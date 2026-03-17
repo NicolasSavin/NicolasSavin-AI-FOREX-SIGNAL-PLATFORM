@@ -1,8 +1,8 @@
 {
-  "updated_at_utc": "2026-03-17T21:35:37.908629+00:00",
+  "updated_at_utc": "2026-03-17T22:31:08.683323+00:00",
   "signals": [
     {
-      "signal_id": "sig-1c457ae141",
+      "signal_id": "sig-2585fd416f",
       "symbol": "EURUSD",
       "timeframe": "H1",
       "action": "NO_TRADE",
@@ -17,7 +17,7 @@
       "reason_ru": "Конфликт со старшим таймфреймом",
       "invalidation_ru": "Ожидать новый валидный сетап.",
       "data_status": "real",
-      "created_at_utc": "2026-03-17T21:35:37.059853+00:00",
+      "created_at_utc": "2026-03-17T22:31:08.167624+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
@@ -25,7 +25,7 @@
       }
     },
     {
-      "signal_id": "sig-40b3b3a708",
+      "signal_id": "sig-b5d86fcb71",
       "symbol": "GBPUSD",
       "timeframe": "H1",
       "action": "NO_TRADE",
@@ -37,10 +37,10 @@
       "confidence_percent": 65,
       "status": "неактуален",
       "description_ru": "NO TRADE: сигнал не опубликован.",
-      "reason_ru": "Конфликт со старшим таймфреймом",
+      "reason_ru": "Слабый confluence структуры: сетап отклонён.",
       "invalidation_ru": "Ожидать новый валидный сетап.",
       "data_status": "real",
-      "created_at_utc": "2026-03-17T21:35:37.597749+00:00",
+      "created_at_utc": "2026-03-17T22:31:08.436837+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
@@ -48,7 +48,7 @@
       }
     },
     {
-      "signal_id": "sig-11bd3de73e",
+      "signal_id": "sig-295e3d2097",
       "symbol": "USDJPY",
       "timeframe": "H1",
       "action": "NO_TRADE",
@@ -60,10 +60,10 @@
       "confidence_percent": 65,
       "status": "неактуален",
       "description_ru": "NO TRADE: сигнал не опубликован.",
-      "reason_ru": "Конфликт со старшим таймфреймом",
+      "reason_ru": "Слабый confluence структуры: сетап отклонён.",
       "invalidation_ru": "Ожидать новый валидный сетап.",
       "data_status": "real",
-      "created_at_utc": "2026-03-17T21:35:37.908498+00:00",
+      "created_at_utc": "2026-03-17T22:31:08.683213+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
