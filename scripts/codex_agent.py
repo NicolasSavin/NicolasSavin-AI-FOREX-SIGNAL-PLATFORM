@@ -7,16 +7,30 @@ ROOT = Path(".").resolve()
 
 EXCLUDED_DIRS = {
     ".git", ".github", "__pycache__", ".venv", "venv", "env",
-    "node_modules", "dist", "build", ".next", ".idea", ".vscode"
+    "node_modules", "dist", "build", ".next", ".idea", ".vscode",
+    "coverage", ".pytest_cache", ".mypy_cache"
 }
 
 EXCLUDED_SUFFIXES = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf",
-    ".zip", ".tar", ".gz", ".exe", ".dll", ".so", ".bin"
+    ".zip", ".tar", ".gz", ".exe", ".dll", ".so", ".bin",
+    ".csv", ".parquet", ".feather"
 }
 
-MAX_FILES = 100
-MAX_CHARS_PER_FILE = 12000
+IMPORTANT_SUFFIXES = {
+    ".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml"
+}
+
+PRIORITY_FILES = {
+    "README.md",
+    "requirements.txt",
+    "pyproject.toml",
+    "package.json",
+    ".gitignore",
+}
+
+MAX_FILES = 25
+MAX_CHARS_PER_FILE = 4000
 
 
 def should_skip(path: Path) -> bool:
@@ -27,16 +41,45 @@ def should_skip(path: Path) -> bool:
     return False
 
 
-def read_project_files():
-    collected = []
+def score_file(path: Path) -> int:
+    score = 0
+    name = path.name.lower()
+    rel = path.as_posix().lower()
+
+    if path.name in PRIORITY_FILES:
+        score += 100
+
+    if path.suffix.lower() in IMPORTANT_SUFFIXES:
+        score += 20
+
+    if "strategy" in rel or "signal" in rel or "trade" in rel:
+        score += 30
+
+    if "test" in rel:
+        score += 10
+
+    if rel.startswith("scripts/"):
+        score += 5
+
+    return score
+
+
+def collect_files():
+    candidates = []
+
     for path in ROOT.rglob("*"):
         if not path.is_file():
             continue
         if should_skip(path):
             continue
+        if path.suffix.lower() not in IMPORTANT_SUFFIXES and path.name not in PRIORITY_FILES:
+            continue
+        candidates.append(path)
 
-        rel = path.relative_to(ROOT).as_posix()
+    candidates.sort(key=score_file, reverse=True)
 
+    result = []
+    for path in candidates[:MAX_FILES]:
         try:
             content = path.read_text(encoding="utf-8")
         except Exception:
@@ -45,15 +88,12 @@ def read_project_files():
         if len(content) > MAX_CHARS_PER_FILE:
             content = content[:MAX_CHARS_PER_FILE] + "\n...[truncated]..."
 
-        collected.append({
-            "path": rel,
+        result.append({
+            "path": path.relative_to(ROOT).as_posix(),
             "content": content
         })
 
-        if len(collected) >= MAX_FILES:
-            break
-
-    return collected
+    return result
 
 
 def main():
@@ -64,17 +104,13 @@ def main():
         raise RuntimeError("OPENAI_API_KEY is missing")
 
     client = OpenAI(api_key=api_key)
-    files = read_project_files()
+    files = collect_files()
 
     system_prompt = """
 Ты автономный AI-разработчик для GitHub-репозитория.
 
-Твоя задача:
-1. Изучить переданные файлы проекта.
-2. Выполнить задачу пользователя.
-3. Вернуть СТРОГО JSON без markdown, без пояснений, без лишнего текста.
+Верни строго JSON без markdown:
 
-Формат ответа:
 {
   "summary": "кратко что изменено",
   "files": [
@@ -86,10 +122,9 @@ def main():
 }
 
 Правила:
+- Меняй минимально необходимое.
 - Возвращай только новые или изменённые файлы.
-- Для каждого файла возвращай полный итоговый текст.
-- Не возвращай бинарные файлы.
-- Делай минимально необходимые изменения.
+- Если информации недостаточно, меняй только очевидные файлы.
 - Если ничего менять не нужно, верни:
   {"summary":"no changes","files":[]}
 """
