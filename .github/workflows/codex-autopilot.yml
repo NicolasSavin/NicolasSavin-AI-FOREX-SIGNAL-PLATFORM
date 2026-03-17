@@ -1,0 +1,118 @@
+name: Codex Autopilot 3.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Что должен сделать автопилот"
+        required: true
+        default: "Improve project code"
+      base_branch:
+        description: "Базовая ветка"
+        required: true
+        default: "main"
+      run_tests:
+        description: "Запускать тесты"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autopilot:
+    runs-on: ubuntu-latest
+
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      TASK: ${{ github.event.inputs.task }}
+      BASE_BRANCH: ${{ github.event.inputs.base_branch }}
+      RUN_TESTS: ${{ github.event.inputs.run_tests }}
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.base_branch }}
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install base dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install openai pytest
+
+      - name: Install project dependencies if present
+        run: |
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt || true
+          fi
+
+      - name: Configure git
+        run: |
+          git config user.name "codex-bot"
+          git config user.email "codex-bot@users.noreply.github.com"
+
+      - name: Create working branch
+        run: |
+          BRANCH="codex/${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          git checkout -b "$BRANCH"
+
+      - name: Run AI agent
+        run: |
+          python scripts/codex_agent.py
+
+      - name: Show diff
+        run: |
+          git status
+          git diff --stat || true
+
+      - name: Run Python tests if requested
+        if: env.RUN_TESTS == 'true'
+        run: |
+          if [ -d "tests" ]; then
+            python -m pytest || exit 1
+          elif ls test_*.py >/dev/null 2>&1; then
+            python -m pytest || exit 1
+          else
+            echo "No Python tests found, skipping."
+          fi
+
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "NO_CHANGES=true" >> $GITHUB_ENV
+            echo "No changes produced."
+            exit 0
+          fi
+
+          git add .
+          git commit -m "Codex autopilot: $TASK"
+
+      - name: Push branch
+        if: env.NO_CHANGES != 'true'
+        run: |
+          git push origin "$BRANCH"
+
+      - name: Create Pull Request
+        if: env.NO_CHANGES != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH" \
+            --title "Codex autopilot: $TASK" \
+            --body "Автоматически создано по задаче: $TASK"

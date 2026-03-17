@@ -42,3 +42,11 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 - Система не выдумывает недоступные рыночные данные.
 - При нехватке данных возвращается `NO_TRADE`.
 - Proxy-метрики явно маркируются `label=proxy`.
+=======
+# AI Forex Signal Platform
+
+## Setup
+pip install -r requirements.txt
+
+## Run
+uvicorn main:app --reload

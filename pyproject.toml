@@ -1,0 +1,18 @@
+[project]
+name = "forex-signal-platform"
+version = "3.0.0"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "pandas",
+  "numpy",
+  "yfinance",
+  "requests",
+  "beautifulsoup4",
+  "selenium",
+  "chromedriver-autoinstaller",
+  "openai",
+  "scikit-learn",
+  "ta",
+  "python-dotenv"
+]
