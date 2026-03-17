@@ -1,2 +1,1 @@
 """Backend skeleton for AI Forex platform (Stage 2)."""
-=======
