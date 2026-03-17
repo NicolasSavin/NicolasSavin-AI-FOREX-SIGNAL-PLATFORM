@@ -1,8 +1,8 @@
 {
-  "updated_at_utc": "2026-03-17T23:30:24.411018+00:00",
+  "updated_at_utc": "2026-03-17T23:58:33.753501+00:00",
   "signals": [
     {
-      "signal_id": "sig-42a246844a",
+      "signal_id": "sig-25927d53bb",
       "symbol": "EURUSD",
       "timeframe": "H1",
       "action": "NO_TRADE",
@@ -17,7 +17,7 @@
       "reason_ru": "Слабый confluence структуры: сетап отклонён.",
       "invalidation_ru": "Ожидать новый валидный сетап.",
       "data_status": "real",
-      "created_at_utc": "2026-03-17T23:30:23.877921+00:00",
+      "created_at_utc": "2026-03-17T23:58:33.191690+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
@@ -25,7 +25,7 @@
       }
     },
     {
-      "signal_id": "sig-4a9d8000d0",
+      "signal_id": "sig-d81f07f85f",
       "symbol": "GBPUSD",
       "timeframe": "H1",
       "action": "NO_TRADE",
@@ -40,7 +40,7 @@
       "reason_ru": "Слабый confluence структуры: сетап отклонён.",
       "invalidation_ru": "Ожидать новый валидный сетап.",
       "data_status": "real",
-      "created_at_utc": "2026-03-17T23:30:24.127397+00:00",
+      "created_at_utc": "2026-03-17T23:58:33.497658+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
@@ -48,7 +48,7 @@
       }
     },
     {
-      "signal_id": "sig-23ada69198",
+      "signal_id": "sig-c6b02ece8d",
       "symbol": "USDJPY",
       "timeframe": "H1",
       "action": "NO_TRADE",
@@ -63,7 +63,7 @@
       "reason_ru": "Слабый confluence структуры: сетап отклонён.",
       "invalidation_ru": "Ожидать новый валидный сетап.",
       "data_status": "real",
-      "created_at_utc": "2026-03-17T23:30:24.410912+00:00",
+      "created_at_utc": "2026-03-17T23:58:33.753400+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
