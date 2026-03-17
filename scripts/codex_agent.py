@@ -15,7 +15,7 @@ EXCLUDED_SUFFIXES = {
     ".zip", ".tar", ".gz", ".exe", ".dll", ".so", ".bin"
 }
 
-MAX_FILES = 80
+MAX_FILES = 100
 MAX_CHARS_PER_FILE = 12000
 
 
@@ -61,19 +61,18 @@ def main():
     task = os.environ.get("TASK", "Improve the project")
 
     if not api_key:
-      raise RuntimeError("OPENAI_API_KEY is missing")
+        raise RuntimeError("OPENAI_API_KEY is missing")
 
     client = OpenAI(api_key=api_key)
-
     files = read_project_files()
 
     system_prompt = """
-Ты автономный AI-разработчик для репозитория GitHub.
+Ты автономный AI-разработчик для GitHub-репозитория.
 
 Твоя задача:
-1. Прочитать файлы проекта.
+1. Изучить переданные файлы проекта.
 2. Выполнить задачу пользователя.
-3. Вернуть строго JSON без markdown и без пояснений.
+3. Вернуть СТРОГО JSON без markdown, без пояснений, без лишнего текста.
 
 Формат ответа:
 {
@@ -87,11 +86,12 @@ def main():
 }
 
 Правила:
-- Возвращай только изменённые или новые файлы.
-- Для каждого файла возвращай полный новый текст файла.
+- Возвращай только новые или изменённые файлы.
+- Для каждого файла возвращай полный итоговый текст.
 - Не возвращай бинарные файлы.
-- Старайся делать минимально необходимые изменения.
-- Если менять нечего, верни {"summary":"no changes","files":[]}.
+- Делай минимально необходимые изменения.
+- Если ничего менять не нужно, верни:
+  {"summary":"no changes","files":[]}
 """
 
     user_payload = {
@@ -100,11 +100,11 @@ def main():
     }
 
     response = client.responses.create(
-        model=os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
+        model="gpt-4.1-mini",
         input=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}
-        ]
+        ],
     )
 
     raw = response.output_text.strip()
