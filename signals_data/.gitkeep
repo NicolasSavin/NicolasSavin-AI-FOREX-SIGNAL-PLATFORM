@@ -1,1 +1,1 @@
-
+# Keep signals_data directory in git even if JSON snapshots are cleaned.

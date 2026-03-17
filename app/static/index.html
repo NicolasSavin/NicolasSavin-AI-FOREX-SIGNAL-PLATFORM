@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI FOREX PLATFORM v3.1</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>AI FOREX SIGNAL PLATFORM <span>v3.1</span></h1>
+      <p>Профессиональная тёмная панель: сигналы, идеи, новости, календарь и heatmap.</p>
+      <nav>
+        <a href="/">Главная</a>
+        <a href="/ideas">Идеи</a>
+        <a href="/news">Новости</a>
+        <a href="/calendar">Календарь</a>
+        <a href="/heatmap/page">Heatmap</a>
+      </nav>
+    </header>
+
+    <section class="ticker" id="ticker">Загрузка тикера...</section>
+
+    <main>
+      <section class="cards" id="signalsGrid"></section>
+
+      <section class="panel">
+        <h2>AI Market Ideas</h2>
+        <ul id="ideasList"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>Market News</h2>
+        <ul id="newsList"></ul>
+      </section>
+
+      <section class="panel two-cols">
+        <div>
+          <h2>Economic Calendar</h2>
+          <ul id="calendarList"></ul>
+        </div>
+        <div>
+          <h2>Currency Heatmap</h2>
+          <ul id="heatmapList"></ul>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/script.js"></script>
+  </body>
+</html>
