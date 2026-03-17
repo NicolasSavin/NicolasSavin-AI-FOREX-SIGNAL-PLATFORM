@@ -1,4 +1,7 @@
-from fastapi import FastAPI
+try:
+    from fastapi import FastAPI
+except ImportError:
+    raise ImportError("FastAPI is not installed. Please run 'pip install fastapi' to install it.")
 
 app = FastAPI()
 

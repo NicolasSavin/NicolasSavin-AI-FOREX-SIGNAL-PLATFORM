@@ -1,7 +1,17 @@
 # AI Forex Signal Platform
 
-## Setup
-pip install -r requirements.txt
+## Установка
+Установите зависимости командой:
 
-## Run
+```bash
+pip install -r requirements.txt
+```
+
+## Запуск
+Для запуска приложения выполните:
+
+```bash
 uvicorn main:app --reload
+```
+
+Приложение будет доступно по адресу http://127.0.0.1:8000
