@@ -43,7 +43,12 @@ class SignalEngine:
             return self._no_trade(symbol, mtf, "Недостаточно подтверждённых данных yfinance для MTF-сценария.")
 
         trend_conflict = htf_features["trend"] != mtf_features["trend"]
-        confluence = [mtf_features["bos"], mtf_features["liquidity_sweep"], bool(mtf_features["order_block"]), bool(ltf_features["pattern"])]
+        confluence = [
+            mtf_features["bos"],
+            mtf_features["liquidity_sweep"],
+            mtf_features["fvg"],
+            ltf_features["pattern"] == "engulfing",
+        ]
         if sum(1 for c in confluence if c) < 3:
             return self._no_trade(symbol, mtf, "Слабый confluence структуры: сетап отклонён.")
 
@@ -55,7 +60,7 @@ class SignalEngine:
 
         stop = price - stop_distance if action == "BUY" else price + stop_distance
         take = price + take_distance if action == "BUY" else price - take_distance
-        rr = abs((take - price) / max(price - stop, 1e-9))
+        rr = abs((take - price) / max(abs(price - stop), 1e-9))
 
         confidence = 65
         if not trend_conflict:
