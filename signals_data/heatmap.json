@@ -1,23 +1,23 @@
 {
-  "updated_at_utc": "2026-03-17T11:16:44.731289+00:00",
+  "updated_at_utc": "2026-03-17T21:35:37.909407+00:00",
   "rows": [
     {
       "pair": "EURUSD",
       "change_percent": null,
-      "data_status": "unavailable",
-      "label": "proxy"
+      "data_status": "real",
+      "label": "real"
     },
     {
       "pair": "GBPUSD",
       "change_percent": null,
-      "data_status": "unavailable",
-      "label": "proxy"
+      "data_status": "real",
+      "label": "real"
     },
     {
       "pair": "USDJPY",
       "change_percent": null,
-      "data_status": "unavailable",
-      "label": "proxy"
+      "data_status": "real",
+      "label": "real"
     }
   ]
 }
