@@ -60,7 +60,9 @@ class SignalEngine:
 
         stop = price - stop_distance if action == "BUY" else price + stop_distance
         take = price + take_distance if action == "BUY" else price - take_distance
-        rr = abs((take - price) / max(abs(price - stop), 1e-9))
+        reward_distance = abs(take - price)
+        risk_distance = abs(price - stop)
+        rr = reward_distance / max(risk_distance, 1e-9)
 
         confidence = 65
         if not trend_conflict:
