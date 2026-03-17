@@ -46,8 +46,8 @@ class SignalEngine:
         confluence = [
             mtf_features["bos"],
             mtf_features["liquidity_sweep"],
-            mtf_features["fvg"],
-            ltf_features["pattern"] == "engulfing",
+            bool(mtf_features["order_block"]),
+            bool(ltf_features["pattern"]),
         ]
         if sum(1 for c in confluence if c) < 3:
             return self._no_trade(symbol, mtf, "Слабый confluence структуры: сетап отклонён.")
