@@ -3,17 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Идеи рынка</title>
+    <title>AI Идеи рынка</title>
     <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/ideas.css" />
   </head>
   <body data-page="ideas">
-    <div class="page-shell">
+    <div class="page-shell ideas-shell">
       <header class="site-header">
         <div>
-          <p class="eyebrow">Идеи</p>
-          <h1>Торговые идеи</h1>
-          <p class="lead">Раздел сохранён отдельной страницей и продолжает работать независимо от главной.</p>
+          <p class="eyebrow">AI Ideas</p>
+          <h1>Подробные AI-идеи по рынку</h1>
+          <p class="lead">
+            Идеи формируются по значимым новостям, по конкретному инструменту, с
+            подробным разбором фундаментала, SMC / ICT, паттернов, волн, объёмов
+            и визуальным сценарием на графике.
+          </p>
         </div>
+
         <nav class="top-nav">
           <a href="/">Сигналы</a>
           <a class="is-active" href="/ideas">Идеи</a>
@@ -24,18 +30,41 @@
       </header>
 
       <main class="content-stack">
-        <section class="panel">
+        <section class="panel ideas-intro-panel">
           <div class="panel-heading compact">
             <div>
-              <p class="section-kicker">Раздел идей</p>
-              <h2>AI-идеи по рынку</h2>
+              <p class="section-kicker">Новая логика</p>
+              <h2>Не короткий сигнал, а полноценная аналитическая идея</h2>
+              <p class="section-text">
+                Каждая идея публикуется по конкретному инструменту после
+                появления сильной новости и показывает не только направление, но
+                и рыночную логику: фундаментальный драйвер, SMC / ICT, паттерн,
+                волновой сценарий, объёмное подтверждение и зоны ликвидности.
+              </p>
             </div>
           </div>
-          <ul class="data-list" id="ideasList"></ul>
+        </section>
+
+        <section class="panel ideas-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="section-kicker">Актуальные идеи</p>
+              <h2>AI-разбор рыночных сценариев</h2>
+              <p class="section-text">
+                Ниже отображаются подробные идеи, сформированные на основе
+                новостей и анализа инструмента.
+              </p>
+            </div>
+          </div>
+
+          <div id="ideasUpdatedAt" class="ideas-updated-at">Обновление: загрузка...</div>
+          <div id="ideasContainer" class="ideas-container">
+            <div class="ideas-loading">Загрузка идей...</div>
+          </div>
         </section>
       </main>
     </div>
 
-    <script src="/static/script.js"></script>
+    <script src="/static/ideas.js"></script>
   </body>
 </html>
