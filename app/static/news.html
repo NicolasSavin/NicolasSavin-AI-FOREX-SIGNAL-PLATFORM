@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Новости рынка</title>
+    <title>Новости для трейдера</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body data-page="news">
@@ -11,8 +11,11 @@
       <header class="site-header">
         <div>
           <p class="eyebrow">News</p>
-          <h1>Новости рынка</h1>
-          <p class="lead">Лента показывает только подтверждённые новости или честно сообщает о недоступности источника.</p>
+          <h1>Новости для трейдера</h1>
+          <p class="lead">
+            Здесь собраны только новости из открытых источников: RSS-ленты, официальные публикации и открытые
+            рыночные фиды. Каждая новость кратко пересказана на русском и дополнена оценкой влияния на рынок.
+          </p>
         </div>
         <nav class="top-nav">
           <a href="/">Сигналы</a>
@@ -24,14 +27,52 @@
       </header>
 
       <main class="content-stack">
-        <section class="panel news-panel">
-          <div class="panel-heading compact">
+        <section class="panel news-overview-panel">
+          <div class="panel-heading compact news-panel__heading">
             <div>
-              <p class="section-kicker">Macro news</p>
-              <h2>Лента новостей</h2>
-              <p class="section-text">Без выдуманных данных и с пометкой уровня влияния.</p>
+              <p class="section-kicker">News desk</p>
+              <h2>Живой новостной дашборд</h2>
+              <p class="section-text">
+                Вверху — быстрый срез по ленте, ниже — карточки с интерпретацией для трейдера и оценкой влияния на активы.
+              </p>
             </div>
-            <span class="panel-meta" id="newsUpdatedAt">Обновление: —</span>
+            <div class="news-panel__meta">
+              <span class="panel-meta" id="newsUpdatedAt">Обновление: —</span>
+              <span class="panel-meta">Автообновление каждые 5 минут</span>
+            </div>
+          </div>
+
+          <div class="news-stats-grid" id="newsStatsGrid">
+            <article class="news-stat-card"><span>Новостей в ленте</span><strong>—</strong></article>
+            <article class="news-stat-card"><span>Высокая важность</span><strong>—</strong></article>
+            <article class="news-stat-card"><span>Источники</span><strong>—</strong></article>
+            <article class="news-stat-card"><span>Последняя публикация</span><strong>—</strong></article>
+          </div>
+
+          <div class="news-toolbar">
+            <div>
+              <p class="news-toolbar__label">Фильтр по категории</p>
+              <div class="news-filter-row" id="newsCategoryFilters"></div>
+            </div>
+            <div>
+              <p class="news-toolbar__label">Фильтр по важности</p>
+              <div class="news-filter-row" id="newsImportanceFilters"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel news-panel">
+          <div class="panel-heading compact news-panel__heading">
+            <div>
+              <p class="section-kicker">Smart news flow</p>
+              <h2>Интеллектуальная лента новостей</h2>
+              <p class="section-text">
+                Лента убирает дубли, поднимает свежие новости наверх и показывает, что это значит для рынка и активных сигналов.
+              </p>
+            </div>
+            <div class="news-panel__meta">
+              <span class="panel-meta" id="newsFeedMeta">Показано: —</span>
+            </div>
           </div>
           <div class="news-list" id="newsList"></div>
         </section>

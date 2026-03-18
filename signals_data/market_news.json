@@ -1,53 +1,308 @@
 {
-  "updated_at_utc": "2026-03-18T08:44:54.837590+00:00",
+  "updated_at_utc": "2026-03-18T09:20:38.516742Z",
   "news": [
     {
-      "title": "What are Unicorn Startups and What They Mean in Investi",
-      "description_ru": "Источник: FOREX.com. Опубликовано: 18.03.2026 08:37 UTC.",
-      "impact": "low",
-      "source": "FOREX.com",
-      "link": "https://news.google.com/rss/articles/CBMieEFVX3lxTE01eURDSHA1YUNEVm5HXzFRSTA5YTRWT3VRaGM0cVhDSUp1NXZKN2R5Qzg1TFFyYXRSY0RWa09iZFBtSG1pVkh3TVowenNIenpyQUk3NXZqN0h6U2RJZlZQX3dwU251b0NXVEJXbmhJZUpBdkk3M09MRg?oc=5",
-      "published_at_utc": "2026-03-18T08:37:12+00:00"
-    },
-    {
-      "title": "Forex Today: Market focus shifts from Middle East to Fed",
-      "description_ru": "Источник: FXStreet. Опубликовано: 18.03.2026 08:03 UTC.",
-      "impact": "high",
+      "id": "news_28ca05b9fdac",
+      "title_original": "BoC: Policy on hold with rangebound Loonie – Societe Generale",
+      "title_ru": "Рынок Forex получил новый новостной драйвер",
+      "summary_ru": "Коротко: Рынок Forex получил новый новостной драйвер. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
+      "what_happened_ru": "На рынке вышла новость: Рынок Forex получил новый новостной драйвер.",
+      "why_it_matters_ru": "Это важно для рынка, потому что новость может изменить краткосрочный баланс спроса и предложения.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по основным инструментам после подтверждения движения.",
+      "category": "Forex",
+      "importance": "low",
+      "importance_ru": "низкая",
+      "assets": [],
       "source": "FXStreet",
-      "link": "https://news.google.com/rss/articles/CBMinwFBVV95cUxOX19sc3BLallqRzc3dElDQ3lMQm56eDk0TkR5MzRnZnI2QkpaNE5mWjNQWE8tQnhuU1dCazJJTHBJSGhWNTJ3anhSTkhPajRpQmRaSkpyZkFKUExjTjM5ZC1ZbzBHYm83TE9ZemswaWE2Qi1kanc4VXg1a3FMWkUzdmFaMUU0WHFraUF5Wl9lVXNCZTJKUk9TakJ3ekFyUDQ?oc=5",
-      "published_at_utc": "2026-03-18T08:03:01+00:00"
+      "source_url": "https://www.fxstreet.com/news/boc-policy-on-hold-with-rangebound-loonie-societe-generale-202603180917",
+      "published_at": "2026-03-18T09:17:29Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
     },
     {
-      "title": "GBP/JPY Daily Outlook",
-      "description_ru": "Источник: Action Forex. Опубликовано: 18.03.2026 08:02 UTC.",
-      "impact": "medium",
-      "source": "Action Forex",
-      "link": "https://news.google.com/rss/articles/CBMimwFBVV95cUxOeTdCWm9fM3BBVU9qS0tJUmRnWkNxcm5mcFhaT3YtdzUwS3Y4R29YT1pZbVlJd3N3LV9YTkZoSVJMb2o3eGUwR3dRZDJneXZQWklGTjVmeHpCdGJua0x6Sk9lT0tBQUFEdFBrVFVldVlrWHJMemRmZ0tSRGZCVHJiVHhoUEpocFR6YTJ6RzNETWduUGlvRGxLT3ktRQ?oc=5",
-      "published_at_utc": "2026-03-18T08:02:29+00:00"
+      "id": "news_5739c88868c2",
+      "title_original": "EUR/USD Forecast: Euro stabilizes ahead of critical Fed decision",
+      "title_ru": "Центробанк дал новый сигнал по ставкам для EURUSD",
+      "summary_ru": "Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту.",
+      "what_happened_ru": "На рынке вышла новость: Центробанк дал новый сигнал по ставкам для EURUSD.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по EURUSD, DXY после подтверждения движения.",
+      "category": "Central Banks",
+      "importance": "high",
+      "importance_ru": "высокая",
+      "assets": [
+        "EURUSD",
+        "DXY"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/analysis/eur-usd-forecast-euro-stabilizes-ahead-of-critical-fed-decision-202603180909",
+      "published_at": "2026-03-18T09:09:20Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
     },
     {
-      "title": "VT Markets and Newcastle United Clinch Double Wins at Forex Sports Awards 2026",
-      "description_ru": "Источник: Yahoo Finance Singapore. Опубликовано: 18.03.2026 08:00 UTC.",
-      "impact": "medium",
-      "source": "Yahoo Finance Singapore",
-      "link": "https://news.google.com/rss/articles/CBMiiwFBVV95cUxQNk1TR1haMG56Z0c4LVFRQ1B5bzJaQl80Rm4yT0k5cktRRjdPcVdRSThnNVhLTTl3YkJtai1BdThCYWNJVmN6b2drVzVxU2Q1ZmFNNkQ2ZWstbW9pQ1ltZ214U0wtc2g2a1dkcUpfQ3JZZlhkdXlVNzJOY3o2RDEzdGszS3hqdGlYcWlj?oc=5",
-      "published_at_utc": "2026-03-18T08:00:00+00:00"
+      "id": "news_5203bf00f4bc",
+      "title_original": "Japanese Yen holds ground as BoJ expected to adopt hawkish tone",
+      "title_ru": "Центробанк дал новый сигнал по ставкам для USDJPY",
+      "summary_ru": "Коротко: Центробанк дал новый сигнал по ставкам для USDJPY. Для трейдера это событие низкой важности, которое стоит учитывать по USDJPY.",
+      "what_happened_ru": "На рынке вышла новость: Центробанк дал новый сигнал по ставкам для USDJPY.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
+      "market_impact_ru": "Негативно для USDJPY.",
+      "category": "Forex",
+      "importance": "low",
+      "importance_ru": "низкая",
+      "assets": [
+        "USDJPY"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/japanese-yen-remains-subdued-near-15900-as-boj-expected-to-adopt-hawkish-tone-202603180906",
+      "published_at": "2026-03-18T09:06:57Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
     },
     {
-      "title": "EUR/AUD Daily Outlook",
-      "description_ru": "Источник: Action Forex. Опубликовано: 18.03.2026 07:54 UTC.",
-      "impact": "medium",
-      "source": "Action Forex",
-      "link": "https://news.google.com/rss/articles/CBMimwFBVV95cUxORUQyN0RaRGEzdzhYY0xJZ0xMbFhQc3FvbnJ4dHJEbnJXX0RRa01TQjhSRFY0eXI4OVJTVjF5T1JiOEFhVE9iTERhV1JFdW9QYVh2azhvSlBzUWljRFBBc3luaXVIdHhza1lkbzV6NGxPNkY4d3p3ZERiVEJEbGkxdi1sWkMzME9WUFNiVnpiYTlqaDY3b0V0TDFkdw?oc=5",
-      "published_at_utc": "2026-03-18T07:54:21+00:00"
+      "id": "news_ba74db4f21f2",
+      "title_original": "BoC set to hold interest rate amid soft inflation, global uncertainty",
+      "title_ru": "Инфляция меняет ожидания по EURUSD",
+      "summary_ru": "Свежие макроданные могут усилить волатильность, потому что рынок пересматривает ожидания по доллару и рисковым активам.",
+      "what_happened_ru": "На рынке вышла новость: Инфляция меняет ожидания по EURUSD.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по DXY, EURUSD, XAUUSD после подтверждения движения.",
+      "category": "Macro",
+      "importance": "high",
+      "importance_ru": "высокая",
+      "assets": [
+        "DXY",
+        "EURUSD",
+        "XAUUSD"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/boc-set-to-hold-interest-rate-amid-soft-inflation-global-uncertainty-202603180900",
+      "published_at": "2026-03-18T09:00:00Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
     },
     {
-      "title": "EUR/CHF Daily Outlook",
-      "description_ru": "Источник: Action Forex. Опубликовано: 18.03.2026 07:52 UTC.",
-      "impact": "medium",
-      "source": "Action Forex",
-      "link": "https://news.google.com/rss/articles/CBMimwFBVV95cUxQY1Bja0RlbXNBYlhsLVJRaElCcmJpNnBZemZfemFqTFAySUFKSF9jTDhKWFNBN0w0aHVCa2ZyMGxfWkFFTmJRMTJfMzlITTZ0TXJaWExKOWw4S19IYWtabXRDbUgtaWhxQmxqZU9zZGRlZ0JvUTFoVWhiemItcHF2QTVFa1RkOXBMT3dLdW5DTlA3TUFJVDYyR1hkRQ?oc=5",
-      "published_at_utc": "2026-03-18T07:52:07+00:00"
+      "id": "news_284eb8145dd8",
+      "title_original": "Fed: FOMC to keep policy options open on conflict risks – MUFG",
+      "title_ru": "Центробанк дал новый сигнал по ставкам для EURUSD",
+      "summary_ru": "Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту.",
+      "what_happened_ru": "На рынке вышла новость: Центробанк дал новый сигнал по ставкам для EURUSD.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по DXY, EURUSD, XAUUSD после подтверждения движения.",
+      "category": "Central Banks",
+      "importance": "high",
+      "importance_ru": "высокая",
+      "assets": [
+        "DXY",
+        "EURUSD",
+        "XAUUSD"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/fed-fomc-to-keep-policy-options-open-on-conflict-risks-mufg-202603180857",
+      "published_at": "2026-03-18T08:57:13Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_42b7eada3717",
+      "title_original": "Gold: Rangebound as risks offset – ING",
+      "title_ru": "Золото получило новый рыночный драйвер",
+      "summary_ru": "Событие способно быстро изменить спрос на золото как на защитный актив.",
+      "what_happened_ru": "На рынке вышла новость: Золото получило новый рыночный драйвер.",
+      "why_it_matters_ru": "Золото чувствительно к доллару, доходностям и спросу на защитные активы.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по XAUUSD после подтверждения движения.",
+      "category": "Gold",
+      "importance": "medium",
+      "importance_ru": "средняя",
+      "assets": [
+        "XAUUSD"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/gold-rangebound-as-risks-offset-ing-202603180843",
+      "published_at": "2026-03-18T08:43:10Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_0c55e66450c8",
+      "title_original": "USD/CAD: Rangebound trade persists with BoC on hold – Danske Bank",
+      "title_ru": "Рынок пересматривает краткосрочный настрой по DXY",
+      "summary_ru": "Коротко: Рынок пересматривает краткосрочный настрой по DXY. Для трейдера это событие низкой важности, которое стоит учитывать по DXY.",
+      "what_happened_ru": "На рынке вышла новость: Рынок пересматривает краткосрочный настрой по DXY.",
+      "why_it_matters_ru": "Это важно для DXY, потому что новость может изменить краткосрочный баланс спроса и предложения.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по DXY после подтверждения движения.",
+      "category": "Forex",
+      "importance": "low",
+      "importance_ru": "низкая",
+      "assets": [
+        "DXY"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/usd-cad-rangebound-trade-persists-with-boc-on-hold-danske-bank-202603180836",
+      "published_at": "2026-03-18T08:36:19Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_33eefc4fc81c",
+      "title_original": "WTI holds losses near $93.50 as supply concerns ease",
+      "title_ru": "Сырьевой рынок меняет настрой по USOIL",
+      "summary_ru": "Новость влияет на сырьевой блок и может сдвинуть ожидания по нефти и связанным активам.",
+      "what_happened_ru": "На рынке вышла новость: Сырьевой рынок меняет настрой по USOIL.",
+      "why_it_matters_ru": "Это важно для USOIL, потому что новость может изменить краткосрочный баланс спроса и предложения.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по USOIL после подтверждения движения.",
+      "category": "Commodities",
+      "importance": "low",
+      "importance_ru": "низкая",
+      "assets": [
+        "USOIL"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/wti-holds-losses-near-9350-as-supply-concerns-ease-202603180826",
+      "published_at": "2026-03-18T08:26:43Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_31ec06dda12b",
+      "title_original": "EUR/USD: Options signal pre-war regime – Commerzbank",
+      "title_ru": "Рынок пересматривает краткосрочный настрой по EURUSD",
+      "summary_ru": "Коротко: Рынок пересматривает краткосрочный настрой по EURUSD. Для трейдера это событие средней важности, которое стоит учитывать по EURUSD, DXY.",
+      "what_happened_ru": "На рынке вышла новость: Рынок пересматривает краткосрочный настрой по EURUSD.",
+      "why_it_matters_ru": "Это важно для EURUSD, DXY, потому что новость может изменить краткосрочный баланс спроса и предложения.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по EURUSD, DXY после подтверждения движения.",
+      "category": "Forex",
+      "importance": "medium",
+      "importance_ru": "средняя",
+      "assets": [
+        "EURUSD",
+        "DXY"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/eur-usd-options-signal-pre-war-regime-commerzbank-202603180826",
+      "published_at": "2026-03-18T08:26:11Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_e72d7b4d9c41",
+      "title_original": "EUR/USD struggles to extend recovery above 1.1550, Fed’s policy remains in focus",
+      "title_ru": "Центробанк дал новый сигнал по ставкам для EURUSD",
+      "summary_ru": "Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту.",
+      "what_happened_ru": "На рынке вышла новость: Центробанк дал новый сигнал по ставкам для EURUSD.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по EURUSD, DXY после подтверждения движения.",
+      "category": "Central Banks",
+      "importance": "high",
+      "importance_ru": "высокая",
+      "assets": [
+        "EURUSD",
+        "DXY"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/eur-usd-struggles-to-extend-recovery-above-11550-feds-policy-remains-in-focus-202603180814",
+      "published_at": "2026-03-18T08:14:21Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_73d1f64e9a1f",
+      "title_original": "Oil: Volatility eases as supply headlines shift – Deutsche Bank",
+      "title_ru": "Сырьевой рынок меняет настрой по USOIL",
+      "summary_ru": "Новость влияет на сырьевой блок и может сдвинуть ожидания по нефти и связанным активам.",
+      "what_happened_ru": "На рынке вышла новость: Сырьевой рынок меняет настрой по USOIL.",
+      "why_it_matters_ru": "Это важно для USOIL, потому что новость может изменить краткосрочный баланс спроса и предложения.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по USOIL после подтверждения движения.",
+      "category": "Commodities",
+      "importance": "medium",
+      "importance_ru": "средняя",
+      "assets": [
+        "USOIL"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/oil-volatility-eases-as-supply-headlines-shift-deutsche-bank-202603180803",
+      "published_at": "2026-03-18T08:03:59Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_4fc4b391596c",
+      "title_original": "Austria HICP (YoY) increased to 2.3% in February from previous 2%",
+      "title_ru": "Рынок Forex получил новый новостной драйвер",
+      "summary_ru": "Коротко: Рынок Forex получил новый новостной драйвер. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
+      "what_happened_ru": "На рынке вышла новость: Рынок Forex получил новый новостной драйвер.",
+      "why_it_matters_ru": "Это важно для рынка, потому что новость может изменить краткосрочный баланс спроса и предложения.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по основным инструментам после подтверждения движения.",
+      "category": "Forex",
+      "importance": "low",
+      "importance_ru": "низкая",
+      "assets": [],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/austria-hicp-yoy-increased-to-23-in-february-from-previous-2-202603180803",
+      "published_at": "2026-03-18T08:03:29Z",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
     }
   ]
 }

@@ -5,11 +5,22 @@ const calendarList = document.getElementById('calendarList');
 const heatmapList = document.getElementById('heatmapList');
 const newsList = document.getElementById('newsList');
 const newsUpdatedAt = document.getElementById('newsUpdatedAt');
+const newsStatsGrid = document.getElementById('newsStatsGrid');
+const newsCategoryFilters = document.getElementById('newsCategoryFilters');
+const newsImportanceFilters = document.getElementById('newsImportanceFilters');
+const newsFeedMeta = document.getElementById('newsFeedMeta');
 const summaryCount = document.getElementById('summaryCount');
 const summaryUpdatedAt = document.getElementById('summaryUpdatedAt');
+const pageName = document.body?.dataset.page || 'unknown';
+const refreshIntervalMs = pageName === 'news' ? 300000 : 60000;
 
 let knownSignalIds = new Set();
 let audioContext = null;
+const newsState = {
+  rows: [],
+  category: 'all',
+  importance: 'all',
+};
 
 async function getJson(url) {
   const resp = await fetch(url);
@@ -28,6 +39,15 @@ function formatUpdatedAt(value) {
     timeStyle: 'short',
     timeZone: 'UTC',
   }).format(date) + ' UTC';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function renderList(id, rows, mapper, emptyMessage = 'Данные пока недоступны.') {
@@ -57,6 +77,10 @@ function getImpactLabel(impact) {
     low: 'Низкое влияние',
     unknown: 'Статус источника',
   }[impact] || 'Без оценки';
+}
+
+function getImportanceClass(importance) {
+  return importance || 'low';
 }
 
 function getLifecycleLabel(state) {
@@ -152,15 +176,117 @@ function renderSignals(signals, updatedAt) {
   });
 }
 
-function renderNews(rows, updatedAt, emptyTitle = 'Новостей пока нет', emptyText = 'Подтверждённые новости появятся здесь после обновления источника.') {
+function buildNewsTagList(items, emptyText) {
+  if (!items?.length) {
+    return `<span class="news-chip news-chip--muted">${emptyText}</span>`;
+  }
+  return items.map((item) => `<span class="news-chip">${escapeHtml(item)}</span>`).join('');
+}
+
+function getSignalRelationClass(relation) {
+  return relation?.effect_on_signal || 'neutral_to_signal';
+}
+
+
+function renderNewsStats(rows) {
+  if (!newsStatsGrid) return;
+
+  const uniqueSources = new Set(rows.map((row) => row.source).filter(Boolean));
+  const highCount = rows.filter((row) => row.importance === 'high').length;
+  const latestPublished = rows[0]?.published_at ? formatUpdatedAt(rows[0].published_at) : '—';
+
+  newsStatsGrid.innerHTML = `
+    <article class="news-stat-card">
+      <span>Новостей в ленте</span>
+      <strong>${rows.length}</strong>
+    </article>
+    <article class="news-stat-card">
+      <span>Высокая важность</span>
+      <strong>${highCount}</strong>
+    </article>
+    <article class="news-stat-card">
+      <span>Источники</span>
+      <strong>${uniqueSources.size}</strong>
+    </article>
+    <article class="news-stat-card">
+      <span>Последняя публикация</span>
+      <strong>${latestPublished}</strong>
+    </article>
+  `;
+}
+
+function buildFilterButtons(items, activeValue, onClick) {
+  return items.map((item) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `news-filter-chip${item.value === activeValue ? ' is-active' : ''}`;
+    button.textContent = item.label;
+    button.addEventListener('click', () => onClick(item.value));
+    return button;
+  });
+}
+
+function renderNewsFilters(rows) {
+  const categories = ['all', ...new Set(rows.map((row) => row.category).filter(Boolean))];
+  const categoryLabels = { all: 'Все', Forex: 'Forex', Gold: 'Gold', Crypto: 'Crypto', Macro: 'Macro', 'Central Banks': 'Central Banks', Commodities: 'Commodities', Indices: 'Indices' };
+  const importanceItems = [
+    { value: 'all', label: 'Все' },
+    { value: 'high', label: 'Высокая' },
+    { value: 'medium', label: 'Средняя' },
+    { value: 'low', label: 'Низкая' },
+  ];
+
+  if (newsCategoryFilters) {
+    newsCategoryFilters.innerHTML = '';
+    buildFilterButtons(
+      categories.map((value) => ({ value, label: categoryLabels[value] || value })),
+      newsState.category,
+      (value) => {
+        newsState.category = value;
+        renderNews(newsState.rows, null, false);
+      },
+    ).forEach((button) => newsCategoryFilters.appendChild(button));
+  }
+
+  if (newsImportanceFilters) {
+    newsImportanceFilters.innerHTML = '';
+    buildFilterButtons(importanceItems, newsState.importance, (value) => {
+      newsState.importance = value;
+      renderNews(newsState.rows, null, false);
+    }).forEach((button) => newsImportanceFilters.appendChild(button));
+  }
+}
+
+function getFilteredNewsRows(rows) {
+  return rows.filter((row) => {
+    const categoryOkay = newsState.category === 'all' || row.category === newsState.category;
+    const importanceOkay = newsState.importance === 'all' || row.importance === newsState.importance;
+    return categoryOkay && importanceOkay;
+  });
+}
+
+function renderNews(rows, updatedAt, syncFilters = true, emptyTitle = 'Новостей пока нет', emptyText = 'Подтверждённые новости появятся здесь после обновления источника.') {
   if (!newsList) return;
 
-  if (newsUpdatedAt) {
+  if (updatedAt && newsUpdatedAt) {
     newsUpdatedAt.textContent = `Обновление: ${formatUpdatedAt(updatedAt)}`;
   }
+
+  if (syncFilters) {
+    newsState.rows = [...rows];
+    renderNewsStats(newsState.rows);
+    renderNewsFilters(newsState.rows);
+  }
+
+  const filteredRows = getFilteredNewsRows(newsState.rows.length ? newsState.rows : rows);
+  if (newsFeedMeta) {
+    const totalRows = (newsState.rows.length ? newsState.rows : rows).length;
+    newsFeedMeta.textContent = `Показано: ${filteredRows.length} из ${totalRows}`;
+  }
+
   newsList.innerHTML = '';
 
-  if (!rows.length) {
+  if (!filteredRows.length) {
     newsList.innerHTML = `
       <article class="news-card news-card--empty">
         <p class="news-card__title">${emptyTitle}</p>
@@ -170,17 +296,72 @@ function renderNews(rows, updatedAt, emptyTitle = 'Новостей пока н�
     return;
   }
 
-  rows.forEach((row) => {
-    const impact = row.impact || 'unknown';
+  filteredRows.forEach((row) => {
     const card = document.createElement('article');
     card.className = 'news-card';
+    const relation = row.signal_relation || {};
+    const hasRelation = Boolean(relation.has_related_signal);
+
     card.innerHTML = `
-      <div class="news-card__header">
-        <${row.link ? 'a' : 'p'} class="news-card__title ${row.link ? 'news-card__link' : ''}" ${row.link ? `href="${row.link}" target="_blank" rel="noopener noreferrer"` : ''}>${row.title || 'Новость без заголовка'}</${row.link ? 'a' : 'p'}>
-        <span class="impact-badge impact-badge--${impact}">${getImpactLabel(impact)}</span>
+      <div class="news-card__header news-card__header--stacked">
+        <div>
+          <p class="news-card__eyebrow">${escapeHtml(row.category || 'News')}</p>
+          <h3 class="news-card__title">${escapeHtml(row.title_ru || row.title_original || 'Новость без заголовка')}</h3>
+        </div>
+        <div class="news-card__badges">
+          <span class="impact-badge impact-badge--${getImportanceClass(row.importance)}">${escapeHtml(row.importance_ru || getImpactLabel(row.importance))}</span>
+          <span class="news-source-badge">${escapeHtml(row.source || 'RSS')}</span>
+        </div>
       </div>
-      <p class="news-card__text">${row.description_ru || 'Описание отсутствует.'}</p>
-      <p class="news-card__meta">Источник: ${row.source || 'RSS'} • Опубликовано: ${formatUpdatedAt(row.published_at_utc)}</p>
+
+      <p class="news-card__summary">${escapeHtml(row.summary_ru || 'Краткий пересказ пока недоступен.')}</p>
+
+      <div class="news-card__sections">
+        <section class="news-detail-box">
+          <h4>Что произошло</h4>
+          <p>${escapeHtml(row.what_happened_ru || '—')}</p>
+        </section>
+        <section class="news-detail-box">
+          <h4>Почему это важно</h4>
+          <p>${escapeHtml(row.why_it_matters_ru || '—')}</p>
+        </section>
+        <section class="news-detail-box news-detail-box--impact">
+          <h4>Влияние на рынок</h4>
+          <p>${escapeHtml(row.market_impact_ru || '—')}</p>
+        </section>
+      </div>
+
+      <div class="news-card__taxonomy">
+        <div>
+          <span class="news-label">Категория</span>
+          <strong>${escapeHtml(row.category || '—')}</strong>
+        </div>
+        <div>
+          <span class="news-label">Важность</span>
+          <strong>${escapeHtml(row.importance_ru || '—')}</strong>
+        </div>
+        <div>
+          <span class="news-label">Публикация</span>
+          <strong>${formatUpdatedAt(row.published_at)}</strong>
+        </div>
+      </div>
+
+      <div class="news-card__assets">
+        <span class="news-label">Связанные активы</span>
+        <div class="news-chip-row">${buildNewsTagList(row.assets, 'Активы не определены')}</div>
+      </div>
+
+      ${hasRelation ? `
+        <div class="news-signal-box news-signal-box--${getSignalRelationClass(relation)}">
+          <span class="news-label">Связь с активным сигналом</span>
+          <strong>${escapeHtml(relation.effect_on_signal_ru || 'Новость нейтральна для текущего сигнала')}</strong>
+        </div>
+      ` : ''}
+
+      <div class="news-card__footer">
+        <p class="news-card__meta">Оригинальный заголовок: ${escapeHtml(row.title_original || '—')}</p>
+        ${row.source_url ? `<a class="news-link-button" href="${escapeHtml(row.source_url)}" target="_blank" rel="noopener noreferrer">Читать источник</a>` : '<span class="news-link-button news-link-button--disabled">Источник недоступен</span>'}
+      </div>
     `;
     newsList.appendChild(card);
   });
@@ -190,6 +371,9 @@ function renderNewsError() {
   if (!newsList) return;
   if (newsUpdatedAt) {
     newsUpdatedAt.textContent = 'Обновление: ошибка загрузки';
+  }
+  if (newsFeedMeta) {
+    newsFeedMeta.textContent = 'Показано: ошибка загрузки';
   }
   newsList.innerHTML = `
     <article class="news-card news-card--empty">
@@ -277,7 +461,7 @@ async function loadNewsSection() {
   newsList.innerHTML = `
     <article class="news-card news-card--empty">
       <p class="news-card__title">Загрузка новостей...</p>
-      <p class="news-card__text">Получаем подтверждённые новости рынка.</p>
+      <p class="news-card__text">Получаем подтверждённые новости рынка из открытых источников.</p>
     </article>
   `;
 
@@ -347,4 +531,4 @@ window.addEventListener('load', () => {
   document.body.addEventListener('click', ensureAudioContext, { once: true });
   refreshCurrentPage();
 });
-setInterval(refreshCurrentPage, 60000);
+setInterval(refreshCurrentPage, refreshIntervalMs);
