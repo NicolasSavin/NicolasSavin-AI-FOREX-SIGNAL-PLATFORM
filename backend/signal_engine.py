@@ -81,6 +81,8 @@ class SignalEngine:
         if not risk["allowed"]:
             return self._no_trade(symbol, mtf, risk["reason_ru"])
 
+        progress = self._build_progress(action, price, price, stop, take)
+        signal_time = datetime.now(timezone.utc).isoformat()
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -89,15 +91,22 @@ class SignalEngine:
             "entry": round(price, 6),
             "stop_loss": round(stop, 6),
             "take_profit": round(take, 6),
+            "signal_time_utc": signal_time,
             "risk_reward": round(rr, 2),
             "distance_to_target_percent": round(abs((take - price) / price) * 100, 3),
+            "probability_percent": confidence,
             "confidence_percent": confidence,
             "status": "актуален",
-            "description_ru": f"{symbol}: {action} по данным yfinance (HTF D1 → MTF H1 → LTF M15).",
+            "lifecycle_state": "active",
+            "description_ru": (
+                f"{symbol}: {action} по структуре HTF D1 → MTF H1 → LTF M15, "
+                f"ATR {round(mtf_features.get('atr_percent', 0.0), 2)}% и подтверждённому импульсу {ltf_features['pattern']}."
+            ),
             "reason_ru": "Есть структурное подтверждение, риск-фильтр пройден, конфликт HTF отсутствует.",
             "invalidation_ru": "Сценарий отменяется при пробое уровня Stop Loss и сломе структуры.",
+            "progress": progress,
             "data_status": mtf["data_status"],
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "created_at_utc": signal_time,
             "market_context": {
                 "htf_trend": htf_features["trend"],
                 "mtf_trend": mtf_features["trend"],
@@ -105,10 +114,13 @@ class SignalEngine:
                 "atr_percent": round(mtf_features.get("atr_percent", 0.0), 4),
                 "source": mtf["source"],
                 "message": mtf["message"],
+                "current_price": round(price, 6),
+                "signal_origin": "backend.signal_engine",
             },
         }
 
     def _no_trade(self, symbol: str, snapshot: dict, reason: str) -> dict:
+        signal_time = datetime.now(timezone.utc).isoformat()
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -117,18 +129,71 @@ class SignalEngine:
             "entry": None,
             "stop_loss": None,
             "take_profit": None,
+            "signal_time_utc": signal_time,
             "risk_reward": None,
             "distance_to_target_percent": None,
+            "probability_percent": 65,
             "confidence_percent": 65,
             "status": "неактуален",
-            "description_ru": "NO TRADE: сигнал не опубликован.",
+            "lifecycle_state": "closed",
+            "description_ru": "NO TRADE: сигнал не опубликован до появления подтверждённого сетапа.",
             "reason_ru": reason,
             "invalidation_ru": "Ожидать новый валидный сетап.",
+            "progress": {
+                "current_price": snapshot.get("close"),
+                "to_take_profit_percent": None,
+                "to_stop_loss_percent": None,
+                "progress_percent": None,
+                "zone": "waiting",
+                "label_ru": "Ожидание нового сетапа",
+            },
             "data_status": snapshot.get("data_status", "unavailable"),
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "created_at_utc": signal_time,
             "market_context": {
                 "source": snapshot.get("source"),
                 "message": snapshot.get("message"),
                 "proxy_metrics": snapshot.get("proxy_metrics", []),
+                "signal_origin": "backend.signal_engine",
             },
+        }
+
+    def _build_progress(self, action: str, current_price: float, entry: float, stop: float, take: float) -> dict:
+        total_path = abs(take - entry)
+        if total_path <= 0:
+            return {
+                "current_price": round(current_price, 6),
+                "to_take_profit_percent": None,
+                "to_stop_loss_percent": None,
+                "progress_percent": None,
+                "zone": "waiting",
+                "label_ru": "Прогресс недоступен",
+            }
+
+        if action == "BUY":
+            progress_raw = ((current_price - entry) / total_path) * 100
+            tp_distance = max(((take - current_price) / max(current_price, 1e-9)) * 100, 0)
+            sl_distance = max(((current_price - stop) / max(current_price, 1e-9)) * 100, 0)
+        else:
+            progress_raw = ((entry - current_price) / total_path) * 100
+            tp_distance = max(((current_price - take) / max(current_price, 1e-9)) * 100, 0)
+            sl_distance = max(((stop - current_price) / max(current_price, 1e-9)) * 100, 0)
+
+        progress_percent = max(min(round(progress_raw, 1), 100), 0)
+        if progress_percent >= 60:
+            zone = "tp"
+            label = "Цена движется к Take Profit"
+        elif progress_percent <= 20:
+            zone = "neutral"
+            label = "Сигнал только открылся"
+        else:
+            zone = "neutral"
+            label = "Сценарий в работе"
+
+        return {
+            "current_price": round(current_price, 6),
+            "to_take_profit_percent": round(tp_distance, 3),
+            "to_stop_loss_percent": round(sl_distance, 3),
+            "progress_percent": progress_percent,
+            "zone": zone,
+            "label_ru": label,
         }

@@ -1,1 +1,41 @@
-<!doctype html><html lang="ru"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Currency Heatmap</title><link rel="stylesheet" href="/static/styles.css"/></head><body><header><h1>Currency Heatmap</h1><nav><a href="/">Главная</a></nav></header><main><section class="panel"><ul id="heatmapList"></ul></section></main><script src="/static/script.js"></script></body></html>
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Currency Heatmap</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body data-page="heatmap">
+    <div class="page-shell">
+      <header class="site-header">
+        <div>
+          <p class="eyebrow">Heatmap</p>
+          <h1>Тепловая карта валют</h1>
+          <p class="lead">Раздел сохранён как отдельная страница и получает данные по существующему маршруту heatmap.</p>
+        </div>
+        <nav class="top-nav">
+          <a href="/">Сигналы</a>
+          <a href="/ideas">Ideas</a>
+          <a href="/news">News</a>
+          <a href="/calendar">Calendar</a>
+          <a class="is-active" href="/heatmap/page">Heatmap</a>
+        </nav>
+      </header>
+
+      <main class="content-stack">
+        <section class="panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="section-kicker">FX heatmap</p>
+              <h2>Движение валютных пар</h2>
+            </div>
+          </div>
+          <ul class="data-list" id="heatmapList"></ul>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/script.js"></script>
+  </body>
+</html>

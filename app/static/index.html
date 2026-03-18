@@ -3,54 +3,60 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI FOREX PLATFORM v3.1</title>
+    <title>AI FOREX SIGNAL PLATFORM v3.3</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
-  <body>
-    <header>
-      <h1>AI FOREX SIGNAL PLATFORM <span>v3.1</span></h1>
-      <p>Профессиональная тёмная панель: сигналы, идеи, новости, календарь и heatmap.</p>
-      <nav>
-        <a href="/">Главная</a>
-        <a href="/ideas">Идеи</a>
-        <a href="/news">Новости</a>
-        <a href="/calendar">Календарь</a>
-        <a href="/heatmap/page">Heatmap</a>
-      </nav>
-    </header>
+  <body data-page="home">
+    <div class="page-shell">
+      <header class="site-header">
+        <div>
+          <p class="eyebrow">AI FOREX SIGNAL PLATFORM</p>
+          <h1>Поток торговых сигналов</h1>
+          <p class="lead">
+            Главная страница показывает только актуальные сигналы. Идеи, новости, календарь и heatmap
+            доступны в отдельных разделах меню.
+          </p>
+        </div>
+        <nav class="top-nav">
+          <a class="is-active" href="/">Сигналы</a>
+          <a href="/ideas">Ideas</a>
+          <a href="/news">News</a>
+          <a href="/calendar">Calendar</a>
+          <a href="/heatmap/page">Heatmap</a>
+        </nav>
+      </header>
 
-    <section class="ticker" id="ticker">Загрузка тикера...</section>
-
-    <main>
-      <section class="cards" id="signalsGrid"></section>
-
-      <section class="panel">
-        <h2>Торговые идеи AI</h2>
-        <ul id="ideasList"></ul>
+      <section class="ticker-panel">
+        <div class="ticker-label">Live ticker</div>
+        <div class="ticker-track" id="ticker">Загрузка рыночного тикера...</div>
       </section>
 
-      <section class="panel news-panel">
-        <div class="panel-header">
-          <div>
-            <h2>Новости рынка</h2>
-            <p class="panel-subtitle">Только подтверждённые новости или честный статус недоступности канала.</p>
+      <main class="content-stack">
+        <section class="signals-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Signals feed</p>
+              <h2>Сигналы AI / Smart Money</h2>
+              <p class="section-text">
+                Каждая карточка показывает направление, параметры сделки, вероятность и прогресс к TP/SL.
+              </p>
+            </div>
+            <div class="signal-summary" id="signalSummary">
+              <div>
+                <span>Активные сигналы</span>
+                <strong id="summaryCount">—</strong>
+              </div>
+              <div>
+                <span>Обновлено</span>
+                <strong id="summaryUpdatedAt">—</strong>
+              </div>
+            </div>
           </div>
-          <span class="panel-meta" id="newsUpdatedAt">Обновление: —</span>
-        </div>
-        <div class="news-list" id="newsList"></div>
-      </section>
 
-      <section class="panel two-cols">
-        <div>
-          <h2>Экономический календарь</h2>
-          <ul id="calendarList"></ul>
-        </div>
-        <div>
-          <h2>Тепловая карта валют</h2>
-          <ul id="heatmapList"></ul>
-        </div>
-      </section>
-    </main>
+          <section class="cards" id="signalsGrid"></section>
+        </section>
+      </main>
+    </div>
 
     <script src="/static/script.js"></script>
   </body>

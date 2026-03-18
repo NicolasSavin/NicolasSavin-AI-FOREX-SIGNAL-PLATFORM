@@ -6,27 +6,37 @@
     <title>Новости рынка</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
-  <body>
-    <header>
-      <h1>Новости рынка</h1>
-      <p>Лента показывает только подтверждённые новости или честно сообщает, что источник сейчас недоступен.</p>
-      <nav>
-        <a href="/">Главная</a>
-      </nav>
-    </header>
-
-    <main>
-      <section class="panel news-panel">
-        <div class="panel-header">
-          <div>
-            <h2>Лента новостей</h2>
-            <p class="panel-subtitle">Без выдуманных данных и с пометкой уровня влияния.</p>
-          </div>
-          <span class="panel-meta" id="newsUpdatedAt">Обновление: —</span>
+  <body data-page="news">
+    <div class="page-shell">
+      <header class="site-header">
+        <div>
+          <p class="eyebrow">News</p>
+          <h1>Новости рынка</h1>
+          <p class="lead">Лента показывает только подтверждённые новости или честно сообщает о недоступности источника.</p>
         </div>
-        <div class="news-list" id="newsList"></div>
-      </section>
-    </main>
+        <nav class="top-nav">
+          <a href="/">Сигналы</a>
+          <a href="/ideas">Ideas</a>
+          <a class="is-active" href="/news">News</a>
+          <a href="/calendar">Calendar</a>
+          <a href="/heatmap/page">Heatmap</a>
+        </nav>
+      </header>
+
+      <main class="content-stack">
+        <section class="panel news-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="section-kicker">Macro news</p>
+              <h2>Лента новостей</h2>
+              <p class="section-text">Без выдуманных данных и с пометкой уровня влияния.</p>
+            </div>
+            <span class="panel-meta" id="newsUpdatedAt">Обновление: —</span>
+          </div>
+          <div class="news-list" id="newsList"></div>
+        </section>
+      </main>
+    </div>
 
     <script src="/static/script.js"></script>
   </body>
