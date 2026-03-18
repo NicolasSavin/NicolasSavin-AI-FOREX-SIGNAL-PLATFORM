@@ -72,6 +72,10 @@ class MarketNewsProvider:
             return 12
 
     @property
+    def _write_cache_to_disk(self) -> bool:
+        return os.getenv("NEWS_WRITE_CACHE_TO_DISK", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+    @property
     def _feed_urls(self) -> tuple[dict, ...]:
         raw = os.getenv("NEWS_FEED_URLS", "").strip()
         if not raw:
@@ -98,7 +102,8 @@ class MarketNewsProvider:
             "updated_at_utc": now.isoformat(),
             "news": items,
         }
-        self._storage.write(payload)
+        if self._write_cache_to_disk:
+            self._storage.write(payload)
         return payload
 
     def _load_news_items(self) -> list[dict]:

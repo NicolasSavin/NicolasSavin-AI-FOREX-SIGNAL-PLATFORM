@@ -29,128 +29,57 @@ class MarketSnapshotResponse(BaseModel):
     proxy_metrics: list[ProxyMetric] = Field(default_factory=list)
 
 
-class ProgressState(BaseModel):
-    current_price: Optional[float] = None
-    to_take_profit_percent: Optional[float] = None
-    to_stop_loss_percent: Optional[float] = None
-    progress_percent: Optional[float] = None
-    zone: Literal["tp", "sl", "neutral", "waiting"] = "waiting"
-    label_ru: str
-    is_fallback: bool = False
+from app.schemas.signals import (
+    ChartAnnotation,
+    LiquidityZone,
+    OrderBlockZone,
+    PriceZone,
+    ProgressState,
+    RelatedNewsItem,
+    SignalCard,
+    SignalCandle,
+    SignalLevel,
+    SignalRecordResponse,
+    SignalsLiveResponse,
+    SignalStats,
+    SignalStatus,
+)
 
-
-class ChartPoint(BaseModel):
-    time_label: str
-    price: float
-    kind: Literal["history", "projection"] = "history"
-
-
-class SignalLevel(BaseModel):
-    label: str
-    value: float
-    type: Literal["entry", "stop_loss", "take_profit", "support", "resistance", "custom"] = "custom"
-    description_ru: str
-
-
-class PriceZone(BaseModel):
-    label: str
-    from_price: float
-    to_price: float
-    zone_type: Literal["order_block", "liquidity", "premium", "discount", "custom"] = "custom"
-    description_ru: str
-
-
-class ProjectedCandle(BaseModel):
-    time_label: str
-    open: float
-    high: float
-    low: float
-    close: float
-    is_mock: bool = False
-
-
-class RelatedNewsItem(BaseModel):
-    id: str
-    title: str
-    description: str
-    instrument: str
-    impact: Literal["low", "medium", "high"]
-    impact_ru: str
-    event_time: Optional[datetime] = None
-    status: Literal["ожидается", "вышла", "завершена"]
-    source: Optional[str] = None
-    is_relevant_to_signal: bool = True
-
-
-class SignalCard(BaseModel):
-    signal_id: str
-    symbol: str
-    timeframe: Literal["M15", "M30", "H1", "H4", "D1", "W1"]
-    action: Literal["BUY", "SELL", "NO_TRADE"]
-    entry: Optional[float] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    signal_time_utc: datetime
-    risk_reward: Optional[float] = None
-    distance_to_target_percent: Optional[float] = None
-    probability_percent: int
-    confidence_percent: int
-    status: Literal[
-        "актуален",
-        "в работе",
-        "достиг TP1",
-        "достиг TP2",
-        "закрыт по TP",
-        "закрыт по SL",
-        "неактуален",
-    ]
-    lifecycle_state: Literal["active", "open", "closed"]
-    description_ru: str
-    reason_ru: str
-    invalidation_ru: str
-    progress: ProgressState
-    data_status: Literal["real", "unavailable"]
-    created_at_utc: datetime
-    market_context: dict[str, Any]
-    signal_datetime: datetime = Field(alias="signalDateTime")
-    signal_time_label: str = Field(alias="signalTime")
-    state: Literal["active", "open", "closed"]
-    probability: int
-    progress_to_tp: float = Field(alias="progressToTP")
-    progress_to_sl: float = Field(alias="progressToSL")
-    chart_data: list[ChartPoint] = Field(default_factory=list, alias="chartData")
-    zones: list[PriceZone] = Field(default_factory=list)
-    levels: list[SignalLevel] = Field(default_factory=list)
-    liquidity_areas: list[PriceZone] = Field(default_factory=list, alias="liquidityAreas")
-    projected_candles: list[ProjectedCandle] = Field(default_factory=list, alias="projectedCandles")
-    related_news: list[RelatedNewsItem] = Field(default_factory=list, alias="relatedNews")
-    updated_at_utc: datetime
-
-    model_config = {"populate_by_name": True}
-
-
-class SignalsLiveResponse(BaseModel):
-    ticker: list[str]
-    updated_at_utc: datetime
-    signals: list[SignalCard]
-
-
-class SignalRecordResponse(BaseModel):
-    updated_at_utc: datetime
-    signals: list[SignalCard]
+__all__ = [
+    "ChartAnnotation",
+    "HealthResponse",
+    "HeatmapResponse",
+    "LiquidityZone",
+    "MarketIdeasResponse",
+    "MarketSnapshotResponse",
+    "Mt4BridgeResponse",
+    "Mt4BridgeSignal",
+    "Mt4ExportRequest",
+    "Mt4ExportResponse",
+    "NewsIngestRequest",
+    "NewsItemResponse",
+    "NewsListResponse",
+    "NewsSignalRelation",
+    "OrderBlockZone",
+    "PriceZone",
+    "ProgressState",
+    "ProxyMetric",
+    "RelatedNewsItem",
+    "SignalCard",
+    "SignalCandle",
+    "SignalCreateRequest",
+    "SignalLevel",
+    "SignalRecordResponse",
+    "SignalsLiveResponse",
+    "SignalStats",
+    "SignalStatus",
+    "SignalStatusPatchRequest",
+]
 
 
 class SignalStatusPatchRequest(BaseModel):
-    status: Literal[
-        "актуален",
-        "в работе",
-        "достиг TP1",
-        "достиг TP2",
-        "закрыт по TP",
-        "закрыт по SL",
-        "неактуален",
-    ]
-    state: Literal["active", "open", "closed"]
+    status: SignalStatus | str
+    state: Optional[Literal["active", "open", "closed"]] = None
 
 
 class SignalCreateRequest(BaseModel):
@@ -162,25 +91,18 @@ class SignalCreateRequest(BaseModel):
     timeframe: Literal["M15", "M30", "H1", "H4", "D1", "W1"] = "H1"
     signalDateTime: Optional[datetime] = None
     signalTime: Optional[str] = None
-    status: Literal[
-        "актуален",
-        "в работе",
-        "достиг TP1",
-        "достиг TP2",
-        "закрыт по TP",
-        "закрыт по SL",
-        "неактуален",
-    ] = "актуален"
-    state: Literal["active", "open", "closed"] = "active"
+    status: SignalStatus | str = SignalStatus.ACTIVE
+    state: Optional[Literal["active", "open", "closed"]] = None
     description: str = Field(min_length=6)
     probability: Optional[int] = None
     progressToTP: Optional[float] = None
     progressToSL: Optional[float] = None
-    chartData: list[ChartPoint] = Field(default_factory=list)
+    chartData: list[SignalCandle] = Field(default_factory=list)
+    annotations: list[ChartAnnotation] = Field(default_factory=list)
     zones: list[PriceZone] = Field(default_factory=list)
     levels: list[SignalLevel] = Field(default_factory=list)
     liquidityAreas: list[PriceZone] = Field(default_factory=list)
-    projectedCandles: list[ProjectedCandle] = Field(default_factory=list)
+    projectedCandles: list[SignalCandle] = Field(default_factory=list)
     relatedNews: list[str] = Field(default_factory=list)
 
 
