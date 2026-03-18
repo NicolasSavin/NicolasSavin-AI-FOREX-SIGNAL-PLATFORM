@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.main import DEFAULT_PAIRS, app, signal_engine
+from backend.signal_engine import SUPPORTED_TIMEFRAMES
 
 
 @app.get('/signals')
@@ -19,4 +20,5 @@ async def legacy_pairs():
     return {
         'status': 'ok',
         'pairs': DEFAULT_PAIRS,
+        'timeframes': SUPPORTED_TIMEFRAMES,
     }

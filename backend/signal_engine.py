@@ -8,6 +8,14 @@ from backend.feature_builder import FeatureBuilder
 from backend.risk_engine import RiskEngine
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
+TIMEFRAME_STACKS = {
+    "M15": {"htf": "H1", "mtf": "M15", "ltf": "M15"},
+    "M30": {"htf": "H4", "mtf": "M30", "ltf": "M15"},
+    "H1": {"htf": "D1", "mtf": "H1", "ltf": "M15"},
+    "H4": {"htf": "W1", "mtf": "H4", "ltf": "H1"},
+    "D1": {"htf": "W1", "mtf": "D1", "ltf": "H4"},
+    "W1": {"htf": "W1", "mtf": "W1", "ltf": "D1"},
+}
 
 
 class SignalEngine:
@@ -16,22 +24,53 @@ class SignalEngine:
         self.feature_builder = FeatureBuilder()
         self.risk_engine = RiskEngine()
 
-    async def generate_live_signals(self, pairs: list[str]) -> list[dict]:
+    async def generate_live_signals(self, pairs: list[str], timeframes: list[str] | None = None) -> list[dict]:
         output: list[dict] = []
+        requested_timeframes = self._normalize_timeframes(timeframes)
         for symbol in pairs:
-            htf = await self.data_provider.snapshot(symbol, timeframe="D1")
-            mtf = await self.data_provider.snapshot(symbol, timeframe="H1")
-            ltf = await self.data_provider.snapshot(symbol, timeframe="M15")
+            snapshots_cache: dict[str, dict] = {}
+            for timeframe in requested_timeframes:
+                stack = TIMEFRAME_STACKS[timeframe]
+                htf = await self._snapshot_for(symbol, stack["htf"], snapshots_cache)
+                mtf = await self._snapshot_for(symbol, stack["mtf"], snapshots_cache)
+                ltf = await self._snapshot_for(symbol, stack["ltf"], snapshots_cache)
 
-            htf_features = self.feature_builder.build(htf)
-            mtf_features = self.feature_builder.build(mtf)
-            ltf_features = self.feature_builder.build(ltf)
-            output.append(self._build_signal(symbol, htf, mtf, ltf, htf_features, mtf_features, ltf_features))
+                htf_features = self.feature_builder.build(htf)
+                mtf_features = self.feature_builder.build(mtf)
+                ltf_features = self.feature_builder.build(ltf)
+                output.append(
+                    self._build_signal(
+                        symbol,
+                        timeframe,
+                        htf,
+                        mtf,
+                        ltf,
+                        htf_features,
+                        mtf_features,
+                        ltf_features,
+                    )
+                )
         return output
+
+    def _normalize_timeframes(self, timeframes: list[str] | None) -> list[str]:
+        if not timeframes:
+            return SUPPORTED_TIMEFRAMES
+        normalized: list[str] = []
+        for timeframe in timeframes:
+            candidate = timeframe.upper().strip()
+            if candidate in SUPPORTED_TIMEFRAMES and candidate not in normalized:
+                normalized.append(candidate)
+        return normalized or SUPPORTED_TIMEFRAMES
+
+    async def _snapshot_for(self, symbol: str, timeframe: str, cache: dict[str, dict]) -> dict:
+        if timeframe not in cache:
+            cache[timeframe] = await self.data_provider.snapshot(symbol, timeframe=timeframe)
+        return cache[timeframe]
 
     def _build_signal(
         self,
         symbol: str,
+        timeframe: str,
         htf: dict,
         mtf: dict,
         ltf: dict,
@@ -40,7 +79,7 @@ class SignalEngine:
         ltf_features: dict,
     ) -> dict:
         if mtf_features["status"] != "ready" or htf["data_status"] != "real" or ltf["data_status"] != "real":
-            return self._no_trade(symbol, mtf, "Недостаточно подтверждённых данных yfinance для MTF-сценария.")
+            return self._no_trade(symbol, timeframe, mtf, "Недостаточно подтверждённых данных yfinance для MTF-сценария.")
 
         trend_conflict = htf_features["trend"] != mtf_features["trend"]
         confluence = [
@@ -50,7 +89,7 @@ class SignalEngine:
             bool(ltf_features["pattern"]),
         ]
         if sum(1 for c in confluence if c) < 3:
-            return self._no_trade(symbol, mtf, "Слабый confluence структуры: сетап отклонён.")
+            return self._no_trade(symbol, timeframe, mtf, "Слабый confluence структуры: сетап отклонён.")
 
         action = "BUY" if mtf_features["trend"] == "up" else "SELL"
         price = mtf["close"]
@@ -79,14 +118,14 @@ class SignalEngine:
         )
 
         if not risk["allowed"]:
-            return self._no_trade(symbol, mtf, risk["reason_ru"])
+            return self._no_trade(symbol, timeframe, mtf, risk["reason_ru"])
 
         progress = self._build_progress(action, price, price, stop, take)
         signal_time = datetime.now(timezone.utc).isoformat()
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
-            "timeframe": "H1",
+            "timeframe": timeframe,
             "action": action,
             "entry": round(price, 6),
             "stop_loss": round(stop, 6),
@@ -99,7 +138,7 @@ class SignalEngine:
             "status": "актуален",
             "lifecycle_state": "active",
             "description_ru": (
-                f"{symbol}: {action} по структуре HTF D1 → MTF H1 → LTF M15, "
+                f"{symbol}: {action} по структуре HTF {htf['timeframe']} → MTF {mtf['timeframe']} → LTF {ltf['timeframe']}, "
                 f"ATR {round(mtf_features.get('atr_percent', 0.0), 2)}% и подтверждённому импульсу {ltf_features['pattern']}."
             ),
             "reason_ru": "Есть структурное подтверждение, риск-фильтр пройден, конфликт HTF отсутствует.",
@@ -119,12 +158,12 @@ class SignalEngine:
             },
         }
 
-    def _no_trade(self, symbol: str, snapshot: dict, reason: str) -> dict:
+    def _no_trade(self, symbol: str, timeframe: str, snapshot: dict, reason: str) -> dict:
         signal_time = datetime.now(timezone.utc).isoformat()
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
-            "timeframe": "H1",
+            "timeframe": timeframe,
             "action": "NO_TRADE",
             "entry": None,
             "stop_loss": None,

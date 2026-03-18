@@ -23,7 +23,18 @@ from app.services.news_service import NewsService
 from app.services.storage.json_storage import JsonStorage
 from backend.signal_engine import SignalEngine
 
-DEFAULT_PAIRS = ["EURUSD", "GBPUSD", "USDJPY"]
+DEFAULT_PAIRS = [
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "USDCHF",
+    "AUDUSD",
+    "USDCAD",
+    "EURGBP",
+    "EURJPY",
+    "GBPJPY",
+    "EURCHF",
+]
 
 
 class SignalHubService:
