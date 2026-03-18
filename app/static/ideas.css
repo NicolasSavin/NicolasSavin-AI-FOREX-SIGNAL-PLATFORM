@@ -1,0 +1,376 @@
+.ideas-shell {
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.10), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.10), transparent 30%);
+}
+
+.ideas-intro-panel,
+.ideas-panel {
+  overflow: hidden;
+}
+
+.ideas-updated-at {
+  margin: 0 0 18px;
+  font-size: 13px;
+  opacity: 0.72;
+}
+
+.ideas-container {
+  display: grid;
+  gap: 24px;
+}
+
+.ideas-loading {
+  padding: 28px;
+  border-radius: 18px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 16px;
+}
+
+.idea-card {
+  border-radius: 28px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.025));
+  box-shadow: 0 24px 70px rgba(0,0,0,0.24);
+  padding: 26px;
+  display: grid;
+  gap: 20px;
+}
+
+.idea-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.idea-card-meta {
+  display: grid;
+  gap: 8px;
+}
+
+.idea-instrument {
+  display: inline-flex;
+  width: fit-content;
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: rgba(99,102,241,0.18);
+  color: #c7d2fe;
+  border: 1px solid rgba(99,102,241,0.26);
+}
+
+.idea-title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+.idea-news-line {
+  font-size: 14px;
+  opacity: 0.72;
+  line-height: 1.6;
+}
+
+.idea-label {
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+.idea-label-buy {
+  background: rgba(34,197,94,0.16);
+  color: #86efac;
+}
+
+.idea-label-sell {
+  background: rgba(239,68,68,0.16);
+  color: #fca5a5;
+}
+
+.idea-label-watch {
+  background: rgba(234,179,8,0.16);
+  color: #fde68a;
+}
+
+.idea-summary {
+  font-size: 17px;
+  line-height: 1.8;
+  color: rgba(255,255,255,0.9);
+  padding: 18px 18px 0;
+}
+
+.idea-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.idea-analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.idea-section {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 20px;
+  padding: 18px;
+}
+
+.idea-section h4 {
+  margin: 0 0 10px;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.idea-section p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.8;
+  opacity: 0.9;
+}
+
+.idea-section-plan {
+  grid-column: 1 / -1;
+}
+
+.trade-plan-list {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.85;
+  font-size: 14px;
+}
+
+.trade-plan-list li + li {
+  margin-top: 4px;
+}
+
+.idea-chart-column {
+  display: grid;
+}
+
+.idea-chart-card {
+  position: sticky;
+  top: 20px;
+  border-radius: 24px;
+  overflow: hidden;
+  background: #0b1222;
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 18px 50px rgba(0,0,0,0.30);
+}
+
+.idea-chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.idea-chart-title {
+  font-weight: 800;
+  font-size: 16px;
+}
+
+.idea-chart-bias {
+  font-size: 12px;
+  opacity: 0.72;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.idea-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(99,102,241,0.09), transparent 40%),
+    linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00));
+}
+
+.idea-chart-footer {
+  padding: 16px 18px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 14px;
+  line-height: 1.75;
+  opacity: 0.82;
+}
+
+.chart-grid line {
+  stroke: rgba(255,255,255,0.07);
+  stroke-width: 1;
+}
+
+.chart-zone rect {
+  stroke-width: 1.5;
+}
+
+.chart-zone-label {
+  font-size: 14px;
+  font-weight: 700;
+  fill: rgba(255,255,255,0.94);
+}
+
+.zone-ob rect {
+  fill: rgba(34,197,94,0.14);
+  stroke: rgba(34,197,94,0.55);
+}
+
+.zone-fvg rect {
+  fill: rgba(59,130,246,0.14);
+  stroke: rgba(59,130,246,0.55);
+}
+
+.zone-liquidity rect {
+  fill: rgba(236,72,153,0.14);
+  stroke: rgba(236,72,153,0.55);
+}
+
+.zone-reaction rect,
+.zone-range rect,
+.zone-generic rect {
+  fill: rgba(168,85,247,0.14);
+  stroke: rgba(168,85,247,0.55);
+}
+
+.chart-level-dot {
+  fill: #ffffff;
+  opacity: 0.95;
+  animation: pulseDot 1.8s infinite ease-in-out;
+}
+
+.chart-level-label {
+  fill: rgba(255,255,255,0.92);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.chart-path-shadow {
+  stroke: rgba(99,102,241,0.38);
+  opacity: 0.8;
+}
+
+.chart-path-main {
+  stroke: url(#chartPathGradient);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1100;
+  stroke-dashoffset: 1100;
+  animation: drawPath 2.8s ease forwards;
+}
+
+.chart-path-start {
+  fill: rgba(255,255,255,0.95);
+}
+
+.chart-path-end {
+  fill: rgba(34,197,94,0.95);
+  animation: pulseDot 1.6s infinite ease-in-out;
+}
+
+.chart-bearish .chart-path-main {
+  stroke: rgba(239,68,68,0.95);
+}
+
+.chart-bearish .chart-path-shadow {
+  stroke: rgba(239,68,68,0.35);
+}
+
+.chart-neutral .chart-path-main {
+  stroke: rgba(234,179,8,0.95);
+}
+
+.chart-neutral .chart-path-shadow {
+  stroke: rgba(234,179,8,0.35);
+}
+
+@keyframes drawPath {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes pulseDot {
+  0% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.22);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+}
+
+@media (max-width: 1200px) {
+  .idea-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .idea-chart-card {
+    position: relative;
+    top: auto;
+  }
+}
+
+@media (max-width: 860px) {
+  .idea-analysis-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .idea-title {
+    font-size: 24px;
+  }
+
+  .idea-summary {
+    padding: 8px 0 0;
+  }
+
+  .idea-card-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .idea-label {
+    align-self: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .idea-card {
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .idea-title {
+    font-size: 21px;
+  }
+
+  .idea-summary {
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
+  .idea-section {
+    padding: 16px;
+  }
+
+  .chart-zone-label,
+  .chart-level-label {
+    font-size: 12px;
+  }
+}
