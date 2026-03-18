@@ -55,9 +55,7 @@ class ChartGenerator:
         if path:
             xs = [float(p.get("x", 0)) for p in path]
             ys = [float(p.get("y", 0)) for p in path]
-
             line_color = "#22c55e" if bias == "bullish" else "#ef4444" if bias == "bearish" else "#eab308"
-
             ax.plot(xs, ys, color=line_color, linewidth=3.2, alpha=0.95)
             ax.scatter(xs[0], ys[0], s=50, color="white", zorder=5)
             ax.scatter(xs[-1], ys[-1], s=70, color=line_color, zorder=6)
@@ -66,18 +64,10 @@ class ChartGenerator:
             x = float(lvl.get("x", 70))
             y = float(lvl.get("y", 30))
             label = str(lvl.get("label", "Level"))
-
             ax.scatter(x, y, s=60, color="white", zorder=7)
             ax.text(x + 1.5, y - 2.5, label, color="white", fontsize=9, weight="bold")
 
-        ax.set_title(
-            f"{instrument} · AI Idea",
-            color="white",
-            fontsize=16,
-            pad=12,
-            weight="bold",
-        )
-
+        ax.set_title(f"{instrument} · AI Idea", color="white", fontsize=16, pad=12, weight="bold")
         ax.set_xticks([])
         ax.set_yticks([])
 
