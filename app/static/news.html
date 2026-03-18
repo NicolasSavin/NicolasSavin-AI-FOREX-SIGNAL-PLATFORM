@@ -1,1 +1,33 @@
-<!doctype html><html lang="ru"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Новости рынка</title><link rel="stylesheet" href="/static/styles.css"/></head><body><header><h1>Market News</h1><nav><a href="/">Главная</a></nav></header><main><section class="panel"><ul id="newsList"></ul></section></main><script src="/static/script.js"></script></body></html>
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Новости рынка</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Новости рынка</h1>
+      <p>Лента показывает только подтверждённые новости или честно сообщает, что источник сейчас недоступен.</p>
+      <nav>
+        <a href="/">Главная</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="panel news-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Лента новостей</h2>
+            <p class="panel-subtitle">Без выдуманных данных и с пометкой уровня влияния.</p>
+          </div>
+          <span class="panel-meta" id="newsUpdatedAt">Обновление: —</span>
+        </div>
+        <div class="news-list" id="newsList"></div>
+      </section>
+    </main>
+
+    <script src="/static/script.js"></script>
+  </body>
+</html>

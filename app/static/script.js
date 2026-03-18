@@ -17,6 +17,61 @@ function renderList(id, rows, mapper) {
   });
 }
 
+function formatUpdatedAt(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('ru-RU', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+    timeZone: 'UTC',
+  }).format(date) + ' UTC';
+}
+
+function getImpactLabel(impact) {
+  const labels = {
+    high: 'Высокое влияние',
+    medium: 'Среднее влияние',
+    low: 'Низкое влияние',
+    unknown: 'Статус источника',
+  };
+  return labels[impact] || 'Без оценки влияния';
+}
+
+function renderNews(rows, updatedAt) {
+  const el = document.getElementById('newsList');
+  const meta = document.getElementById('newsUpdatedAt');
+  if (meta) {
+    meta.textContent = `Обновление: ${formatUpdatedAt(updatedAt)}`;
+  }
+  if (!el) return;
+
+  el.innerHTML = '';
+  if (!rows.length) {
+    el.innerHTML = `
+      <article class="news-card news-card--empty">
+        <p class="news-card__title">Новостей пока нет</p>
+        <p class="news-card__text">Подтверждённые новости появятся здесь после обновления источника.</p>
+      </article>
+    `;
+    return;
+  }
+
+  rows.forEach((row) => {
+    const card = document.createElement('article');
+    const impact = row.impact || 'unknown';
+    card.className = 'news-card animated';
+    card.innerHTML = `
+      <div class="news-card__header">
+        <p class="news-card__title">${row.title || 'Новость без заголовка'}</p>
+        <span class="impact-badge impact-badge--${impact}">${getImpactLabel(impact)}</span>
+      </div>
+      <p class="news-card__text">${row.description_ru || 'Описание отсутствует.'}</p>
+    `;
+    el.appendChild(card);
+  });
+}
+
 function renderSignals(signals) {
   if (!signalsGrid) return;
   signalsGrid.innerHTML = '';
@@ -57,11 +112,12 @@ async function refreshAll() {
 
     renderSignals(signals.signals || []);
     renderList('ideasList', ideas.ideas || [], (x) => `${x.title}: ${x.description_ru}`);
-    renderList('newsList', news.news || [], (x) => `${x.title}: ${x.description_ru}`);
+    renderNews(news.news || [], news.updated_at_utc);
     renderList('calendarList', calendar.events || [], (x) => `${x.title}: ${x.description_ru}`);
     renderList('heatmapList', heatmap.rows || [], (x) => `${x.pair}: ${x.change_percent ?? 'нет данных'} [${x.label}]`);
   } catch (e) {
     if (ticker) ticker.textContent = 'Ошибка загрузки данных платформы';
+    renderNews([], null);
   }
 }
 
