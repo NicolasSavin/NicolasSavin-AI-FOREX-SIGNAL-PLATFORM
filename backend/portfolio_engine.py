@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from backend.news_provider import MarketNewsProvider
+
 
 class PortfolioEngine:
+    def __init__(self) -> None:
+        self._news_provider = MarketNewsProvider()
+
     def rank_signals(self, signals: list[dict]) -> list[dict]:
         tradable = [s for s in signals if s.get("action") in {"BUY", "SELL"}]
         return sorted(tradable, key=lambda item: item.get("confidence_percent", 0), reverse=True)
@@ -21,16 +26,7 @@ class PortfolioEngine:
         }
 
     def market_news(self) -> dict:
-        return {
-            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "news": [
-                {
-                    "title": "Новостной канал не подключён",
-                    "description_ru": "Нет подтверждённых новостей от источника. Данные не выдумываются.",
-                    "impact": "unknown",
-                }
-            ],
-        }
+        return self._news_provider.market_news()
 
     def calendar_events(self) -> dict:
         return {

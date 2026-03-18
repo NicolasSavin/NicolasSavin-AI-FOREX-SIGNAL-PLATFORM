@@ -26,7 +26,10 @@ main { padding: 24px; }
 .news-card--empty { animation: none; }
 .news-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .news-card__title { margin: 0; font-weight: 700; color: var(--text); }
+.news-card__link { text-decoration: none; }
+.news-card__link:hover { text-decoration: underline; color: var(--accent); }
 .news-card__text { margin: 0; color: var(--muted); line-height: 1.5; }
+.news-card__meta { margin: 12px 0 0; color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
 .impact-badge { display: inline-flex; align-items: center; justify-content: center; padding: 6px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; white-space: nowrap; }
 .impact-badge--high { background: rgba(239, 68, 68, 0.16); color: #fca5a5; }
 .impact-badge--medium { background: rgba(245, 158, 11, 0.16); color: #fcd34d; }
