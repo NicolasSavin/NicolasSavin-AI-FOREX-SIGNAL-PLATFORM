@@ -8,7 +8,7 @@ import requests
 
 class GrokIdeaService:
     def __init__(self) -> None:
-        self.api_key = "PASTE_YOUR_NEW_OPENROUTER_KEY_HERE"
+        self.api_key = "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"
         self.model = "x-ai/grok-4-fast"
         self.api_url = "https://openrouter.ai/api/v1/chat/completions"
 
