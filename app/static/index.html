@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI FOREX SIGNAL PLATFORM v3.4</title>
+    <title>AI FOREX SIGNAL PLATFORM v3.6</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body data-page="home">
@@ -11,9 +11,9 @@
       <header class="site-header">
         <div>
           <p class="eyebrow">AI FOREX SIGNAL PLATFORM</p>
-          <h1>Только торговые сигналы</h1>
+          <h1>Премиум-панель торговых сигналов</h1>
           <p class="lead">
-            На главной странице оставлен только поток активных сигналов. Остальные разделы доступны отдельно через меню.
+            Главная страница разделяет актуальные сигналы и архив, показывает статистику отработки и раскрывает идею сетапа через детальную свечную визуализацию.
           </p>
         </div>
         <nav class="top-nav">
@@ -25,34 +25,66 @@
         </nav>
       </header>
 
-      <main class="content-stack content-stack--signals-only">
-        <section class="signals-panel">
+      <section class="ticker-panel" aria-label="Тикер сигналов">
+        <div class="ticker-track" id="ticker">Загрузка тикера сигналов…</div>
+      </section>
+
+      <main class="content-stack dashboard-layout">
+        <section class="signals-panel stats-panel">
           <div class="panel-heading">
             <div>
-              <p class="section-kicker">Signals feed</p>
-              <h2>Сигналы AI / Smart Money</h2>
+              <p class="section-kicker">Статистика</p>
+              <h2>Статистика сигналов</h2>
               <p class="section-text">
-                Каждая карточка показывает направление, параметры сделки, вероятность, прогресс до TP/SL,
-                ключевые уровни и описание сценария.
+                Формула успеха учитывает только статусы <strong>hit</strong> и <strong>missed</strong>.
+                Если закрытых результатов нет, платформа честно показывает 0%.
               </p>
             </div>
-            <div class="signal-summary" id="signalSummary">
-              <div>
-                <span>Активные сигналы</span>
-                <strong id="summaryCount">—</strong>
-              </div>
+            <div class="signal-summary">
               <div>
                 <span>Обновлено</span>
                 <strong id="summaryUpdatedAt">—</strong>
               </div>
+              <div>
+                <span>Всего записей</span>
+                <strong id="summaryCount">—</strong>
+              </div>
             </div>
           </div>
 
-          <section class="cards" id="signalsGrid"></section>
+          <section class="stats-grid" id="statsGrid" aria-label="Статистика сигналов"></section>
+        </section>
+
+        <section class="signals-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Актуальное</p>
+              <h2>Актуальные сигналы</h2>
+              <p class="section-text">
+                Здесь остаются только сетапы со статусом <strong>active</strong>, готовые к сопровождению.
+              </p>
+            </div>
+          </div>
+
+          <section class="cards signal-dashboard-grid" id="activeSignalsGrid" aria-label="Актуальные сигналы"></section>
+        </section>
+
+        <section class="signals-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Архив</p>
+              <h2>Архив сигналов</h2>
+              <p class="section-text">
+                Архив хранит закрытые, отменённые и истёкшие сценарии для последующего анализа качества.
+              </p>
+            </div>
+          </div>
+
+          <section class="cards signal-dashboard-grid" id="archiveSignalsGrid" aria-label="Архив сигналов"></section>
         </section>
       </main>
     </div>
 
-    <script src="/static/script.js"></script>
+    <script type="module" src="/static/home.js"></script>
   </body>
 </html>
