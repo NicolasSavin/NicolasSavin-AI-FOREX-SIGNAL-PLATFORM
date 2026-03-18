@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from app.services.analytics.models import (
     CalendarEvent,
@@ -96,25 +96,18 @@ class MockTickProvider(TickDataProvider):
     async def get_ticks(self, instrument: str, limit: int = 120) -> tuple[ProviderPayload, list[Tick]]:
         symbol = normalize_symbol(instrument)
         now = datetime.now(timezone.utc)
-        base = 1.0 if symbol != "BTCUSD" else 80000.0
-        ticks = [
-            Tick(
-                instrument=symbol,
-                timestamp=now - timedelta(seconds=limit - idx),
-                price=base + ((idx % 7) - 3) * base * 0.00008,
-                volume=1.0 + (idx % 5) * 0.1,
-                side="buy" if idx % 2 == 0 else "sell",
-            )
-            for idx in range(limit)
-        ]
         payload = ProviderPayload(
             provider="mock-tick-provider",
-            status="mock",
+            status="unavailable",
             instrument=symbol,
             as_of=now,
-            meta={"note": "Tick data provider is a stub. Replace with broker/API/WebSocket feed for production."},
+            meta={
+                "note": "Tick data provider is a stub. Synthetic ticks are not emitted. Connect broker/API/WebSocket feed for production.",
+                "example_schema": {"instrument": symbol, "timestamp": now.isoformat(), "price": None, "volume": None, "side": "unknown"},
+                "requested_limit": limit,
+            },
         )
-        return payload, ticks
+        return payload, []
 
 
 class DerivedQuoteProvider(QuoteDataProvider):
@@ -150,58 +143,57 @@ class MockFuturesProvider(FuturesDataProvider):
     async def get_futures(self, instrument: str, timeframe: Timeframe) -> tuple[ProviderPayload, FuturesSnapshot | None]:
         symbol = normalize_symbol(instrument)
         now = datetime.now(timezone.utc)
-        snapshot = FuturesSnapshot(
-            instrument=symbol,
-            contract=f"{symbol}-PERP",
-            timeframe=normalize_timeframe(timeframe),
-            timestamp=now,
-            lastPrice=1.0012 if symbol != "BTCUSD" else 80250.0,
-            volume=1450000.0,
-            openInterest=None,
-            expiry=now + timedelta(days=90),
-        )
         return ProviderPayload(
             provider="mock-futures-provider",
-            status="mock",
+            status="unavailable",
             instrument=symbol,
             timeframe=normalize_timeframe(timeframe),
             as_of=now,
-            meta={"note": "Futures/OI are placeholders until exchange data is connected."},
-        ), snapshot
+            meta={
+                "note": "Futures/OI provider is a stub. Synthetic futures snapshots are not emitted until exchange data is connected.",
+                "example_schema": {
+                    "instrument": symbol,
+                    "contract": f"{symbol}-PERP",
+                    "timeframe": normalize_timeframe(timeframe),
+                    "timestamp": now.isoformat(),
+                    "lastPrice": None,
+                    "volume": None,
+                    "openInterest": None,
+                    "expiry": None,
+                },
+            },
+        ), None
 
 
 class MockOptionsProvider(OptionsDataProvider):
     async def get_options(self, instrument: str) -> tuple[ProviderPayload, list[OptionContract]]:
         symbol = normalize_symbol(instrument)
         now = datetime.now(timezone.utc)
-        expiry = now + timedelta(days=14)
-        contracts = [
-            OptionContract(
-                underlying=symbol,
-                symbol=f"{symbol}-{expiry:%Y%m%d}-{strike}-{otype.upper()}",
-                expiry=expiry,
-                strike=float(strike),
-                optionType=otype,
-                bid=1.2 if otype == "call" else 1.1,
-                ask=1.35 if otype == "call" else 1.25,
-                last=1.28 if otype == "call" else 1.18,
-                volume=420.0 if otype == "call" else 390.0,
-                openInterest=None,
-                impliedVolatility=0.16 if otype == "call" else 0.18,
-                delta=0.55 if otype == "call" else -0.45,
-                gamma=0.03,
-                vega=0.11,
-            )
-            for strike in (95, 100, 105)
-            for otype in ("call", "put")
-        ]
         return ProviderPayload(
             provider="mock-options-provider",
-            status="mock",
+            status="unavailable",
             instrument=symbol,
             as_of=now,
-            meta={"note": "Options chain is a stub. Real implementation requires broker/exchange options feed and OI snapshots."},
-        ), contracts
+            meta={
+                "note": "Options chain is a stub. Synthetic options contracts are not emitted. Real implementation requires broker/exchange options feed and OI snapshots.",
+                "example_schema": {
+                    "underlying": symbol,
+                    "symbol": f"{symbol}-YYYYMMDD-STRIKE-C",
+                    "expiry": None,
+                    "strike": None,
+                    "optionType": "call",
+                    "bid": None,
+                    "ask": None,
+                    "last": None,
+                    "volume": None,
+                    "openInterest": None,
+                    "impliedVolatility": None,
+                    "delta": None,
+                    "gamma": None,
+                    "vega": None,
+                },
+            },
+        ), []
 
 
 class PlatformNewsProvider(NewsDataProvider):
@@ -256,7 +248,7 @@ class PlatformCalendarProvider(EconomicCalendarProvider):
             )
             for idx, item in enumerate(payload.get("events", []), start=1)
         ]
-        status = "mock" if any("временно недоступен" in event.title.lower() for event in events) else "real"
+        status = "unavailable" if any("временно недоступен" in event.title.lower() for event in events) else "real"
         return ProviderPayload(
             provider="platform-calendar-provider",
             status=status,

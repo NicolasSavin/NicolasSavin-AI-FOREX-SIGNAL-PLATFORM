@@ -137,18 +137,19 @@ class AdvancedSignalEngine:
             weakening.append("Основной таймфрейм не готов: недостаточно свечей.")
             return "NO_SIGNAL", ["Нет достаточных данных на основном ТФ."], weakening, warnings
 
+        entry_threshold = 58.0
         if high_risk_event and score.finalScore < 62:
             warnings.append("Сигнал подавлен из-за окна высокорискового фундаментального события.")
             return "NO_SIGNAL", ["Риск фундаментального события выше текущего преимущества модели."], weakening, warnings
 
-        if score.finalScore >= 63 and primary_trend == "bullish" and higher_trend in {"bullish", "neutral"} and confirm_bos and lower_trigger in {"bullish", "neutral"}:
+        if score.finalScore >= entry_threshold and primary_trend == "bullish" and higher_trend in {"bullish", "neutral"} and confirm_bos and lower_trigger in {"bullish", "neutral"}:
             reasons.extend([
                 f"{symbol}: основной ТФ поддерживает bullish-сценарий.",
                 "Есть подтверждение со старшего ТФ и структурный trigger снизу.",
             ])
             return "BUY", reasons + score.strengths, weakening, warnings
 
-        if score.finalScore >= 63 and primary_trend == "bearish" and higher_trend in {"bearish", "neutral"} and confirm_bos and lower_trigger in {"bearish", "neutral"}:
+        if score.finalScore >= entry_threshold and primary_trend == "bearish" and higher_trend in {"bearish", "neutral"} and confirm_bos and lower_trigger in {"bearish", "neutral"}:
             reasons.extend([
                 f"{symbol}: основной ТФ поддерживает bearish-сценарий.",
                 "Есть подтверждение со старшего ТФ и структурный trigger снизу.",

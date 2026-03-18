@@ -174,7 +174,8 @@ finalScore =
 ```
 
 Важно:
-- `tick / quote / futures / options / OI` пока подготовлены как архитектура с mock/stub provider-ами;
+- `tick / futures / options / OI` пока подготовлены как архитектура с mock/stub provider-ами, которые **не генерируют синтетические рыночные цены**, а возвращают пустой набор и schema/meta-подсказки до подключения реальных источников;
+- `quote` без прямого bid/ask feed строится только как явно помеченный proxy-слой поверх реальных свечей;
 - `news` и `calendar` интегрированы через существующие сервисы;
 - `OI change`, полноценный `dealer hedging`, `real options walls` и `real-time orderflow` требуют внешних источников и исторических снимков.
 

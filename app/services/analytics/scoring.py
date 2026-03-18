@@ -117,7 +117,9 @@ class CompositeScoringService:
         return max(0.0, min(score, 100.0))
 
     def _orderflow_score(self, quote: FeatureSet, tick: FeatureSet) -> float:
-        score = 38.0
+        if quote.status != "ready" and tick.status != "ready":
+            return 45.0
+        score = 44.0
         imbalance = float(quote.values.get("quote_imbalance") or 0.0)
         pressure = float(tick.values.get("short_term_pressure") or 0.0)
         impulse = float(tick.values.get("micro_impulse") or 0.0)
@@ -130,11 +132,13 @@ class CompositeScoringService:
         if quote.status != "ready":
             score -= 3
         if tick.status != "ready":
-            score -= 5
+            score -= 2
         return max(0.0, min(score, 100.0))
 
     def _derivatives_score(self, futures: FeatureSet, options: FeatureSet) -> float:
-        score = 35.0
+        if futures.status != "ready" and options.status != "ready" and not futures.values and not options.values:
+            return 50.0
+        score = 45.0
         basis = float(futures.values.get("basis_percent") or 0.0)
         divergence = bool(futures.values.get("futures_spot_divergence"))
         pc_ratio = options.values.get("put_call_volume_ratio")
@@ -147,13 +151,15 @@ class CompositeScoringService:
         if abs(iv_skew) > 0.05:
             score -= 4
         if futures.status != "ready":
-            score -= 4
+            score -= 2
         if options.status != "ready":
-            score -= 6
+            score -= 3
         return max(0.0, min(score, 100.0))
 
     def _fundamental_score(self, fundamental: FeatureSet) -> float:
-        score = 40.0
+        if fundamental.status != "ready" and not fundamental.values:
+            return 45.0
+        score = 45.0
         relevance = float(fundamental.values.get("relevance_score") or 0.0)
         importance = float(fundamental.values.get("importance_score") or 0.0)
         bias = fundamental.values.get("directional_bias")
@@ -164,5 +170,5 @@ class CompositeScoringService:
         if bool(fundamental.values.get("high_risk_event_window")):
             score -= 10
         if fundamental.status != "ready":
-            score -= 6
+            score -= 3
         return max(0.0, min(score, 100.0))
