@@ -37,6 +37,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
+В репозитории также добавлен готовый `render.yaml`, чтобы Render автоматически подхватил корректный web-service config без ручной настройки start command.
+
 ## Принципы данных
 - Сигналы строятся на реальных OHLCV-данных из yfinance (D1/H1/M15).
 - Система не выдумывает недоступные рыночные данные.
