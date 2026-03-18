@@ -1,15 +1,15 @@
 {
-  "updated_at_utc": "2026-03-18T08:44:54.837122+00:00",
+  "updated_at_utc": "2026-03-18T09:52:44.640269+00:00",
   "signals": [
     {
-      "signal_id": "sig-944a148690",
+      "signal_id": "sig-6593cc184d",
       "symbol": "EURUSD",
       "timeframe": "H1",
       "action": "NO_TRADE",
       "entry": null,
       "stop_loss": null,
       "take_profit": null,
-      "signal_time_utc": "2026-03-18T08:44:53.751345+00:00",
+      "signal_time_utc": "2026-03-18T09:52:43.966547+00:00",
       "risk_reward": null,
       "distance_to_target_percent": null,
       "probability_percent": 65,
@@ -17,10 +17,10 @@
       "status": "неактуален",
       "lifecycle_state": "closed",
       "description_ru": "NO TRADE: сигнал не опубликован до появления подтверждённого сетапа.",
-      "reason_ru": "Конфликт со старшим таймфреймом",
+      "reason_ru": "Слабый confluence структуры: сетап отклонён.",
       "invalidation_ru": "Ожидать новый валидный сетап.",
       "progress": {
-        "current_price": 1.1530035734176636,
+        "current_price": 1.154068112373352,
         "to_take_profit_percent": null,
         "to_stop_loss_percent": null,
         "progress_percent": null,
@@ -28,7 +28,7 @@
         "label_ru": "Ожидание нового сетапа"
       },
       "data_status": "real",
-      "created_at_utc": "2026-03-18T08:44:53.751345+00:00",
+      "created_at_utc": "2026-03-18T09:52:43.966547+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
@@ -37,14 +37,14 @@
       }
     },
     {
-      "signal_id": "sig-9385d24e34",
+      "signal_id": "sig-e0618c7274",
       "symbol": "GBPUSD",
       "timeframe": "H1",
       "action": "NO_TRADE",
       "entry": null,
       "stop_loss": null,
       "take_profit": null,
-      "signal_time_utc": "2026-03-18T08:44:54.264043+00:00",
+      "signal_time_utc": "2026-03-18T09:52:44.303447+00:00",
       "risk_reward": null,
       "distance_to_target_percent": null,
       "probability_percent": 65,
@@ -52,10 +52,10 @@
       "status": "неактуален",
       "lifecycle_state": "closed",
       "description_ru": "NO TRADE: сигнал не опубликован до появления подтверждённого сетапа.",
-      "reason_ru": "Конфликт со старшим таймфреймом",
+      "reason_ru": "Слабый confluence структуры: сетап отклонён.",
       "invalidation_ru": "Ожидать новый валидный сетап.",
       "progress": {
-        "current_price": 1.334587812423706,
+        "current_price": 1.3358268737792969,
         "to_take_profit_percent": null,
         "to_stop_loss_percent": null,
         "progress_percent": null,
@@ -63,7 +63,7 @@
         "label_ru": "Ожидание нового сетапа"
       },
       "data_status": "real",
-      "created_at_utc": "2026-03-18T08:44:54.264043+00:00",
+      "created_at_utc": "2026-03-18T09:52:44.303447+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
@@ -72,14 +72,14 @@
       }
     },
     {
-      "signal_id": "sig-763c85eb98",
+      "signal_id": "sig-462e8f3b42",
       "symbol": "USDJPY",
       "timeframe": "H1",
       "action": "NO_TRADE",
       "entry": null,
       "stop_loss": null,
       "take_profit": null,
-      "signal_time_utc": "2026-03-18T08:44:54.836978+00:00",
+      "signal_time_utc": "2026-03-18T09:52:44.640126+00:00",
       "risk_reward": null,
       "distance_to_target_percent": null,
       "probability_percent": 65,
@@ -90,7 +90,7 @@
       "reason_ru": "Конфликт со старшим таймфреймом",
       "invalidation_ru": "Ожидать новый валидный сетап.",
       "progress": {
-        "current_price": 158.9669952392578,
+        "current_price": 158.9499969482422,
         "to_take_profit_percent": null,
         "to_stop_loss_percent": null,
         "progress_percent": null,
@@ -98,7 +98,7 @@
         "label_ru": "Ожидание нового сетапа"
       },
       "data_status": "real",
-      "created_at_utc": "2026-03-18T08:44:54.836978+00:00",
+      "created_at_utc": "2026-03-18T09:52:44.640126+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
