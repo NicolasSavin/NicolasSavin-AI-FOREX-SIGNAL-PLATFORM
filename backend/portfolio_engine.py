@@ -25,8 +25,8 @@ class PortfolioEngine:
             ],
         }
 
-    def market_news(self) -> dict:
-        return self._news_provider.market_news()
+    def market_news(self, active_signals: list[dict] | None = None) -> dict:
+        return self._news_provider.market_news(active_signals=active_signals)
 
     def calendar_events(self) -> dict:
         return {

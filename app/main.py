@@ -92,7 +92,8 @@ async def ideas_market() -> MarketIdeasResponse:
 
 @app.get("/news/market", response_model=MarketNewsResponse)
 async def news_market() -> MarketNewsResponse:
-    payload = portfolio_engine.market_news()
+    signals = await signal_engine.generate_live_signals(DEFAULT_PAIRS)
+    payload = portfolio_engine.market_news(active_signals=signals)
     return MarketNewsResponse(
         updated_at_utc=datetime.fromisoformat(payload["updated_at_utc"]),
         news=payload["news"],
