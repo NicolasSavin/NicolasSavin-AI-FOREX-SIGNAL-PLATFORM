@@ -105,9 +105,35 @@ class MarketIdeasResponse(BaseModel):
     ideas: list[dict[str, Any]]
 
 
+class NewsSignalRelation(BaseModel):
+    has_related_signal: bool
+    related_signal_symbol: Optional[str] = None
+    related_signal_direction: Optional[Literal["BUY", "SELL"]] = None
+    effect_on_signal: Literal["strengthens_signal", "weakens_signal", "neutral_to_signal"]
+    effect_on_signal_ru: str
+
+
+class NewsItemResponse(BaseModel):
+    id: str
+    title_original: str
+    title_ru: str
+    summary_ru: str
+    what_happened_ru: str
+    why_it_matters_ru: str
+    market_impact_ru: str
+    category: Literal["Forex", "Gold", "Crypto", "Macro", "Central Banks", "Commodities", "Indices"]
+    importance: Literal["low", "medium", "high"]
+    importance_ru: str
+    assets: list[str] = Field(default_factory=list)
+    source: str
+    source_url: Optional[str] = None
+    published_at: Optional[datetime] = None
+    signal_relation: NewsSignalRelation
+
+
 class MarketNewsResponse(BaseModel):
     updated_at_utc: datetime
-    news: list[dict[str, Any]]
+    news: list[NewsItemResponse]
 
 
 class CalendarResponse(BaseModel):
