@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.schemas.analytics import AnalyticsCapabilityResponse, AnalyticsSignalResponse
 from app.schemas.contracts import (
     CalendarResponse,
     HealthResponse,
@@ -21,18 +22,20 @@ from app.schemas.contracts import (
     SignalStatusPatchRequest,
     SignalsLiveResponse,
 )
+from app.services.analytics import SignalAnalyticsService
 from app.services.mt4_bridge import Mt4BridgeService
 from app.services.news_service import NewsService
 from app.services.signal_hub import DEFAULT_PAIRS, SignalHubService
 from backend.portfolio_engine import PortfolioEngine
 from backend.signal_engine import SignalEngine
 
-app = FastAPI(title="AI Forex Signal Platform", version="3.4.0")
+app = FastAPI(title="AI Forex Signal Platform", version="3.5.0")
 
 signal_engine = SignalEngine()
 portfolio_engine = PortfolioEngine()
 mt4_bridge_service = Mt4BridgeService()
 news_service = NewsService()
+signal_analytics_service = SignalAnalyticsService(signal_engine=signal_engine)
 signal_hub_service = SignalHubService(signal_engine=signal_engine, news_service=news_service)
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -66,7 +69,7 @@ async def news_page() -> FileResponse:
 @app.get("/health", response_model=HealthResponse)
 @app.get("/api/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok", version="3.4.0")
+    return HealthResponse(status="ok", version="3.5.0")
 
 
 @app.get("/signals/live", response_model=SignalsLiveResponse)
@@ -112,6 +115,15 @@ async def patch_signal_status(signal_id: str, payload: SignalStatusPatchRequest)
     if signal is None:
         raise HTTPException(status_code=404, detail="Сигнал для обновления не найден")
     return signal
+
+@app.get("/api/analytics/capabilities", response_model=AnalyticsCapabilityResponse)
+async def analytics_capabilities() -> AnalyticsCapabilityResponse:
+    return signal_analytics_service.capabilities()
+
+
+@app.get("/api/analytics/signals/{symbol}", response_model=AnalyticsSignalResponse)
+async def analytics_signal(symbol: str) -> AnalyticsSignalResponse:
+    return await signal_analytics_service.build_signal_analytics(symbol)
 
 
 @app.get("/api/mt4/signals", response_model=Mt4BridgeResponse)

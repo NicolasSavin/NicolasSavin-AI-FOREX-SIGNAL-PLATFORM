@@ -1,6 +1,12 @@
-# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.4
+# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.5
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
+
+## Что обновлено в версии 3.5
+- Добавлен отдельный `data/analytics` слой для сигналов: adapters/connectors, normalization models, feature extraction, fundamental scoring и composite signal scoring.
+- Для `tick data`, `bid/ask quotes`, `futures data`, `open interest`, `options chain`, `news feed`, `economic calendar` подготовлены отдельные коннекторы, типы и runtime-статусы источников.
+- Добавлены новые API-контракты: `GET /api/analytics/capabilities` и `GET /api/analytics/signals/{symbol}`.
+- Реально работает RSS news connector и весь вычислительный pipeline поверх mock/stub источников, без подделки отсутствующих live market feeds.
 
 ## Что обновлено в версии 3.4
 - Главная страница оставляет только поток сигналов и news banner; страницы `/ideas`, `/news`, `/calendar` и `/heatmap/page` сохранены и продолжают работать через прежние маршруты.
@@ -52,6 +58,10 @@
 ### Подготовка к MT4
 - `GET /api/mt4/signals` — read-only polling контракт для будущего советника
 - `POST /api/mt4/export` — подготовка export payload для MT4/bridge слоя
+
+### Analytics API
+- `GET /api/analytics/capabilities` — показывает, какие наборы данных уже работают и какие пока заглушки
+- `GET /api/analytics/signals/{symbol}` — отдаёт нормализованный analytics bundle, вычисленные признаки, fundamental score и composite signal score
 
 ## Контракты данных
 ### Расширенная модель сигнала
@@ -150,3 +160,36 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 - Система не выдумывает недоступные рыночные данные.
 - При нехватке данных возвращается fallback/mock UI-слой с честной маркировкой.
 - Proxy-метрики явно маркируются `label=proxy`.
+
+## Новый analytics/data слой
+Архитектура разбита на отдельные модули:
+- `app/schemas/analytics.py` — внутренние нормализованные модели, feature/result контракты и composite/fundamental score типы.
+- `app/services/analytics/providers.py` — provider interfaces, mock providers для market microstructure/derivatives и RSS/stub providers для news/calendar.
+- `app/services/analytics/connectors.py` — adapters/connectors по типам данных.
+- `app/services/analytics/normalizer.py` — normalization layer в единые внутренние модели.
+- `app/services/analytics/features.py` — feature extraction layer.
+- `app/services/analytics/fundamental.py` — scoring layer для news relevance / impact / direction / time decay.
+- `app/services/analytics/composite.py` — composite score из technical/orderflow/derivatives/fundamental.
+- `app/services/analytics/service.py` — orchestration service и API-ready output.
+
+### Какие признаки считаются
+- `spread`
+- `order book imbalance`
+- `delta` / `cumulative delta`
+- `futures/spot basis`
+- `OI change`
+- `put/call OI ratio`
+- `put/call volume ratio`
+- `IV skew`
+- `news impact score`
+- `macro event impact score`
+
+### Что уже реально работает
+- RSS news feed connector через открытые источники, без синтетических новостей.
+- Normalization layer, feature extraction, fundamental scoring и composite signal scoring.
+- Integration c текущим `backend.signal_engine` для technical component composite score.
+- Mock connectors для orderflow/derivatives с явной маркировкой `mock`, чтобы безопасно разрабатывать контракт и downstream-логику.
+
+### Что пока заглушка
+- Экономический календарь пока остаётся `stub` до подключения проверенного live source.
+- Tick, quotes, futures, OI и options пока работают как `mock providers`, а не как реальные биржевые feed-коннекторы.
