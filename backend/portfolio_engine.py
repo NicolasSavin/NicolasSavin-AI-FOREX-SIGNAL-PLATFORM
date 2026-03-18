@@ -13,20 +13,11 @@ class PortfolioEngine:
         self._grok_idea_service = GrokIdeaService()
         self._chart_generator = ChartGenerator()
 
-    def rank_signals(self, signals: list[dict]) -> list[dict]:
-        tradable = [s for s in signals if s.get("action") in {"BUY", "SELL"}]
-        return sorted(
-            tradable,
-            key=lambda item: item.get("confidence_percent", 0),
-            reverse=True,
-        )
-
     def market_ideas(self) -> dict:
         news_payload = self._news_provider.market_news(active_signals=[])
         raw_news = news_payload.get("news", [])
 
         ideas = self._ideas_from_news(raw_news)
-
         if not ideas:
             ideas = [self._empty_idea()]
 
@@ -77,10 +68,8 @@ class PortfolioEngine:
 
             if importance not in {"medium", "high"}:
                 continue
-
             if not assets:
                 continue
-
             if published_at is not None and published_at < datetime.now(timezone.utc) - timedelta(hours=36):
                 continue
 
@@ -104,21 +93,9 @@ class PortfolioEngine:
             idea = self._grok_idea_service.build_detailed_idea_from_news(item, instrument)
             if idea:
                 try:
-                    chart_url = self._chart_generator.generate_chart(instrument, idea)
-                    idea["chart_image"] = chart_url
-                    idea["chart_debug"] = {
-                        "chart_generated": True,
-                        "chart_url": chart_url,
-                        "chart_error": None,
-                    }
-                except Exception as exc:
+                    idea["chart_image"] = self._chart_generator.generate_chart(instrument, idea)
+                except Exception:
                     idea["chart_image"] = None
-                    idea["chart_debug"] = {
-                        "chart_generated": False,
-                        "chart_url": None,
-                        "chart_error": str(exc),
-                    }
-
                 ideas.append(idea)
 
             if len(ideas) >= 5:
@@ -183,9 +160,7 @@ class PortfolioEngine:
             "chart": {
                 "pattern_type": "wait_mode",
                 "bias": "neutral",
-                "zones": [
-                    {"type": "range", "label": "Range", "x1": 20, "y1": 42, "x2": 78, "y2": 66}
-                ],
+                "zones": [{"type": "range", "label": "Range", "x1": 20, "y1": 42, "x2": 78, "y2": 66}],
                 "levels": [
                     {"label": "Upper Liquidity", "x": 80, "y": 36},
                     {"label": "Lower Liquidity", "x": 80, "y": 72},
@@ -199,21 +174,14 @@ class PortfolioEngine:
                 ],
             },
             "chart_image": None,
-            "chart_debug": {
-                "chart_generated": False,
-                "chart_url": None,
-                "chart_error": "no_active_idea",
-            },
         }
 
     @staticmethod
     def _parse_dt(value: str | datetime | None) -> datetime | None:
         if value is None:
             return None
-
         if isinstance(value, datetime):
             return value.astimezone(timezone.utc)
-
         try:
             return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
         except ValueError:
