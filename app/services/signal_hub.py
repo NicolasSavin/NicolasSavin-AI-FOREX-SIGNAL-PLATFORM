@@ -5,19 +5,28 @@ from hashlib import sha1
 from uuid import uuid4
 
 from app.schemas.contracts import (
-    ChartPoint,
+    ChartAnnotation,
     Mt4ExportRequest,
     Mt4ExportResponse,
     PriceZone,
     ProgressState,
-    ProjectedCandle,
     RelatedNewsItem,
     SignalCard,
+    SignalCandle,
     SignalCreateRequest,
     SignalLevel,
     SignalRecordResponse,
     SignalStatusPatchRequest,
     SignalsLiveResponse,
+)
+from app.schemas.signals import OrderBlockZone, SignalStatus
+from app.services.signal_metrics import (
+    compute_signal_stats,
+    direction_from_action,
+    group_signals,
+    lifecycle_from_status,
+    normalize_status,
+    status_label_ru,
 )
 from app.services.news_service import NewsService
 from app.services.storage.json_storage import JsonStorage
@@ -58,7 +67,14 @@ class SignalHubService:
         normalized = [self._normalize_generated_signal(item, news_feed.news) for item in generated]
         normalized.extend(self._load_manual_signals())
         normalized.sort(key=lambda item: item.updated_at_utc, reverse=True)
-        return SignalRecordResponse(updated_at_utc=datetime.now(timezone.utc), signals=normalized)
+        active_signals, archive_signals = group_signals(normalized)
+        return SignalRecordResponse(
+            updated_at_utc=datetime.now(timezone.utc),
+            stats=compute_signal_stats(normalized),
+            activeSignals=active_signals,
+            archiveSignals=archive_signals,
+            signals=normalized,
+        )
 
     async def get_signal(self, signal_id_or_symbol: str) -> SignalCard | None:
         feed = await self.list_signals()
@@ -69,35 +85,56 @@ class SignalHubService:
 
     async def get_active_signals(self) -> SignalRecordResponse:
         feed = await self.list_signals()
-        active = [signal for signal in feed.signals if signal.state in {"active", "open"}]
-        return SignalRecordResponse(updated_at_utc=feed.updated_at_utc, signals=active)
+        active = [signal for signal in feed.signals if signal.status == SignalStatus.ACTIVE]
+        return SignalRecordResponse(
+            updated_at_utc=feed.updated_at_utc,
+            stats=compute_signal_stats(active),
+            activeSignals=active,
+            archiveSignals=[],
+            signals=active,
+        )
 
     async def create_signal(self, payload: SignalCreateRequest) -> SignalCard:
         now = datetime.now(timezone.utc)
         signal_datetime = payload.signalDateTime or now
         signal_id = f"manual-sig-{uuid4().hex[:10]}"
-        chart_data = payload.chartData or self._build_chart_data(payload.entry, payload.takeProfit, payload.stopLoss)
+        chart_data = payload.chartData or self._build_chart_candles(payload.entry, payload.takeProfit, payload.stopLoss, payload.side)
         projected = payload.projectedCandles or self._build_projected_candles(payload.entry, payload.takeProfit, payload.side)
         probability = self._clamp_probability(payload.probability)
         progress_tp = self._clamp_percent(payload.progressToTP if payload.progressToTP is not None else 38.0)
         progress_sl = self._clamp_percent(payload.progressToSL if payload.progressToSL is not None else 18.0)
         related_news = await self._noop_async_news(payload.relatedNews)
+        normalized_status = normalize_status(payload.status, payload.side)
+        lifecycle_state = lifecycle_from_status(normalized_status)
+        zones = payload.zones or self._build_default_zones(payload.entry, payload.stopLoss, payload.takeProfit)
+        levels = payload.levels or self._build_default_levels(payload.entry, payload.stopLoss, payload.takeProfit)
+        liquidity = payload.liquidityAreas or self._build_default_liquidity(payload.entry, payload.side)
+        annotations = payload.annotations or self._build_annotations(
+            entry=payload.entry,
+            stop_loss=payload.stopLoss,
+            take_profit=payload.takeProfit,
+            side=payload.side,
+            candle_count=len(chart_data) + len(projected),
+        )
 
         signal = SignalCard(
             signal_id=signal_id,
             symbol=payload.instrument.upper(),
             timeframe=payload.timeframe,
             action=payload.side,
+            direction=direction_from_action(payload.side),
             entry=payload.entry,
             stop_loss=payload.stopLoss,
             take_profit=payload.takeProfit,
+            takeProfits=[payload.takeProfit],
             signal_time_utc=signal_datetime,
             risk_reward=round(abs(payload.takeProfit - payload.entry) / max(abs(payload.entry - payload.stopLoss), 1e-9), 2),
             distance_to_target_percent=round(abs((payload.takeProfit - payload.entry) / max(payload.entry, 1e-9)) * 100, 3),
             probability_percent=probability,
             confidence_percent=probability,
-            status=payload.status,
-            lifecycle_state=payload.state,
+            status=normalized_status,
+            status_label_ru=status_label_ru(normalized_status),
+            lifecycle_state=lifecycle_state,
             description_ru=payload.description,
             reason_ru="Сигнал создан вручную через API и сохранён для дальнейшей автоматизации.",
             invalidation_ru="Сценарий отменяется при достижении Stop Loss или ручном переводе статуса.",
@@ -120,14 +157,15 @@ class SignalHubService:
             },
             signalDateTime=signal_datetime,
             signalTime=payload.signalTime or signal_datetime.strftime("%H:%M UTC"),
-            state=payload.state,
+            state=lifecycle_state,
             probability=probability,
             progressToTP=progress_tp,
             progressToSL=progress_sl,
             chartData=chart_data,
-            zones=payload.zones or self._build_default_zones(payload.entry, payload.stopLoss, payload.takeProfit),
-            levels=payload.levels or self._build_default_levels(payload.entry, payload.stopLoss, payload.takeProfit),
-            liquidityAreas=payload.liquidityAreas or self._build_default_liquidity(payload.entry, payload.side),
+            annotations=annotations,
+            zones=zones,
+            levels=levels,
+            liquidityAreas=liquidity,
             projectedCandles=projected,
             relatedNews=related_news,
             updated_at_utc=now,
@@ -142,9 +180,12 @@ class SignalHubService:
         next_rows: list[dict] = []
         for raw in signals:
             if raw.get("signal_id") == signal_id:
-                raw["status"] = payload.status
-                raw["lifecycle_state"] = payload.state
-                raw["state"] = payload.state
+                normalized_status = normalize_status(raw_status=payload.status, action=raw.get("action"))
+                lifecycle_state = lifecycle_from_status(normalized_status)
+                raw["status"] = normalized_status.value
+                raw["status_label_ru"] = status_label_ru(normalized_status)
+                raw["lifecycle_state"] = lifecycle_state.value
+                raw["state"] = lifecycle_state.value
                 raw["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
                 updated_signal = SignalCard(**raw)
             next_rows.append(raw)
@@ -194,23 +235,31 @@ class SignalHubService:
         progress_tp = self._derive_progress_tp(signal)
         progress_sl = self._derive_progress_sl(signal)
         related_news = self._build_related_news(signal, news_feed)
-        chart_data = self._build_chart_data(entry, take_profit, stop_loss, current_price)
+        chart_data = self._build_chart_candles(entry, take_profit, stop_loss, signal.get("action", "BUY"), current_price)
         projected = self._build_projected_candles(entry, take_profit, signal.get("action", "BUY"))
+        normalized_status = normalize_status(signal.get("status"), signal.get("action"))
+        lifecycle_state = lifecycle_from_status(normalized_status)
+        zones = self._build_default_zones(entry, stop_loss, take_profit)
+        levels = self._build_default_levels(entry, stop_loss, take_profit)
+        liquidity = self._build_default_liquidity(entry, signal.get("action", "BUY"))
         return SignalCard(
             signal_id=stable_id,
             symbol=signal["symbol"],
             timeframe=signal.get("timeframe", "H1"),
             action=signal.get("action", "NO_TRADE"),
+            direction=direction_from_action(signal.get("action", "NO_TRADE")),
             entry=entry,
             stop_loss=stop_loss,
             take_profit=take_profit,
+            takeProfits=[take_profit] if take_profit is not None else [],
             signal_time_utc=signal_time,
             risk_reward=signal.get("risk_reward"),
             distance_to_target_percent=signal.get("distance_to_target_percent"),
             probability_percent=probability,
             confidence_percent=signal.get("confidence_percent", probability),
-            status=signal.get("status", "неактуален"),
-            lifecycle_state=signal.get("lifecycle_state", "closed"),
+            status=normalized_status,
+            status_label_ru=status_label_ru(normalized_status),
+            lifecycle_state=lifecycle_state,
             description_ru=signal.get("description_ru", "Описание сигнала будет добавлено после подтверждения сетапа."),
             reason_ru=signal.get("reason_ru", "Причина сигнала недоступна."),
             invalidation_ru=signal.get("invalidation_ru", "Условие отмены сценария недоступно."),
@@ -220,14 +269,21 @@ class SignalHubService:
             market_context=signal.get("market_context", {}),
             signalDateTime=signal_time,
             signalTime=signal_time.strftime("%H:%M UTC"),
-            state=signal.get("lifecycle_state", "closed"),
+            state=lifecycle_state,
             probability=probability,
             progressToTP=progress_tp,
             progressToSL=progress_sl,
             chartData=chart_data,
-            zones=self._build_default_zones(entry, stop_loss, take_profit),
-            levels=self._build_default_levels(entry, stop_loss, take_profit),
-            liquidityAreas=self._build_default_liquidity(entry, signal.get("action", "BUY")),
+            annotations=self._build_annotations(
+                entry=entry,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                side=signal.get("action", "BUY"),
+                candle_count=len(chart_data) + len(projected),
+            ),
+            zones=zones,
+            levels=levels,
+            liquidityAreas=liquidity,
             projectedCandles=projected,
             relatedNews=related_news,
             updated_at_utc=signal_time,
@@ -292,46 +348,172 @@ class SignalHubService:
         if signal.action == "NO_TRADE":
             return f"{signal.symbol} NO TRADE: {signal.reason_ru}"
         suffix = "есть news alert" if signal.related_news else "без критичных новостей"
-        return f"{signal.symbol} {signal.action} {signal.status} | Вероятность: {signal.probability_percent}% | {suffix}"
+        return f"{signal.symbol} {signal.action} {signal.status_label_ru} | Вероятность: {signal.probability_percent}% | {suffix}"
 
     @staticmethod
-    def _build_chart_data(entry: float | None, take_profit: float | None, stop_loss: float | None, current_price: float | None = None) -> list[ChartPoint]:
+    def _build_chart_candles(
+        entry: float | None,
+        take_profit: float | None,
+        stop_loss: float | None,
+        side: str,
+        current_price: float | None = None,
+    ) -> list[SignalCandle]:
         base = current_price or entry or take_profit or stop_loss or 1.0
-        low_anchor = stop_loss or base * 0.995
-        high_anchor = take_profit or base * 1.005
-        values = [base * 0.996, base * 0.998, base, base * 1.002, high_anchor]
-        if stop_loss and take_profit:
-            values = [stop_loss + (entry or base - stop_loss) * 0.4, entry or base, current_price or entry or base, (take_profit + (current_price or entry or base)) / 2, take_profit]
-        labels = ["-4ч", "-3ч", "-2ч", "-1ч", "Сейчас"]
-        chart = [ChartPoint(time_label=label, price=round(value, 6), kind="history") for label, value in zip(labels, values)]
-        chart.append(ChartPoint(time_label="TP", price=round(high_anchor, 6), kind="projection"))
-        return chart
+        fallback_stop = stop_loss if stop_loss is not None else base * (0.996 if side == "BUY" else 1.004)
+        fallback_take = take_profit if take_profit is not None else base * (1.004 if side == "BUY" else 0.996)
+        path = [
+            fallback_stop + (base - fallback_stop) * 0.25,
+            base * 0.998,
+            base * 0.9995,
+            base,
+            (base + fallback_take) / 2,
+            fallback_take,
+        ]
+        labels = ["-5ч", "-4ч", "-3ч", "-2ч", "-1ч", "Сейчас"]
+        candles: list[SignalCandle] = []
+        previous_close = path[0]
+        for index, close_price in enumerate(path):
+            open_price = previous_close if index else close_price * (0.999 if side == "BUY" else 1.001)
+            spread = abs(close_price - open_price) or base * 0.0008
+            high = max(open_price, close_price) + spread * 0.7
+            low = min(open_price, close_price) - spread * 0.55
+            candles.append(
+                SignalCandle(
+                    time_label=labels[index],
+                    open=round(open_price, 6),
+                    high=round(high, 6),
+                    low=round(low, 6),
+                    close=round(close_price, 6),
+                    is_proxy=True,
+                )
+            )
+            previous_close = close_price
+        return candles
 
     @staticmethod
-    def _build_projected_candles(entry: float | None, take_profit: float | None, side: str) -> list[ProjectedCandle]:
+    def _build_projected_candles(entry: float | None, take_profit: float | None, side: str) -> list[SignalCandle]:
         if entry is None:
             entry = 1.0
         target = take_profit if take_profit is not None else entry * (1.004 if side == "BUY" else 0.996)
         direction = 1 if side == "BUY" else -1
         step = abs(target - entry) / 4 if target != entry else entry * 0.0015
-        candles: list[ProjectedCandle] = []
+        candles: list[SignalCandle] = []
         open_price = entry
         for index in range(1, 5):
             close_price = open_price + direction * step
             high = max(open_price, close_price) + step * 0.35
             low = min(open_price, close_price) - step * 0.2
             candles.append(
-                ProjectedCandle(
+                SignalCandle(
                     time_label=f"+{index}ч",
                     open=round(open_price, 6),
                     high=round(high, 6),
                     low=round(low, 6),
                     close=round(close_price, 6),
-                    is_mock=True,
+                    is_proxy=True,
                 )
             )
             open_price = close_price
         return candles
+
+    @staticmethod
+    def _build_annotations(
+        entry: float | None,
+        stop_loss: float | None,
+        take_profit: float | None,
+        side: str,
+        candle_count: int,
+    ) -> list[ChartAnnotation]:
+        if entry is None:
+            return []
+        direction = 1 if side == "BUY" else -1
+        annotations: list[ChartAnnotation] = [
+            OrderBlockZone(
+                id="order-block",
+                label="Order Block",
+                description_ru="Полупрозрачная зона вероятного набора позиции по smart money логике.",
+                from_price=round(entry * 0.9992, 6),
+                to_price=round(entry * 1.0008, 6),
+                start_index=max(1, candle_count // 4),
+                end_index=max(3, candle_count // 2),
+            ),
+            ChartAnnotation(
+                id="liquidity-zone",
+                type="liquidity",
+                label="Liquidity Zone",
+                description_ru="Зона ликвидности, где рынок может собрать стопы перед продолжением сценария.",
+                from_price=round(entry + direction * entry * 0.0014, 6),
+                to_price=round(entry + direction * entry * 0.0026, 6),
+                start_index=max(2, candle_count // 2),
+                end_index=max(4, candle_count - 1),
+            ),
+            ChartAnnotation(
+                id="entry-line",
+                type="entry",
+                label="Entry",
+                description_ru="Базовая точка входа в позицию.",
+                value=round(entry, 6),
+            ),
+        ]
+        if stop_loss is not None:
+            annotations.extend(
+                [
+                    ChartAnnotation(
+                        id="stop-loss-line",
+                        type="stop_loss",
+                        label="Stop Loss",
+                        description_ru="Защитный уровень отмены сценария.",
+                        value=round(stop_loss, 6),
+                    ),
+                    ChartAnnotation(
+                        id="support-line" if side == "BUY" else "resistance-line",
+                        type="support" if side == "BUY" else "resistance",
+                        label="Support" if side == "BUY" else "Resistance",
+                        description_ru="Ключевой структурный уровень рядом со стоп-зоной.",
+                        value=round(stop_loss, 6),
+                    ),
+                ]
+            )
+        if take_profit is not None:
+            annotations.extend(
+                [
+                    ChartAnnotation(
+                        id="take-profit-line",
+                        type="take_profit",
+                        label="Take Profit",
+                        description_ru="Основная цель по фиксации прибыли.",
+                        value=round(take_profit, 6),
+                    ),
+                    ChartAnnotation(
+                        id="resistance-target" if side == "BUY" else "support-target",
+                        type="resistance" if side == "BUY" else "support",
+                        label="Resistance" if side == "BUY" else "Support",
+                        description_ru="Целевой структурный уровень по направлению сигнала.",
+                        value=round(take_profit, 6),
+                    ),
+                    ChartAnnotation(
+                        id="fvg-zone",
+                        type="fvg",
+                        label="FVG",
+                        description_ru="Незаполненный дисбаланс цены, который поддерживает сценарий импульса.",
+                        from_price=round((entry + take_profit) / 2 * 0.9994, 6),
+                        to_price=round((entry + take_profit) / 2 * 1.0006, 6),
+                        start_index=max(2, candle_count // 3),
+                        end_index=max(4, candle_count // 2),
+                    ),
+                    ChartAnnotation(
+                        id="imbalance-zone",
+                        type="imbalance",
+                        label="Imbalance",
+                        description_ru="Имбаланс показывает ускорение цены и потенциальную зону возврата.",
+                        from_price=round((entry + take_profit) / 2 * 0.9988, 6),
+                        to_price=round((entry + take_profit) / 2 * 1.0012, 6),
+                        start_index=max(3, candle_count // 2),
+                        end_index=max(5, candle_count - 2),
+                    ),
+                ]
+            )
+        return annotations
 
     @staticmethod
     def _build_default_levels(entry: float | None, stop_loss: float | None, take_profit: float | None) -> list[SignalLevel]:
