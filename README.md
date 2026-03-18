@@ -40,11 +40,15 @@ Legacy:
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
+# либо совместимый entrypoint для деплоя
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 ## Render
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port $PORT
+# либо если платформа запускает корневой модуль
+uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
 ## MT4 bridge contract
