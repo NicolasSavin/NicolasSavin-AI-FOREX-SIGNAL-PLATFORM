@@ -30,6 +30,7 @@ from app.services.signal_metrics import (
 )
 from app.services.news_service import NewsService
 from app.services.storage.json_storage import JsonStorage
+from backend.pattern_visualization import PatternVisualizationBuilder
 from backend.signal_engine import SignalEngine
 
 DEFAULT_PAIRS = [
@@ -54,6 +55,7 @@ class SignalHubService:
         self.news_service = news_service
         self.manual_store = JsonStorage("signals_data/manual_signals.json", {"signals": []})
         self.mt4_export_store = JsonStorage("signals_data/mt4_exports.json", {"exports": []})
+        self.pattern_visualizer = PatternVisualizationBuilder()
 
     async def get_live_response(self, pairs: list[str] | None = None) -> SignalsLiveResponse:
         signals = await self.list_signals(pairs=pairs)
@@ -168,6 +170,9 @@ class SignalHubService:
             liquidityAreas=liquidity,
             projectedCandles=projected,
             relatedNews=related_news,
+            chartPatterns=[],
+            patternSummary=None,
+            patternSignalImpact=None,
             updated_at_utc=now,
         )
         self._persist_manual_signal(signal)
@@ -242,6 +247,21 @@ class SignalHubService:
         zones = self._build_default_zones(entry, stop_loss, take_profit)
         levels = self._build_default_levels(entry, stop_loss, take_profit)
         liquidity = self._build_default_liquidity(entry, signal.get("action", "BUY"))
+        chart_patterns = signal.get("chart_patterns", [])
+        pattern_summary = signal.get("pattern_summary")
+        pattern_signal_impact = signal.get("pattern_signal_impact")
+        base_annotations = self._build_annotations(
+            entry=entry,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            side=signal.get("action", "BUY"),
+            candle_count=len(chart_data) + len(projected),
+        )
+        pattern_annotations = self.pattern_visualizer.build(
+            chart_patterns,
+            candle_count=len(chart_data) + len(projected),
+            original_candle_count=signal.get("source_candle_count") or signal.get("market_context", {}).get("mtf_candle_count") or 200,
+        )
         return SignalCard(
             signal_id=stable_id,
             symbol=signal["symbol"],
@@ -274,18 +294,15 @@ class SignalHubService:
             progressToTP=progress_tp,
             progressToSL=progress_sl,
             chartData=chart_data,
-            annotations=self._build_annotations(
-                entry=entry,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                side=signal.get("action", "BUY"),
-                candle_count=len(chart_data) + len(projected),
-            ),
+            annotations=base_annotations + pattern_annotations,
             zones=zones,
             levels=levels,
             liquidityAreas=liquidity,
             projectedCandles=projected,
             relatedNews=related_news,
+            chartPatterns=chart_patterns,
+            patternSummary=pattern_summary,
+            patternSignalImpact=pattern_signal_impact,
             updated_at_utc=signal_time,
         )
 

@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from backend.data_provider import DataProvider
 from backend.feature_builder import FeatureBuilder
+from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
@@ -22,6 +23,7 @@ class SignalEngine:
     def __init__(self) -> None:
         self.data_provider = DataProvider()
         self.feature_builder = FeatureBuilder()
+        self.pattern_detector = PatternDetector()
         self.risk_engine = RiskEngine()
 
     async def generate_live_signals(self, pairs: list[str], timeframes: list[str] | None = None) -> list[dict]:
@@ -78,8 +80,17 @@ class SignalEngine:
         mtf_features: dict,
         ltf_features: dict,
     ) -> dict:
+        mtf_patterns = mtf_features.get("chart_patterns", [])
+        mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
         if mtf_features["status"] != "ready" or htf["data_status"] != "real" or ltf["data_status"] != "real":
-            return self._no_trade(symbol, timeframe, mtf, "Недостаточно подтверждённых данных yfinance для MTF-сценария.")
+            return self._no_trade(
+                symbol,
+                timeframe,
+                mtf,
+                "Недостаточно подтверждённых данных yfinance для MTF-сценария.",
+                mtf_patterns,
+                mtf_pattern_summary,
+            )
 
         trend_conflict = htf_features["trend"] != mtf_features["trend"]
         confluence = [
@@ -89,9 +100,17 @@ class SignalEngine:
             bool(ltf_features["pattern"]),
         ]
         if sum(1 for c in confluence if c) < 3:
-            return self._no_trade(symbol, timeframe, mtf, "Слабый confluence структуры: сетап отклонён.")
+            return self._no_trade(
+                symbol,
+                timeframe,
+                mtf,
+                "Слабый confluence структуры: сетап отклонён.",
+                mtf_patterns,
+                mtf_pattern_summary,
+            )
 
         action = "BUY" if mtf_features["trend"] == "up" else "SELL"
+        pattern_impact = self.pattern_detector.signal_impact(action=action, summary=mtf_pattern_summary)
         price = mtf["close"]
         atr_percent = max(mtf_features.get("atr_percent", 0.2), 0.2)
         stop_distance = price * (atr_percent / 100) * 0.8
@@ -108,7 +127,8 @@ class SignalEngine:
             confidence += 7
         if ltf_features["pattern"] == "engulfing":
             confidence += 4
-        confidence = min(confidence, 90)
+        confidence += int(pattern_impact.get("confidenceDelta", 0) or 0)
+        confidence = max(45, min(confidence, 92))
 
         risk = self.risk_engine.validate(
             rr=rr,
@@ -118,10 +138,19 @@ class SignalEngine:
         )
 
         if not risk["allowed"]:
-            return self._no_trade(symbol, timeframe, mtf, risk["reason_ru"])
+            return self._no_trade(
+                symbol,
+                timeframe,
+                mtf,
+                risk["reason_ru"],
+                mtf_patterns,
+                mtf_pattern_summary,
+                pattern_impact,
+            )
 
         progress = self._build_progress(action, price, price, stop, take)
         signal_time = datetime.now(timezone.utc).isoformat()
+        pattern_summary_ru = mtf_pattern_summary.get("patternSummaryRu") or "Явные графические паттерны не обнаружены"
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -139,13 +168,21 @@ class SignalEngine:
             "lifecycle_state": "active",
             "description_ru": (
                 f"{symbol}: {action} по структуре HTF {htf['timeframe']} → MTF {mtf['timeframe']} → LTF {ltf['timeframe']}, "
-                f"ATR {round(mtf_features.get('atr_percent', 0.0), 2)}% и подтверждённому импульсу {ltf_features['pattern']}."
+                f"ATR {round(mtf_features.get('atr_percent', 0.0), 2)}% и подтверждённому импульсу {ltf_features['pattern']}. "
+                f"Паттерны: {pattern_summary_ru}"
             ),
-            "reason_ru": "Есть структурное подтверждение, риск-фильтр пройден, конфликт HTF отсутствует.",
+            "reason_ru": (
+                "Есть структурное подтверждение, риск-фильтр пройден. "
+                f"Паттерн-модуль: {pattern_impact.get('patternAlignmentLabelRu', 'нейтрально')}."
+            ),
             "invalidation_ru": "Сценарий отменяется при пробое уровня Stop Loss и сломе структуры.",
             "progress": progress,
             "data_status": mtf["data_status"],
             "created_at_utc": signal_time,
+            "chart_patterns": mtf_patterns,
+            "pattern_summary": mtf_pattern_summary,
+            "pattern_signal_impact": pattern_impact,
+            "source_candle_count": len(mtf.get("candles", [])),
             "market_context": {
                 "htf_trend": htf_features["trend"],
                 "mtf_trend": mtf_features["trend"],
@@ -154,12 +191,28 @@ class SignalEngine:
                 "source": mtf["source"],
                 "message": mtf["message"],
                 "current_price": round(price, 6),
+                "mtf_candle_count": len(mtf.get("candles", [])),
                 "signal_origin": "backend.signal_engine",
+                "patternSummaryRu": pattern_summary_ru,
+                "patternScore": mtf_pattern_summary.get("patternScore", 0.0),
+                "patternBias": mtf_pattern_summary.get("patternBias", "neutral"),
+                "patternAlignment": pattern_impact.get("patternAlignmentWithSignal", "neutral"),
             },
         }
 
-    def _no_trade(self, symbol: str, timeframe: str, snapshot: dict, reason: str) -> dict:
+    def _no_trade(
+        self,
+        symbol: str,
+        timeframe: str,
+        snapshot: dict,
+        reason: str,
+        chart_patterns: list[dict] | None = None,
+        pattern_summary: dict | None = None,
+        pattern_impact: dict | None = None,
+    ) -> dict:
         signal_time = datetime.now(timezone.utc).isoformat()
+        summary = pattern_summary or self.pattern_detector.detect([])["summary"]
+        impact = pattern_impact or self.pattern_detector.signal_impact(action="NO_TRADE", summary=summary)
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -188,11 +241,16 @@ class SignalEngine:
             },
             "data_status": snapshot.get("data_status", "unavailable"),
             "created_at_utc": signal_time,
+            "chart_patterns": chart_patterns or [],
+            "pattern_summary": summary,
+            "pattern_signal_impact": impact,
+            "source_candle_count": len(snapshot.get("candles", [])),
             "market_context": {
                 "source": snapshot.get("source"),
                 "message": snapshot.get("message"),
                 "proxy_metrics": snapshot.get("proxy_metrics", []),
                 "signal_origin": "backend.signal_engine",
+                "patternSummaryRu": summary.get("patternSummaryRu", "Явные графические паттерны не обнаружены"),
             },
         }
 

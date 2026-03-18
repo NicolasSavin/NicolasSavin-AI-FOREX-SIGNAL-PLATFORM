@@ -1,6 +1,13 @@
-# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.6
+# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.7
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
+
+## Что обновлено в версии 3.7
+- Добавлен отдельный модуль графических паттернов: `backend/pattern_detector.py` и `backend/pattern_visualization.py`.
+- Паттерны (`Double Top/Bottom`, `Head and Shoulders`, `Inverse Head and Shoulders`, `Triangle`, `Wedge`, `Flag`) теперь определяются по OHLCV-свечам как дополнительный подтверждающий фактор, а не как замена текущего signal scoring.
+- Контракты сигналов и analytics расширены полями `chartPatterns`, `patternSummary`, `patternSignalImpact`, а в analytics feature layer добавлен `patternFeatures` и отдельная pattern-компонента composite score.
+- На главной странице в detail-view сигнала появился блок «Графические паттерны», а chart annotations научились рисовать линии, точки, breakout, target и invalidation уровни паттернов.
+- Добавлены минимальные тесты detector/API для пустых данных, коротких массивов, пустого результата и mock-сценариев с распознаванием паттернов.
 
 ## Что обновлено в версии 3.6
 - Главная страница переработана в dashboard с двумя секциями: `Актуальные сигналы` и `Архив сигналов`.
@@ -68,7 +75,7 @@
 
 ### Analytics API
 - `GET /api/analytics/capabilities` — показывает, какие наборы данных уже работают и какие пока заглушки
-- `GET /api/analytics/signals/{symbol}` — отдаёт нормализованный analytics bundle, вычисленные признаки, fundamental score и composite signal score
+- `GET /api/analytics/signals/{symbol}` — отдаёт нормализованный analytics bundle, вычисленные признаки, данные по графическим паттернам, fundamental score и composite signal score
 
 ## Контракты данных
 ### Расширенная модель сигнала
@@ -97,6 +104,9 @@
 - `liquidityAreas`
 - `projectedCandles`
 - `relatedNews`
+- `chartPatterns`
+- `patternSummary`
+- `patternSignalImpact`
 - `createdAt/created_at_utc`
 - `updatedAt/updated_at_utc`
 
@@ -208,6 +218,7 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 - `IV skew`
 - `news impact score`
 - `macro event impact score`
+- `pattern score` + `patternFeatures`
 
 ### Что уже реально работает
 - RSS news feed connector через открытые источники, без синтетических новостей.
