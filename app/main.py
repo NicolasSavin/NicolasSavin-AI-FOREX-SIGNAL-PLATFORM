@@ -4,14 +4,25 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.schemas.contracts import CalendarResponse, HealthResponse, HeatmapResponse, MarketIdeasResponse, MarketNewsResponse, SignalCard, SignalsLiveResponse
+from app.schemas.contracts import (
+    CalendarResponse,
+    HealthResponse,
+    HeatmapResponse,
+    MarketIdeasResponse,
+    MarketNewsResponse,
+    Mt4BridgeResponse,
+    SignalCard,
+    SignalsLiveResponse,
+)
+from app.services.mt4_bridge import Mt4BridgeService
 from backend.portfolio_engine import PortfolioEngine
 from backend.signal_engine import SignalEngine
 
-app = FastAPI(title="AI Forex Signal Platform", version="3.2.0")
+app = FastAPI(title="AI Forex Signal Platform", version="3.3.0")
 
 signal_engine = SignalEngine()
 portfolio_engine = PortfolioEngine()
+mt4_bridge_service = Mt4BridgeService()
 DEFAULT_PAIRS = ["EURUSD", "GBPUSD", "USDJPY"]
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -45,14 +56,14 @@ async def news_page() -> FileResponse:
 @app.get("/health", response_model=HealthResponse)
 @app.get("/api/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok", version="3.2.0")
+    return HealthResponse(status="ok", version="3.3.0")
 
 
 @app.get("/signals/live", response_model=SignalsLiveResponse)
 async def signals_live() -> SignalsLiveResponse:
     signals = await signal_engine.generate_live_signals(DEFAULT_PAIRS)
     ticker = [
-        f"{item['symbol']} {item['action']} {item['status']} | Уверенность: {item['confidence_percent']}%"
+        f"{item['symbol']} {item['action']} {item['status']} | Вероятность: {item['probability_percent']}%"
         if item["action"] != "NO_TRADE"
         else f"{item['symbol']} NO TRADE: {item['reason_ru']}"
         for item in signals
@@ -62,6 +73,12 @@ async def signals_live() -> SignalsLiveResponse:
         updated_at_utc=datetime.now(timezone.utc),
         signals=[SignalCard(**item) for item in signals],
     )
+
+
+@app.get("/api/mt4/signals", response_model=Mt4BridgeResponse)
+async def mt4_signals() -> Mt4BridgeResponse:
+    live_response = await signals_live()
+    return mt4_bridge_service.build_payload(live_response.signals)
 
 
 @app.get("/ideas/market", response_model=MarketIdeasResponse)
