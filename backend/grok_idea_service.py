@@ -8,7 +8,7 @@ from urllib import error, request
 
 class GrokIdeaService:
     def __init__(self) -> None:
-        self.api_key = os.getenv("XAI_API_KEY", "").strip()
+      self.api_key = "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"
         self.model = os.getenv("XAI_MODEL", "grok-3-mini").strip()
         self.api_url = os.getenv(
             "XAI_API_URL",
