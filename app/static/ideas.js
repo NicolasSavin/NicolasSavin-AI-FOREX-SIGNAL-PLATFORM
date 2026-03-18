@@ -64,7 +64,7 @@ function createPolyline(path, width, height) {
   return points.join(" ");
 }
 
-function renderChart(chart, title) {
+function renderSvgChart(chart, title) {
   const width = 760;
   const height = 460;
   const zones = chart?.zones || [];
@@ -146,17 +146,6 @@ function renderChart(chart, title) {
               <feMergeNode in="SourceGraphic"></feMergeNode>
             </feMerge>
           </filter>
-
-          <marker
-            id="arrowHead"
-            markerWidth="16"
-            markerHeight="16"
-            refX="8"
-            refY="8"
-            orient="auto"
-          >
-            <path d="M2,2 L14,8 L2,14 Z" fill="currentColor"></path>
-          </marker>
         </defs>
 
         <g class="chart-grid">
@@ -207,10 +196,38 @@ function renderChart(chart, title) {
   `;
 }
 
+function renderChartBlock(idea) {
+  const title = idea.instrument || "MARKET";
+  const chartImage = idea.chart_image;
+
+  if (chartImage) {
+    return `
+      <div class="idea-chart-card image-chart-card">
+        <div class="idea-chart-header">
+          <div class="idea-chart-title">${escapeHtml(title)}</div>
+          <div class="idea-chart-bias">generated chart</div>
+        </div>
+
+        <img
+          class="idea-chart-image"
+          src="${escapeHtml(chartImage)}"
+          alt="${escapeHtml(title)}"
+        />
+
+        <div class="idea-chart-footer">
+          На картинке показан сгенерированный сценарий по инструменту с ключевыми
+          зонами, уровнями ликвидности и направлением основной идеи.
+        </div>
+      </div>
+    `;
+  }
+
+  return renderSvgChart(idea.chart || {}, title);
+}
+
 function renderIdeaCard(idea) {
   const analysis = idea.analysis || {};
   const tradePlan = idea.trade_plan || {};
-  const chart = idea.chart || {};
 
   return `
     <article class="idea-card">
@@ -275,7 +292,7 @@ function renderIdeaCard(idea) {
         </div>
 
         <div class="idea-chart-column">
-          ${renderChart(chart, idea.instrument || "MARKET")}
+          ${renderChartBlock(idea)}
         </div>
       </div>
     </article>
