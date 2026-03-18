@@ -1,17 +1,13 @@
-# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.3
+# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.4
 
-Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и API для live-сигналов на основе реальных данных yfinance.
+Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
-## Что обновлено в версии 3.3
-- Главная страница теперь сфокусирована только на блоке сигналов, без встроенных секций ideas/news/calendar/heatmap.
-- Страницы `/ideas`, `/news`, `/calendar` и `/heatmap/page` сохранены и продолжают работать через существующие маршруты.
-- Карточка сигнала расширена: инструмент, направление, entry, stop loss, take profit, время сигнала, статус, lifecycle (`active/open/closed`), уникальное описание, вероятность и прогресс к TP/SL.
-- На frontend добавлено звуковое уведомление о новом сигнале через Web Audio API.
-- На backend добавлен read-only контракт `GET /api/mt4/signals` для будущей интеграции сигналов в советник MT4 без выполнения сделок на стороне сервера.
-
-## Stage 1 (Audit)
-- Проверена структура репозитория и текущие маршруты.
-- Зафиксированы основные API-контракты для frontend/backend.
+## Что обновлено в версии 3.4
+- Главная страница оставляет только поток сигналов и news banner; страницы `/ideas`, `/news`, `/calendar` и `/heatmap/page` сохранены и продолжают работать через прежние маршруты.
+- Карточка сигнала расширена и теперь показывает инструмент, дату/время выхода сигнала, направление BUY/SELL, точку входа, Stop Loss, Take Profit, время сигнала, статус, состояние (`active/open/closed`), уникальное описание, вероятность и прогресс до TP/SL.
+- На frontend добавлены анимированная шкала вероятности, крупный график сигнала, уровни, зоны liquidity/order block, projected candles и блок важных новостей по инструменту.
+- Добавлены отдельные звуки для нового сигнала и нового news alert с защитой от дублей и повторов при ререндере.
+- Backend расширен типизированными моделями сигналов и новостей, ручным ingest слоем, fallback/mock-слоем и MT4 export endpoint без реализации самого советника.
 
 ## Backend modules
 Основные backend-модули:
@@ -20,21 +16,99 @@
 - `backend/signal_engine.py`
 - `backend/risk_engine.py`
 - `backend/portfolio_engine.py`
+- `backend/news_provider.py`
+- `app/services/signal_hub.py`
+- `app/services/news_service.py`
 - `app/services/mt4_bridge.py`
 
 ## API
-Основные маршруты:
+### Базовые маршруты
 - `GET /health`
+- `GET /api/health`
 - `GET /signals/live`
 - `GET /ideas/market`
 - `GET /news/market`
 - `GET /calendar/events`
 - `GET /heatmap`
-- `GET /api/mt4/signals` — read-only JSON-контракт для будущего polling из MT4/EA
 
-Legacy:
-- `GET /api/health`
-- `GET /api/signals/{symbol}`
+### Новый API сигналов
+- `GET /api/signals`
+- `GET /api/signals/active`
+- `GET /api/signals/{id}` — поддерживает и lookup по `signal_id`, и обратную совместимость для symbol lookup
+- `GET /api/signals/{id}/news`
+- `POST /api/signals`
+- `PATCH /api/signals/{id}/status`
+- `GET /api/signals/lookup/{symbol}`
+- `GET /api/legacy/signals/{symbol}`
+
+### Новый API новостей
+- `GET /api/news`
+- `GET /api/news/relevant`
+- `GET /api/news/{id}`
+- `POST /api/news/webhook`
+- `POST /api/news/ingest`
+
+### Подготовка к MT4
+- `GET /api/mt4/signals` — read-only polling контракт для будущего советника
+- `POST /api/mt4/export` — подготовка export payload для MT4/bridge слоя
+
+## Контракты данных
+### Расширенная модель сигнала
+Сигнал теперь поддерживает:
+- `id/signal_id`
+- `instrument/symbol`
+- `signalDateTime`
+- `side/action`
+- `entry`
+- `stopLoss/stop_loss`
+- `takeProfit/take_profit`
+- `signalTime`
+- `status`
+- `state`
+- `description`
+- `probability`
+- `progressToTP`
+- `progressToSL`
+- `chartData`
+- `zones`
+- `levels`
+- `liquidityAreas`
+- `projectedCandles`
+- `relatedNews`
+- `createdAt/created_at_utc`
+- `updatedAt/updated_at_utc`
+
+### Модель news alert
+Новость нормализуется в контракт с полями:
+- `id`
+- `title`
+- `description`
+- `instrument`
+- `relatedInstruments`
+- `currency`
+- `impact`
+- `eventTime`
+- `publishedAt/published_at`
+- `status`
+- `source`
+- `isRelevantToSignal`
+- `relatedSignalIds`
+- `soundPlayed`
+- `createdAt`
+- `updatedAt`
+
+## Архитектура данных
+Система подготовлена для следующих источников:
+- mock data / fallback слой;
+- REST API;
+- WebSocket в будущем;
+- внешний новостной сервис;
+- экономический календарь.
+
+Если внешние данные недоступны, платформа:
+- не выдумывает рыночные котировки;
+- честно отмечает `data_status=unavailable`;
+- использует безопасные fallback/mock структуры только для UI-представления графика, projected candles и прогресса.
 
 ## Запуск
 ```bash
@@ -51,28 +125,22 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
+## Новости рынка
+- Раздел `/news` продолжает работать как отдельная страница.
+- На главной появился news banner с релевантными событиями средней и высокой важности.
+- В карточке сигнала отображается блок «Внимание: важная новость», если событие связано с инструментом.
+- Поддерживаются открытые RSS-источники и ручной ingest через API.
+- Один и тот же news alert не должен проигрывать звук повторно после ререндера.
+
 ## MT4 bridge contract
-Эндпоинт `GET /api/mt4/signals` подготавливает инфраструктуру для будущего советника MT4:
-- сервер отдаёт только read-only сигнал-фид;
-- в контракте есть `schema_version`, `poll_interval_seconds`, `bridge_status` и массив `signals`;
-- каждый сигнал содержит `symbol`, `side`, `entry`, `stop_loss`, `take_profit`, `probability_percent`, `signal_time_utc` и `expires_at_utc`;
+Эндпоинты `GET /api/mt4/signals` и `POST /api/mt4/export` подготавливают инфраструктуру для будущего советника MT4:
+- сервер отдаёт read-only сигнал-фид;
+- export payload сохраняется как очередь для bridge-слоя;
+- в контракте есть `magicNumber`, `riskPercent`, `brokerSymbol`, `timeframe`, `comment`;
 - выполнение ордеров на стороне MT4 пока **не реализовано**.
 
-## Новости рынка
-- Раздел `/news` теперь работает как отдельная интеллектуальная лента для трейдера: новости показываются только на странице News и не выводятся на главной.
-- Backend забирает новости из открытых источников и официальных публикаций: `FXStreet RSS`, `Investing.com RSS`, `ECB RSS` и `Federal Reserve RSS`.
-- Каждая новость нормализуется в единый JSON-контракт: оригинальный заголовок, русский заголовок, краткий пересказ, блоки «Что произошло», «Почему это важно», «Влияние на рынок», категория, важность, связанные активы, источник, время публикации и связь с активным сигналом.
-- Лента удаляет дубли по URL, заголовку и похожему смыслу, сохраняет кэш/снимок в `signals_data/market_news.json` и поднимает новые новости наверх.
-- Источники можно переопределить через переменную окружения `NEWS_FEED_URLS` в формате `Имя|URL,Имя|URL`.
-- Дополнительные параметры:
-  - `NEWS_MAX_ITEMS` — сколько новостей отдавать (по умолчанию `12`)
-  - `NEWS_CACHE_TTL_SECONDS` — TTL кэша в памяти (по умолчанию `300`, диапазон `300–900` секунд)
-  - `NEWS_REQUEST_TIMEOUT_SECONDS` — таймаут запросов к RSS (по умолчанию `10`)
-- Frontend страницы News обновляет ленту без перезагрузки страницы каждые 5 минут.
-- Если источники временно недоступны, API честно возвращает fallback-статус и не выдумывает новости.
-
 ## Принципы данных
-- Сигналы строятся на реальных OHLCV-данных из yfinance (D1/H1/M15).
+- Сигналы строятся на реальных OHLCV-данных из yfinance там, где они доступны.
 - Система не выдумывает недоступные рыночные данные.
-- При нехватке данных возвращается `NO_TRADE`.
+- При нехватке данных возвращается fallback/mock UI-слой с честной маркировкой.
 - Proxy-метрики явно маркируются `label=proxy`.

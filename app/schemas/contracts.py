@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any, Literal, Optional
 
@@ -34,6 +36,50 @@ class ProgressState(BaseModel):
     progress_percent: Optional[float] = None
     zone: Literal["tp", "sl", "neutral", "waiting"] = "waiting"
     label_ru: str
+    is_fallback: bool = False
+
+
+class ChartPoint(BaseModel):
+    time_label: str
+    price: float
+    kind: Literal["history", "projection"] = "history"
+
+
+class SignalLevel(BaseModel):
+    label: str
+    value: float
+    type: Literal["entry", "stop_loss", "take_profit", "support", "resistance", "custom"] = "custom"
+    description_ru: str
+
+
+class PriceZone(BaseModel):
+    label: str
+    from_price: float
+    to_price: float
+    zone_type: Literal["order_block", "liquidity", "premium", "discount", "custom"] = "custom"
+    description_ru: str
+
+
+class ProjectedCandle(BaseModel):
+    time_label: str
+    open: float
+    high: float
+    low: float
+    close: float
+    is_mock: bool = False
+
+
+class RelatedNewsItem(BaseModel):
+    id: str
+    title: str
+    description: str
+    instrument: str
+    impact: Literal["low", "medium", "high"]
+    impact_ru: str
+    event_time: Optional[datetime] = None
+    status: Literal["ожидается", "вышла", "завершена"]
+    source: Optional[str] = None
+    is_relevant_to_signal: bool = True
 
 
 class SignalCard(BaseModel):
@@ -66,12 +112,76 @@ class SignalCard(BaseModel):
     data_status: Literal["real", "unavailable"]
     created_at_utc: datetime
     market_context: dict[str, Any]
+    signal_datetime: datetime = Field(alias="signalDateTime")
+    signal_time_label: str = Field(alias="signalTime")
+    state: Literal["active", "open", "closed"]
+    probability: int
+    progress_to_tp: float = Field(alias="progressToTP")
+    progress_to_sl: float = Field(alias="progressToSL")
+    chart_data: list[ChartPoint] = Field(default_factory=list, alias="chartData")
+    zones: list[PriceZone] = Field(default_factory=list)
+    levels: list[SignalLevel] = Field(default_factory=list)
+    liquidity_areas: list[PriceZone] = Field(default_factory=list, alias="liquidityAreas")
+    projected_candles: list[ProjectedCandle] = Field(default_factory=list, alias="projectedCandles")
+    related_news: list[RelatedNewsItem] = Field(default_factory=list, alias="relatedNews")
+    updated_at_utc: datetime
+
+    model_config = {"populate_by_name": True}
 
 
 class SignalsLiveResponse(BaseModel):
     ticker: list[str]
     updated_at_utc: datetime
     signals: list[SignalCard]
+
+
+class SignalRecordResponse(BaseModel):
+    updated_at_utc: datetime
+    signals: list[SignalCard]
+
+
+class SignalStatusPatchRequest(BaseModel):
+    status: Literal[
+        "актуален",
+        "в работе",
+        "достиг TP1",
+        "достиг TP2",
+        "закрыт по TP",
+        "закрыт по SL",
+        "неактуален",
+    ]
+    state: Literal["active", "open", "closed"]
+
+
+class SignalCreateRequest(BaseModel):
+    instrument: str
+    side: Literal["BUY", "SELL"]
+    entry: float
+    stopLoss: float
+    takeProfit: float
+    timeframe: Literal["M15", "M30", "H1", "H4", "D1", "W1"] = "H1"
+    signalDateTime: Optional[datetime] = None
+    signalTime: Optional[str] = None
+    status: Literal[
+        "актуален",
+        "в работе",
+        "достиг TP1",
+        "достиг TP2",
+        "закрыт по TP",
+        "закрыт по SL",
+        "неактуален",
+    ] = "актуален"
+    state: Literal["active", "open", "closed"] = "active"
+    description: str = Field(min_length=6)
+    probability: Optional[int] = None
+    progressToTP: Optional[float] = None
+    progressToSL: Optional[float] = None
+    chartData: list[ChartPoint] = Field(default_factory=list)
+    zones: list[PriceZone] = Field(default_factory=list)
+    levels: list[SignalLevel] = Field(default_factory=list)
+    liquidityAreas: list[PriceZone] = Field(default_factory=list)
+    projectedCandles: list[ProjectedCandle] = Field(default_factory=list)
+    relatedNews: list[str] = Field(default_factory=list)
 
 
 class Mt4BridgeSignal(BaseModel):
@@ -97,6 +207,30 @@ class Mt4BridgeResponse(BaseModel):
     bridge_status: Literal["ready", "degraded"]
     account_mode: Literal["read_only"]
     signals: list[Mt4BridgeSignal]
+    message_ru: str
+
+
+class Mt4ExportRequest(BaseModel):
+    id: str
+    instrument: str
+    side: Literal["BUY", "SELL"]
+    entry: float
+    stopLoss: float
+    takeProfit: float
+    probability: int
+    signalTime: str
+    magicNumber: int
+    riskPercent: float
+    timeframe: str
+    comment: str
+    brokerSymbol: str
+
+
+class Mt4ExportResponse(BaseModel):
+    export_id: str
+    created_at_utc: datetime
+    status: Literal["queued"]
+    payload: dict[str, Any]
     message_ru: str
 
 
@@ -129,11 +263,38 @@ class NewsItemResponse(BaseModel):
     source_url: Optional[str] = None
     published_at: Optional[datetime] = None
     signal_relation: NewsSignalRelation
+    instrument: str = "MARKET"
+    relatedInstruments: list[str] = Field(default_factory=list)
+    currency: Optional[str] = None
+    impact: Literal["low", "medium", "high"]
+    eventTime: Optional[datetime] = None
+    status: Literal["ожидается", "вышла", "завершена"]
+    isRelevantToSignal: bool = False
+    relatedSignalIds: list[str] = Field(default_factory=list)
+    soundPlayed: bool = False
+    createdAt: datetime
+    updatedAt: datetime
+
+    model_config = {"populate_by_name": True}
 
 
-class MarketNewsResponse(BaseModel):
+class NewsListResponse(BaseModel):
     updated_at_utc: datetime
     news: list[NewsItemResponse]
+
+
+class NewsIngestRequest(BaseModel):
+    title: str
+    description: str
+    instrument: str
+    relatedInstruments: list[str] = Field(default_factory=list)
+    currency: Optional[str] = None
+    impact: Literal["low", "medium", "high"] = "medium"
+    eventTime: Optional[datetime] = None
+    publishedAt: Optional[datetime] = None
+    status: Optional[Literal["ожидается", "вышла", "завершена"]] = None
+    source: str = "manual"
+    relatedSignalIds: list[str] = Field(default_factory=list)
 
 
 class CalendarResponse(BaseModel):
