@@ -66,88 +66,6 @@ STOPWORDS = {
     "today",
 }
 
-TRANSLATIONS = {
-    "federal reserve": "ФРС",
-    "fed": "ФРС",
-    "ecb": "ЕЦБ",
-    "bank of england": "Банк Англии",
-    "boe": "Банк Англии",
-    "bank of japan": "Банк Японии",
-    "boj": "Банк Японии",
-    "interest rates": "процентные ставки",
-    "interest rate": "процентная ставка",
-    "rate cut": "снижение ставки",
-    "rate cuts": "снижения ставки",
-    "rate hike": "повышение ставки",
-    "rate hikes": "повышения ставки",
-    "inflation": "инфляция",
-    "cpi": "CPI",
-    "ppi": "PPI",
-    "payrolls": "рынок труда",
-    "nonfarm payrolls": "Nonfarm Payrolls",
-    "jobs": "занятость",
-    "labour market": "рынок труда",
-    "economy": "экономика",
-    "recession": "рецессия",
-    "growth": "рост",
-    "yields": "доходности",
-    "yield": "доходность",
-    "us dollar": "доллар США",
-    "dollar": "доллар",
-    "euro": "евро",
-    "pound": "фунт",
-    "sterling": "фунт",
-    "yen": "иена",
-    "gold": "золото",
-    "silver": "серебро",
-    "oil": "нефть",
-    "crude": "нефть",
-    "bitcoin": "биткоин",
-    "crypto": "крипторынок",
-    "stocks": "акции",
-    "equities": "акции",
-    "shares": "акции",
-    "surges": "резко растёт",
-    "jumps": "резко растёт",
-    "rises": "растёт",
-    "falls": "снижается",
-    "drops": "снижается",
-    "slips": "снижается",
-    "holds": "сохраняет",
-    "keeps": "сохраняет",
-    "signals": "сигнализирует",
-    "warns": "предупреждает",
-    "expects": "ожидает",
-    "unexpectedly": "неожиданно",
-    "stronger": "сильнее",
-    "weaker": "слабее",
-    "higher": "выше",
-    "lower": "ниже",
-    "set to": "готовится",
-    "amid": "на фоне",
-    "soft": "слабой",
-    "uncertainty": "неопределённости",
-    "global": "глобальной",
-    "keep": "сохраняет",
-    "open": "открытыми",
-    "risks": "рисков",
-    "rangebound": "в боковом диапазоне",
-    "trade": "торги",
-    "persists": "сохраняются",
-    "losses": "потери",
-    "near": "около",
-    "supply": "предложения",
-    "concerns": "опасения",
-    "ease": "ослабевают",
-    "holds": "держится",
-    "hold": "сохраняет",
-    "options": "опционы",
-    "conflict": "конфликта",
-    "policy": "политику",
-    "markets": "рынки",
-    "market": "рынок",
-}
-
 ASSET_RULES = {
     "EURUSD": {"eurusd", "eur", "euro", "ecb", "eurozone"},
     "GBPUSD": {"gbpusd", "gbp", "sterling", "boe", "bank of england", "uk"},
@@ -281,25 +199,6 @@ class NewsIntelligenceService:
         if any(word in content for word in {"dollar", "eur", "gbp", "jpy", "gold", "oil", "bitcoin", "nasdaq", "s&p"}):
             return "medium"
         return "low"
-
-    def _translate_title(self, title: str, category: str, assets: list[str], content: str) -> str:
-        text = " ".join(title.split())
-        lowered = text.lower()
-        for source_suffix in [" - reuters", " - fxstreet", " - forexlive", " - investing.com", " - financial times"]:
-            if lowered.endswith(source_suffix):
-                text = text[: -len(source_suffix)]
-                lowered = text.lower()
-        for original, translated in sorted(TRANSLATIONS.items(), key=lambda item: len(item[0]), reverse=True):
-            text = re.sub(rf"\b{re.escape(original)}\b", translated, text, flags=re.IGNORECASE)
-        text = re.sub(r"\s+", " ", text).strip(" -–—")
-        text = text.replace("USD/CAD", "USD/CAD").replace("EUR/USD", "EURUSD").replace("GBP/USD", "GBPUSD").replace("USD/JPY", "USDJPY")
-        text = re.sub(r"\s+", " ", text).strip()
-        if text and text[0].islower():
-            text = text[0].upper() + text[1:]
-        latin_words = re.findall(r"[A-Za-z]{4,}", text)
-        if latin_words and len(latin_words) >= 2:
-            return self._fallback_title_ru(category, assets, content)
-        return text or self._fallback_title_ru(category, assets, content)
 
 
 

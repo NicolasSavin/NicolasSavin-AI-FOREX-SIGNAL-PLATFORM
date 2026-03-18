@@ -228,7 +228,7 @@ function buildFilterButtons(items, activeValue, onClick) {
 
 function renderNewsFilters(rows) {
   const categories = ['all', ...new Set(rows.map((row) => row.category).filter(Boolean))];
-  const categoryLabels = { all: 'Все', Forex: 'Forex', Gold: 'Gold', Crypto: 'Crypto', Macro: 'Macro', 'Central Banks': 'Central Banks', Commodities: 'Commodities', Indices: 'Indices' };
+  const categoryLabels = { all: 'Все', Forex: 'Форекс', Gold: 'Золото', Crypto: 'Крипто', Macro: 'Макро', 'Central Banks': 'Центробанки', Commodities: 'Сырьё', Indices: 'Индексы' };
   const importanceItems = [
     { value: 'all', label: 'Все' },
     { value: 'high', label: 'Высокая' },
