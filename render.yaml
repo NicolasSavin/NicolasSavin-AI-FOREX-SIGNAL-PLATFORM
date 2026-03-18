@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: ai-forex-signal-platform
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
