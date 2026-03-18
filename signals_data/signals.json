@@ -1,73 +1,109 @@
 {
-  "updated_at_utc": "2026-03-18T07:35:51.085216+00:00",
+  "updated_at_utc": "2026-03-18T08:44:54.837122+00:00",
   "signals": [
     {
-      "signal_id": "sig-c86a3703bf",
+      "signal_id": "sig-944a148690",
       "symbol": "EURUSD",
       "timeframe": "H1",
       "action": "NO_TRADE",
       "entry": null,
       "stop_loss": null,
       "take_profit": null,
+      "signal_time_utc": "2026-03-18T08:44:53.751345+00:00",
       "risk_reward": null,
       "distance_to_target_percent": null,
+      "probability_percent": 65,
       "confidence_percent": 65,
       "status": "неактуален",
-      "description_ru": "NO TRADE: сигнал не опубликован.",
+      "lifecycle_state": "closed",
+      "description_ru": "NO TRADE: сигнал не опубликован до появления подтверждённого сетапа.",
       "reason_ru": "Конфликт со старшим таймфреймом",
       "invalidation_ru": "Ожидать новый валидный сетап.",
+      "progress": {
+        "current_price": 1.1530035734176636,
+        "to_take_profit_percent": null,
+        "to_stop_loss_percent": null,
+        "progress_percent": null,
+        "zone": "waiting",
+        "label_ru": "Ожидание нового сетапа"
+      },
       "data_status": "real",
-      "created_at_utc": "2026-03-18T07:35:50.437402+00:00",
+      "created_at_utc": "2026-03-18T08:44:53.751345+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
-        "proxy_metrics": []
+        "proxy_metrics": [],
+        "signal_origin": "backend.signal_engine"
       }
     },
     {
-      "signal_id": "sig-8066653410",
+      "signal_id": "sig-9385d24e34",
       "symbol": "GBPUSD",
       "timeframe": "H1",
       "action": "NO_TRADE",
       "entry": null,
       "stop_loss": null,
       "take_profit": null,
+      "signal_time_utc": "2026-03-18T08:44:54.264043+00:00",
       "risk_reward": null,
       "distance_to_target_percent": null,
+      "probability_percent": 65,
       "confidence_percent": 65,
       "status": "неактуален",
-      "description_ru": "NO TRADE: сигнал не опубликован.",
+      "lifecycle_state": "closed",
+      "description_ru": "NO TRADE: сигнал не опубликован до появления подтверждённого сетапа.",
       "reason_ru": "Конфликт со старшим таймфреймом",
       "invalidation_ru": "Ожидать новый валидный сетап.",
+      "progress": {
+        "current_price": 1.334587812423706,
+        "to_take_profit_percent": null,
+        "to_stop_loss_percent": null,
+        "progress_percent": null,
+        "zone": "waiting",
+        "label_ru": "Ожидание нового сетапа"
+      },
       "data_status": "real",
-      "created_at_utc": "2026-03-18T07:35:50.763792+00:00",
+      "created_at_utc": "2026-03-18T08:44:54.264043+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
-        "proxy_metrics": []
+        "proxy_metrics": [],
+        "signal_origin": "backend.signal_engine"
       }
     },
     {
-      "signal_id": "sig-17a764f996",
+      "signal_id": "sig-763c85eb98",
       "symbol": "USDJPY",
       "timeframe": "H1",
       "action": "NO_TRADE",
       "entry": null,
       "stop_loss": null,
       "take_profit": null,
+      "signal_time_utc": "2026-03-18T08:44:54.836978+00:00",
       "risk_reward": null,
       "distance_to_target_percent": null,
+      "probability_percent": 65,
       "confidence_percent": 65,
       "status": "неактуален",
-      "description_ru": "NO TRADE: сигнал не опубликован.",
-      "reason_ru": "Слабый confluence структуры: сетап отклонён.",
+      "lifecycle_state": "closed",
+      "description_ru": "NO TRADE: сигнал не опубликован до появления подтверждённого сетапа.",
+      "reason_ru": "Конфликт со старшим таймфреймом",
       "invalidation_ru": "Ожидать новый валидный сетап.",
+      "progress": {
+        "current_price": 158.9669952392578,
+        "to_take_profit_percent": null,
+        "to_stop_loss_percent": null,
+        "progress_percent": null,
+        "zone": "waiting",
+        "label_ru": "Ожидание нового сетапа"
+      },
       "data_status": "real",
-      "created_at_utc": "2026-03-18T07:35:51.085110+00:00",
+      "created_at_utc": "2026-03-18T08:44:54.836978+00:00",
       "market_context": {
         "source": "Yahoo Finance",
         "message": "Реальные данные получены.",
-        "proxy_metrics": []
+        "proxy_metrics": [],
+        "signal_origin": "backend.signal_engine"
       }
     }
   ],

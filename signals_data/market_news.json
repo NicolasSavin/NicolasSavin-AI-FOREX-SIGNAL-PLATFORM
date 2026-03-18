@@ -1,10 +1,53 @@
 {
-  "updated_at_utc": "2026-03-18T07:35:51.085622+00:00",
+  "updated_at_utc": "2026-03-18T08:44:54.837590+00:00",
   "news": [
     {
-      "title": "Новостной канал не подключён",
-      "description_ru": "Нет подтверждённых новостей от источника. Данные не выдумываются.",
-      "impact": "unknown"
+      "title": "What are Unicorn Startups and What They Mean in Investi",
+      "description_ru": "Источник: FOREX.com. Опубликовано: 18.03.2026 08:37 UTC.",
+      "impact": "low",
+      "source": "FOREX.com",
+      "link": "https://news.google.com/rss/articles/CBMieEFVX3lxTE01eURDSHA1YUNEVm5HXzFRSTA5YTRWT3VRaGM0cVhDSUp1NXZKN2R5Qzg1TFFyYXRSY0RWa09iZFBtSG1pVkh3TVowenNIenpyQUk3NXZqN0h6U2RJZlZQX3dwU251b0NXVEJXbmhJZUpBdkk3M09MRg?oc=5",
+      "published_at_utc": "2026-03-18T08:37:12+00:00"
+    },
+    {
+      "title": "Forex Today: Market focus shifts from Middle East to Fed",
+      "description_ru": "Источник: FXStreet. Опубликовано: 18.03.2026 08:03 UTC.",
+      "impact": "high",
+      "source": "FXStreet",
+      "link": "https://news.google.com/rss/articles/CBMinwFBVV95cUxOX19sc3BLallqRzc3dElDQ3lMQm56eDk0TkR5MzRnZnI2QkpaNE5mWjNQWE8tQnhuU1dCazJJTHBJSGhWNTJ3anhSTkhPajRpQmRaSkpyZkFKUExjTjM5ZC1ZbzBHYm83TE9ZemswaWE2Qi1kanc4VXg1a3FMWkUzdmFaMUU0WHFraUF5Wl9lVXNCZTJKUk9TakJ3ekFyUDQ?oc=5",
+      "published_at_utc": "2026-03-18T08:03:01+00:00"
+    },
+    {
+      "title": "GBP/JPY Daily Outlook",
+      "description_ru": "Источник: Action Forex. Опубликовано: 18.03.2026 08:02 UTC.",
+      "impact": "medium",
+      "source": "Action Forex",
+      "link": "https://news.google.com/rss/articles/CBMimwFBVV95cUxOeTdCWm9fM3BBVU9qS0tJUmRnWkNxcm5mcFhaT3YtdzUwS3Y4R29YT1pZbVlJd3N3LV9YTkZoSVJMb2o3eGUwR3dRZDJneXZQWklGTjVmeHpCdGJua0x6Sk9lT0tBQUFEdFBrVFVldVlrWHJMemRmZ0tSRGZCVHJiVHhoUEpocFR6YTJ6RzNETWduUGlvRGxLT3ktRQ?oc=5",
+      "published_at_utc": "2026-03-18T08:02:29+00:00"
+    },
+    {
+      "title": "VT Markets and Newcastle United Clinch Double Wins at Forex Sports Awards 2026",
+      "description_ru": "Источник: Yahoo Finance Singapore. Опубликовано: 18.03.2026 08:00 UTC.",
+      "impact": "medium",
+      "source": "Yahoo Finance Singapore",
+      "link": "https://news.google.com/rss/articles/CBMiiwFBVV95cUxQNk1TR1haMG56Z0c4LVFRQ1B5bzJaQl80Rm4yT0k5cktRRjdPcVdRSThnNVhLTTl3YkJtai1BdThCYWNJVmN6b2drVzVxU2Q1ZmFNNkQ2ZWstbW9pQ1ltZ214U0wtc2g2a1dkcUpfQ3JZZlhkdXlVNzJOY3o2RDEzdGszS3hqdGlYcWlj?oc=5",
+      "published_at_utc": "2026-03-18T08:00:00+00:00"
+    },
+    {
+      "title": "EUR/AUD Daily Outlook",
+      "description_ru": "Источник: Action Forex. Опубликовано: 18.03.2026 07:54 UTC.",
+      "impact": "medium",
+      "source": "Action Forex",
+      "link": "https://news.google.com/rss/articles/CBMimwFBVV95cUxORUQyN0RaRGEzdzhYY0xJZ0xMbFhQc3FvbnJ4dHJEbnJXX0RRa01TQjhSRFY0eXI4OVJTVjF5T1JiOEFhVE9iTERhV1JFdW9QYVh2azhvSlBzUWljRFBBc3luaXVIdHhza1lkbzV6NGxPNkY4d3p3ZERiVEJEbGkxdi1sWkMzME9WUFNiVnpiYTlqaDY3b0V0TDFkdw?oc=5",
+      "published_at_utc": "2026-03-18T07:54:21+00:00"
+    },
+    {
+      "title": "EUR/CHF Daily Outlook",
+      "description_ru": "Источник: Action Forex. Опубликовано: 18.03.2026 07:52 UTC.",
+      "impact": "medium",
+      "source": "Action Forex",
+      "link": "https://news.google.com/rss/articles/CBMimwFBVV95cUxQY1Bja0RlbXNBYlhsLVJRaElCcmJpNnBZemZfemFqTFAySUFKSF9jTDhKWFNBN0w0aHVCa2ZyMGxfWkFFTmJRMTJfMzlITTZ0TXJaWExKOWw4S19IYWtabXRDbUgtaWhxQmxqZU9zZGRlZ0JvUTFoVWhiemItcHF2QTVFa1RkOXBMT3dLdW5DTlA3TUFJVDYyR1hkRQ?oc=5",
+      "published_at_utc": "2026-03-18T07:52:07+00:00"
     }
   ]
 }
