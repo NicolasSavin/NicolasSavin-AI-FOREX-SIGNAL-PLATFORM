@@ -271,6 +271,62 @@ function buildNewsAlert(signal) {
   `;
 }
 
+function buildAnalyticsBlock(signal) {
+  const context = signal.signal_context || {};
+  const score = signal.composite_score || {};
+  const reasons = Array.isArray(signal.reasons) ? signal.reasons : [];
+  const weakening = Array.isArray(signal.weakening_factors) ? signal.weakening_factors : [];
+  const warnings = Array.isArray(signal.risk_warnings) ? signal.risk_warnings : [];
+
+  return `
+    <section class="analytics-grid">
+      <article class="analytics-panel">
+        <div class="metric-card__header">
+          <strong>Multi-timeframe анализ</strong>
+          <span>Основной / подтверждающий / bias / trigger</span>
+        </div>
+        <div class="analytics-mtf">
+          <div><span>ТФ сигнала</span><strong>${escapeHtml(context.timeframe || signal.timeframe || '—')}</strong></div>
+          <div><span>Основной ТФ</span><strong>${escapeHtml(context.primary_timeframe || '—')}</strong></div>
+          <div><span>Подтверждение</span><strong>${escapeHtml(context.confirmation_timeframe || '—')}</strong></div>
+          <div><span>HTF bias</span><strong>${escapeHtml(context.higher_timeframe_bias || 'neutral')}</strong></div>
+          <div><span>LTF trigger</span><strong>${escapeHtml(context.lower_timeframe_trigger || '—')}</strong></div>
+          <div><span>Режим рынка</span><strong>${escapeHtml(context.market_regime || '—')}</strong></div>
+        </div>
+      </article>
+
+      <article class="analytics-panel">
+        <div class="metric-card__header">
+          <strong>Composite score</strong>
+          <span>${signal.fundamental_risk ? 'Есть фундаментальный риск' : 'Без критичного фундаментального риска'}</span>
+        </div>
+        <div class="analytics-scores">
+          <div class="metric-card__row"><span>Технический score</span><strong>${getPercentValue(context.technical_score ?? score.technical_score)}</strong></div>
+          <div class="metric-card__row"><span>Orderflow score</span><strong>${getPercentValue(context.orderflow_score ?? score.orderflow_score)}</strong></div>
+          <div class="metric-card__row"><span>Деривативы score</span><strong>${getPercentValue(context.derivatives_score ?? score.derivatives_score)}</strong></div>
+          <div class="metric-card__row"><span>Фундаментальный score</span><strong>${getPercentValue(context.fundamental_score ?? score.fundamental_score)}</strong></div>
+          <div class="metric-card__row metric-card__row--total"><span>Итоговый score</span><strong>${getPercentValue(context.final_score ?? score.final_score)}</strong></div>
+        </div>
+        <p class="progress-caption">${escapeHtml(signal.news_impact_summary || 'Влияние новостей на сигнал пока нейтрально или ограничено fallback-слоем.')}</p>
+      </article>
+    </section>
+    <section class="analytics-reasons">
+      <article class="analytics-panel">
+        <h4>Факторы усиления</h4>
+        <ul>${(score.strengths || reasons).map((item) => `<li>${escapeHtml(item)}</li>`).join('') || '<li>Нет явных усиливающих факторов.</li>'}</ul>
+      </article>
+      <article class="analytics-panel">
+        <h4>Факторы ослабления</h4>
+        <ul>${(weakening.length ? weakening : (score.weaknesses || [])).map((item) => `<li>${escapeHtml(item)}</li>`).join('') || '<li>Критичных ослабляющих факторов не выявлено.</li>'}</ul>
+      </article>
+      <article class="analytics-panel">
+        <h4>Риски и предупреждения</h4>
+        <ul>${(warnings.length ? warnings : ['Критичных фундаментальных предупреждений нет.']).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      </article>
+    </section>
+  `;
+}
+
 function buildSignalCard(signal) {
   const card = document.createElement('article');
   card.className = `signal-card signal-card--${signal.action}`;
@@ -304,6 +360,7 @@ function buildSignalCard(signal) {
 
     ${buildProbabilityBlock(signal)}
     ${buildProgressBlock(signal)}
+    ${buildAnalyticsBlock(signal)}
 
     <section class="signal-chart">
       <div class="metric-card__header">

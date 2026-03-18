@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from app.schemas.contracts import (
     ChartPoint,
+    CompositeScoreResponse,
     Mt4ExportRequest,
     Mt4ExportResponse,
     PriceZone,
@@ -13,6 +14,7 @@ from app.schemas.contracts import (
     ProjectedCandle,
     RelatedNewsItem,
     SignalCard,
+    SignalContextResponse,
     SignalCreateRequest,
     SignalLevel,
     SignalRecordResponse,
@@ -119,6 +121,35 @@ class SignalHubService:
             liquidityAreas=payload.liquidityAreas or self._build_default_liquidity(payload.entry, payload.side),
             projectedCandles=projected,
             relatedNews=related_news,
+            signal_context=SignalContextResponse(
+                instrument=payload.instrument.upper(),
+                timeframe=payload.timeframe,
+                primary_timeframe=payload.timeframe,
+                confirmation_timeframe=None,
+                higher_timeframe_bias="neutral",
+                lower_timeframe_trigger="manual",
+                market_regime="manual",
+                technical_score=float(probability),
+                orderflow_score=0.0,
+                derivatives_score=0.0,
+                fundamental_score=0.0,
+                final_score=float(probability),
+            ),
+            composite_score=CompositeScoreResponse(
+                technical_score=float(probability),
+                orderflow_score=0.0,
+                derivatives_score=0.0,
+                fundamental_score=0.0,
+                final_score=float(probability),
+                strengths=["Сигнал создан вручную через API."],
+                weaknesses=["Автоматический аналитический pipeline для ручного сигнала не запускался."],
+                risk_warnings=[],
+            ),
+            reasons=["Ручной сигнал добавлен оператором через API."],
+            weakening_factors=["Авто-аналитика не пересчитывалась для ручного сигнала."],
+            risk_warnings=[],
+            fundamental_risk=False,
+            news_impact_summary="Фундаментальный слой для ручного сигнала не рассчитан автоматически.",
             updated_at_utc=now,
         )
         self._persist_manual_signal(signal)
@@ -219,6 +250,27 @@ class SignalHubService:
             liquidityAreas=self._build_default_liquidity(entry, signal.get("action", "BUY")),
             projectedCandles=projected,
             relatedNews=related_news,
+            signal_context=SignalContextResponse(**signal.get("signal_context", self._fallback_context(signal, probability))),
+            composite_score=CompositeScoreResponse(
+                **signal.get(
+                    "composite_score",
+                    {
+                        "technical_score": float(probability),
+                        "orderflow_score": 0.0,
+                        "derivatives_score": 0.0,
+                        "fundamental_score": 0.0,
+                        "final_score": float(probability),
+                        "strengths": [],
+                        "weaknesses": [],
+                        "risk_warnings": [],
+                    },
+                )
+            ),
+            reasons=signal.get("reasons", []),
+            weakening_factors=signal.get("weakening_factors", []),
+            risk_warnings=signal.get("risk_warnings", []),
+            fundamental_risk=signal.get("fundamental_risk", False),
+            news_impact_summary=signal.get("news_impact_summary"),
             updated_at_utc=signal_time,
         )
 
@@ -432,3 +484,21 @@ class SignalHubService:
                 )
             )
         return items
+
+    @staticmethod
+    def _fallback_context(signal: dict, probability: int) -> dict:
+        timeframe = signal.get("timeframe", "H1")
+        return {
+            "instrument": signal.get("symbol", "UNKNOWN"),
+            "timeframe": timeframe,
+            "primary_timeframe": signal.get("market_context", {}).get("primary_timeframe", timeframe),
+            "confirmation_timeframe": signal.get("market_context", {}).get("confirmation_timeframe"),
+            "higher_timeframe_bias": signal.get("market_context", {}).get("higher_timeframe_bias", "neutral"),
+            "lower_timeframe_trigger": signal.get("market_context", {}).get("lower_timeframe_trigger", "unknown"),
+            "market_regime": signal.get("market_context", {}).get("market_regime", "unknown"),
+            "technical_score": float(signal.get("market_context", {}).get("technical_score", probability)),
+            "orderflow_score": float(signal.get("market_context", {}).get("orderflow_score", 0.0)),
+            "derivatives_score": float(signal.get("market_context", {}).get("derivatives_score", 0.0)),
+            "fundamental_score": float(signal.get("market_context", {}).get("fundamental_score", 0.0)),
+            "final_score": float(signal.get("market_context", {}).get("final_score", probability)),
+        }

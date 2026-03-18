@@ -1,8 +1,17 @@
-# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.4
+# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.5
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
-## Что обновлено в версии 3.4
+## Что обновлено в версии 3.5
+- Проведён аудит текущего signal engine: подтверждено, что прежняя multi-timeframe логика была частичной и реально использовала `D1 -> H1 -> M15`, хотя в конфигурации уже присутствовали дополнительные ТФ.
+- Добавлен отдельный слой `app/services/analytics/` с разделением на adapters/connectors, normalization, feature extraction, analytics/scoring и advanced signal engine.
+- Подготовлена расширенная архитектура данных для `candles / tick / bid-ask / futures / open interest / options chain / news / economic calendar` с честной маркировкой `real / mock / unavailable`.
+- Signal engine расширен multi-timeframe analysis-моделью `primary timeframe / confirmation timeframe / higher timeframe bias / lower timeframe trigger`.
+- Внутренние модели теперь покрывают `Candle`, `Tick`, `Quote`, `FuturesSnapshot`, `OptionContract`, `NewsEvent`, `CalendarEvent`, `SignalContext`, а также composite scoring.
+- Добавлены новые backend endpoints для market data и analytics scoring без поломки существующих маршрутов.
+- Карточка сигнала на UI теперь показывает MTF-контекст, разложение score по слоям, факторы усиления/ослабления и фундаментальные предупреждения.
+
+## Что было обновлено в версии 3.4
 - Главная страница оставляет только поток сигналов и news banner; страницы `/ideas`, `/news`, `/calendar` и `/heatmap/page` сохранены и продолжают работать через прежние маршруты.
 - Карточка сигнала расширена и теперь показывает инструмент, дату/время выхода сигнала, направление BUY/SELL, точку входа, Stop Loss, Take Profit, время сигнала, статус, состояние (`active/open/closed`), уникальное описание, вероятность и прогресс до TP/SL.
 - На frontend добавлены анимированная шкала вероятности, крупный график сигнала, уровни, зоны liquidity/order block, projected candles и блок важных новостей по инструменту.
@@ -20,6 +29,13 @@
 - `app/services/signal_hub.py`
 - `app/services/news_service.py`
 - `app/services/mt4_bridge.py`
+- `app/services/analytics/models.py`
+- `app/services/analytics/normalization.py`
+- `app/services/analytics/providers.py`
+- `app/services/analytics/feature_extraction.py`
+- `app/services/analytics/scoring.py`
+- `app/services/analytics/signal_engine.py`
+- `app/services/analytics/service.py`
 
 ## API
 ### Базовые маршруты
@@ -40,6 +56,16 @@
 - `PATCH /api/signals/{id}/status`
 - `GET /api/signals/lookup/{symbol}`
 - `GET /api/legacy/signals/{symbol}`
+
+### Новый API market/analytics
+- `GET /api/market/candles`
+- `GET /api/market/quotes`
+- `GET /api/market/ticks`
+- `GET /api/market/futures`
+- `GET /api/market/options`
+- `GET /api/market/open-interest`
+- `GET /api/calendar/events`
+- `POST /api/analytics/score`
 
 ### Новый API новостей
 - `GET /api/news`
@@ -75,6 +101,13 @@
 - `liquidityAreas`
 - `projectedCandles`
 - `relatedNews`
+- `signal_context`
+- `composite_score`
+- `reasons`
+- `weakening_factors`
+- `risk_warnings`
+- `fundamental_risk`
+- `news_impact_summary`
 - `createdAt/created_at_utc`
 - `updatedAt/updated_at_utc`
 
@@ -99,11 +132,51 @@
 
 ## Архитектура данных
 Система подготовлена для следующих источников:
+- candles / OHLCV;
+- tick data;
+- bid/ask quotes;
+- futures snapshots;
+- open interest snapshots;
+- options chain;
+- внешний новостной сервис;
+- экономический календарь;
 - mock data / fallback слой;
 - REST API;
-- WebSocket в будущем;
-- внешний новостной сервис;
-- экономический календарь.
+- WebSocket в будущем.
+
+## Multi-timeframe логика
+- Исторически live signal flow использовал `D1` как higher timeframe, `H1` как основной таймфрейм и `M15` как trigger/confirmation слой.
+- В версии 3.5 подготовлена поддержка `M1`, `M5`, `M15`, `H1`, `H4`, `D1` и сохранена совместимость с `M30`, `W1`.
+- В signal context теперь передаются:
+  - `timeframe`
+  - `primary_timeframe`
+  - `confirmation_timeframe`
+  - `higher_timeframe_bias`
+  - `lower_timeframe_trigger`
+  - `market_regime`
+
+## Composite scoring
+Сигнал теперь оценивается несколькими слоями:
+- `technical_score`
+- `orderflow_score`
+- `derivatives_score`
+- `fundamental_score`
+- `final_score`
+
+Базовая формула в scoring layer:
+
+```text
+finalScore =
+  technicalScore * 0.35 +
+  orderflowScore * 0.20 +
+  derivativesScore * 0.20 +
+  fundamentalScore * 0.25
+```
+
+Важно:
+- `tick / quote / futures / options / OI` пока подготовлены как архитектура с mock/stub provider-ами;
+- `news` и `calendar` интегрированы через существующие сервисы;
+- `OI change`, полноценный `dealer hedging`, `real options walls` и `real-time orderflow` требуют внешних источников и исторических снимков.
 
 Если внешние данные недоступны, платформа:
 - не выдумывает рыночные котировки;

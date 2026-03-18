@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import yfinance as yf
 
 TIMEFRAME_CONFIG = {
+    "M1": {"interval": "1m", "period": "1d"},
+    "M5": {"interval": "5m", "period": "5d"},
     "M15": {"interval": "15m", "period": "5d"},
     "M30": {"interval": "30m", "period": "1mo"},
     "H1": {"interval": "1h", "period": "1mo"},
@@ -29,13 +31,14 @@ class DataProvider:
 
             candles = [
                 {
+                    "timestamp": index.to_pydatetime().astimezone(timezone.utc).isoformat() if hasattr(index, "to_pydatetime") else None,
                     "open": float(row["Open"]),
                     "high": float(row["High"]),
                     "low": float(row["Low"]),
                     "close": float(row["Close"]),
                     "volume": float(row["Volume"]),
                 }
-                for _, row in history.tail(200).iterrows()
+                for index, row in history.tail(200).iterrows()
             ]
             if not candles:
                 return self._unavailable(symbol=ticker_symbol, timeframe=timeframe, message="Пустой набор свечей после нормализации.")

@@ -5,9 +5,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.schemas.contracts import (
+    AnalyticsScoreRequest,
+    AnalyticsScoreResponse,
     CalendarResponse,
     HealthResponse,
     HeatmapResponse,
+    MarketDatasetResponse,
     MarketIdeasResponse,
     Mt4BridgeResponse,
     Mt4ExportRequest,
@@ -21,15 +24,17 @@ from app.schemas.contracts import (
     SignalStatusPatchRequest,
     SignalsLiveResponse,
 )
+from app.services.analytics import MarketAnalyticsService
 from app.services.mt4_bridge import Mt4BridgeService
 from app.services.news_service import NewsService
 from app.services.signal_hub import DEFAULT_PAIRS, SignalHubService
 from backend.portfolio_engine import PortfolioEngine
 from backend.signal_engine import SignalEngine
 
-app = FastAPI(title="AI Forex Signal Platform", version="3.4.0")
+app = FastAPI(title="AI Forex Signal Platform", version="3.5.0")
 
 signal_engine = SignalEngine()
+market_analytics_service = MarketAnalyticsService()
 portfolio_engine = PortfolioEngine()
 mt4_bridge_service = Mt4BridgeService()
 news_service = NewsService()
@@ -66,7 +71,7 @@ async def news_page() -> FileResponse:
 @app.get("/health", response_model=HealthResponse)
 @app.get("/api/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok", version="3.4.0")
+    return HealthResponse(status="ok", version="3.5.0")
 
 
 @app.get("/signals/live", response_model=SignalsLiveResponse)
@@ -125,6 +130,36 @@ async def mt4_export(payload: Mt4ExportRequest) -> Mt4ExportResponse:
     return signal_hub_service.queue_mt4_export(payload)
 
 
+@app.get("/api/market/candles", response_model=MarketDatasetResponse)
+async def market_candles(instrument: str = "EURUSD", timeframe: str = "H1", limit: int = 200) -> MarketDatasetResponse:
+    return MarketDatasetResponse(**await market_analytics_service.get_candles(instrument, timeframe, limit))
+
+
+@app.get("/api/market/quotes", response_model=MarketDatasetResponse)
+async def market_quotes(instrument: str = "EURUSD") -> MarketDatasetResponse:
+    return MarketDatasetResponse(**await market_analytics_service.get_quote(instrument))
+
+
+@app.get("/api/market/ticks", response_model=MarketDatasetResponse)
+async def market_ticks(instrument: str = "EURUSD", limit: int = 120) -> MarketDatasetResponse:
+    return MarketDatasetResponse(**await market_analytics_service.get_ticks(instrument, limit))
+
+
+@app.get("/api/market/futures", response_model=MarketDatasetResponse)
+async def market_futures(instrument: str = "EURUSD", timeframe: str = "H1") -> MarketDatasetResponse:
+    return MarketDatasetResponse(**await market_analytics_service.get_futures(instrument, timeframe))
+
+
+@app.get("/api/market/options", response_model=MarketDatasetResponse)
+async def market_options(instrument: str = "EURUSD") -> MarketDatasetResponse:
+    return MarketDatasetResponse(**await market_analytics_service.get_options(instrument))
+
+
+@app.get("/api/market/open-interest", response_model=MarketDatasetResponse)
+async def market_open_interest(instrument: str = "EURUSD", timeframe: str = "H1") -> MarketDatasetResponse:
+    return MarketDatasetResponse(**await market_analytics_service.get_open_interest(instrument, timeframe))
+
+
 @app.get("/ideas/market", response_model=MarketIdeasResponse)
 async def ideas_market() -> MarketIdeasResponse:
     payload = portfolio_engine.market_ideas()
@@ -180,6 +215,24 @@ async def calendar_events() -> CalendarResponse:
         updated_at_utc=datetime.fromisoformat(payload["updated_at_utc"]),
         events=payload["events"],
     )
+
+
+@app.get("/api/calendar/events", response_model=MarketDatasetResponse)
+async def api_calendar_events(instrument: str | None = None) -> MarketDatasetResponse:
+    return MarketDatasetResponse(**await market_analytics_service.get_calendar(instrument))
+
+
+@app.post("/api/analytics/score", response_model=AnalyticsScoreResponse)
+async def analytics_score(payload: AnalyticsScoreRequest) -> AnalyticsScoreResponse:
+    scored = await market_analytics_service.score_signal(
+        instrument=payload.instrument,
+        timeframe=payload.timeframe,
+        primary=payload.primaryTimeframe,
+        confirmation=payload.confirmationTimeframe,
+        higher=payload.higherTimeframe,
+        lower=payload.lowerTimeframe,
+    )
+    return AnalyticsScoreResponse(**scored)
 
 
 @app.get("/heatmap", response_model=HeatmapResponse)

@@ -5,6 +5,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+SupportedTimeframe = Literal["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1"]
+
 
 class ProxyMetric(BaseModel):
     name: str
@@ -82,10 +84,36 @@ class RelatedNewsItem(BaseModel):
     is_relevant_to_signal: bool = True
 
 
+class SignalContextResponse(BaseModel):
+    instrument: str
+    timeframe: SupportedTimeframe
+    primary_timeframe: SupportedTimeframe
+    confirmation_timeframe: Optional[SupportedTimeframe] = None
+    higher_timeframe_bias: Literal["bullish", "bearish", "neutral"]
+    lower_timeframe_trigger: str
+    market_regime: str
+    technical_score: float
+    orderflow_score: float
+    derivatives_score: float
+    fundamental_score: float
+    final_score: float
+
+
+class CompositeScoreResponse(BaseModel):
+    technical_score: float
+    orderflow_score: float
+    derivatives_score: float
+    fundamental_score: float
+    final_score: float
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    risk_warnings: list[str] = Field(default_factory=list)
+
+
 class SignalCard(BaseModel):
     signal_id: str
     symbol: str
-    timeframe: Literal["M15", "M30", "H1", "H4", "D1", "W1"]
+    timeframe: SupportedTimeframe
     action: Literal["BUY", "SELL", "NO_TRADE"]
     entry: Optional[float] = None
     stop_loss: Optional[float] = None
@@ -124,6 +152,13 @@ class SignalCard(BaseModel):
     liquidity_areas: list[PriceZone] = Field(default_factory=list, alias="liquidityAreas")
     projected_candles: list[ProjectedCandle] = Field(default_factory=list, alias="projectedCandles")
     related_news: list[RelatedNewsItem] = Field(default_factory=list, alias="relatedNews")
+    signal_context: Optional[SignalContextResponse] = None
+    composite_score: Optional[CompositeScoreResponse] = None
+    reasons: list[str] = Field(default_factory=list)
+    weakening_factors: list[str] = Field(default_factory=list)
+    risk_warnings: list[str] = Field(default_factory=list)
+    fundamental_risk: bool = False
+    news_impact_summary: Optional[str] = None
     updated_at_utc: datetime
 
     model_config = {"populate_by_name": True}
@@ -159,7 +194,7 @@ class SignalCreateRequest(BaseModel):
     entry: float
     stopLoss: float
     takeProfit: float
-    timeframe: Literal["M15", "M30", "H1", "H4", "D1", "W1"] = "H1"
+    timeframe: SupportedTimeframe = "H1"
     signalDateTime: Optional[datetime] = None
     signalTime: Optional[str] = None
     status: Literal[
@@ -315,3 +350,120 @@ class SignalResponse(BaseModel):
     reason_ru: str
     data_status: Literal["real", "unavailable"]
     market: MarketSnapshotResponse
+
+
+class CandleDto(BaseModel):
+    instrument: str
+    timeframe: SupportedTimeframe
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class TickDto(BaseModel):
+    instrument: str
+    timestamp: datetime
+    price: float
+    volume: float
+    side: Literal["buy", "sell", "unknown"]
+
+
+class QuoteDto(BaseModel):
+    instrument: str
+    timestamp: datetime
+    bid: float
+    ask: float
+    bidSize: float
+    askSize: float
+    spread: float
+    mid: float
+
+
+class FuturesSnapshotDto(BaseModel):
+    instrument: str
+    contract: str
+    timeframe: SupportedTimeframe
+    timestamp: datetime
+    lastPrice: float
+    volume: float
+    openInterest: Optional[float] = None
+    expiry: Optional[datetime] = None
+
+
+class OptionContractDto(BaseModel):
+    underlying: str
+    symbol: str
+    expiry: datetime
+    strike: float
+    optionType: Literal["call", "put"]
+    bid: Optional[float] = None
+    ask: Optional[float] = None
+    last: Optional[float] = None
+    volume: Optional[float] = None
+    openInterest: Optional[float] = None
+    impliedVolatility: Optional[float] = None
+    delta: Optional[float] = None
+    gamma: Optional[float] = None
+    vega: Optional[float] = None
+
+
+class NewsEventDto(BaseModel):
+    id: str
+    title: str
+    summary: str
+    source: str
+    publishedAt: Optional[datetime] = None
+    eventTime: Optional[datetime] = None
+    relatedInstruments: list[str] = Field(default_factory=list)
+    impact: Literal["low", "medium", "high"]
+    category: str
+    sentiment: Literal["bullish", "bearish", "neutral", "mixed"]
+    status: str
+
+
+class CalendarEventDto(BaseModel):
+    id: str
+    country: Optional[str] = None
+    currency: Optional[str] = None
+    title: str
+    eventTime: Optional[datetime] = None
+    importance: Literal["low", "medium", "high"]
+    actual: Optional[str] = None
+    forecast: Optional[str] = None
+    previous: Optional[str] = None
+
+
+class MarketDatasetResponse(BaseModel):
+    provider: str
+    provider_status: Literal["real", "mock", "unavailable"]
+    instrument: str
+    timeframe: Optional[SupportedTimeframe] = None
+    as_of: Optional[datetime] = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AnalyticsScoreRequest(BaseModel):
+    instrument: str
+    timeframe: SupportedTimeframe = "H1"
+    primaryTimeframe: Optional[SupportedTimeframe] = None
+    confirmationTimeframe: Optional[SupportedTimeframe] = None
+    higherTimeframe: Optional[SupportedTimeframe] = None
+    lowerTimeframe: Optional[SupportedTimeframe] = None
+
+
+class AnalyticsScoreResponse(BaseModel):
+    generated_at_utc: datetime
+    instrument: str
+    action: Literal["BUY", "SELL", "NO_SIGNAL"]
+    context: SignalContextResponse
+    score: CompositeScoreResponse
+    reasons: list[str] = Field(default_factory=list)
+    weakening_factors: list[str] = Field(default_factory=list)
+    risk_warnings: list[str] = Field(default_factory=list)
+    provider_states: dict[str, str] = Field(default_factory=dict)
+    levels: dict[str, Optional[float]] = Field(default_factory=dict)
+    market_context: dict[str, Any] = Field(default_factory=dict)
