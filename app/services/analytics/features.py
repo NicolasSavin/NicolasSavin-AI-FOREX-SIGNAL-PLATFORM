@@ -1,10 +1,18 @@
 from __future__ import annotations
 
-from app.schemas.analytics import FeatureExtractionResult, FeatureValue, NormalizedAnalyticsBundle
+from app.schemas.analytics import FeatureExtractionResult, FeatureValue, NormalizedAnalyticsBundle, PatternFeatureSet
 
 
 class AnalyticsFeatureExtractor:
-    def extract(self, bundle: NormalizedAnalyticsBundle, *, news_score: float, macro_score: float) -> FeatureExtractionResult:
+    def extract(
+        self,
+        bundle: NormalizedAnalyticsBundle,
+        *,
+        news_score: float,
+        macro_score: float,
+        pattern_summary: dict | None = None,
+        pattern_signal_impact: dict | None = None,
+    ) -> FeatureExtractionResult:
         spread_value, spread_status = self._spread(bundle)
         imbalance_value, imbalance_status = self._imbalance(bundle)
         delta_value, delta_status = self._delta(bundle)
@@ -14,6 +22,9 @@ class AnalyticsFeatureExtractor:
         put_call_oi_value, put_call_oi_status = self._put_call_ratio(bundle, field="open_interest")
         put_call_volume_value, put_call_volume_status = self._put_call_ratio(bundle, field="volume")
         iv_skew_value, iv_skew_status = self._iv_skew(bundle)
+        pattern_summary = pattern_summary or {}
+        pattern_signal_impact = pattern_signal_impact or {}
+        pattern_score = float(pattern_summary.get("patternScore", 0.0) or 0.0)
 
         return FeatureExtractionResult(
             spread=FeatureValue(
@@ -92,6 +103,24 @@ class AnalyticsFeatureExtractor:
                 unit="score",
                 status="computed" if bundle.economic_calendar else "partial",
                 description_ru="Агрегированный impact score экономического календаря.",
+            ),
+            pattern_score=FeatureValue(
+                name="pattern_score",
+                value=pattern_score,
+                unit="score",
+                status="computed" if pattern_summary.get("patternsDetected") else "partial",
+                description_ru="Интегральная оценка графических паттернов как дополнительного подтверждающего модуля.",
+            ),
+            patternFeatures=PatternFeatureSet(
+                hasBullishPattern=bool(pattern_signal_impact.get("hasBullishPattern", False)),
+                hasBearishPattern=bool(pattern_signal_impact.get("hasBearishPattern", False)),
+                dominantPatternType=pattern_signal_impact.get("dominantPatternType"),
+                dominantPatternTitleRu=pattern_signal_impact.get("dominantPatternTitleRu"),
+                patternConfidence=float(pattern_signal_impact.get("patternConfidence", abs(pattern_score)) or 0.0),
+                patternScore=pattern_score,
+                patternAlignmentWithSignal=pattern_signal_impact.get("patternAlignmentWithSignal", "not_applicable"),
+                conflictingPatternDetected=bool(pattern_signal_impact.get("conflictingPatternDetected", False)),
+                explanationRu=pattern_signal_impact.get("explanationRu", "Паттерны не повлияли на аналитику"),
             ),
         )
 

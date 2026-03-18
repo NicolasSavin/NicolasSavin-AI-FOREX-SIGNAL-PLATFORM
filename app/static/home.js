@@ -37,6 +37,11 @@ function formatPercent(value) {
   return `${Number(value).toFixed(value % 1 === 0 ? 0 : 2)}%`;
 }
 
+function formatPatternConfidence(value) {
+  if (value == null || Number.isNaN(Number(value))) return '0%';
+  return `${Math.round(Number(value) * 100)}%`;
+}
+
 function formatRiskReward(value) {
   if (value == null || Number.isNaN(Number(value))) return '—';
   return `1:${Number(value).toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}`;
@@ -56,6 +61,23 @@ function getStatusMeta(status) {
   }[status] || { label: status || 'unknown', className: 'status-badge--expired' };
 }
 
+function getPatternBiasLabel(direction) {
+  return {
+    bullish: 'Бычий',
+    bearish: 'Медвежий',
+    neutral: 'Нейтральный',
+  }[direction] || 'Нейтральный';
+}
+
+function getPatternImpactLabel(alignment) {
+  return {
+    supports: 'Подтверждает сигнал',
+    conflicts: 'Конфликтует с сигналом',
+    neutral: 'Нейтрально к сигналу',
+    not_applicable: 'Не влияет на вход',
+  }[alignment] || 'Не влияет на вход';
+}
+
 function getAnnotationAppearance(type) {
   return {
     order_block: { className: 'chart-zone chart-zone--order-block', labelClass: 'chart-label chart-label--zone' },
@@ -67,6 +89,11 @@ function getAnnotationAppearance(type) {
     take_profit: { className: 'chart-line chart-line--target', labelClass: 'chart-label chart-label--target' },
     support: { className: 'chart-line chart-line--support', labelClass: 'chart-label chart-label--support' },
     resistance: { className: 'chart-line chart-line--resistance', labelClass: 'chart-label chart-label--resistance' },
+    pattern_line: { className: 'chart-segment chart-segment--pattern', labelClass: 'chart-label chart-label--pattern' },
+    pattern_point: { className: 'chart-point chart-point--pattern', labelClass: 'chart-label chart-label--pattern' },
+    pattern_breakout: { className: 'chart-point chart-point--breakout', labelClass: 'chart-label chart-label--breakout' },
+    pattern_target: { className: 'chart-line chart-line--pattern-target', labelClass: 'chart-label chart-label--target' },
+    pattern_invalidation: { className: 'chart-line chart-line--pattern-invalid', labelClass: 'chart-label chart-label--stop' },
   }[type] || { className: 'chart-line', labelClass: 'chart-label' };
 }
 
@@ -85,7 +112,10 @@ function buildTickerText(payload) {
   }
   return active
     .slice(0, 8)
-    .map((signal) => `${signal.symbol} ${getDirectionLabel(signal)} • ${signal.status_label_ru} • RR ${formatRiskReward(signal.risk_reward)}`)
+    .map((signal) => {
+      const patternSuffix = signal.patternSummary?.dominantPatternTitleRu ? ` • Паттерн: ${signal.patternSummary.dominantPatternTitleRu}` : '';
+      return `${signal.symbol} ${getDirectionLabel(signal)} • ${signal.status_label_ru} • RR ${formatRiskReward(signal.risk_reward)}${patternSuffix}`;
+    })
     .join('  ✦  ');
 }
 
@@ -118,7 +148,7 @@ function buildChart(signal) {
   }
 
   const values = candles.flatMap((candle) => [candle.open, candle.high, candle.low, candle.close]);
-  const annotationValues = (signal.annotations || []).flatMap((item) => [item.value, item.from_price, item.to_price]).filter((value) => value != null);
+  const annotationValues = (signal.annotations || []).flatMap((item) => [item.value, item.from_price, item.to_price, item.start_price, item.end_price, item.point_price]).filter((value) => value != null);
   const minPrice = Math.min(...values, ...annotationValues);
   const maxPrice = Math.max(...values, ...annotationValues);
   const width = 860;
@@ -133,6 +163,7 @@ function buildChart(signal) {
   const candleWidth = Math.max(8, Math.min(20, stepX * 0.55));
   const range = Math.max(maxPrice - minPrice, 0.0001);
   const yOf = (price) => padTop + ((maxPrice - Number(price)) / range) * plotHeight;
+  const xOf = (index) => padLeft + Number(index) * stepX + stepX / 2;
 
   const grid = Array.from({ length: 4 }, (_, index) => {
     const price = minPrice + (range / 3) * index;
@@ -147,6 +178,34 @@ function buildChart(signal) {
 
   const annotations = (signal.annotations || []).map((annotation) => {
     const appearance = getAnnotationAppearance(annotation.type);
+    if (annotation.start_price != null && annotation.end_price != null && annotation.start_index != null && annotation.end_index != null) {
+      const x1 = xOf(annotation.start_index);
+      const x2 = xOf(annotation.end_index);
+      const y1 = yOf(annotation.start_price);
+      const y2 = yOf(annotation.end_price);
+      return `
+        <g>
+          <line class="${appearance.className}" x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}">
+            <title>${escapeHtml(`${annotation.label}: ${annotation.description_ru}`)}</title>
+          </line>
+          <text class="${appearance.labelClass}" x="${((x1 + x2) / 2).toFixed(2)}" y="${(Math.min(y1, y2) - 8).toFixed(2)}">${escapeHtml(annotation.label)}</text>
+        </g>
+      `;
+    }
+
+    if (annotation.point_price != null && annotation.point_index != null) {
+      const x = xOf(annotation.point_index);
+      const y = yOf(annotation.point_price);
+      return `
+        <g>
+          <circle class="${appearance.className}" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="4.5">
+            <title>${escapeHtml(`${annotation.label}: ${annotation.description_ru}`)}</title>
+          </circle>
+          <text class="${appearance.labelClass}" x="${(x + 8).toFixed(2)}" y="${(y - 8).toFixed(2)}">${escapeHtml(annotation.label)}</text>
+        </g>
+      `;
+    }
+
     if (annotation.from_price != null && annotation.to_price != null) {
       const startIndex = Math.max(0, annotation.start_index ?? 0);
       const endIndex = Math.min(candles.length - 1, annotation.end_index ?? candles.length - 1);
@@ -173,7 +232,7 @@ function buildChart(signal) {
           <line class="${appearance.className}" x1="${padLeft}" y1="${y.toFixed(2)}" x2="${width - padRight}" y2="${y.toFixed(2)}">
             <title>${escapeHtml(`${annotation.label}: ${annotation.description_ru}`)}</title>
           </line>
-          <text class="${appearance.labelClass}" x="${(width - padRight - 150).toFixed(2)}" y="${(y - 6).toFixed(2)}">${escapeHtml(annotation.label)} ${formatPrice(annotation.value)}</text>
+          <text class="${appearance.labelClass}" x="${(width - padRight - 170).toFixed(2)}" y="${(y - 6).toFixed(2)}">${escapeHtml(annotation.label)} ${formatPrice(annotation.value)}</text>
         </g>
       `;
     }
@@ -226,6 +285,58 @@ function buildAnnotationTags(signal) {
   `).join('');
 }
 
+function buildPatternBlock(signal) {
+  const patterns = signal.chartPatterns || [];
+  const summary = signal.patternSummary;
+  const impact = signal.patternSignalImpact;
+
+  if (!patterns.length) {
+    return `
+      <div class="pattern-empty-state">
+        <strong>Графические паттерны</strong>
+        <p>Явные графические паттерны не обнаружены.</p>
+      </div>
+    `;
+  }
+
+  const patternCards = patterns.map((pattern) => `
+    <article class="pattern-card pattern-card--${escapeHtml(pattern.direction)}">
+      <div class="pattern-card__head">
+        <strong>${escapeHtml(pattern.title_ru)}</strong>
+        <span>${escapeHtml(getPatternBiasLabel(pattern.direction))}</span>
+      </div>
+      <div class="pattern-card__stats">
+        <span>Уверенность: ${escapeHtml(formatPatternConfidence(pattern.confidence))}</span>
+        <span>Статус: ${escapeHtml(pattern.status === 'confirmed' ? 'Подтверждён' : pattern.status)}</span>
+      </div>
+      <p>${escapeHtml(pattern.description_ru)}</p>
+      <small>${escapeHtml(pattern.explanation_ru)}</small>
+    </article>
+  `).join('');
+
+  return `
+    <section class="pattern-analysis-panel">
+      <div class="signal-details__panel-head">
+        <strong>Графические паттерны</strong>
+        <span>${escapeHtml(summary?.patternSummaryRu || 'Дополнительный подтверждающий модуль')}</span>
+      </div>
+      <div class="pattern-summary-grid">
+        <div><span>Найдено</span><strong>${escapeHtml(String(summary?.patternsDetected || 0))}</strong></div>
+        <div><span>Доминирует</span><strong>${escapeHtml(summary?.dominantPatternTitleRu || '—')}</strong></div>
+        <div><span>Bias</span><strong>${escapeHtml(getPatternBiasLabel(summary?.patternBias))}</strong></div>
+        <div><span>Влияние</span><strong>${escapeHtml(getPatternImpactLabel(impact?.patternAlignmentWithSignal))}</strong></div>
+      </div>
+      ${impact ? `
+        <div class="pattern-impact pattern-impact--${escapeHtml(impact.patternAlignmentWithSignal || 'neutral')}">
+          <strong>${escapeHtml(impact.patternAlignmentLabelRu || 'Нейтрально')}</strong>
+          <span>${escapeHtml(impact.explanationRu || '')}</span>
+        </div>
+      ` : ''}
+      <div class="pattern-card-list">${patternCards}</div>
+    </section>
+  `;
+}
+
 function buildSignalCard(signal, sectionLabel) {
   const article = document.createElement('article');
   const statusMeta = getStatusMeta(signal.status);
@@ -270,6 +381,13 @@ function buildSignalCard(signal, sectionLabel) {
         <p>${escapeHtml(signal.description_ru)}</p>
       </div>
 
+      ${signal.patternSummary?.dominantPatternTitleRu ? `
+        <div class="signal-pattern-banner signal-pattern-banner--${escapeHtml(signal.patternSignalImpact?.patternAlignmentWithSignal || 'neutral')}">
+          <strong>Паттерн: ${escapeHtml(signal.patternSummary.dominantPatternTitleRu)}</strong>
+          <span>${escapeHtml(signal.patternSignalImpact?.patternAlignmentLabelRu || 'Дополнительный фактор')}</span>
+        </div>
+      ` : ''}
+
       <div class="premium-signal-card__footer">
         <div class="premium-signal-card__meta">
           <span>Вероятность: ${escapeHtml(String(signal.probability_percent || signal.probability || 0))}%</span>
@@ -298,7 +416,7 @@ function buildSignalCard(signal, sectionLabel) {
           <section class="signal-details__panel">
             <div class="signal-details__panel-head">
               <strong>Аналитика</strong>
-              <span>Order Blocks, liquidity, SR, FVG, imbalance</span>
+              <span>Order Blocks, liquidity, SR, FVG, imbalance, patterns</span>
             </div>
             <div class="analytics-chip-list">${buildAnnotationTags(signal)}</div>
             <div class="detail-kv-list">
@@ -309,6 +427,7 @@ function buildSignalCard(signal, sectionLabel) {
               <div><span>Риск до SL</span><strong>${formatPercent(signal.progressToSL || 0)}</strong></div>
               <div><span>Текущая цена</span><strong>${formatPrice(signal.progress?.current_price)}</strong></div>
             </div>
+            ${buildPatternBlock(signal)}
           </section>
         </div>
       </div>
@@ -364,8 +483,8 @@ function renderDashboard(payload) {
   }
 
   renderStats(payload.stats || {});
-  renderSignals(activeSignalsGrid, payload.activeSignals || [], 'Active', 'Сейчас нет активных сигналов. Система ждёт подтверждённый сетап.');
-  renderSignals(archiveSignalsGrid, payload.archiveSignals || [], 'Archive', 'Архив пока пуст.');
+  renderSignals(activeSignalsGrid, payload.activeSignals || [], 'Актуальные', 'Сейчас нет активных сигналов. Система ждёт подтверждённый сетап.');
+  renderSignals(archiveSignalsGrid, payload.archiveSignals || [], 'Архив', 'Архив пока пуст.');
 }
 
 async function loadDashboard() {

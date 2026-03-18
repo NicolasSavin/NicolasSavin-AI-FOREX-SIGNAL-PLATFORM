@@ -6,6 +6,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.patterns import DetectedChartPattern, PatternAnalysisSummary, PatternSignalImpact
+
 
 class SignalStatus(str, Enum):
     ACTIVE = "active"
@@ -37,6 +39,11 @@ class ChartAnnotationType(str, Enum):
     TAKE_PROFIT = "take_profit"
     FVG = "fvg"
     IMBALANCE = "imbalance"
+    PATTERN_LINE = "pattern_line"
+    PATTERN_POINT = "pattern_point"
+    PATTERN_BREAKOUT = "pattern_breakout"
+    PATTERN_TARGET = "pattern_target"
+    PATTERN_INVALIDATION = "pattern_invalidation"
 
 
 class ProgressState(BaseModel):
@@ -84,6 +91,10 @@ class ChartAnnotation(BaseModel):
     to_price: Optional[float] = None
     start_index: Optional[int] = None
     end_index: Optional[int] = None
+    start_price: Optional[float] = None
+    end_price: Optional[float] = None
+    point_index: Optional[int] = None
+    point_price: Optional[float] = None
     source: Literal["proxy", "market"] = "proxy"
 
 
@@ -159,6 +170,9 @@ class SignalCard(BaseModel):
     liquidity_areas: list[PriceZone] = Field(default_factory=list, alias="liquidityAreas")
     projected_candles: list[SignalCandle] = Field(default_factory=list, alias="projectedCandles")
     related_news: list[RelatedNewsItem] = Field(default_factory=list, alias="relatedNews")
+    chart_patterns: list[DetectedChartPattern] = Field(default_factory=list, alias="chartPatterns")
+    pattern_summary: Optional[PatternAnalysisSummary] = Field(default=None, alias="patternSummary")
+    pattern_signal_impact: Optional[PatternSignalImpact] = Field(default=None, alias="patternSignalImpact")
     chart_note_ru: str = "Прокси-визуализация сценария по уровням сигнала. Не является live-стаканом или историей биржевых свечей."
     updated_at_utc: datetime = Field(default_factory=datetime.utcnow)
 

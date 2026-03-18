@@ -67,11 +67,20 @@ class SignalAnalyticsService:
             news_feed=raw_news,
             economic_calendar=raw_calendar,
         )
-        technical_signal, technical_source = await self._technical_signal(symbol)
+        technical_signal, technical_source, signal_payload = await self._technical_signal(symbol)
+        chart_patterns = signal_payload.get("chart_patterns", [])
+        pattern_summary = signal_payload.get("pattern_summary", {})
+        pattern_signal_impact = signal_payload.get("pattern_signal_impact", {})
         fundamental = self.fundamental_service.score(symbol, bundle.news_feed, bundle.economic_calendar)
         news_score = sum(item.net_score for item in fundamental.items if item.item_type == "news")
         macro_score = sum(item.net_score for item in fundamental.items if item.item_type == "macro")
-        features = self.feature_extractor.extract(bundle, news_score=round(news_score, 4), macro_score=round(macro_score, 4))
+        features = self.feature_extractor.extract(
+            bundle,
+            news_score=round(news_score, 4),
+            macro_score=round(macro_score, 4),
+            pattern_summary=pattern_summary,
+            pattern_signal_impact=pattern_signal_impact,
+        )
         composite = self.composite_service.score(
             technical_signal=technical_signal,
             features=features,
@@ -85,6 +94,9 @@ class SignalAnalyticsService:
             fundamental=fundamental,
             composite=composite,
             technical_score_source=technical_source,
+            chartPatterns=chart_patterns,
+            patternSummary=pattern_summary,
+            patternSignalImpact=pattern_signal_impact,
             runtime_status=self._runtime_status(bundle),
         )
 
@@ -100,23 +112,24 @@ class SignalAnalyticsService:
                 AnalyticsStubDescriptor(dataset="options_chain", status="working", detail_ru="Работает mock options connector + put/call ratios и IV skew."),
                 AnalyticsStubDescriptor(dataset="news_feed", status="working", detail_ru="Работает реальный RSS news connector + normalization + fundamental/news scoring."),
                 AnalyticsStubDescriptor(dataset="economic_calendar", status="stub", detail_ru="Пока только типизированная заглушка и API contract без верифицированного live source."),
-                AnalyticsStubDescriptor(dataset="composite_signal_score", status="working", detail_ru="Работает сводный score из technical/orderflow/derivatives/fundamental."),
+                AnalyticsStubDescriptor(dataset="chart_patterns", status="working", detail_ru="Работает эвристический detector графических паттернов и интеграция в composite score."),
+                AnalyticsStubDescriptor(dataset="composite_signal_score", status="working", detail_ru="Работает сводный score из technical/patterns/orderflow/derivatives/fundamental."),
             ],
         )
 
-    async def _technical_signal(self, symbol: str) -> tuple[float, str]:
+    async def _technical_signal(self, symbol: str) -> tuple[float, str, dict]:
         generated = await self.signal_engine.generate_live_signals([symbol])
         signal = generated[0] if generated else None
         if not signal:
-            return 0.0, "signal engine не вернул данных"
+            return 0.0, "signal engine не вернул данных", {}
         action = signal.get("action", "NO_TRADE")
         confidence = float(signal.get("confidence_percent") or signal.get("probability_percent") or 0.0)
         normalized_confidence = min(max(confidence / 100, 0.0), 1.0)
         if action == "BUY":
-            return normalized_confidence, "backend.signal_engine confidence BUY"
+            return normalized_confidence, "backend.signal_engine confidence BUY", signal
         if action == "SELL":
-            return -normalized_confidence, "backend.signal_engine confidence SELL"
-        return 0.0, f"backend.signal_engine {action}"
+            return -normalized_confidence, "backend.signal_engine confidence SELL", signal
+        return 0.0, f"backend.signal_engine {action}", signal
 
     @staticmethod
     def _runtime_status(bundle) -> list[AnalyticsStubDescriptor]:

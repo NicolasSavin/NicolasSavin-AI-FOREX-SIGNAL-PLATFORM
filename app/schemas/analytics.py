@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.patterns import DetectedChartPattern, PatternAnalysisSummary, PatternSignalImpact, PatternType
+
 
 SourceStatus = Literal["real", "mock", "stub", "unavailable"]
 ImpactLevel = Literal["low", "medium", "high"]
@@ -139,6 +141,20 @@ class FeatureValue(BaseModel):
     description_ru: str
 
 
+class PatternFeatureSet(BaseModel):
+    has_bullish_pattern: bool = Field(default=False, alias="hasBullishPattern")
+    has_bearish_pattern: bool = Field(default=False, alias="hasBearishPattern")
+    dominant_pattern_type: PatternType | None = Field(default=None, alias="dominantPatternType")
+    dominant_pattern_title_ru: str | None = Field(default=None, alias="dominantPatternTitleRu")
+    pattern_confidence: float = Field(default=0.0, alias="patternConfidence")
+    pattern_score: float = Field(default=0.0, alias="patternScore")
+    pattern_alignment_with_signal: str = Field(default="not_applicable", alias="patternAlignmentWithSignal")
+    conflicting_pattern_detected: bool = Field(default=False, alias="conflictingPatternDetected")
+    explanation_ru: str = Field(default="Паттерны не влияют на аналитику", alias="explanationRu")
+
+    model_config = {"populate_by_name": True}
+
+
 class FeatureExtractionResult(BaseModel):
     spread: FeatureValue
     order_book_imbalance: FeatureValue
@@ -151,6 +167,10 @@ class FeatureExtractionResult(BaseModel):
     iv_skew: FeatureValue
     news_impact_score: FeatureValue
     macro_event_impact_score: FeatureValue
+    pattern_score: FeatureValue
+    pattern_features: PatternFeatureSet = Field(alias="patternFeatures")
+
+    model_config = {"populate_by_name": True}
 
 
 class FundamentalComponentScore(BaseModel):
@@ -171,7 +191,7 @@ class FundamentalScoreSummary(BaseModel):
 
 
 class ScoreComponent(BaseModel):
-    name: Literal["technical", "orderflow", "derivatives", "fundamental"]
+    name: Literal["technical", "patterns", "orderflow", "derivatives", "fundamental"]
     raw_signal: float
     weight: float
     weighted_contribution: float
@@ -199,7 +219,12 @@ class AnalyticsSignalResponse(BaseModel):
     fundamental: FundamentalScoreSummary
     composite: CompositeSignalScore
     technical_score_source: str
+    chart_patterns: list[DetectedChartPattern] = Field(default_factory=list, alias="chartPatterns")
+    pattern_summary: PatternAnalysisSummary = Field(default_factory=PatternAnalysisSummary, alias="patternSummary")
+    pattern_signal_impact: PatternSignalImpact = Field(default_factory=PatternSignalImpact, alias="patternSignalImpact")
     runtime_status: list[AnalyticsStubDescriptor] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
 
 
 class AnalyticsCapabilityResponse(BaseModel):

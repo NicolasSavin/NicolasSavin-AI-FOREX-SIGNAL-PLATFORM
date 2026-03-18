@@ -15,18 +15,25 @@ class CompositeSignalScoringService:
         derivatives_raw = self._derivatives_signal(features)
         fundamental_raw = self._clip(fundamental.net_score)
         technical_raw = self._clip(technical_signal)
+        pattern_raw = self._clip(features.pattern_score.value or 0.0)
 
         components = [
             self._build_component(
                 name="technical",
                 raw_signal=technical_raw,
-                weight=0.35,
+                weight=0.3,
                 note_ru="Техническая компонента приходит из действующего signal engine и confidence score.",
+            ),
+            self._build_component(
+                name="patterns",
+                raw_signal=pattern_raw,
+                weight=0.1,
+                note_ru="Графические паттерны добавлены как подтверждающий модуль и не заменяют основную логику сигналов.",
             ),
             self._build_component(
                 name="orderflow",
                 raw_signal=orderflow_raw,
-                weight=0.25,
+                weight=0.2,
                 note_ru="Orderflow строится из spread, imbalance, delta и cumulative delta.",
             ),
             self._build_component(

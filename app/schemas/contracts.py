@@ -29,6 +29,15 @@ class MarketSnapshotResponse(BaseModel):
     proxy_metrics: list[ProxyMetric] = Field(default_factory=list)
 
 
+from app.schemas.patterns import (
+    DetectedChartPattern,
+    PatternAnalysisSummary,
+    PatternDirection,
+    PatternSignalImpact,
+    PatternStatus,
+    PatternType,
+)
+
 from app.schemas.signals import (
     ChartAnnotation,
     LiquidityZone,
@@ -61,6 +70,12 @@ __all__ = [
     "NewsListResponse",
     "NewsSignalRelation",
     "OrderBlockZone",
+    "PatternAnalysisSummary",
+    "PatternDirection",
+    "PatternSignalImpact",
+    "PatternStatus",
+    "PatternType",
+    "DetectedChartPattern",
     "PriceZone",
     "ProgressState",
     "ProxyMetric",
