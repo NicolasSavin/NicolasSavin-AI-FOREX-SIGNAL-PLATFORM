@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.services.signal_hub import DEFAULT_PAIRS
 from backend.portfolio_engine import PortfolioEngine
 from backend.signal_engine import SignalEngine
 
@@ -10,9 +11,7 @@ from backend.signal_engine import SignalEngine
 async def main() -> None:
     signal_engine = SignalEngine()
     portfolio_engine = PortfolioEngine()
-    pairs = ["EURUSD", "GBPUSD", "USDJPY"]
-
-    signals = await signal_engine.generate_live_signals(pairs)
+    signals = await signal_engine.generate_live_signals(DEFAULT_PAIRS)
     Path("signals_data").mkdir(exist_ok=True)
 
     Path("signals_data/signals.json").write_text(
