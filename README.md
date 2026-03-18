@@ -1,6 +1,13 @@
-# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.5
+# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.6
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
+
+## Что обновлено в версии 3.6
+- Главная страница переработана в dashboard с двумя секциями: `Актуальные сигналы` и `Архив сигналов`.
+- В контракт сигналов добавлены типы `SignalStatus`, `SignalStats`, `ChartAnnotation`, `LiquidityZone`, `OrderBlockZone` и группировка `activeSignals/archiveSignals`.
+- Добавлен блок статистики сигналов с общим количеством, hit/missed и расчётом `successRate` / `failureRate`.
+- Карточки сигналов получили новый premium UI, кнопку `Подробнее`, адаптивную компоновку и расширенный detail-view.
+- Для каждого сигнала строится отдельная свечная proxy-визуализация сценария с order block, liquidity zone, support/resistance, entry, stop loss, take profit, FVG и imbalance.
 
 ## Что обновлено в версии 3.5
 - Добавлен отдельный `data/analytics` слой для сигналов: adapters/connectors, normalization models, feature extraction, fundamental scoring и composite signal scoring.
@@ -68,19 +75,23 @@
 Сигнал теперь поддерживает:
 - `id/signal_id`
 - `instrument/symbol`
+- `status` (`active`, `hit`, `missed`, `cancelled`, `expired`)
+- `status_label_ru`
+- `direction`
 - `signalDateTime`
 - `side/action`
 - `entry`
 - `stopLoss/stop_loss`
 - `takeProfit/take_profit`
+- `takeProfits`
 - `signalTime`
-- `status`
 - `state`
 - `description`
 - `probability`
 - `progressToTP`
 - `progressToSL`
 - `chartData`
+- `annotations`
 - `zones`
 - `levels`
 - `liquidityAreas`
@@ -88,6 +99,19 @@
 - `relatedNews`
 - `createdAt/created_at_utc`
 - `updatedAt/updated_at_utc`
+
+### Модель статистики сигналов
+Ответ `GET /api/signals` дополнительно содержит:
+- `stats.total`
+- `stats.active`
+- `stats.hit`
+- `stats.missed`
+- `stats.cancelled`
+- `stats.expired`
+- `stats.successRate`
+- `stats.failureRate`
+- `activeSignals`
+- `archiveSignals`
 
 ### Модель news alert
 Новость нормализуется в контракт с полями:
@@ -160,6 +184,7 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 - Система не выдумывает недоступные рыночные данные.
 - При нехватке данных возвращается fallback/mock UI-слой с честной маркировкой.
 - Proxy-метрики явно маркируются `label=proxy`.
+- Свечной график на главной странице — это **proxy visualization** логики сигнала по его уровням, а не исторический live-stream биржевых свечей.
 
 ## Новый analytics/data слой
 Архитектура разбита на отдельные модули:

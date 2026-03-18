@@ -503,8 +503,7 @@ async function loadSignalsSection() {
     }
     notifyAboutNewSignals(signalsPayload.signals || []);
     renderSignals(signalsPayload.signals || [], signalsPayload.updated_at_utc);
-  } catch (error) {
-    console.error('Не удалось загрузить сигналы', error);
+  } catch {
     if (ticker) ticker.textContent = 'Ошибка загрузки тикера';
     signalsGrid.innerHTML = `
       <article class="empty-state">
@@ -522,8 +521,7 @@ async function loadIdeasSection() {
   try {
     const ideas = await getJson('/ideas/market');
     renderList('ideasList', ideas.ideas || [], (idea) => `${idea.title}: ${idea.description_ru}`, 'Торговые идеи пока недоступны.');
-  } catch (error) {
-    console.error('Не удалось загрузить идеи', error);
+  } catch {
     renderList('ideasList', [], () => '', 'Торговые идеи временно недоступны.');
   }
 }
@@ -535,8 +533,7 @@ async function loadCalendarSection() {
   try {
     const calendar = await getJson('/calendar/events');
     renderList('calendarList', calendar.events || [], (event) => `${event.title}: ${event.description_ru}`, 'События календаря пока недоступны.');
-  } catch (error) {
-    console.error('Не удалось загрузить календарь', error);
+  } catch {
     renderList('calendarList', [], () => '', 'Экономический календарь временно недоступен.');
   }
 }
@@ -548,8 +545,7 @@ async function loadHeatmapSection() {
   try {
     const heatmap = await getJson('/heatmap');
     renderList('heatmapList', heatmap.rows || [], (row) => `${row.pair}: ${row.change_percent ?? 'нет данных'} [${row.label}]`, 'Тепловая карта пока недоступна.');
-  } catch (error) {
-    console.error('Не удалось загрузить тепловую карту', error);
+  } catch {
     renderList('heatmapList', [], () => '', 'Тепловая карта временно недоступна.');
   }
 }
@@ -571,8 +567,7 @@ async function loadNewsSection() {
     const news = await getJson('/api/news');
     notifyAboutNews(news.news || []);
     renderNews(news.news || [], news.updated_at_utc);
-  } catch (error) {
-    console.error('Не удалось загрузить новости', error);
+  } catch {
     renderNewsError();
   }
 }
