@@ -1,1 +1,41 @@
-<!doctype html><html lang="ru"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Идеи рынка</title><link rel="stylesheet" href="/static/styles.css"/></head><body><header><h1>AI Market Ideas</h1><nav><a href="/">Главная</a></nav></header><main><section class="panel"><ul id="ideasList"></ul></section></main><script src="/static/script.js"></script></body></html>
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Идеи рынка</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body data-page="ideas">
+    <div class="page-shell">
+      <header class="site-header">
+        <div>
+          <p class="eyebrow">Ideas</p>
+          <h1>Торговые идеи</h1>
+          <p class="lead">Раздел сохранён отдельной страницей и продолжает работать независимо от главной.</p>
+        </div>
+        <nav class="top-nav">
+          <a href="/">Сигналы</a>
+          <a class="is-active" href="/ideas">Ideas</a>
+          <a href="/news">News</a>
+          <a href="/calendar">Calendar</a>
+          <a href="/heatmap/page">Heatmap</a>
+        </nav>
+      </header>
+
+      <main class="content-stack">
+        <section class="panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="section-kicker">Ideas board</p>
+              <h2>AI-идеи по рынку</h2>
+            </div>
+          </div>
+          <ul class="data-list" id="ideasList"></ul>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/script.js"></script>
+  </body>
+</html>
