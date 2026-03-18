@@ -1,21 +1,21 @@
 {
-  "updated_at_utc": "2026-03-18T13:06:50.805866+00:00",
+  "updated_at_utc": "2026-03-18T14:46:40.787413+00:00",
   "rows": [
     {
       "pair": "EURUSD",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
     {
       "pair": "EURUSD",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
     {
       "pair": "EURUSD",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
@@ -39,13 +39,13 @@
     },
     {
       "pair": "GBPUSD",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
     {
       "pair": "GBPUSD",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
@@ -99,7 +99,7 @@
     },
     {
       "pair": "USDJPY",
-      "change_percent": 0.798,
+      "change_percent": 0.802,
       "data_status": "real",
       "label": "real"
     },
@@ -111,19 +111,19 @@
     },
     {
       "pair": "USDCHF",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
     {
       "pair": "USDCHF",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
     {
       "pair": "USDCHF",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
@@ -147,19 +147,19 @@
     },
     {
       "pair": "AUDUSD",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
     {
       "pair": "AUDUSD",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
     {
       "pair": "AUDUSD",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
@@ -189,7 +189,7 @@
     },
     {
       "pair": "USDCAD",
-      "change_percent": null,
+      "change_percent": 0.288,
       "data_status": "real",
       "label": "real"
     },
@@ -219,13 +219,13 @@
     },
     {
       "pair": "EURGBP",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
     {
       "pair": "EURGBP",
-      "change_percent": 0.288,
+      "change_percent": null,
       "data_status": "real",
       "label": "real"
     },
@@ -273,7 +273,7 @@
     },
     {
       "pair": "EURJPY",
-      "change_percent": null,
+      "change_percent": 0.288,
       "data_status": "real",
       "label": "real"
     },
@@ -327,7 +327,13 @@
     },
     {
       "pair": "EURCHF",
-      "change_percent": null,
+      "change_percent": 0.288,
+      "data_status": "real",
+      "label": "real"
+    },
+    {
+      "pair": "EURCHF",
+      "change_percent": 0.288,
       "data_status": "real",
       "label": "real"
     },
@@ -345,13 +351,7 @@
     },
     {
       "pair": "EURCHF",
-      "change_percent": null,
-      "data_status": "real",
-      "label": "real"
-    },
-    {
-      "pair": "EURCHF",
-      "change_percent": 0.653,
+      "change_percent": 0.66,
       "data_status": "real",
       "label": "real"
     },

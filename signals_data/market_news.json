@@ -1,162 +1,14 @@
 {
-  "updated_at_utc": "2026-03-18T13:06:49.222376+00:00",
+  "updated_at_utc": "2026-03-18T14:46:39.453508+00:00",
   "news": [
     {
-      "id": "news_a4d41dbbcea8",
-      "title_original": "BoC set to hold interest rate as markets assess future hikes amid oil-driven inflation fears",
-      "title_ru": "Инфляция меняет ожидания по USOIL",
-      "summary_ru": "Свежие макроданные могут усилить волатильность, потому что рынок пересматривает ожидания по доллару и рисковым активам.",
-      "what_happened_ru": "На рынке вышла новость: Инфляция меняет ожидания по USOIL.",
-      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
-      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по USOIL после подтверждения движения.",
-      "category": "Macro",
-      "importance": "high",
-      "importance_ru": "высокая",
-      "assets": [
-        "USOIL"
-      ],
-      "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/news/boc-set-to-hold-interest-rate-amid-soft-inflation-global-uncertainty-202603180900",
-      "published_at": "2026-03-18T13:00:00+00:00",
-      "signal_relation": {
-        "has_related_signal": false,
-        "related_signal_symbol": null,
-        "related_signal_direction": null,
-        "effect_on_signal": "neutral_to_signal",
-        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
-      }
-    },
-    {
-      "id": "news_201b040ce204",
-      "title_original": "Ripple expands in Brazil as XRP holds steady despite geopolitical volatility",
-      "title_ru": "На рынке Forex вышла новость по рынку",
-      "summary_ru": "Коротко: На рынке Forex вышла новость по рынку. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
-      "what_happened_ru": "На рынке вышла новость: На рынке Forex вышла новость по рынку.",
-      "why_it_matters_ru": "Это важно для рынка, потому что новость может изменить краткосрочный баланс спроса и предложения.",
-      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по основным инструментам после подтверждения движения.",
-      "category": "Forex",
-      "importance": "low",
-      "importance_ru": "низкая",
-      "assets": [],
-      "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/cryptocurrencies/news/xrp-holds-steady-as-etf-inflows-return-and-ripple-deepens-footprint-in-brazil-202603181007",
-      "published_at": "2026-03-18T13:00:00+00:00",
-      "signal_relation": {
-        "has_related_signal": false,
-        "related_signal_symbol": null,
-        "related_signal_direction": null,
-        "effect_on_signal": "neutral_to_signal",
-        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
-      }
-    },
-    {
-      "id": "news_3a7136b1abc4",
-      "title_original": "EUR/USD Price Forecast: US PPI boosts fears ahead of Federal Reserve’s announcement",
-      "title_ru": "Инфляция меняет ожидания по EURUSD",
-      "summary_ru": "Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту.",
-      "what_happened_ru": "На рынке вышла новость: Инфляция меняет ожидания по EURUSD.",
-      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
-      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по EURUSD, DXY после подтверждения движения.",
-      "category": "Central Banks",
-      "importance": "high",
-      "importance_ru": "высокая",
-      "assets": [
-        "EURUSD",
-        "DXY"
-      ],
-      "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/analysis/eur-usd-price-forecast-us-ppi-boosts-fears-ahead-of-federal-reserves-announcement-202603181258",
-      "published_at": "2026-03-18T12:58:10+00:00",
-      "signal_relation": {
-        "has_related_signal": false,
-        "related_signal_symbol": null,
-        "related_signal_direction": null,
-        "effect_on_signal": "neutral_to_signal",
-        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
-      }
-    },
-    {
-      "id": "news_722fc3348b8d",
-      "title_original": "Crypto Today: Bitcoin, Ethereum, XRP slide despite market sentiment mildly improving",
-      "title_ru": "Крипторынок получил новый драйвер",
-      "summary_ru": "Новость важна для крипторынка и может повлиять на интерес к риску в течение ближайших сессий.",
-      "what_happened_ru": "На рынке вышла новость: Крипторынок получил новый драйвер.",
-      "why_it_matters_ru": "Для крипторынка важно, растёт ли готовность инвесторов к риску и куда движется долларовая ликвидность.",
-      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по BTCUSD после подтверждения движения.",
-      "category": "Crypto",
-      "importance": "medium",
-      "importance_ru": "средняя",
-      "assets": [
-        "BTCUSD"
-      ],
-      "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/cryptocurrencies/news/crypto-today-bitcoin-ethereum-xrp-slide-despite-market-sentiment-mildly-improving-202603181253",
-      "published_at": "2026-03-18T12:53:54+00:00",
-      "signal_relation": {
-        "has_related_signal": false,
-        "related_signal_symbol": null,
-        "related_signal_direction": null,
-        "effect_on_signal": "neutral_to_signal",
-        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
-      }
-    },
-    {
-      "id": "news_c7218d93c7b8",
-      "title_original": "GBP/USD: Softer UK labour data keeps BoE easing bias – TD Securities",
-      "title_ru": "Центробанк дал новый сигнал по ставкам для GBPUSD",
-      "summary_ru": "Коротко: Центробанк дал новый сигнал по ставкам для GBPUSD. Для трейдера это событие средней важности, которое стоит учитывать по GBPUSD, DXY.",
-      "what_happened_ru": "На рынке вышла новость: Центробанк дал новый сигнал по ставкам для GBPUSD.",
-      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
-      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по GBPUSD, DXY после подтверждения движения.",
-      "category": "Forex",
-      "importance": "medium",
-      "importance_ru": "средняя",
-      "assets": [
-        "GBPUSD",
-        "DXY"
-      ],
-      "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/news/gbp-usd-softer-uk-labour-data-keeps-boe-easing-bias-td-securities-202603181251",
-      "published_at": "2026-03-18T12:51:57+00:00",
-      "signal_relation": {
-        "has_related_signal": false,
-        "related_signal_symbol": null,
-        "related_signal_direction": null,
-        "effect_on_signal": "neutral_to_signal",
-        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
-      }
-    },
-    {
-      "id": "news_9ea6207ee3ac",
-      "title_original": "US headline Producer Prices rose by 3.4% YoY in February",
-      "title_ru": "На рынке Forex вышла новость по рынку",
-      "summary_ru": "Коротко: На рынке Forex вышла новость по рынку. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
-      "what_happened_ru": "На рынке вышла новость: На рынке Forex вышла новость по рынку.",
-      "why_it_matters_ru": "Это важно для рынка, потому что новость может изменить краткосрочный баланс спроса и предложения.",
-      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по основным инструментам после подтверждения движения.",
-      "category": "Forex",
-      "importance": "low",
-      "importance_ru": "низкая",
-      "assets": [],
-      "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/news/us-headline-producer-prices-rose-by-34-yoy-in-february-202603181244",
-      "published_at": "2026-03-18T12:44:49+00:00",
-      "signal_relation": {
-        "has_related_signal": false,
-        "related_signal_symbol": null,
-        "related_signal_direction": null,
-        "effect_on_signal": "neutral_to_signal",
-        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
-      }
-    },
-    {
-      "id": "news_ddf0f3e2c08e",
-      "title_original": "Fed: Dovish hold seen as reasonable – ABN AMRO",
+      "id": "news_b3e6d093678a",
+      "title_original": "Fed: Powell set to delay cuts – ING",
       "title_ru": "Центробанк дал новый сигнал по ставкам для DXY",
       "summary_ru": "Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту.",
       "what_happened_ru": "На рынке вышла новость: Центробанк дал новый сигнал по ставкам для DXY.",
       "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
-      "market_impact_ru": "Негативно для dxy; позитивно для eurusd; позитивно для xauusd; позитивно для nasdaq.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по DXY, EURUSD, XAUUSD после подтверждения движения.",
       "category": "Central Banks",
       "importance": "high",
       "importance_ru": "высокая",
@@ -166,8 +18,8 @@
         "XAUUSD"
       ],
       "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/news/fed-dovish-hold-seen-as-reasonable-ing-202603181238",
-      "published_at": "2026-03-18T12:38:46+00:00",
+      "source_url": "https://www.fxstreet.com/news/fed-powell-set-to-delay-cuts-ing-202603181434",
+      "published_at": "2026-03-18T14:34:10+00:00",
       "signal_relation": {
         "has_related_signal": false,
         "related_signal_symbol": null,
@@ -177,8 +29,84 @@
       }
     },
     {
-      "id": "news_5b9a81607121",
-      "title_original": "Ripple faces pressure as card giants Visa and Mastercard enter the stablecoin race",
+      "id": "news_15ac26a660cf",
+      "title_original": "United States EIA Crude Oil Stocks Change above expectations (0.4M) in March 13: Actual (6.156M)",
+      "title_ru": "Сырьевой рынок меняет настрой по SP500",
+      "summary_ru": "Новость влияет на сырьевой блок и может сдвинуть ожидания по нефти и связанным активам.",
+      "what_happened_ru": "На рынке вышла новость: Сырьевой рынок меняет настрой по SP500.",
+      "why_it_matters_ru": "Это важно для SP500, USOIL, потому что новость может изменить краткосрочный баланс спроса и предложения.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по SP500, USOIL после подтверждения движения.",
+      "category": "Commodities",
+      "importance": "medium",
+      "importance_ru": "средняя",
+      "assets": [
+        "SP500",
+        "USOIL"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/united-states-eia-crude-oil-stocks-change-above-expectations-04m-in-march-13-actual-6156m-202603181430",
+      "published_at": "2026-03-18T14:30:02+00:00",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_367a380e2e40",
+      "title_original": "Federal Reserve expected to hold interest rates as stagflation risks grow",
+      "title_ru": "Центробанк дал новый сигнал по ставкам для DXY",
+      "summary_ru": "Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту.",
+      "what_happened_ru": "На рынке вышла новость: Центробанк дал новый сигнал по ставкам для DXY.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по DXY, EURUSD, XAUUSD после подтверждения движения.",
+      "category": "Central Banks",
+      "importance": "high",
+      "importance_ru": "высокая",
+      "assets": [
+        "DXY",
+        "EURUSD",
+        "XAUUSD"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/federal-reserve-set-to-hold-interest-rates-as-iran-war-clouds-outlook-202603181000",
+      "published_at": "2026-03-18T14:30:00+00:00",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_46bf11318f55",
+      "title_original": "BoC Governor Macklem speaks on outlook after keeping rates unchanged",
+      "title_ru": "На рынке Forex вышла новость по рынку",
+      "summary_ru": "Коротко: На рынке Forex вышла новость по рынку. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
+      "what_happened_ru": "На рынке вышла новость: На рынке Forex вышла новость по рынку.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по основным инструментам после подтверждения движения.",
+      "category": "Forex",
+      "importance": "low",
+      "importance_ru": "низкая",
+      "assets": [],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/boc-set-to-hold-interest-rate-amid-soft-inflation-global-uncertainty-202603180900",
+      "published_at": "2026-03-18T14:26:11+00:00",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_de257e305d4e",
+      "title_original": "Canada: Spending data shows tentative resilience – RBC",
       "title_ru": "На рынке Forex вышла новость по рынку",
       "summary_ru": "Коротко: На рынке Forex вышла новость по рынку. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
       "what_happened_ru": "На рынке вышла новость: На рынке Forex вышла новость по рынку.",
@@ -189,8 +117,8 @@
       "importance_ru": "низкая",
       "assets": [],
       "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/cryptocurrencies/news/ripple-faces-pressure-as-card-giants-visa-and-mastercard-enter-the-stablecoin-race-202603181235",
-      "published_at": "2026-03-18T12:35:02+00:00",
+      "source_url": "https://www.fxstreet.com/news/canada-spending-data-shows-tentative-resilience-rbc-202603181418",
+      "published_at": "2026-03-18T14:18:43+00:00",
       "signal_relation": {
         "has_related_signal": false,
         "related_signal_symbol": null,
@@ -200,8 +128,8 @@
       }
     },
     {
-      "id": "news_8186adbaeefc",
-      "title_original": "Canada Foreign Portfolio Investment in Canadian Securities registered at $46.73B above expectations ($4.72B) in January",
+      "id": "news_0c9df9138a3f",
+      "title_original": "US issues 60-day waiver of Jones Act in an attempt to lower energy prices",
       "title_ru": "На рынке Forex вышла новость по рынку",
       "summary_ru": "Коротко: На рынке Forex вышла новость по рынку. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
       "what_happened_ru": "На рынке вышла новость: На рынке Forex вышла новость по рынку.",
@@ -212,8 +140,8 @@
       "importance_ru": "низкая",
       "assets": [],
       "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/news/canada-foreign-portfolio-investment-in-canadian-securities-registered-at-4673b-above-expectations-472b-in-january-202603181230",
-      "published_at": "2026-03-18T12:30:14+00:00",
+      "source_url": "https://www.fxstreet.com/news/us-issues-60-day-waiver-of-jones-act-in-an-attempt-to-lower-energy-prices-202603181405",
+      "published_at": "2026-03-18T14:05:54+00:00",
       "signal_relation": {
         "has_related_signal": false,
         "related_signal_symbol": null,
@@ -223,8 +151,8 @@
       }
     },
     {
-      "id": "news_959f5d828cbc",
-      "title_original": "Canada Canadian Portfolio Investment in Foreign Securities declined to $11.39B in January from previous $13.06B",
+      "id": "news_bf192b54e90c",
+      "title_original": "SEK: Riksbank to stay patient through energy shock – TD Securities",
       "title_ru": "На рынке Forex вышла новость по рынку",
       "summary_ru": "Коротко: На рынке Forex вышла новость по рынку. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
       "what_happened_ru": "На рынке вышла новость: На рынке Forex вышла новость по рынку.",
@@ -235,8 +163,8 @@
       "importance_ru": "низкая",
       "assets": [],
       "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/news/canada-canadian-portfolio-investment-in-foreign-securities-declined-to-1139b-in-january-from-previous-1306b-202603181230",
-      "published_at": "2026-03-18T12:30:13+00:00",
+      "source_url": "https://www.fxstreet.com/news/sek-riksbank-to-stay-patient-through-energy-shock-td-securities-202603181401",
+      "published_at": "2026-03-18T14:01:19+00:00",
       "signal_relation": {
         "has_related_signal": false,
         "related_signal_symbol": null,
@@ -246,20 +174,20 @@
       }
     },
     {
-      "id": "news_a6f1ef9b3134",
-      "title_original": "United States Producer Price Index ex Food & Energy (YoY) above forecasts (3.7%) in February: Actual (3.9%)",
-      "title_ru": "Фондовые индексы получили новый рыночный сигнал",
-      "summary_ru": "Коротко: Фондовые индексы получили новый рыночный сигнал. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
-      "what_happened_ru": "На рынке вышла новость: Фондовые индексы получили новый рыночный сигнал.",
-      "why_it_matters_ru": "Индексы реагируют на изменение ставок, ожиданий по прибыли и общего аппетита к риску.",
+      "id": "news_4b4156adaab6",
+      "title_original": "United States Factory Orders (MoM) in line with forecasts (0.1%) in January",
+      "title_ru": "На рынке Forex вышла новость по рынку",
+      "summary_ru": "Коротко: На рынке Forex вышла новость по рынку. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
+      "what_happened_ru": "На рынке вышла новость: На рынке Forex вышла новость по рынку.",
+      "why_it_matters_ru": "Это важно для рынка, потому что новость может изменить краткосрочный баланс спроса и предложения.",
       "market_impact_ru": "Влияние умеренное: следите за реакцией цены по основным инструментам после подтверждения движения.",
-      "category": "Indices",
+      "category": "Forex",
       "importance": "low",
       "importance_ru": "низкая",
       "assets": [],
       "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/news/united-states-producer-price-index-ex-food-energy-yoy-above-forecasts-37-in-february-actual-39-202603181230",
-      "published_at": "2026-03-18T12:30:11+00:00",
+      "source_url": "https://www.fxstreet.com/news/united-states-factory-orders-mom-in-line-with-forecasts-01-in-january-202603181400",
+      "published_at": "2026-03-18T14:00:01+00:00",
       "signal_relation": {
         "has_related_signal": false,
         "related_signal_symbol": null,
@@ -269,20 +197,93 @@
       }
     },
     {
-      "id": "news_2f77acef3733",
-      "title_original": "United States Producer Price Index (YoY) registered at 3.4% above expectations (2.9%) in February",
-      "title_ru": "Фондовые индексы получили новый рыночный сигнал",
-      "summary_ru": "Коротко: Фондовые индексы получили новый рыночный сигнал. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
-      "what_happened_ru": "На рынке вышла новость: Фондовые индексы получили новый рыночный сигнал.",
-      "why_it_matters_ru": "Индексы реагируют на изменение ставок, ожиданий по прибыли и общего аппетита к риску.",
+      "id": "news_324d339c90bd",
+      "title_original": "USD: Fed signal watched as inflation shock looms – BBH",
+      "title_ru": "Инфляция меняет ожидания по DXY",
+      "summary_ru": "Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту.",
+      "what_happened_ru": "На рынке вышла новость: Инфляция меняет ожидания по DXY.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по DXY после подтверждения движения.",
+      "category": "Central Banks",
+      "importance": "high",
+      "importance_ru": "высокая",
+      "assets": [
+        "DXY"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/usd-fed-signal-watched-as-inflation-shock-looms-bbh-202603181345",
+      "published_at": "2026-03-18T13:45:21+00:00",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_763ef1dedb41",
+      "title_original": "Canada BoC Interest Rate Decision meets forecasts (2.25%)",
+      "title_ru": "Центробанк дал новый сигнал по ставкам для рынку",
+      "summary_ru": "Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту.",
+      "what_happened_ru": "На рынке вышла новость: Центробанк дал новый сигнал по ставкам для рынку.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
       "market_impact_ru": "Влияние умеренное: следите за реакцией цены по основным инструментам после подтверждения движения.",
-      "category": "Indices",
+      "category": "Central Banks",
+      "importance": "high",
+      "importance_ru": "высокая",
+      "assets": [],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/canada-boc-interest-rate-decision-meets-forecasts-225-202603181345",
+      "published_at": "2026-03-18T13:45:02+00:00",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_e19fcfbadb7a",
+      "title_original": "Gold slides to a fresh monthly low ahead of the Fed decision, US PPI beats expectations",
+      "title_ru": "Инфляция меняет ожидания по XAUUSD",
+      "summary_ru": "Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту.",
+      "what_happened_ru": "На рынке вышла новость: Инфляция меняет ожидания по XAUUSD.",
+      "why_it_matters_ru": "Такие сообщения двигают ожидания по ставкам, а значит напрямую влияют на валюты, золото и аппетит к риску.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по XAUUSD после подтверждения движения.",
+      "category": "Central Banks",
+      "importance": "high",
+      "importance_ru": "высокая",
+      "assets": [
+        "XAUUSD"
+      ],
+      "source": "FXStreet",
+      "source_url": "https://www.fxstreet.com/news/gold-slides-to-a-fresh-monthly-low-ahead-of-the-fed-decision-202603181206",
+      "published_at": "2026-03-18T13:43:16+00:00",
+      "signal_relation": {
+        "has_related_signal": false,
+        "related_signal_symbol": null,
+        "related_signal_direction": null,
+        "effect_on_signal": "neutral_to_signal",
+        "effect_on_signal_ru": "Связанного активного сигнала сейчас нет."
+      }
+    },
+    {
+      "id": "news_b18f0db75062",
+      "title_original": "Copper: Inventory surge weighs on prices – ING",
+      "title_ru": "На рынке Forex вышла новость по рынку",
+      "summary_ru": "Коротко: На рынке Forex вышла новость по рынку. Для трейдера это событие низкой важности, которое стоит учитывать по основным валютным инструментам.",
+      "what_happened_ru": "На рынке вышла новость: На рынке Forex вышла новость по рынку.",
+      "why_it_matters_ru": "Это важно для рынка, потому что новость может изменить краткосрочный баланс спроса и предложения.",
+      "market_impact_ru": "Влияние умеренное: следите за реакцией цены по основным инструментам после подтверждения движения.",
+      "category": "Forex",
       "importance": "low",
       "importance_ru": "низкая",
       "assets": [],
       "source": "FXStreet",
-      "source_url": "https://www.fxstreet.com/news/united-states-producer-price-index-yoy-registered-at-34-above-expectations-29-in-february-202603181230",
-      "published_at": "2026-03-18T12:30:06+00:00",
+      "source_url": "https://www.fxstreet.com/news/copper-inventory-surge-weighs-on-prices-ing-202603181329",
+      "published_at": "2026-03-18T13:29:14+00:00",
       "signal_relation": {
         "has_related_signal": false,
         "related_signal_symbol": null,
