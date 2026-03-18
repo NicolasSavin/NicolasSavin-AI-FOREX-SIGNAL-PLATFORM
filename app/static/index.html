@@ -11,10 +11,9 @@
       <header class="site-header">
         <div>
           <p class="eyebrow">AI FOREX SIGNAL PLATFORM</p>
-          <h1>Поток торговых сигналов</h1>
+          <h1>Только торговые сигналы</h1>
           <p class="lead">
-            Главная страница показывает только сигналы и связанные news alert. Разделы «Идеи», «Новости»,
-            «Календарь» и «Тепловая карта» сохранены в меню, но их блоки убраны с главной страницы.
+            На главной странице оставлен только поток активных сигналов. Остальные разделы доступны отдельно через меню.
           </p>
         </div>
         <nav class="top-nav">
@@ -26,36 +25,7 @@
         </nav>
       </header>
 
-      <section class="ticker-panel">
-        <div class="ticker-label">Live ticker</div>
-        <div class="ticker-track" id="ticker">Загрузка рыночного тикера...</div>
-      </section>
-
-      <main class="content-stack">
-        <section class="news-banner-panel" id="newsBannerPanel" hidden>
-          <div class="panel-heading compact">
-            <div>
-              <p class="section-kicker">News alerts</p>
-              <h2>Важные новости по активным инструментам</h2>
-              <p class="section-text">
-                Показываются только релевантные события средней и высокой важности. При недоступности источника
-                используется безопасный fallback без выдуманных рыночных фактов.
-              </p>
-            </div>
-            <div class="signal-summary">
-              <div>
-                <span>News alerts</span>
-                <strong id="newsBannerCount">—</strong>
-              </div>
-              <div>
-                <span>Обновлено</span>
-                <strong id="newsBannerUpdatedAt">—</strong>
-              </div>
-            </div>
-          </div>
-          <div class="news-banner-list" id="newsBannerList"></div>
-        </section>
-
+      <main class="content-stack content-stack--signals-only">
         <section class="signals-panel">
           <div class="panel-heading">
             <div>
@@ -63,7 +33,7 @@
               <h2>Сигналы AI / Smart Money</h2>
               <p class="section-text">
                 Каждая карточка показывает направление, параметры сделки, вероятность, прогресс до TP/SL,
-                новостные риски и подготовку к будущей интеграции с MT4.
+                ключевые уровни и описание сценария.
               </p>
             </div>
             <div class="signal-summary" id="signalSummary">
