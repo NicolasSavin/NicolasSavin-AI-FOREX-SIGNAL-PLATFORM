@@ -10,10 +10,16 @@ from xml.etree import ElementTree
 import requests
 from bs4 import BeautifulSoup
 
+from app.services.news_intelligence import NewsIntelligenceService
+from app.services.storage.json_storage import JsonStorage
 
-DEFAULT_NEWS_FEED_URLS = (
-    "https://news.google.com/rss/search?q=forex%20market&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=central%20bank%20forex&hl=en-US&gl=US&ceid=US:en",
+
+DEFAULT_NEWS_FEEDS = (
+    {"name": "FXStreet", "url": "http://xml.fxstreet.com/news/forex-news/index.xml"},
+    {"name": "Investing Forex", "url": "https://www.investing.com/rss/forex.rss"},
+    {"name": "Investing News", "url": "https://www.investing.com/rss/news.rss"},
+    {"name": "ECB Press", "url": "https://www.ecb.europa.eu/rss/press.html"},
+    {"name": "Federal Reserve", "url": "https://www.federalreserve.gov/feeds/e2.xml"},
 )
 
 
@@ -27,25 +33,25 @@ class MarketNewsProvider:
     def __init__(self) -> None:
         self._session = requests.Session()
         self._cache: CachedNewsPayload | None = None
+        self._storage = JsonStorage("signals_data/market_news.json", self._default_payload())
+        self._intelligence = NewsIntelligenceService()
 
-    def market_news(self) -> dict:
+    def market_news(self, active_signals: list[dict] | None = None) -> dict:
+        active_signals = active_signals or []
         now = datetime.now(timezone.utc)
-        if self._cache and self._cache.expires_at > now:
-            return self._cache.payload
 
-        news_items = self._load_news_items()
-        payload = {
-            "updated_at_utc": now.isoformat(),
-            "news": news_items or [self._fallback_item()],
-        }
-        self._cache = CachedNewsPayload(expires_at=now + timedelta(seconds=self._cache_ttl_seconds), payload=payload)
-        return payload
+        if self._cache and self._cache.expires_at > now:
+            return self._attach_signal_relations(self._cache.payload, active_signals)
+
+        base_payload = self._refresh_news_payload(now)
+        self._cache = CachedNewsPayload(expires_at=now + timedelta(seconds=self._cache_ttl_seconds), payload=base_payload)
+        return self._attach_signal_relations(base_payload, active_signals)
 
     @property
     def _cache_ttl_seconds(self) -> int:
         value = os.getenv("NEWS_CACHE_TTL_SECONDS", "300").strip()
         try:
-            return max(60, int(value))
+            return min(900, max(300, int(value)))
         except ValueError:
             return 300
 
@@ -59,40 +65,55 @@ class MarketNewsProvider:
 
     @property
     def _max_items(self) -> int:
-        value = os.getenv("NEWS_MAX_ITEMS", "6").strip()
+        value = os.getenv("NEWS_MAX_ITEMS", "12").strip()
         try:
-            return min(12, max(1, int(value)))
+            return min(20, max(3, int(value)))
         except ValueError:
-            return 6
+            return 12
 
     @property
-    def _feed_urls(self) -> tuple[str, ...]:
-        raw = os.getenv("NEWS_FEED_URLS", "")
-        if raw.strip():
-            urls = tuple(url.strip() for url in raw.split(",") if url.strip())
-            if urls:
-                return urls
-        return DEFAULT_NEWS_FEED_URLS
+    def _feed_urls(self) -> tuple[dict, ...]:
+        raw = os.getenv("NEWS_FEED_URLS", "").strip()
+        if not raw:
+            return DEFAULT_NEWS_FEEDS
+        feeds: list[dict] = []
+        for chunk in raw.split(","):
+            if not chunk.strip():
+                continue
+            if "|" in chunk:
+                name, url = chunk.split("|", 1)
+                feeds.append({"name": name.strip() or "RSS", "url": url.strip()})
+            else:
+                feeds.append({"name": "RSS", "url": chunk.strip()})
+        return tuple(feed for feed in feeds if feed.get("url")) or DEFAULT_NEWS_FEEDS
+
+    def _refresh_news_payload(self, now: datetime) -> dict:
+        items = self._load_news_items()
+        if not items:
+            stored = self._storage.read()
+            news = stored.get("news") or [self._fallback_item(now)]
+            return {"updated_at_utc": now.isoformat(), "news": news}
+
+        payload = {
+            "updated_at_utc": now.isoformat(),
+            "news": items,
+        }
+        self._storage.write(payload)
+        return payload
 
     def _load_news_items(self) -> list[dict]:
         collected: list[dict] = []
-        seen_titles: set[str] = set()
+        for feed in self._feed_urls:
+            collected.extend(self._fetch_feed_items(feed))
 
-        for url in self._feed_urls:
-            for item in self._fetch_feed_items(url):
-                normalized_title = item["title"].strip().lower()
-                if normalized_title in seen_titles:
-                    continue
-                seen_titles.add(normalized_title)
-                collected.append(item)
+        unique_items = self._intelligence.deduplicate(collected)
+        unique_items.sort(key=lambda item: item.get("published_at") or "", reverse=True)
+        return unique_items[: self._max_items]
 
-        collected.sort(key=lambda item: item.get("published_at_utc", ""), reverse=True)
-        return collected[: self._max_items]
-
-    def _fetch_feed_items(self, url: str) -> Iterable[dict]:
+    def _fetch_feed_items(self, feed: dict) -> Iterable[dict]:
         try:
             response = self._session.get(
-                url,
+                feed["url"],
                 timeout=self._request_timeout_seconds,
                 headers={"User-Agent": "Mozilla/5.0 AI Forex Signal Platform"},
             )
@@ -105,119 +126,105 @@ class MarketNewsProvider:
         except ElementTree.ParseError:
             return []
 
+        channel_items = root.findall("./channel/item")
+        rdf_items = root.findall("{http://purl.org/rss/1.0/}item")
         parsed_items: list[dict] = []
-        for item in root.findall("./channel/item"):
-            parsed = self._parse_feed_item(item)
+        for item in [*channel_items, *rdf_items]:
+            parsed = self._parse_feed_item(item, feed_name=feed.get("name") or "RSS")
             if parsed:
                 parsed_items.append(parsed)
         return parsed_items
 
-    def _parse_feed_item(self, item: ElementTree.Element) -> dict | None:
-        raw_title = (item.findtext("title") or "").strip()
-        raw_link = (item.findtext("link") or "").strip()
-        raw_description = item.findtext("description") or ""
-        source_node = item.find("source")
-        source = (source_node.text or "").strip() if source_node is not None and source_node.text else "Google News RSS"
-        published_at = self._parse_pub_date(item.findtext("pubDate"))
+    def _parse_feed_item(self, item: ElementTree.Element, feed_name: str) -> dict | None:
+        raw_title = self._find_text(item, "title").strip()
+        raw_link = self._find_text(item, "link").strip()
+        raw_description = self._find_text(item, "description") or self._find_text(item, "encoded")
+        source = self._extract_source(item, fallback=feed_name)
+        published_at = self._parse_pub_date(
+            self._find_text(item, "pubDate")
+            or self._find_text(item, "date")
+            or self._find_text(item, "issued")
+        )
 
-        if not raw_title or not raw_link:
+        if not raw_title:
             return None
 
-        title = self._normalize_title(raw_title, source)
-        summary = self._clean_description(raw_description, title=title, source=source)
-        impact = self._classify_impact(title=title, summary=summary)
-        published_label = published_at.strftime("%d.%m.%Y %H:%M UTC") if published_at else "время не указано"
-
-        description_ru = f"Источник: {source}. Опубликовано: {published_label}."
-        if summary:
-            description_ru = f"{description_ru} Краткое описание источника: {summary}"
-
+        clean_title = self._normalize_title(raw_title, source)
+        clean_summary = self._clean_description(raw_description, clean_title)
         return {
-            "title": title,
-            "description_ru": description_ru,
-            "impact": impact,
+            "title_original": clean_title,
+            "summary_original": clean_summary,
             "source": source,
-            "link": raw_link,
-            "published_at_utc": published_at.isoformat() if published_at else None,
+            "source_url": raw_link or None,
+            "published_at": published_at.isoformat() if published_at else None,
+        }
+
+    def _attach_signal_relations(self, payload: dict, active_signals: list[dict]) -> dict:
+        items = [self._intelligence.enrich(item, active_signals) for item in payload.get("news", [])]
+        return {
+            "updated_at_utc": payload.get("updated_at_utc") or datetime.now(timezone.utc).isoformat(),
+            "news": items,
         }
 
     @staticmethod
-    def _normalize_title(title: str, source: str) -> str:
-        suffix = f" - {source}"
-        if source and title.endswith(suffix):
-            return title[: -len(suffix)].strip()
-        return title
+    def _find_text(item: ElementTree.Element, tag_name: str) -> str:
+        for child in item.iter():
+            if child.tag.split("}")[-1] == tag_name and child.text:
+                return child.text.strip()
+        return ""
 
     @staticmethod
-    def _clean_description(value: str, title: str, source: str) -> str:
+    def _extract_source(item: ElementTree.Element, fallback: str) -> str:
+        source_text = MarketNewsProvider._find_text(item, "source")
+        if source_text:
+            return source_text
+        author_text = MarketNewsProvider._find_text(item, "author")
+        if author_text:
+            return author_text.split("(")[0].strip()
+        return fallback
+
+    @staticmethod
+    def _normalize_title(title: str, source: str) -> str:
+        normalized = " ".join(title.split())
+        suffix = f" - {source}"
+        if source and normalized.lower().endswith(suffix.lower()):
+            return normalized[: -len(suffix)].strip()
+        return normalized
+
+    @staticmethod
+    def _clean_description(value: str, title: str) -> str:
         if not value.strip():
             return ""
-
         soup = BeautifulSoup(value, "html.parser")
         text = " ".join(part.strip() for part in soup.stripped_strings if part.strip())
-        normalized_title = title.strip().lower()
-        normalized_source = source.strip().lower()
-
-        if text.lower().startswith(normalized_title):
+        if text.lower().startswith(title.lower()):
             text = text[len(title) :].strip(" -–—:|")
-        if normalized_source and text.lower().endswith(normalized_source):
-            text = text[: -len(source)].strip(" -–—:|")
-
-        return text[:280]
+        return text[:420]
 
     @staticmethod
     def _parse_pub_date(value: str | None) -> datetime | None:
         if not value:
             return None
+        candidate = value.strip()
         try:
-            parsed = parsedate_to_datetime(value)
+            if "T" in candidate:
+                return datetime.fromisoformat(candidate.replace("Z", "+00:00")).astimezone(timezone.utc)
+            parsed = parsedate_to_datetime(candidate)
+            return parsed.astimezone(timezone.utc)
         except (TypeError, ValueError, IndexError, OverflowError):
             return None
-        return parsed.astimezone(timezone.utc)
 
     @staticmethod
-    def _classify_impact(title: str, summary: str) -> str:
-        content = f"{title} {summary}".lower()
-        high_keywords = (
-            "interest rate",
-            "fed",
-            "ecb",
-            "boj",
-            "bank of japan",
-            "bank of england",
-            "central bank",
-            "inflation",
-            "cpi",
-            "nonfarm",
-            "payrolls",
-            "nfp",
-            "intervention",
-            "tariff",
-        )
-        medium_keywords = (
-            "usd",
-            "eur",
-            "jpy",
-            "gbp",
-            "oil",
-            "gold",
-            "yield",
-            "forex",
-            "currency",
-        )
-        if any(keyword in content for keyword in high_keywords):
-            return "high"
-        if any(keyword in content for keyword in medium_keywords):
-            return "medium"
-        return "low"
+    def _default_payload() -> dict:
+        now = datetime.now(timezone.utc).isoformat()
+        return {"updated_at_utc": now, "news": [MarketNewsProvider._fallback_item(datetime.now(timezone.utc))]}
 
     @staticmethod
-    def _fallback_item() -> dict:
+    def _fallback_item(now: datetime) -> dict:
         return {
-            "title": "Новостной канал временно недоступен",
-            "description_ru": "Не удалось получить подтверждённые новости из RSS-источника. Данные не выдумываются.",
-            "impact": "unknown",
-            "source": "RSS",
-            "link": None,
-            "published_at_utc": None,
+            "title_original": "Confirmed market news feed is temporarily unavailable",
+            "summary_original": "The service could not fetch fresh market news from open feeds. No synthetic stories are generated.",
+            "source": "Open RSS",
+            "source_url": None,
+            "published_at": now.isoformat(),
         }
