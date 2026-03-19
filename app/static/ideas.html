@@ -279,7 +279,7 @@
         <button id="close-modal" class="close-btn">Закрыть</button>
       </div>
 
-      <img id="modal-image" class="modal-image" src="/static/default-chart.png" alt="chart" />
+      <img id="modal-image" class="modal-image" src="/static/default-chart.png" alt="chart" onerror="this.src='/static/default-chart.png'" />
 
       <div class="section">
         <div class="section-title">Summary</div>
@@ -289,6 +289,26 @@
       <div class="section">
         <div class="section-title">Technical Logic</div>
         <p id="modal-technical" class="section-text"></p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">SMC / ICT</div>
+        <p id="modal-smc" class="section-text"></p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Wave Analysis</div>
+        <p id="modal-waves" class="section-text"></p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Volume</div>
+        <p id="modal-volume" class="section-text"></p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Liquidity</div>
+        <p id="modal-liquidity" class="section-text"></p>
       </div>
 
       <div class="section">
@@ -323,6 +343,10 @@
     const modalImage = document.getElementById("modal-image");
     const modalSummary = document.getElementById("modal-summary");
     const modalTechnical = document.getElementById("modal-technical");
+    const modalSmc = document.getElementById("modal-smc");
+    const modalWaves = document.getElementById("modal-waves");
+    const modalVolume = document.getElementById("modal-volume");
+    const modalLiquidity = document.getElementById("modal-liquidity");
     const modalOptions = document.getElementById("modal-options");
     const modalScenario = document.getElementById("modal-scenario");
     const modalTargets = document.getElementById("modal-targets");
@@ -374,12 +398,18 @@
       modalTitle.textContent = `${idea.symbol || idea.instrument || "Idea"} — ${idea.direction || idea.bias || ""}`;
       modalSub.textContent = `${idea.timeframe || "Intraday"} · Confidence ${idea.confidence ?? "-"}%`;
       modalImage.src = normalizeImagePath(idea);
+
       modalSummary.textContent = idea.summary || idea.summary_ru || idea.description || "";
-      modalTechnical.textContent = idea.technical || idea.analysis?.smc_ict_ru || "";
+      modalTechnical.textContent = idea.technical || idea.analysis?.fundamental_ru || "";
+      modalSmc.textContent = idea.analysis?.smc_ict_ru || "";
+      modalWaves.textContent = idea.analysis?.waves_ru || "";
+      modalVolume.textContent = idea.analysis?.volume_ru || "";
+      modalLiquidity.textContent = idea.analysis?.liquidity_ru || "";
       modalOptions.textContent = idea.options || "";
       modalScenario.textContent = idea.scenario || idea.trade_plan?.alternative_scenario_ru || "";
       modalTargets.textContent = idea.targets || [idea.trade_plan?.target_1, idea.trade_plan?.target_2].filter(Boolean).join(" / ");
       modalInvalidation.textContent = idea.invalidation || idea.trade_plan?.invalidation || "";
+
       modal.classList.add("open");
     }
 
