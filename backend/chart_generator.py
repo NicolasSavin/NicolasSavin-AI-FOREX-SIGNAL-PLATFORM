@@ -1,22 +1,23 @@
 import random
 from datetime import datetime, timedelta
 
+
 def generate_fake_candles():
     candles = []
-    price = 1.10
+    price = 2000
 
     for i in range(120):
         open_price = price
-        close = price + random.uniform(-0.003, 0.003)
-        high = max(open_price, close) + random.uniform(0, 0.002)
-        low = min(open_price, close) - random.uniform(0, 0.002)
+        close = price + random.uniform(-5, 5)
+        high = max(open_price, close) + random.uniform(0, 3)
+        low = min(open_price, close) - random.uniform(0, 3)
 
         candles.append({
-            "time": (datetime.utcnow() - timedelta(minutes=60 * (120-i))).isoformat(),
-            "open": round(open_price, 5),
-            "high": round(high, 5),
-            "low": round(low, 5),
-            "close": round(close, 5),
+            "time": (datetime.utcnow() - timedelta(hours=(120-i))).isoformat(),
+            "open": round(open_price, 2),
+            "high": round(high, 2),
+            "low": round(low, 2),
+            "close": round(close, 2),
         })
 
         price = close
@@ -51,15 +52,15 @@ class ChartGenerator:
             ],
 
             "levels": [
-                {"price": candles[-15]["high"]},
-                {"price": candles[-15]["low"]}
+                {"price": candles[-10]["high"]},
+                {"price": candles[-10]["low"]}
             ],
 
             "arrows": [
                 {
-                    "fromIndex": 40,
+                    "fromIndex": 50,
                     "toIndex": 110,
-                    "fromPrice": candles[40]["close"],
+                    "fromPrice": candles[50]["close"],
                     "toPrice": candles[110]["close"],
                 }
             ]
