@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-
 from backend.grok_idea_service import GrokIdeaService
 from backend.news_provider import MarketNewsProvider
 
@@ -110,8 +109,7 @@ class PortfolioEngine:
             if not isinstance(idea, dict):
                 continue
 
-            idea = self._enrich_idea_for_chart(idea, instrument, item)
-            ideas.append(idea)
+            ideas.append(self._enrich_idea_for_chart(idea, instrument))
 
             if len(ideas) >= 5:
                 break
@@ -166,7 +164,6 @@ class PortfolioEngine:
             "timeframe": "Интрадей",
             "summary": summary,
             "summary_ru": summary,
-            "news_title": title,
             "technical": f"По {instrument} нужен дополнительный технический сигнал после новости.",
             "technical_ru": f"По {instrument} нужен дополнительный технический сигнал после новости.",
             "options": f"По {instrument} стоит учитывать опционные уровни как потенциальные зоны притяжения цены.",
@@ -180,75 +177,62 @@ class PortfolioEngine:
             "tags": ["Новость", "Наблюдение", "Опционы"],
             "analysis": {
                 "fundamental_ru": f"{title}. Фундаментальный фон по {instrument} изменился, но сетап ещё формируется.",
-                "smc_ict_ru": f"По {instrument} нужен структурный сигнал после новости.",
-                "pattern_ru": "Паттерн пока не подтверждён.",
-                "waves_ru": "Волновая структура нейтральна.",
                 "volume_ru": "Объёмы пока не дали сильного сигнала.",
-                "cumulative_delta_ru": "Кумулятивная дельта не показывает устойчивого перевеса покупателей или продавцов.",
+                "cumulative_delta_ru": "Кумулятивная дельта пока не показывает устойчивого перевеса.",
+                "pattern_ru": "Паттерн пока не подтверждён.",
                 "liquidity_ru": "Ликвидность остаётся ключевым ориентиром.",
                 "options_ru": f"По {instrument} опционный фон нейтральный, уровни интереса стоит учитывать как дополнительный фильтр.",
             },
             "trade_plan": {
-                "bias": "neutral",
-                "entry_zone": f"Ожидание подтверждения по {instrument}.",
-                "invalidation": "Не применяется до подтверждения сетапа.",
+                "alternative_scenario_ru": "Рынок может остаться в диапазоне до появления нового импульса.",
                 "target_1": "Нет подтверждённой цели",
                 "target_2": "Нет подтверждённой цели",
-                "alternative_scenario_ru": "Рынок может остаться в диапазоне до появления нового импульса.",
+                "invalidation": "Не применяется до подтверждения сетапа.",
             },
         }
 
     def _empty_idea(self) -> dict:
-        idea = {
-            "title": "Нет подходящей новости для новой идеи",
-            "label": "НАБЛЮДЕНИЕ",
-            "instrument": "MARKET",
-            "symbol": "MARKET",
-            "direction": "NEUTRAL",
-            "confidence": 50,
-            "timeframe": "Интрадей",
-            "summary": (
-                "Идея публикуется после появления значимой новости по конкретному инструменту. "
-                "Сейчас в ленте нет события, которое даёт достаточно сильный и понятный сценарий."
-            ),
-            "summary_ru": (
-                "Идея публикуется после появления значимой новости по конкретному инструменту. "
-                "Сейчас в ленте нет события, которое даёт достаточно сильный и понятный сценарий."
-            ),
-            "news_title": "Нет новой релевантной новости",
-            "technical": "Технический сценарий пока не подтверждён.",
-            "technical_ru": "Технический сценарий пока не подтверждён.",
-            "options": "Опционный анализ пока не даёт приоритетного направления.",
-            "options_ru": "Опционный анализ пока не даёт приоритетного направления.",
-            "scenario": "Режим наблюдения до появления нового триггера.",
-            "scenario_ru": "Режим наблюдения до появления нового триггера.",
-            "targets": "Нет цели до появления сценария.",
-            "targets_ru": "Нет цели до появления сценария.",
-            "invalidation": "Не применяется, так как активной идеи нет.",
-            "invalidation_ru": "Не применяется, так как активной идеи нет.",
-            "tags": ["Наблюдение", "Нейтрально"],
-            "analysis": {
-                "fundamental_ru": "Фундаментального триггера для новой идеи сейчас недостаточно.",
-                "smc_ict_ru": "Рыночная структура требует наблюдения до появления нового драйвера.",
-                "pattern_ru": "Паттерн для приоритетного сценария не подтверждён.",
-                "waves_ru": "Волновая структура не даёт очевидного направленного преимущества.",
-                "volume_ru": "Объёмное подтверждение недостаточное.",
-                "cumulative_delta_ru": "Кумулятивная дельта не показывает устойчивого смещения потока ордеров.",
-                "liquidity_ru": "Основная ликвидность пока не отработана.",
-                "options_ru": "Опционный фон нейтральный.",
+        return self._enrich_idea_for_chart(
+            {
+                "title": "Нет подходящей новости для новой идеи",
+                "label": "НАБЛЮДЕНИЕ",
+                "instrument": "MARKET",
+                "symbol": "MARKET",
+                "direction": "NEUTRAL",
+                "confidence": 50,
+                "timeframe": "Интрадей",
+                "summary": (
+                    "Идея публикуется после появления значимой новости по конкретному инструменту. "
+                    "Сейчас в ленте нет события, которое даёт достаточно сильный и понятный сценарий."
+                ),
+                "summary_ru": (
+                    "Идея публикуется после появления значимой новости по конкретному инструменту. "
+                    "Сейчас в ленте нет события, которое даёт достаточно сильный и понятный сценарий."
+                ),
+                "technical_ru": "Технический сценарий пока не подтверждён.",
+                "options_ru": "Опционный анализ пока не даёт приоритетного направления.",
+                "scenario_ru": "Режим наблюдения до появления нового триггера.",
+                "targets_ru": "Нет цели до появления сценария.",
+                "invalidation_ru": "Не применяется, так как активной идеи нет.",
+                "tags": ["Наблюдение", "Нейтрально"],
+                "analysis": {
+                    "volume_ru": "Объёмное подтверждение недостаточное.",
+                    "cumulative_delta_ru": "Кумулятивная дельта не показывает устойчивого смещения потока ордеров.",
+                    "pattern_ru": "Паттерн для приоритетного сценария не подтверждён.",
+                    "liquidity_ru": "Основная ликвидность пока не отработана.",
+                    "options_ru": "Опционный фон нейтральный.",
+                },
+                "trade_plan": {
+                    "alternative_scenario_ru": "До выхода важной новости рынок может оставаться в режиме диапазона.",
+                    "target_1": "Нет цели до появления сценария.",
+                    "target_2": "Нет цели до появления сценария.",
+                    "invalidation": "Не применяется, так как активной идеи нет.",
+                },
             },
-            "trade_plan": {
-                "bias": "neutral",
-                "entry_zone": "Ожидание нового новостного триггера и подтверждения на цене.",
-                "invalidation": "Не применяется, так как активной идеи нет.",
-                "target_1": "Нет цели до появления сценария.",
-                "target_2": "Нет цели до появления сценария.",
-                "alternative_scenario_ru": "До выхода важной новости рынок может оставаться в режиме диапазона.",
-            },
-        }
-        return self._enrich_idea_for_chart(idea, "MARKET", {})
+            "MARKET",
+        )
 
-    def _enrich_idea_for_chart(self, idea: dict, instrument: str, item: dict | None = None) -> dict:
+    def _enrich_idea_for_chart(self, idea: dict, instrument: str) -> dict:
         direction_raw = str(idea.get("direction") or idea.get("bias") or "NEUTRAL").strip().lower()
         if direction_raw in {"bullish", "buy", "long"}:
             direction = "bullish"
@@ -257,93 +241,72 @@ class PortfolioEngine:
         else:
             direction = "neutral"
 
-        timeframe = str(idea.get("timeframe") or "Интрадей")
-        summary_ru = str(idea.get("summary_ru") or idea.get("summary") or f"Идея по {instrument}.").strip()
-
         idea["symbol"] = idea.get("symbol") or instrument
         idea["instrument"] = idea.get("instrument") or instrument
         idea["direction"] = direction.upper() if direction != "neutral" else "NEUTRAL"
-        idea["timeframe"] = timeframe
-        idea["summary_ru"] = summary_ru
-
+        idea["timeframe"] = idea.get("timeframe") or "Интрадей"
         if "analysis" not in idea or not isinstance(idea["analysis"], dict):
             idea["analysis"] = {}
 
-        analysis = idea["analysis"]
-        analysis.setdefault("volume_ru", "Объёмная структура требует подтверждения импульсом.")
-        analysis.setdefault("cumulative_delta_ru", "Кумулятивная дельта пока не показывает устойчивого перевеса.")
-        analysis.setdefault("pattern_ru", "Паттерн развивается, но ещё требует подтверждения.")
-        analysis.setdefault("liquidity_ru", "Ключевые зоны ликвидности остаются рабочими ориентирами.")
-        analysis.setdefault("options_ru", "Опционный фон используется как дополнительный фильтр сценария.")
+        idea["analysis"].setdefault("volume_ru", "Объёмы требуют дополнительного подтверждения.")
+        idea["analysis"].setdefault("cumulative_delta_ru", "Кумулятивная дельта остаётся нейтральной.")
+        idea["analysis"].setdefault("pattern_ru", "Паттерн в процессе формирования.")
+        idea["analysis"].setdefault("liquidity_ru", "Ликвидность остаётся главным ориентиром.")
+        idea["analysis"].setdefault("options_ru", "Опционный фон используется как фильтр сценария.")
 
-        chart_data = self._build_chart_data(
-            instrument=instrument,
-            direction=direction,
-            summary=summary_ru,
-            item=item or {},
-            confidence=int(idea.get("confidence") or 55),
-        )
-
-        idea["chart_data"] = chart_data
+        idea["chart_data"] = self._build_chart_data(direction)
         return idea
 
-    def _build_chart_data(
-        self,
-        instrument: str,
-        direction: str,
-        summary: str,
-        item: dict,
-        confidence: int,
-    ) -> dict:
+    def _build_chart_data(self, direction: str) -> dict:
         candles = self._build_candles(direction)
-        prices = [c["close"] for c in candles]
-        low_price = min(c["low"] for c in candles)
-        high_price = max(c["high"] for c in candles)
-        mid_price = (low_price + high_price) / 2
+        closes = [c["close"] for c in candles]
+        lows = [c["low"] for c in candles]
+        highs = [c["high"] for c in candles]
 
-        zone_bottom = round(min(prices[7:12]) - 0.00035, 5)
-        zone_top = round(max(prices[7:12]) + 0.00020, 5)
+        low_price = min(lows)
+        high_price = max(highs)
+        mid = (low_price + high_price) / 2
 
         if direction == "bullish":
             zones = [
                 {
                     "type": "bullish_ob",
                     "label": "Бычий ордерблок",
-                    "from": zone_bottom,
-                    "to": zone_top,
+                    "from": round(min(closes[6:10]) - 0.0005, 5),
+                    "to": round(max(closes[6:10]) + 0.0002, 5),
                     "startIndex": 6,
-                    "endIndex": 12,
+                    "endIndex": 10,
                 },
                 {
                     "type": "fvg",
                     "label": "Имбаланс",
-                    "from": round(zone_top + 0.00045, 5),
-                    "to": round(zone_top + 0.00100, 5),
-                    "startIndex": 13,
-                    "endIndex": 17,
+                    "from": round(max(closes[12:15]) + 0.0002, 5),
+                    "to": round(max(closes[12:15]) + 0.0009, 5),
+                    "startIndex": 12,
+                    "endIndex": 15,
                 },
             ]
             levels = [
-                {"label": "Нижняя ликвидность", "price": round(low_price + 0.00010, 5)},
-                {"label": "Верхняя ликвидность", "price": round(high_price + 0.00055, 5)},
-                {"label": "Целевой уровень", "price": round(high_price + 0.00120, 5)},
+                {"label": "Нижняя ликвидность", "price": round(low_price + 0.0002, 5)},
+                {"label": "Верхняя ликвидность", "price": round(high_price + 0.0007, 5)},
+                {"label": "Целевой уровень", "price": round(high_price + 0.0013, 5)},
             ]
             arrows = [
                 {
                     "text": "Ожидаем рост",
-                    "fromIndex": 12,
+                    "fromIndex": 11,
                     "toIndex": 19,
-                    "fromPrice": round(zone_top - 0.00010, 5),
-                    "toPrice": round(high_price + 0.00105, 5),
+                    "fromPrice": round(mid, 5),
+                    "toPrice": round(high_price + 0.0011, 5),
                 }
             ]
             patterns = [
                 {
                     "name": "Восходящий канал",
                     "points": [
-                        {"time": candles[8]["time"], "price": round(zone_bottom + 0.00005, 5)},
-                        {"time": candles[12]["time"], "price": round(mid_price, 5)},
-                        {"time": candles[17]["time"], "price": round(high_price + 0.00020, 5)},
+                        {"time": candles[5]["time"], "price": round(min(closes[5:7]), 5)},
+                        {"time": candles[11]["time"], "price": round(mid, 5)},
+                        {"time": candles[18]["time"], "price": round(high_price, 5)},
                     ],
                 }
             ]
@@ -352,84 +315,82 @@ class PortfolioEngine:
                 {
                     "type": "bearish_ob",
                     "label": "Медвежий ордерблок",
-                    "from": zone_bottom,
-                    "to": zone_top,
+                    "from": round(min(closes[6:10]) - 0.0002, 5),
+                    "to": round(max(closes[6:10]) + 0.0005, 5),
                     "startIndex": 6,
-                    "endIndex": 12,
+                    "endIndex": 10,
                 },
                 {
                     "type": "fvg",
                     "label": "Имбаланс",
-                    "from": round(zone_bottom - 0.00100, 5),
-                    "to": round(zone_bottom - 0.00040, 5),
-                    "startIndex": 13,
-                    "endIndex": 17,
+                    "from": round(min(closes[12:15]) - 0.0009, 5),
+                    "to": round(min(closes[12:15]) - 0.0002, 5),
+                    "startIndex": 12,
+                    "endIndex": 15,
                 },
             ]
             levels = [
-                {"label": "Верхняя ликвидность", "price": round(high_price - 0.00010, 5)},
-                {"label": "Нижняя ликвидность", "price": round(low_price - 0.00055, 5)},
-                {"label": "Целевой уровень", "price": round(low_price - 0.00120, 5)},
+                {"label": "Верхняя ликвидность", "price": round(high_price - 0.0002, 5)},
+                {"label": "Нижняя ликвидность", "price": round(low_price - 0.0007, 5)},
+                {"label": "Целевой уровень", "price": round(low_price - 0.0013, 5)},
             ]
             arrows = [
                 {
                     "text": "Ожидаем снижение",
-                    "fromIndex": 12,
+                    "fromIndex": 11,
                     "toIndex": 19,
-                    "fromPrice": round(zone_bottom + 0.00010, 5),
-                    "toPrice": round(low_price - 0.00105, 5),
+                    "fromPrice": round(mid, 5),
+                    "toPrice": round(low_price - 0.0011, 5),
                 }
             ]
             patterns = [
                 {
                     "name": "Нисходящий канал",
                     "points": [
-                        {"time": candles[8]["time"], "price": round(zone_top - 0.00005, 5)},
-                        {"time": candles[12]["time"], "price": round(mid_price, 5)},
-                        {"time": candles[17]["time"], "price": round(low_price - 0.00020, 5)},
+                        {"time": candles[5]["time"], "price": round(max(closes[5:7]), 5)},
+                        {"time": candles[11]["time"], "price": round(mid, 5)},
+                        {"time": candles[18]["time"], "price": round(low_price, 5)},
                     ],
                 }
             ]
         else:
+            zone_low = round(min(closes[5:15]) - 0.00035, 5)
+            zone_high = round(max(closes[5:15]) + 0.00035, 5)
             zones = [
                 {
                     "type": "range",
                     "label": "Диапазон",
-                    "from": zone_bottom,
-                    "to": zone_top,
+                    "from": zone_low,
+                    "to": zone_high,
                     "startIndex": 5,
                     "endIndex": 15,
                 }
             ]
             levels = [
-                {"label": "Верхняя ликвидность", "price": round(zone_top + 0.00075, 5)},
-                {"label": "Нижняя ликвидность", "price": round(zone_bottom - 0.00075, 5)},
-                {"label": "Середина диапазона", "price": round((zone_bottom + zone_top) / 2, 5)},
+                {"label": "Верхняя ликвидность", "price": round(zone_high + 0.00065, 5)},
+                {"label": "Нижняя ликвидность", "price": round(zone_low - 0.00065, 5)},
+                {"label": "Середина диапазона", "price": round((zone_low + zone_high) / 2, 5)},
             ]
             arrows = [
                 {
-                    "text": "Базовый сценарий: работа внутри диапазона",
+                    "text": "Работа внутри диапазона",
                     "fromIndex": 10,
                     "toIndex": 18,
-                    "fromPrice": round((zone_bottom + zone_top) / 2, 5),
-                    "toPrice": round((zone_bottom + zone_top) / 2 + 0.00015, 5),
+                    "fromPrice": round((zone_low + zone_high) / 2, 5),
+                    "toPrice": round((zone_low + zone_high) / 2 + 0.00012, 5),
                 }
             ]
             patterns = [
                 {
                     "name": "Диапазон",
                     "points": [
-                        {"time": candles[5]["time"], "price": round(zone_top, 5)},
-                        {"time": candles[15]["time"], "price": round(zone_top, 5)},
+                        {"time": candles[5]["time"], "price": zone_high},
+                        {"time": candles[15]["time"], "price": zone_high},
                     ],
                 }
             ]
 
         return {
-            "instrument": instrument,
-            "direction": direction,
-            "confidence": confidence,
-            "summary": summary,
             "candles": candles,
             "zones": zones,
             "levels": levels,
@@ -439,6 +400,7 @@ class PortfolioEngine:
 
     def _build_candles(self, direction: str) -> list[dict]:
         now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+
         if direction == "bullish":
             closes = [
                 1.2700, 1.2704, 1.2701, 1.2708, 1.2712,
@@ -455,10 +417,10 @@ class PortfolioEngine:
             ]
         else:
             closes = [
-                1.2700, 1.2703, 1.2701, 1.2704, 1.2702,
-                1.2705, 1.2701, 1.2706, 1.2703, 1.2707,
-                1.2702, 1.2706, 1.2704, 1.2707, 1.2703,
-                1.2706, 1.2702, 1.2705, 1.2703, 1.2706,
+                1.2700, 1.2702, 1.2701, 1.2703, 1.2702,
+                1.2704, 1.2703, 1.2705, 1.2702, 1.2706,
+                1.2703, 1.2705, 1.2702, 1.2704, 1.2703,
+                1.2705, 1.2702, 1.2704, 1.2703, 1.2705,
             ]
 
         candles: list[dict] = []
