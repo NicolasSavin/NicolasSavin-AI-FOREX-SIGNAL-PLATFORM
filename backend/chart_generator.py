@@ -36,30 +36,30 @@ class ChartGenerator:
             "zones": [
                 {
                     "type": "bullish_ob",
-                    "startIndex": 30,
-                    "endIndex": 60,
-                    "from": min(c["low"] for c in candles[30:60]),
-                    "to": max(c["high"] for c in candles[30:60]),
+                    "startIndex": 20,
+                    "endIndex": 50,
+                    "from": min(c["low"] for c in candles[20:50]),
+                    "to": max(c["high"] for c in candles[20:50]),
                 },
                 {
                     "type": "fvg",
-                    "startIndex": 70,
-                    "endIndex": 90,
-                    "from": min(c["low"] for c in candles[70:90]),
-                    "to": max(c["high"] for c in candles[70:90]),
+                    "startIndex": 60,
+                    "endIndex": 85,
+                    "from": min(c["low"] for c in candles[60:85]),
+                    "to": max(c["high"] for c in candles[60:85]),
                 }
             ],
 
             "levels": [
-                {"price": candles[-20]["high"]},
-                {"price": candles[-20]["low"]}
+                {"price": candles[-15]["high"]},
+                {"price": candles[-15]["low"]}
             ],
 
             "arrows": [
                 {
-                    "fromIndex": 60,
+                    "fromIndex": 40,
                     "toIndex": 110,
-                    "fromPrice": candles[60]["close"],
+                    "fromPrice": candles[40]["close"],
                     "toPrice": candles[110]["close"],
                 }
             ]
