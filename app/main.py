@@ -5,9 +5,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.portfolio_engine import PortfolioEngine
+from backend.market_data import MarketDataService
 
 app = FastAPI(title="AI Forex Signal Platform")
+
 portfolio_engine = PortfolioEngine()
+market_data_service = MarketDataService()
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
@@ -27,16 +30,24 @@ async def market_ideas():
     return portfolio_engine.market_ideas()
 
 
-@app.get("/news/market")
-async def market_news():
-    return portfolio_engine.market_news(active_signals=[])
+@app.get("/api/chart/{symbol}/{timeframe}")
+async def chart_data(symbol: str, timeframe: str):
+    candles = market_data_service.get_candles(symbol=symbol.upper(), timeframe=timeframe.upper())
+    overlays = portfolio_engine.get_chart_overlays(symbol=symbol.upper(), timeframe=timeframe.upper())
+
+    return {
+        "symbol": symbol.upper(),
+        "timeframe": timeframe.upper(),
+        "candles": candles,
+        "overlays": overlays,
+    }
 
 
-@app.get("/calendar/events")
-async def calendar_events():
-    return portfolio_engine.calendar_events()
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
-@app.get("/heatmap")
-async def heatmap():
-    return portfolio_engine.heatmap([])
+@app.get("/api/health")
+async def api_health():
+    return {"status": "ok"}
