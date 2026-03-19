@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI-идеи по рынку</title>
-  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     :root {
       --bg: #08111f;
@@ -27,7 +26,7 @@
     }
 
     .wrap {
-      max-width: 1280px;
+      max-width: 1320px;
       margin: 0 auto;
       padding: 28px 16px 40px;
     }
@@ -68,7 +67,7 @@
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 380px));
+      grid-template-columns: repeat(auto-fit, minmax(340px, 400px));
       justify-content: start;
       gap: 14px;
     }
@@ -126,25 +125,26 @@
       margin: 0 0 12px;
       color: #d7e0ee;
       font-size: 13px;
-      line-height: 1.35;
+      line-height: 1.45;
       display: -webkit-box;
-      -webkit-line-clamp: 4;
+      -webkit-line-clamp: 5;
       -webkit-box-orient: vertical;
       overflow: hidden;
-      min-height: 70px;
+      min-height: 92px;
     }
 
-    .preview {
-      height: 180px;
-      background: #091325;
-      border: 1px solid #162744;
+    .preview-shell {
+      width: 100%;
+      height: 210px;
       border-radius: 14px;
+      border: 1px solid #162744;
+      background: #08111f;
       margin-bottom: 12px;
-      position: relative;
       overflow: hidden;
+      position: relative;
     }
 
-    .preview svg {
+    .preview-canvas {
       width: 100%;
       height: 100%;
       display: block;
@@ -181,8 +181,8 @@
     }
 
     .modal-card {
-      width: min(1240px, 100%);
-      max-height: 94vh;
+      width: min(1280px, 100%);
+      max-height: 95vh;
       overflow-y: auto;
       background: #0b1730;
       border: 1px solid var(--border);
@@ -221,29 +221,19 @@
 
     .chart-shell {
       width: 100%;
-      height: 620px;
+      height: 700px;
       border-radius: 18px;
-      overflow: hidden;
-      background: #08111f;
       border: 1px solid #162744;
+      background: #08111f;
+      overflow: hidden;
       margin-bottom: 18px;
       position: relative;
     }
 
-    .chart-host {
+    .chart-canvas {
       width: 100%;
       height: 100%;
-      position: absolute;
-      inset: 0;
-    }
-
-    .chart-overlay {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
-      z-index: 4;
+      display: block;
     }
 
     .legend {
@@ -262,26 +252,26 @@
       border: 1px solid #233553;
     }
 
-    .section {
-      margin-bottom: 16px;
+    .analysis-block {
+      background: linear-gradient(180deg, #0c1a33 0%, #0a1529 100%);
+      border: 1px solid #1d2c47;
+      border-radius: 16px;
+      padding: 16px 18px;
+      margin-top: 8px;
     }
 
-    .section.hidden {
-      display: none;
-    }
-
-    .section-title {
+    .analysis-title {
       font-size: 13px;
       color: var(--muted);
-      margin-bottom: 6px;
+      margin-bottom: 8px;
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }
 
-    .section-text {
+    .analysis-text {
       margin: 0;
-      font-size: 14px;
-      line-height: 1.5;
+      font-size: 15px;
+      line-height: 1.65;
       color: #eef4ff;
       white-space: pre-line;
     }
@@ -302,7 +292,11 @@
       }
 
       .chart-shell {
-        height: 380px;
+        height: 420px;
+      }
+
+      .preview-shell {
+        height: 180px;
       }
 
       .modal-card {
@@ -316,7 +310,7 @@
     <div class="topbar">
       <div class="topbar-left">
         <h1>AI-идеи по рынку</h1>
-        <p>Кликните по карточке, чтобы открыть интерактивный график с зонами, уровнями, стрелками и подписями.</p>
+        <p>Короткая карточка показывает информативное превью графика, а по клику открывается полный разбор с крупным графиком, зонами, уровнями и стрелками.</p>
       </div>
       <a class="home-link" href="/">На главную</a>
     </div>
@@ -335,8 +329,7 @@
       </div>
 
       <div class="chart-shell">
-        <div id="modal-chart" class="chart-host"></div>
-        <canvas id="modal-overlay" class="chart-overlay"></canvas>
+        <canvas id="modal-chart" class="chart-canvas"></canvas>
       </div>
 
       <div class="legend">
@@ -344,57 +337,12 @@
         <div class="legend-item">Красная зона — предложение / медвежий ордерблок</div>
         <div class="legend-item">Фиолетовая зона — FVG / имбаланс</div>
         <div class="legend-item">Белые линии — уровни ликвидности</div>
-        <div class="legend-item">Жёлтые стрелки — ожидаемое движение</div>
+        <div class="legend-item">Жёлтая стрелка — ожидаемое направление</div>
       </div>
 
-      <div id="section-summary" class="section">
-        <div class="section-title">СВОДКА</div>
-        <p id="modal-summary" class="section-text"></p>
-      </div>
-
-      <div id="section-technical" class="section">
-        <div class="section-title">ТЕХНИЧЕСКАЯ ЛОГИКА</div>
-        <p id="modal-technical" class="section-text"></p>
-      </div>
-
-      <div id="section-volume" class="section">
-        <div class="section-title">АНАЛИЗ ОБЪЁМОВ</div>
-        <p id="modal-volume" class="section-text"></p>
-      </div>
-
-      <div id="section-cdelta" class="section">
-        <div class="section-title">КУМУЛЯТИВНАЯ ДЕЛЬТА</div>
-        <p id="modal-cdelta" class="section-text"></p>
-      </div>
-
-      <div id="section-patterns" class="section">
-        <div class="section-title">АНАЛИЗ ПАТТЕРНОВ</div>
-        <p id="modal-patterns" class="section-text"></p>
-      </div>
-
-      <div id="section-liquidity" class="section">
-        <div class="section-title">АНАЛИЗ ЛИКВИДНОСТИ</div>
-        <p id="modal-liquidity" class="section-text"></p>
-      </div>
-
-      <div id="section-options" class="section">
-        <div class="section-title">ОПЦИОННЫЙ АНАЛИЗ</div>
-        <p id="modal-options" class="section-text"></p>
-      </div>
-
-      <div id="section-scenario" class="section">
-        <div class="section-title">СЦЕНАРИЙ</div>
-        <p id="modal-scenario" class="section-text"></p>
-      </div>
-
-      <div id="section-targets" class="section">
-        <div class="section-title">ЦЕЛИ</div>
-        <p id="modal-targets" class="section-text"></p>
-      </div>
-
-      <div id="section-invalidation" class="section">
-        <div class="section-title">ИНВАЛИДАЦИЯ</div>
-        <p id="modal-invalidation" class="section-text"></p>
+      <div class="analysis-block">
+        <div class="analysis-title">Описание сценария</div>
+        <p id="modal-analysis" class="analysis-text"></p>
       </div>
     </div>
   </div>
@@ -406,22 +354,9 @@
 
     const modalTitle = document.getElementById("modal-title");
     const modalSub = document.getElementById("modal-sub");
-    const modalChartHost = document.getElementById("modal-chart");
-    const modalOverlay = document.getElementById("modal-overlay");
+    const modalChart = document.getElementById("modal-chart");
+    const modalAnalysis = document.getElementById("modal-analysis");
 
-    const modalSummary = document.getElementById("modal-summary");
-    const modalTechnical = document.getElementById("modal-technical");
-    const modalVolume = document.getElementById("modal-volume");
-    const modalCDelta = document.getElementById("modal-cdelta");
-    const modalPatterns = document.getElementById("modal-patterns");
-    const modalLiquidity = document.getElementById("modal-liquidity");
-    const modalOptions = document.getElementById("modal-options");
-    const modalScenario = document.getElementById("modal-scenario");
-    const modalTargets = document.getElementById("modal-targets");
-    const modalInvalidation = document.getElementById("modal-invalidation");
-
-    let activeChart = null;
-    let activeSeries = null;
     let activeIdea = null;
     let resizeHandler = null;
 
@@ -457,53 +392,65 @@
       return "НЕЙТРАЛЬНЫЙ";
     }
 
-    function setSection(textEl, value) {
-      const section = textEl.closest(".section");
-      const text = getText(value);
-      if (!text) {
-        section.classList.add("hidden");
-        textEl.textContent = "";
-      } else {
-        section.classList.remove("hidden");
-        textEl.textContent = text;
-      }
-    }
+    function buildUnifiedText(idea) {
+      const blocks = [];
 
-    function buildPreview(direction) {
-      const bullish = String(direction || "").toLowerCase() !== "bearish";
-      return `
-        <svg viewBox="0 0 100 50" xmlns="http://www.w3.org/2000/svg">
-          <rect x="0" y="0" width="100" height="50" fill="#08111f"/>
-          <line x1="0" y1="8" x2="100" y2="8" stroke="#13233c"/>
-          <line x1="0" y1="20" x2="100" y2="20" stroke="#13233c"/>
-          <line x1="0" y1="32" x2="100" y2="32" stroke="#13233c"/>
-          <line x1="0" y1="44" x2="100" y2="44" stroke="#13233c"/>
-          <rect x="14" y="24" width="28" height="10" fill="rgba(34,197,94,0.22)" stroke="#22c55e"/>
-          <rect x="54" y="16" width="18" height="8" fill="rgba(139,92,246,0.22)" stroke="#8b5cf6"/>
-          <line x1="78" y1="12" x2="95" y2="12" stroke="#ffffff" stroke-width="1.2"/>
-          <line x1="78" y1="38" x2="95" y2="38" stroke="#ffffff" stroke-width="1.2"/>
-          <polyline points="8,30 18,28 28,25 38,27 48,23 58,20 68,22 78,18" fill="none" stroke="#facc15" stroke-width="2"/>
-          ${bullish
-            ? '<line x1="74" y1="22" x2="90" y2="10" stroke="#facc15" stroke-width="2"/><polygon points="90,10 84,12 86,16" fill="#facc15"/>'
-            : '<line x1="74" y1="18" x2="90" y2="30" stroke="#facc15" stroke-width="2"/><polygon points="90,30 84,28 86,24" fill="#facc15"/>'
-          }
-        </svg>
-      `;
+      const summary = getText(idea.summary_ru, idea.summary);
+      const technical = getText(idea.technical_ru, idea.technical, idea.analysis?.fundamental_ru);
+      const volume = getText(idea.analysis?.volume_ru, idea.volume_analysis_ru);
+      const cdelta = getText(idea.analysis?.cumulative_delta_ru, idea.cumulative_delta_ru);
+      const pattern = getText(idea.analysis?.pattern_ru, idea.pattern_analysis_ru);
+      const liquidity = getText(idea.analysis?.liquidity_ru, idea.liquidity_ru);
+      const options = getText(idea.options_ru, idea.options, idea.analysis?.options_ru);
+      const scenario = getText(idea.scenario_ru, idea.scenario, idea.trade_plan?.alternative_scenario_ru);
+      const targets = getText(idea.targets_ru, idea.targets, [idea.trade_plan?.target_1, idea.trade_plan?.target_2].filter(Boolean).join(" / "));
+      const invalidation = getText(idea.invalidation_ru, idea.invalidation, idea.trade_plan?.invalidation);
+
+      if (summary) blocks.push(summary);
+      if (technical) blocks.push(`Технически: ${technical}`);
+      if (volume) blocks.push(`По объёмам: ${volume}`);
+      if (cdelta) blocks.push(`По кумулятивной дельте: ${cdelta}`);
+      if (pattern) blocks.push(`По паттернам: ${pattern}`);
+      if (liquidity) blocks.push(`По ликвидности: ${liquidity}`);
+      if (options) blocks.push(`По опционам: ${options}`);
+      if (scenario) blocks.push(`Базовый сценарий: ${scenario}`);
+      if (targets) blocks.push(`Цели: ${targets}`);
+      if (invalidation) blocks.push(`Инвалидация: ${invalidation}`);
+
+      return blocks.join("\n\n");
     }
 
     function fallbackCandles(direction) {
-      const bullish = String(direction || "").toLowerCase() !== "bearish";
-      const base = bullish
-        ? [1.2690,1.2694,1.2692,1.2698,1.2704,1.2701,1.2707,1.2712,1.2709,1.2715,1.2719,1.2716,1.2722,1.2728,1.2724,1.2730,1.2736,1.2731,1.2738,1.2742]
-        : [1.2690,1.2686,1.2689,1.2682,1.2678,1.2681,1.2674,1.2669,1.2672,1.2666,1.2661,1.2664,1.2659,1.2653,1.2657,1.2651,1.2646,1.2649,1.2643,1.2638];
+      const raw = String(direction || "").toLowerCase();
+
+      let base;
+      if (raw === "bullish") {
+        base = [
+          1.2688,1.2691,1.2690,1.2694,1.2697,1.2695,1.2699,1.2704,1.2702,1.2707,
+          1.2705,1.2710,1.2714,1.2712,1.2717,1.2720,1.2718,1.2723,1.2727,1.2725,
+          1.2730,1.2734,1.2732,1.2737,1.2740,1.2738,1.2743,1.2747,1.2745,1.2750
+        ];
+      } else if (raw === "bearish") {
+        base = [
+          1.2750,1.2747,1.2749,1.2744,1.2741,1.2743,1.2738,1.2735,1.2737,1.2732,
+          1.2729,1.2731,1.2726,1.2723,1.2725,1.2720,1.2717,1.2719,1.2714,1.2711,
+          1.2713,1.2708,1.2705,1.2707,1.2702,1.2699,1.2701,1.2696,1.2693,1.2690
+        ];
+      } else {
+        base = [
+          1.2710,1.2712,1.2711,1.2713,1.2710,1.2714,1.2712,1.2715,1.2711,1.2716,
+          1.2712,1.2715,1.2711,1.2714,1.2712,1.2716,1.2713,1.2715,1.2712,1.2714,
+          1.2711,1.2713,1.2712,1.2714,1.2711,1.2713,1.2712,1.2714,1.2712,1.2715
+        ];
+      }
 
       return base.map((close, i) => {
         const prev = i === 0 ? close : base[i - 1];
         const open = prev;
-        const high = Math.max(open, close) + 0.0005;
-        const low = Math.min(open, close) - 0.0005;
+        const high = Math.max(open, close) + 0.00045;
+        const low = Math.min(open, close) - 0.00045;
         return {
-          time: Math.floor(Date.now() / 1000) - (base.length - i) * 3600,
+          time: Date.now() - (base.length - i) * 3600 * 1000,
           open: Number(open.toFixed(5)),
           high: Number(high.toFixed(5)),
           low: Number(low.toFixed(5)),
@@ -516,7 +463,7 @@
       const raw = idea?.chart_data?.candles || idea?.candles || [];
       if (Array.isArray(raw) && raw.length) {
         return raw.map((c, i) => ({
-          time: c.time ? Math.floor(new Date(c.time).getTime() / 1000) : Math.floor(Date.now() / 1000) - (raw.length - i) * 3600,
+          time: c.time ? new Date(c.time).getTime() : Date.now() - (raw.length - i) * 3600 * 1000,
           open: Number(c.open),
           high: Number(c.high),
           low: Number(c.low),
@@ -539,7 +486,7 @@
       if (arrows.length) return arrows;
 
       if (!candles.length) return [];
-      const fromIndex = Math.max(0, candles.length - 6);
+      const fromIndex = Math.max(0, candles.length - 8);
       const toIndex = candles.length - 1;
       const bullish = String(idea.direction || idea.bias || "").toLowerCase() !== "bearish";
 
@@ -548,7 +495,7 @@
         fromIndex,
         toIndex,
         fromPrice: candles[fromIndex].close,
-        toPrice: bullish ? candles[toIndex].close + 0.0015 : candles[toIndex].close - 0.0015
+        toPrice: bullish ? candles[toIndex].close + 0.0012 : candles[toIndex].close - 0.0012
       }];
     }
 
@@ -559,56 +506,68 @@
     function zoneStyle(type) {
       const raw = String(type || "").toLowerCase();
       if (["bullish_ob", "demand", "buy_zone"].includes(raw)) {
-        return { fill: "rgba(34,197,94,0.20)", stroke: "#22c55e" };
+        return { fill: "rgba(34,197,94,0.16)", stroke: "#22c55e" };
       }
       if (["bearish_ob", "supply", "sell_zone"].includes(raw)) {
-        return { fill: "rgba(239,68,68,0.20)", stroke: "#ef4444" };
+        return { fill: "rgba(239,68,68,0.16)", stroke: "#ef4444" };
       }
       if (["fvg", "imbalance"].includes(raw)) {
-        return { fill: "rgba(139,92,246,0.20)", stroke: "#8b5cf6" };
+        return { fill: "rgba(139,92,246,0.16)", stroke: "#8b5cf6" };
       }
-      return { fill: "rgba(56,189,248,0.18)", stroke: "#38bdf8" };
+      return { fill: "rgba(56,189,248,0.14)", stroke: "#38bdf8" };
     }
 
-    function fitOverlayCanvas() {
-      const rect = modalChartHost.getBoundingClientRect();
+    function fitCanvas(canvas) {
+      const rect = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      modalOverlay.width = Math.floor(rect.width * dpr);
-      modalOverlay.height = Math.floor(rect.height * dpr);
-      modalOverlay.style.width = rect.width + "px";
-      modalOverlay.style.height = rect.height + "px";
-      const ctx = modalOverlay.getContext("2d");
+      const cssWidth = Math.max(320, Math.floor(rect.width || canvas.parentElement?.clientWidth || 320));
+      const cssHeight = Math.max(180, Math.floor(rect.height || canvas.parentElement?.clientHeight || 180));
+
+      canvas.width = Math.floor(cssWidth * dpr);
+      canvas.height = Math.floor(cssHeight * dpr);
+      canvas.style.width = cssWidth + "px";
+      canvas.style.height = cssHeight + "px";
+
+      const ctx = canvas.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      return { ctx, width: rect.width, height: rect.height };
+
+      return { ctx, width: cssWidth, height: cssHeight };
     }
 
-    function drawLabel(ctx, x, y, text, color = "#ffffff", bg = "rgba(8,17,31,0.82)") {
-      ctx.font = "12px Arial";
-      const padX = 6;
-      const padY = 4;
-      const metrics = ctx.measureText(text);
-      const w = metrics.width + padX * 2;
-      const h = 20;
-      ctx.fillStyle = bg;
+    function roundRectPath(ctx, x, y, w, h, r) {
       ctx.beginPath();
-      ctx.roundRect(x, y - h + 4, w, h, 8);
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    function drawLabel(ctx, x, y, text, color = "#ffffff", bg = "rgba(8,17,31,0.86)", compact = false) {
+      ctx.font = compact ? "11px Arial" : "12px Arial";
+      const padX = compact ? 5 : 6;
+      const h = compact ? 18 : 20;
+      const w = ctx.measureText(text).width + padX * 2;
+      ctx.fillStyle = bg;
+      roundRectPath(ctx, x, y - h, w, h, 8);
       ctx.fill();
       ctx.fillStyle = color;
-      ctx.fillText(text, x + padX, y - 4);
+      ctx.fillText(text, x + padX, y - 5);
     }
 
-    function drawArrow(ctx, x1, y1, x2, y2, color, text) {
+    function drawArrow(ctx, x1, y1, x2, y2, color, text, compact = false) {
       ctx.save();
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = compact ? 2 : 3;
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
 
       const angle = Math.atan2(y2 - y1, x2 - x1);
-      const headLen = 12;
+      const headLen = compact ? 9 : 12;
       ctx.beginPath();
       ctx.moveTo(x2, y2);
       ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
@@ -616,207 +575,240 @@
       ctx.closePath();
       ctx.fill();
 
-      if (text) {
+      if (text && !compact) {
         drawLabel(ctx, x2 + 8, y2 - 10, text, color, "rgba(11,23,48,0.92)");
       }
       ctx.restore();
     }
 
-    function drawOverlay(idea) {
-      if (!activeChart || !activeSeries) return;
+    function renderChart(canvas, idea, compact = false) {
+      try {
+        const { ctx, width, height } = fitCanvas(canvas);
 
-      const { ctx, width, height } = fitOverlayCanvas();
-      ctx.clearRect(0, 0, width, height);
-
-      const timeScale = activeChart.timeScale();
-      const zones = normalizeZones(idea);
-      const levels = normalizeLevels(idea);
-      const arrows = normalizeArrows(idea, normalizeCandles(idea));
-      const patterns = normalizePatterns(idea);
-
-      zones.forEach((zone) => {
-        const startTime = zone.startTime ? Math.floor(new Date(zone.startTime).getTime() / 1000) : null;
-        const endTime = zone.endTime ? Math.floor(new Date(zone.endTime).getTime() / 1000) : null;
-
-        const x1 = startTime != null
-          ? timeScale.timeToCoordinate(startTime)
-          : timeScale.timeToCoordinate(normalizeCandles(idea)[Math.max(0, Number(zone.startIndex ?? 0))]?.time);
-
-        const x2 = endTime != null
-          ? timeScale.timeToCoordinate(endTime)
-          : timeScale.timeToCoordinate(normalizeCandles(idea)[Math.min(normalizeCandles(idea).length - 1, Number(zone.endIndex ?? normalizeCandles(idea).length - 1))]?.time);
-
-        const y1 = activeSeries.priceToCoordinate(Number(zone.to ?? zone.priceTo ?? 0));
-        const y2 = activeSeries.priceToCoordinate(Number(zone.from ?? zone.priceFrom ?? 0));
-
-        if (x1 == null || x2 == null || y1 == null || y2 == null) return;
-
-        const left = Math.min(x1, x2);
-        const top = Math.min(y1, y2);
-        const rectW = Math.abs(x2 - x1);
-        const rectH = Math.abs(y2 - y1);
-        const style = zoneStyle(zone.type);
-
-        ctx.save();
-        ctx.fillStyle = style.fill;
-        ctx.strokeStyle = style.stroke;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect(left, top, rectW, rectH, 10);
-        ctx.fill();
-        ctx.stroke();
-        drawLabel(ctx, left + 8, top + 22, String(zone.label || "Зона"), style.stroke);
-        ctx.restore();
-      });
-
-      levels.forEach((level) => {
-        const y = activeSeries.priceToCoordinate(Number(level.price ?? level.value ?? 0));
-        if (y == null) return;
-
-        ctx.save();
-        ctx.strokeStyle = "#ffffff";
-        ctx.setLineDash([8, 6]);
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(20, y);
-        ctx.lineTo(width - 20, y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        drawLabel(ctx, width - 170, y - 6, String(level.label || "Уровень"), "#ffffff");
-        ctx.restore();
-      });
-
-      arrows.forEach((arrow) => {
         const candles = normalizeCandles(idea);
-        const fromTime = arrow.fromTime ? Math.floor(new Date(arrow.fromTime).getTime() / 1000) : candles[Math.max(0, Number(arrow.fromIndex ?? 0))]?.time;
-        const toTime = arrow.toTime ? Math.floor(new Date(arrow.toTime).getTime() / 1000) : candles[Math.min(candles.length - 1, Number(arrow.toIndex ?? candles.length - 1))]?.time;
+        const zones = normalizeZones(idea);
+        const levels = normalizeLevels(idea);
+        const arrows = normalizeArrows(idea, candles);
+        const patterns = normalizePatterns(idea);
 
-        const x1 = timeScale.timeToCoordinate(fromTime);
-        const x2 = timeScale.timeToCoordinate(toTime);
-        const y1 = activeSeries.priceToCoordinate(Number(arrow.fromPrice ?? 0));
-        const y2 = activeSeries.priceToCoordinate(Number(arrow.toPrice ?? 0));
-        if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+        const padLeft = compact ? 10 : 70;
+        const padRight = compact ? 10 : 28;
+        const padTop = compact ? 10 : 42;
+        const padBottom = compact ? 12 : 48;
 
-        drawArrow(ctx, x1, y1, x2, y2, "#facc15", String(arrow.text || "Сценарий"));
-      });
+        const plotX = padLeft;
+        const plotY = padTop;
+        const plotW = width - padLeft - padRight;
+        const plotH = height - padTop - padBottom;
 
-      patterns.forEach((pattern) => {
-        const points = Array.isArray(pattern.points) ? pattern.points : [];
-        if (points.length < 2) return;
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#08111f";
+        ctx.fillRect(0, 0, width, height);
 
-        ctx.save();
-        ctx.strokeStyle = "#38bdf8";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
+        ctx.strokeStyle = "#13233c";
+        ctx.lineWidth = 1;
 
-        points.forEach((p, idx) => {
-          const t = p.time ? Math.floor(new Date(p.time).getTime() / 1000) : null;
-          const x = t != null ? timeScale.timeToCoordinate(t) : null;
-          const y = activeSeries.priceToCoordinate(Number(p.price ?? 0));
-          if (x == null || y == null) return;
+        for (let i = 0; i <= 10; i++) {
+          const x = plotX + (plotW * i / 10);
+          ctx.beginPath();
+          ctx.moveTo(x, plotY);
+          ctx.lineTo(x, plotY + plotH);
+          ctx.stroke();
+        }
 
-          if (idx === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
+        for (let i = 0; i <= 8; i++) {
+          const y = plotY + (plotH * i / 8);
+          ctx.beginPath();
+          ctx.moveTo(plotX, y);
+          ctx.lineTo(plotX + plotW, y);
+          ctx.stroke();
+        }
+
+        if (!candles.length) return;
+
+        const priceCandidates = [
+          ...candles.flatMap(c => [c.low, c.high]),
+          ...levels.map(l => Number(l.price || 0)).filter(Boolean),
+          ...zones.flatMap(z => [Number(z.from || z.priceFrom || 0), Number(z.to || z.priceTo || 0)]).filter(Boolean),
+          ...arrows.flatMap(a => [Number(a.fromPrice || 0), Number(a.toPrice || 0)]).filter(Boolean),
+        ];
+
+        const pMin = Math.min(...priceCandidates);
+        const pMax = Math.max(...priceCandidates);
+        const range = Math.max(0.0001, pMax - pMin);
+        const minPrice = pMin - range * 0.14;
+        const maxPrice = pMax + range * 0.14;
+
+        function yForPrice(price) {
+          return plotY + (maxPrice - price) / (maxPrice - minPrice) * plotH;
+        }
+
+        function xForIndex(index) {
+          if (candles.length === 1) return plotX + plotW / 2;
+          return plotX + (index / (candles.length - 1)) * plotW;
+        }
+
+        ctx.strokeStyle = "#233553";
+        ctx.strokeRect(plotX, plotY, plotW, plotH);
+
+        if (!compact) {
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "700 16px Arial";
+          ctx.fillText(`${idea.symbol || idea.instrument || "IDEA"} · График сценария`, plotX + 6, 24);
+
+          ctx.fillStyle = "#9fb0c7";
+          ctx.font = "12px Arial";
+          ctx.fillText(`${getDirectionRu(idea.direction || idea.bias)} · ${idea.timeframe || "Интрадей"} · Уверенность ${idea.confidence ?? "-"}%`, plotX + 6, 42);
+        }
+
+        if (!compact) {
+          ctx.fillStyle = "#9fb0c7";
+          ctx.font = "11px Arial";
+          for (let i = 0; i <= 6; i++) {
+            const value = maxPrice - (maxPrice - minPrice) * i / 6;
+            const y = plotY + plotH * i / 6;
+            ctx.fillText(value.toFixed(5), 8, y + 4);
+          }
+        }
+
+        zones.forEach((zone) => {
+          const startIndex = Math.max(0, Number(zone.startIndex ?? 0));
+          const endIndex = Math.min(candles.length - 1, Number(zone.endIndex ?? candles.length - 1));
+          const x1 = xForIndex(startIndex) - (compact ? 6 : 10);
+          const x2 = xForIndex(endIndex) + (compact ? 6 : 10);
+          const y1 = yForPrice(Number(zone.to ?? zone.priceTo ?? 0));
+          const y2 = yForPrice(Number(zone.from ?? zone.priceFrom ?? 0));
+          const top = Math.min(y1, y2);
+          const h = Math.max(10, Math.abs(y2 - y1));
+
+          const style = zoneStyle(zone.type);
+          ctx.save();
+          ctx.fillStyle = style.fill;
+          ctx.strokeStyle = style.stroke;
+          ctx.lineWidth = compact ? 1.5 : 2;
+          roundRectPath(ctx, x1, top, Math.max(16, x2 - x1), h, compact ? 8 : 10);
+          ctx.fill();
+          ctx.stroke();
+
+          if (!compact) {
+            drawLabel(ctx, x1 + 8, top + 22, String(zone.label || "Зона"), style.stroke, "rgba(8,17,31,0.88)", false);
+          }
+          ctx.restore();
         });
 
-        ctx.stroke();
+        levels.forEach((level) => {
+          const y = yForPrice(Number(level.price || 0));
+          ctx.save();
+          ctx.strokeStyle = "#ffffff";
+          ctx.setLineDash(compact ? [5, 4] : [8, 6]);
+          ctx.lineWidth = compact ? 1 : 2;
+          ctx.beginPath();
+          ctx.moveTo(plotX, y);
+          ctx.lineTo(plotX + plotW, y);
+          ctx.stroke();
+          ctx.setLineDash([]);
 
-        const first = points[0];
-        const t0 = first.time ? Math.floor(new Date(first.time).getTime() / 1000) : null;
-        const x0 = t0 != null ? timeScale.timeToCoordinate(t0) : null;
-        const y0 = activeSeries.priceToCoordinate(Number(first.price ?? 0));
-        if (x0 != null && y0 != null) {
-          drawLabel(ctx, x0 + 8, y0 - 8, String(pattern.name || "Паттерн"), "#38bdf8");
+          if (!compact) {
+            drawLabel(ctx, plotX + plotW - 190, y - 6, String(level.label || "Уровень"), "#ffffff");
+          }
+          ctx.restore();
+        });
+
+        const candleStep = plotW / Math.max(candles.length, 1);
+        const candleWidth = Math.max(compact ? 4 : 6, Math.min(compact ? 8 : 12, candleStep * 0.58));
+
+        candles.forEach((candle, i) => {
+          const x = xForIndex(i);
+          const openY = yForPrice(candle.open);
+          const closeY = yForPrice(candle.close);
+          const highY = yForPrice(candle.high);
+          const lowY = yForPrice(candle.low);
+
+          const bull = candle.close >= candle.open;
+          const color = bull ? "#22c55e" : "#ef4444";
+
+          ctx.strokeStyle = "#dbe7f7";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, highY);
+          ctx.lineTo(x, lowY);
+          ctx.stroke();
+
+          const bodyTop = Math.min(openY, closeY);
+          const bodyHeight = Math.max(3, Math.abs(closeY - openY));
+
+          ctx.fillStyle = color;
+          ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
+        });
+
+        patterns.forEach((pattern) => {
+          if (!Array.isArray(pattern.points) || pattern.points.length < 2) return;
+
+          ctx.save();
+          ctx.strokeStyle = "#38bdf8";
+          ctx.lineWidth = compact ? 1.5 : 2;
+          ctx.beginPath();
+
+          pattern.points.forEach((point, idx) => {
+            const timeValue = new Date(point.time).getTime();
+            let foundIndex = candles.findIndex(c => Math.abs(c.time - timeValue) < 60000);
+            if (foundIndex < 0) {
+              foundIndex = Math.min(
+                candles.length - 1,
+                idx * Math.floor(candles.length / Math.max(pattern.points.length, 1))
+              );
+            }
+
+            const x = xForIndex(foundIndex);
+            const y = yForPrice(Number(point.price || candles[foundIndex].close));
+
+            if (idx === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+
+          ctx.stroke();
+
+          if (!compact) {
+            drawLabel(ctx, plotX + 12, plotY + 24, String(pattern.name || "Паттерн"), "#38bdf8");
+          }
+          ctx.restore();
+        });
+
+        arrows.forEach((arrow) => {
+          const fromIndex = Math.max(0, Number(arrow.fromIndex ?? candles.length - 8));
+          const toIndex = Math.min(candles.length - 1, Number(arrow.toIndex ?? candles.length - 1));
+
+          const x1 = xForIndex(fromIndex);
+          const x2 = xForIndex(toIndex);
+          const y1 = yForPrice(Number(arrow.fromPrice ?? candles[fromIndex].close));
+          const y2 = yForPrice(Number(arrow.toPrice ?? candles[toIndex].close));
+
+          drawArrow(ctx, x1, y1, x2, y2, "#facc15", String(arrow.text || "Сценарий"), compact);
+        });
+
+        if (!compact) {
+          ctx.fillStyle = "#9fb0c7";
+          ctx.font = "11px Arial";
+          const step = Math.max(1, Math.floor(candles.length / 6));
+          for (let i = 0; i < candles.length; i += step) {
+            const x = xForIndex(i);
+            const d = new Date(candles[i].time);
+            const label = `${String(d.getUTCHours()).padStart(2, "0")}:00`;
+            ctx.fillText(label, x - 14, height - 14);
+          }
         }
-        ctx.restore();
-      });
+      } catch (e) {
+        console.error("Ошибка отрисовки графика:", e);
+      }
     }
 
-    function createChart(idea) {
-      modalChartHost.innerHTML = "";
-      if (activeChart) {
-        activeChart.remove();
-        activeChart = null;
-        activeSeries = null;
-      }
-
-      const candles = normalizeCandles(idea);
-
-      activeChart = LightweightCharts.createChart(modalChartHost, {
-        width: modalChartHost.clientWidth,
-        height: modalChartHost.clientHeight,
-        layout: {
-          background: { color: "#08111f" },
-          textColor: "#dbe7f7",
-        },
-        grid: {
-          vertLines: { color: "#13233c" },
-          horzLines: { color: "#13233c" },
-        },
-        rightPriceScale: {
-          borderColor: "#233553",
-          scaleMargins: {
-            top: 0.08,
-            bottom: 0.08,
-          },
-        },
-        timeScale: {
-          borderColor: "#233553",
-          timeVisible: true,
-          secondsVisible: false,
-          rightOffset: 8,
-          barSpacing: 18,
-        },
-        crosshair: {
-          mode: LightweightCharts.CrosshairMode.Normal,
-        },
-      });
-
-      activeSeries = activeChart.addCandlestickSeries({
-        upColor: "#22c55e",
-        downColor: "#ef4444",
-        borderVisible: false,
-        wickUpColor: "#dbe7f7",
-        wickDownColor: "#dbe7f7",
-      });
-
-      activeSeries.setData(candles);
-
-      const markers = [];
-      normalizeArrows(idea, candles).forEach((arrow) => {
-        const toIndex = Math.min(candles.length - 1, Number(arrow.toIndex ?? candles.length - 1));
-        const bullish = Number(arrow.toPrice ?? 0) >= Number(arrow.fromPrice ?? 0);
-        markers.push({
-          time: candles[toIndex].time,
-          position: bullish ? "aboveBar" : "belowBar",
-          color: "#facc15",
-          shape: bullish ? "arrowUp" : "arrowDown",
-          text: String(arrow.text || "Сценарий"),
+    function renderModalChart() {
+      if (!activeIdea) return;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          renderChart(modalChart, activeIdea, false);
         });
       });
-
-      normalizeLevels(idea).forEach((level) => {
-        const price = Number(level.price ?? level.value ?? 0);
-        if (!price) return;
-        activeSeries.createPriceLine({
-          price,
-          color: "#ffffff",
-          lineWidth: 1,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: String(level.label || "Уровень"),
-        });
-      });
-
-      activeSeries.setMarkers(markers);
-      activeChart.timeScale().fitContent();
-
-      const redraw = () => drawOverlay(idea);
-      activeChart.subscribeVisibleLogicalRangeChange(redraw);
-      activeChart.subscribeVisibleTimeRangeChange(redraw);
-      setTimeout(redraw, 50);
-
-      return redraw;
     }
 
     function openIdeaModal(idea) {
@@ -829,52 +821,31 @@
 
       modalTitle.textContent = `${symbol} — ${directionRu}`;
       modalSub.textContent = `${timeframe} · Уверенность ${confidence}%`;
-
-      setSection(modalSummary, getText(idea.summary_ru, idea.summary));
-      setSection(modalTechnical, getText(idea.technical_ru, idea.technical, idea.analysis?.fundamental_ru));
-      setSection(modalVolume, getText(idea.analysis?.volume_ru, idea.volume_analysis_ru));
-      setSection(modalCDelta, getText(idea.analysis?.cumulative_delta_ru, idea.cumulative_delta_ru));
-      setSection(modalPatterns, getText(idea.analysis?.pattern_ru, idea.pattern_analysis_ru));
-      setSection(modalLiquidity, getText(idea.analysis?.liquidity_ru, idea.liquidity_ru));
-      setSection(modalOptions, getText(idea.options_ru, idea.options, idea.analysis?.options_ru));
-      setSection(modalScenario, getText(idea.scenario_ru, idea.scenario, idea.trade_plan?.alternative_scenario_ru));
-      setSection(modalTargets, getText(idea.targets_ru, idea.targets, [idea.trade_plan?.target_1, idea.trade_plan?.target_2].filter(Boolean).join(" / ")));
-      setSection(modalInvalidation, getText(idea.invalidation_ru, idea.invalidation, idea.trade_plan?.invalidation));
+      modalAnalysis.textContent = buildUnifiedText(idea);
 
       modal.classList.add("open");
-      const redraw = createChart(idea);
+      renderModalChart();
 
       if (resizeHandler) {
         window.removeEventListener("resize", resizeHandler);
       }
 
       resizeHandler = () => {
-        if (!activeChart) return;
-        activeChart.applyOptions({
-          width: modalChartHost.clientWidth,
-          height: modalChartHost.clientHeight,
+        if (activeIdea) renderModalChart();
+        document.querySelectorAll(".preview-canvas").forEach((canvas) => {
+          const raw = canvas.getAttribute("data-idea");
+          if (!raw) return;
+          try {
+            renderChart(canvas, JSON.parse(raw), true);
+          } catch {}
         });
-        drawOverlay(activeIdea);
       };
 
       window.addEventListener("resize", resizeHandler);
-      setTimeout(redraw, 120);
     }
 
     function closeIdeaModal() {
       modal.classList.remove("open");
-      if (activeChart) {
-        activeChart.remove();
-        activeChart = null;
-        activeSeries = null;
-      }
-      if (resizeHandler) {
-        window.removeEventListener("resize", resizeHandler);
-        resizeHandler = null;
-      }
-      const ctx = modalOverlay.getContext("2d");
-      ctx.clearRect(0, 0, modalOverlay.width, modalOverlay.height);
-      modalChartHost.innerHTML = "";
       activeIdea = null;
     }
 
@@ -884,9 +855,9 @@
         return;
       }
 
-      ideasGrid.innerHTML = ideas.map((idea) => {
+      ideasGrid.innerHTML = ideas.map((idea, idx) => {
         const tags = Array.isArray(idea.tags) ? idea.tags : [];
-        const summary = getText(idea.summary_ru, idea.summary);
+        const summary = buildUnifiedText(idea);
         const symbol = idea.symbol || idea.instrument || idea.pair || "";
         const direction = getDirectionRu(idea.direction || idea.bias || "neutral");
         const timeframe = idea.timeframe || "Интрадей";
@@ -902,7 +873,9 @@
               <button class="watch-btn" type="button">Открыть</button>
             </div>
 
-            <div class="preview">${buildPreview(idea.direction || idea.bias)}</div>
+            <div class="preview-shell">
+              <canvas class="preview-canvas" id="preview-${idx}" data-idea='${escapeHtml(JSON.stringify(idea))}'></canvas>
+            </div>
 
             <p class="summary">${escapeHtml(summary)}</p>
 
@@ -912,6 +885,15 @@
           </div>
         `;
       }).join("");
+
+      document.querySelectorAll(".preview-canvas").forEach((canvas) => {
+        try {
+          const idea = JSON.parse(canvas.getAttribute("data-idea"));
+          renderChart(canvas, idea, true);
+        } catch (e) {
+          console.error(e);
+        }
+      });
 
       document.querySelectorAll(".card").forEach((card) => {
         card.addEventListener("click", () => {
