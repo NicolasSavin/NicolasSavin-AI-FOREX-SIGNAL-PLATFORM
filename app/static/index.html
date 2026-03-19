@@ -61,57 +61,19 @@
       color: #ffffff;
       border: 1px solid #223552;
     }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 16px;
-      margin-top: 40px;
-    }
-    .card {
-      background: linear-gradient(180deg, #0b1730 0%, #0a1426 100%);
-      border: 1px solid #1e2d49;
-      border-radius: 18px;
-      padding: 18px;
-    }
-    .card h3 {
-      margin: 0 0 10px;
-      font-size: 18px;
-    }
-    .card p {
-      margin: 0;
-      font-size: 14px;
-      color: #aebed3;
-    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="badge">AI Forex Signal Platform</div>
     <h1>Главная страница платформы</h1>
-    <p>
-      Здесь должна быть главная страница, а не лента идей. Страница идей открывается отдельно.
-    </p>
+    <p>Это отдельная главная страница. Идеи должны открываться только на /ideas.</p>
 
     <div class="actions">
       <a class="btn btn-primary" href="/ideas">Открыть идеи</a>
       <a class="btn btn-secondary" href="/ideas/market">API идей</a>
       <a class="btn btn-secondary" href="/news/market">Новости рынка</a>
       <a class="btn btn-secondary" href="/calendar/events">Календарь</a>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <h3>Идеи</h3>
-        <p>Компактная лента сценариев должна быть только на отдельной странице /ideas.</p>
-      </div>
-      <div class="card">
-        <h3>Новости</h3>
-        <p>Рыночные события и фундаментальные триггеры можно смотреть отдельно через API.</p>
-      </div>
-      <div class="card">
-        <h3>Календарь</h3>
-        <p>Экономические события и важные релизы доступны отдельным маршрутом.</p>
-      </div>
     </div>
   </div>
 </body>
