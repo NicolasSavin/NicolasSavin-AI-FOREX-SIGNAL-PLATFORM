@@ -71,6 +71,74 @@ class PortfolioEngine:
             "rows": rows,
         }
 
+    def _safe_generate_chart(self, instrument: str, idea: dict) -> str:
+        """
+        Не отдаём заглушку, пока есть хоть какие-то данные для отрисовки.
+        Если chart/path/zones/levels отсутствуют — добавляем минимальный сценарий.
+        """
+        if not isinstance(idea, dict):
+            idea = {}
+
+        chart = idea.get("chart")
+        if not isinstance(chart, dict):
+            chart = {}
+
+        if not chart.get("path"):
+            chart["path"] = [
+                {"x": 12, "y": 58},
+                {"x": 24, "y": 52},
+                {"x": 38, "y": 57},
+                {"x": 52, "y": 49},
+                {"x": 66, "y": 54},
+                {"x": 80, "y": 46},
+                {"x": 92, "y": 50},
+            ]
+
+        if not chart.get("zones"):
+            chart["zones"] = [
+                {"type": "range", "label": "Диапазон", "x1": 18, "y1": 34, "x2": 82, "y2": 68}
+            ]
+
+        if not chart.get("levels"):
+            chart["levels"] = [
+                {"label": "Верхняя ликвидность", "x": 84, "y": 28},
+                {"label": "Нижняя ликвидность", "x": 84, "y": 74},
+            ]
+
+        idea["chart"] = chart
+
+        try:
+            chart_path = self._chart_generator.generate_chart(instrument, idea)
+            if chart_path:
+                return chart_path
+        except Exception:
+            pass
+
+        fallback_idea = dict(idea)
+        fallback_idea["chart"] = {
+            "zones": [
+                {"type": "range", "label": "Диапазон", "x1": 18, "y1": 34, "x2": 82, "y2": 68}
+            ],
+            "levels": [
+                {"label": "Верхняя ликвидность", "x": 84, "y": 28},
+                {"label": "Нижняя ликвидность", "x": 84, "y": 74},
+            ],
+            "path": [
+                {"x": 10, "y": 60},
+                {"x": 22, "y": 54},
+                {"x": 36, "y": 58},
+                {"x": 50, "y": 46},
+                {"x": 64, "y": 52},
+                {"x": 78, "y": 44},
+                {"x": 92, "y": 48},
+            ],
+        }
+
+        try:
+            return self._chart_generator.generate_chart(instrument, fallback_idea)
+        except Exception:
+            return "/static/default-chart.png"
+
     def _ideas_from_news(self, raw_news: list[dict]) -> list[dict]:
         filtered: list[dict] = []
 
@@ -109,14 +177,9 @@ class PortfolioEngine:
                 idea = self._fallback_news_idea(item, instrument)
 
             if idea:
-                try:
-                    chart_path = self._chart_generator.generate_chart(instrument, idea)
-                    idea["chart_image"] = chart_path
-                    idea["image"] = chart_path
-                except Exception:
-                    idea["chart_image"] = None
-                    idea["image"] = "/static/default-chart.png"
-
+                chart_path = self._safe_generate_chart(instrument, idea)
+                idea["chart_image"] = chart_path
+                idea["image"] = chart_path
                 ideas.append(idea)
 
             if len(ideas) >= 5:
@@ -164,45 +227,54 @@ class PortfolioEngine:
 
         return {
             "title": title,
-            "label": "WATCH",
+            "label": "НАБЛЮДЕНИЕ",
             "instrument": instrument,
             "symbol": instrument,
             "direction": "NEUTRAL",
             "confidence": 55,
-            "timeframe": "Intraday",
+            "timeframe": "Интрадей",
             "summary": summary,
             "summary_ru": summary,
             "news_title": title,
-            "technical": f"По {instrument} нужен дополнительный technical confirmation после новости.",
+            "technical": f"По {instrument} нужен дополнительный технический сигнал после новости.",
+            "technical_ru": f"По {instrument} нужен дополнительный технический сигнал после новости.",
             "options": f"По {instrument} стоит учитывать опционные уровни как потенциальные зоны притяжения цены.",
+            "options_ru": f"По {instrument} стоит учитывать опционные уровни как потенциальные зоны притяжения цены.",
             "scenario": f"По {instrument} базовый сценарий пока наблюдательный до подтверждения структуры.",
-            "targets": "Waiting for confirmation",
-            "invalidation": "Scenario not confirmed yet",
+            "scenario_ru": f"По {instrument} базовый сценарий пока наблюдательный до подтверждения структуры.",
+            "targets": "Ожидание подтверждения целей",
+            "targets_ru": "Ожидание подтверждения целей",
+            "invalidation": "Сценарий пока не подтверждён",
+            "invalidation_ru": "Сценарий пока не подтверждён",
             "image": "/static/default-chart.png",
-            "tags": ["News", "Watching", "Options"],
+            "tags": ["Новость", "Наблюдение", "Опционы"],
             "analysis": {
-                "fundamental_ru": f"{title}. Фундаментальный фон по {instrument} изменился, но сетап еще формируется.",
+                "fundamental_ru": f"{title}. Фундаментальный фон по {instrument} изменился, но сетап ещё формируется.",
                 "smc_ict_ru": f"По {instrument} нужен структурный сигнал после новости.",
-                "pattern_ru": "Паттерн пока не подтвержден.",
+                "pattern_ru": "Паттерн пока не подтверждён.",
                 "waves_ru": "Волновая структура нейтральна.",
-                "volume_ru": "Объемы пока не дали сильного сигнала.",
-                "liquidity_ru": "Ликвидность остается ключевым ориентиром.",
+                "volume_ru": "Объёмы пока не дали сильного сигнала.",
+                "cumulative_delta_ru": "Кумулятивная дельта не показывает устойчивого перевеса покупателей или продавцов.",
+                "liquidity_ru": "Ликвидность остаётся ключевым ориентиром.",
+                "options_ru": f"По {instrument} опционный фон нейтральный, уровни интереса стоит учитывать как дополнительный фильтр.",
             },
             "trade_plan": {
                 "bias": "neutral",
                 "entry_zone": f"Ожидание подтверждения по {instrument}.",
                 "invalidation": "Не применяется до подтверждения сетапа.",
-                "target_1": "Нет подтвержденной цели",
-                "target_2": "Нет подтвержденной цели",
+                "target_1": "Нет подтверждённой цели",
+                "target_2": "Нет подтверждённой цели",
                 "alternative_scenario_ru": "Рынок может остаться в диапазоне до появления нового импульса.",
             },
             "chart": {
                 "pattern_type": "wait_mode",
                 "bias": "neutral",
-                "zones": [{"type": "range", "label": "Range", "x1": 20, "y1": 42, "x2": 78, "y2": 66}],
+                "zones": [
+                    {"type": "range", "label": "Диапазон", "x1": 20, "y1": 42, "x2": 78, "y2": 66}
+                ],
                 "levels": [
-                    {"label": "Upper Liquidity", "x": 80, "y": 36},
-                    {"label": "Lower Liquidity", "x": 80, "y": 72},
+                    {"label": "Верхняя ликвидность", "x": 80, "y": 36},
+                    {"label": "Нижняя ликвидность", "x": 80, "y": 72},
                 ],
                 "path": [
                     {"x": 18, "y": 60},
@@ -211,6 +283,7 @@ class PortfolioEngine:
                     {"x": 60, "y": 54},
                     {"x": 76, "y": 58},
                 ],
+                "patterns": [],
             },
             "chart_image": None,
         }
@@ -218,12 +291,12 @@ class PortfolioEngine:
     def _empty_idea(self) -> dict:
         return {
             "title": "Нет подходящей новости для новой идеи",
-            "label": "WATCH",
+            "label": "НАБЛЮДЕНИЕ",
             "instrument": "MARKET",
             "symbol": "MARKET",
             "direction": "NEUTRAL",
             "confidence": 50,
-            "timeframe": "Intraday",
+            "timeframe": "Интрадей",
             "summary": (
                 "Идея публикуется после появления значимой новости по конкретному инструменту. "
                 "Сейчас в ленте нет события, которое даёт достаточно сильный и понятный сценарий."
@@ -233,20 +306,27 @@ class PortfolioEngine:
                 "Сейчас в ленте нет события, которое даёт достаточно сильный и понятный сценарий."
             ),
             "news_title": "Нет новой релевантной новости",
-            "technical": "Технический сценарий пока не подтвержден.",
-            "options": "Опционный анализ пока не дает приоритетного направления.",
+            "technical": "Технический сценарий пока не подтверждён.",
+            "technical_ru": "Технический сценарий пока не подтверждён.",
+            "options": "Опционный анализ пока не даёт приоритетного направления.",
+            "options_ru": "Опционный анализ пока не даёт приоритетного направления.",
             "scenario": "Режим наблюдения до появления нового триггера.",
+            "scenario_ru": "Режим наблюдения до появления нового триггера.",
             "targets": "Нет цели до появления сценария.",
+            "targets_ru": "Нет цели до появления сценария.",
             "invalidation": "Не применяется, так как активной идеи нет.",
+            "invalidation_ru": "Не применяется, так как активной идеи нет.",
             "image": "/static/default-chart.png",
-            "tags": ["Watching", "Neutral"],
+            "tags": ["Наблюдение", "Нейтрально"],
             "analysis": {
                 "fundamental_ru": "Фундаментального триггера для новой идеи сейчас недостаточно.",
                 "smc_ict_ru": "Рыночная структура требует наблюдения до появления нового драйвера.",
                 "pattern_ru": "Паттерн для приоритетного сценария не подтверждён.",
                 "waves_ru": "Волновая структура не даёт очевидного направленного преимущества.",
                 "volume_ru": "Объёмное подтверждение недостаточное.",
+                "cumulative_delta_ru": "Кумулятивная дельта не показывает устойчивого смещения потока ордеров.",
                 "liquidity_ru": "Основная ликвидность пока не отработана.",
+                "options_ru": "Опционный фон нейтральный.",
             },
             "trade_plan": {
                 "bias": "neutral",
@@ -259,10 +339,12 @@ class PortfolioEngine:
             "chart": {
                 "pattern_type": "wait_mode",
                 "bias": "neutral",
-                "zones": [{"type": "range", "label": "Range", "x1": 20, "y1": 42, "x2": 78, "y2": 66}],
+                "zones": [
+                    {"type": "range", "label": "Диапазон", "x1": 20, "y1": 42, "x2": 78, "y2": 66}
+                ],
                 "levels": [
-                    {"label": "Upper Liquidity", "x": 80, "y": 36},
-                    {"label": "Lower Liquidity", "x": 80, "y": 72},
+                    {"label": "Верхняя ликвидность", "x": 80, "y": 36},
+                    {"label": "Нижняя ликвидность", "x": 80, "y": 72},
                 ],
                 "path": [
                     {"x": 18, "y": 60},
@@ -271,6 +353,7 @@ class PortfolioEngine:
                     {"x": 60, "y": 54},
                     {"x": 76, "y": 58},
                 ],
+                "patterns": [],
             },
             "chart_image": None,
         }
