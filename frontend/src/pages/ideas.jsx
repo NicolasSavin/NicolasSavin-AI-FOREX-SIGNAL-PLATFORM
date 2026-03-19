@@ -43,7 +43,6 @@ const mockIdeas = [
 
 export default function IdeasPage() {
   const [selectedIdea, setSelectedIdea] = useState(null);
-  const ideas = mockIdeas;
 
   return (
     <div className="min-h-screen bg-slate-950 p-4 md:p-6">
@@ -56,13 +55,12 @@ export default function IdeasPage() {
             AI-разбор рыночных сценариев
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            В ленте показываются только компактные превью. Полный разбор
-            открывается по клику.
+            В ленте показываются только компактные превью. Полный разбор открывается по клику.
           </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {ideas.map((idea) => (
+          {mockIdeas.map((idea) => (
             <IdeaCard key={idea.id} idea={idea} onOpen={setSelectedIdea} />
           ))}
         </div>
