@@ -3,128 +3,914 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Forex Signal Platform</title>
+  <title>AI-идеи по рынку</title>
   <style>
+    :root {
+      --bg: #08111f;
+      --panel: #0b1730;
+      --panel-2: #0d1b34;
+      --border: #1d2c47;
+      --text: #ffffff;
+      --muted: #9fb0c7;
+      --tag: #13233c;
+      --accent: #facc15;
+    }
+
+    * { box-sizing: border-box; }
+
     body {
       margin: 0;
       font-family: Arial, sans-serif;
-      background: #08111f;
-      color: #ffffff;
+      background: var(--bg);
+      color: var(--text);
     }
 
     .wrap {
-      max-width: 1100px;
+      max-width: 1280px;
       margin: 0 auto;
-      padding: 48px 20px;
+      padding: 28px 16px 40px;
     }
 
-    .badge {
-      display: inline-block;
-      padding: 6px 12px;
-      border-radius: 999px;
-      background: #0f1f38;
-      color: #7dd3fc;
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      margin-bottom: 16px;
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 22px;
+      flex-wrap: wrap;
     }
 
-    h1 {
-      margin: 0 0 12px;
-      font-size: 40px;
+    .topbar-left h1 {
+      margin: 0 0 6px;
+      font-size: 28px;
       line-height: 1.1;
     }
 
-    p {
-      margin: 0 0 18px;
-      color: #cbd5e1;
-      font-size: 16px;
-      line-height: 1.5;
-      max-width: 760px;
+    .topbar-left p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.4;
     }
 
-    .actions {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-top: 28px;
-    }
-
-    .btn {
+    .home-link {
       display: inline-block;
-      padding: 12px 18px;
-      border-radius: 12px;
       text-decoration: none;
-      font-weight: 600;
-    }
-
-    .btn-primary {
-      background: #22d3ee;
-      color: #04111d;
-    }
-
-    .btn-secondary {
+      color: var(--text);
       background: #13233c;
-      color: #ffffff;
-      border: 1px solid #223552;
+      border: 1px solid #233553;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 600;
     }
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 16px;
-      margin-top: 40px;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 380px));
+      justify-content: start;
+      gap: 14px;
     }
 
     .card {
-      background: linear-gradient(180deg, #0b1730 0%, #0a1426 100%);
-      border: 1px solid #1e2d49;
+      width: 100%;
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+      border: 1px solid var(--border);
       border-radius: 18px;
+      padding: 14px;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: #2b436d;
+    }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .symbol {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 3px;
+    }
+
+    .meta {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    .watch-btn {
+      border: none;
+      background: var(--accent);
+      color: #111827;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .summary {
+      margin: 0 0 12px;
+      color: #d7e0ee;
+      font-size: 13px;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 4;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: 70px;
+    }
+
+    .preview-shell {
+      width: 100%;
+      height: 185px;
+      border-radius: 14px;
+      border: 1px solid #162744;
+      background: #08111f;
+      margin-bottom: 12px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .preview-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tag {
+      background: var(--tag);
+      color: #dbe7f7;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 11px;
+      line-height: 1;
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.72);
+      display: none;
+      align-items: center;
+      justify-content: center;
       padding: 18px;
+      z-index: 1000;
     }
 
-    .card h3 {
-      margin: 0 0 10px;
-      font-size: 18px;
+    .modal.open {
+      display: flex;
     }
 
-    .card p {
+    .modal-card {
+      width: min(1240px, 100%);
+      max-height: 94vh;
+      overflow-y: auto;
+      background: #0b1730;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 20px;
+    }
+
+    .modal-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+
+    .modal-top h2 {
+      margin: 0 0 6px;
+      font-size: 24px;
+    }
+
+    .modal-sub {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .close-btn {
+      border: none;
+      background: #13233c;
+      color: #fff;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .chart-shell {
+      width: 100%;
+      height: 620px;
+      border-radius: 18px;
+      border: 1px solid #162744;
+      background: #08111f;
+      overflow: hidden;
+      margin-bottom: 18px;
+      position: relative;
+    }
+
+    .chart-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 18px;
+    }
+
+    .legend-item {
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: #13233c;
+      color: #dbe7f7;
+      border: 1px solid #233553;
+    }
+
+    .section {
+      margin-bottom: 16px;
+    }
+
+    .section.hidden {
+      display: none;
+    }
+
+    .section-title {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .section-text {
       margin: 0;
       font-size: 14px;
-      color: #aebed3;
+      line-height: 1.5;
+      color: #eef4ff;
+      white-space: pre-line;
+    }
+
+    .empty {
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 22px;
+      color: var(--muted);
+      font-size: 14px;
+      max-width: 380px;
+    }
+
+    @media (max-width: 640px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .chart-shell {
+        height: 380px;
+      }
+
+      .modal-card {
+        padding: 16px;
+      }
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="badge">AI Forex Signal Platform</div>
-    <h1>Главная страница платформы</h1>
-    <p>
-      Это отдельная главная страница. Страница идей открывается только по адресу <strong>/ideas</strong>.
-    </p>
-
-    <div class="actions">
-      <a class="btn btn-primary" href="/ideas">Открыть идеи</a>
-      <a class="btn btn-secondary" href="/ideas/market">API идей</a>
-      <a class="btn btn-secondary" href="/news/market">Новости рынка</a>
-      <a class="btn btn-secondary" href="/calendar/events">Календарь</a>
+    <div class="topbar">
+      <div class="topbar-left">
+        <h1>AI-идеи по рынку</h1>
+        <p>В короткой карточке показывается информативное превью, а по клику открывается полный график с зонами, уровнями, стрелками и подписями.</p>
+      </div>
+      <a class="home-link" href="/">На главную</a>
     </div>
 
-    <div class="grid">
-      <div class="card">
-        <h3>Идеи</h3>
-        <p>Компактная лента сценариев должна быть только на отдельной странице /ideas.</p>
+    <div id="ideas-grid" class="grid"></div>
+  </div>
+
+  <div id="idea-modal" class="modal">
+    <div class="modal-card">
+      <div class="modal-top">
+        <div>
+          <h2 id="modal-title">Идея</h2>
+          <div id="modal-sub" class="modal-sub"></div>
+        </div>
+        <button id="close-modal" class="close-btn">Закрыть</button>
       </div>
-      <div class="card">
-        <h3>Новости</h3>
-        <p>Рыночные события и фундаментальные триггеры можно смотреть отдельно.</p>
+
+      <div class="chart-shell">
+        <canvas id="modal-chart" class="chart-canvas"></canvas>
       </div>
-      <div class="card">
-        <h3>Календарь</h3>
-        <p>Экономические события и важные релизы доступны отдельным маршрутом.</p>
+
+      <div class="legend">
+        <div class="legend-item">Зелёная зона — спрос / бычий ордерблок</div>
+        <div class="legend-item">Красная зона — предложение / медвежий ордерблок</div>
+        <div class="legend-item">Фиолетовая зона — FVG / имбаланс</div>
+        <div class="legend-item">Белые линии — уровни ликвидности</div>
+        <div class="legend-item">Жёлтая стрелка — ожидаемое направление</div>
+      </div>
+
+      <div id="section-summary" class="section">
+        <div class="section-title">СВОДКА</div>
+        <p id="modal-summary" class="section-text"></p>
+      </div>
+
+      <div id="section-technical" class="section">
+        <div class="section-title">ТЕХНИЧЕСКАЯ ЛОГИКА</div>
+        <p id="modal-technical" class="section-text"></p>
+      </div>
+
+      <div id="section-volume" class="section">
+        <div class="section-title">АНАЛИЗ ОБЪЁМОВ</div>
+        <p id="modal-volume" class="section-text"></p>
+      </div>
+
+      <div id="section-cdelta" class="section">
+        <div class="section-title">КУМУЛЯТИВНАЯ ДЕЛЬТА</div>
+        <p id="modal-cdelta" class="section-text"></p>
+      </div>
+
+      <div id="section-patterns" class="section">
+        <div class="section-title">АНАЛИЗ ПАТТЕРНОВ</div>
+        <p id="modal-patterns" class="section-text"></p>
+      </div>
+
+      <div id="section-liquidity" class="section">
+        <div class="section-title">АНАЛИЗ ЛИКВИДНОСТИ</div>
+        <p id="modal-liquidity" class="section-text"></p>
+      </div>
+
+      <div id="section-options" class="section">
+        <div class="section-title">ОПЦИОННЫЙ АНАЛИЗ</div>
+        <p id="modal-options" class="section-text"></p>
+      </div>
+
+      <div id="section-scenario" class="section">
+        <div class="section-title">СЦЕНАРИЙ</div>
+        <p id="modal-scenario" class="section-text"></p>
+      </div>
+
+      <div id="section-targets" class="section">
+        <div class="section-title">ЦЕЛИ</div>
+        <p id="modal-targets" class="section-text"></p>
+      </div>
+
+      <div id="section-invalidation" class="section">
+        <div class="section-title">ИНВАЛИДАЦИЯ</div>
+        <p id="modal-invalidation" class="section-text"></p>
       </div>
     </div>
   </div>
+
+  <script>
+    const ideasGrid = document.getElementById("ideas-grid");
+    const modal = document.getElementById("idea-modal");
+    const closeModalBtn = document.getElementById("close-modal");
+
+    const modalTitle = document.getElementById("modal-title");
+    const modalSub = document.getElementById("modal-sub");
+    const modalChart = document.getElementById("modal-chart");
+
+    const modalSummary = document.getElementById("modal-summary");
+    const modalTechnical = document.getElementById("modal-technical");
+    const modalVolume = document.getElementById("modal-volume");
+    const modalCDelta = document.getElementById("modal-cdelta");
+    const modalPatterns = document.getElementById("modal-patterns");
+    const modalLiquidity = document.getElementById("modal-liquidity");
+    const modalOptions = document.getElementById("modal-options");
+    const modalScenario = document.getElementById("modal-scenario");
+    const modalTargets = document.getElementById("modal-targets");
+    const modalInvalidation = document.getElementById("modal-invalidation");
+
+    let activeIdea = null;
+    let resizeHandler = null;
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function normalizeIdeas(data) {
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data?.ideas)) return data.ideas;
+      if (Array.isArray(data?.items)) return data.items;
+      return [];
+    }
+
+    function getText(...values) {
+      for (const value of values) {
+        if (value !== undefined && value !== null && String(value).trim() !== "") {
+          return String(value).trim();
+        }
+      }
+      return "";
+    }
+
+    function getDirectionRu(value) {
+      const raw = String(value || "").trim().toLowerCase();
+      if (["bullish", "buy", "long"].includes(raw)) return "БЫЧИЙ";
+      if (["bearish", "sell", "short"].includes(raw)) return "МЕДВЕЖИЙ";
+      return "НЕЙТРАЛЬНЫЙ";
+    }
+
+    function setSection(textEl, value) {
+      const section = textEl.closest(".section");
+      const text = getText(value);
+      if (!text) {
+        section.classList.add("hidden");
+        textEl.textContent = "";
+      } else {
+        section.classList.remove("hidden");
+        textEl.textContent = text;
+      }
+    }
+
+    function fallbackCandles(direction) {
+      const bullish = String(direction || "").toLowerCase() !== "bearish";
+      const base = bullish
+        ? [1.2690,1.2694,1.2692,1.2698,1.2704,1.2701,1.2707,1.2712,1.2709,1.2715,1.2719,1.2716,1.2722,1.2728,1.2724,1.2730,1.2736,1.2731,1.2738,1.2742]
+        : [1.2690,1.2686,1.2689,1.2682,1.2678,1.2681,1.2674,1.2669,1.2672,1.2666,1.2661,1.2664,1.2659,1.2653,1.2657,1.2651,1.2646,1.2649,1.2643,1.2638];
+
+      return base.map((close, i) => {
+        const prev = i === 0 ? close : base[i - 1];
+        const open = prev;
+        const high = Math.max(open, close) + 0.0005;
+        const low = Math.min(open, close) - 0.0005;
+        return {
+          time: Math.floor(Date.now() / 1000) - (base.length - i) * 3600,
+          open: Number(open.toFixed(5)),
+          high: Number(high.toFixed(5)),
+          low: Number(low.toFixed(5)),
+          close: Number(close.toFixed(5)),
+        };
+      });
+    }
+
+    function normalizeCandles(idea) {
+      const raw = idea?.chart_data?.candles || idea?.candles || [];
+      if (Array.isArray(raw) && raw.length) {
+        return raw.map((c, i) => ({
+          time: c.time ? new Date(c.time).getTime() : Date.now() - (raw.length - i) * 3600 * 1000,
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+        }));
+      }
+      return fallbackCandles(idea.direction || idea.bias).map(c => ({
+        ...c,
+        time: typeof c.time === "number" ? c.time * 1000 : Date.now()
+      }));
+    }
+
+    function normalizeZones(idea) {
+      return Array.isArray(idea?.chart_data?.zones) ? idea.chart_data.zones : [];
+    }
+
+    function normalizeLevels(idea) {
+      return Array.isArray(idea?.chart_data?.levels) ? idea.chart_data.levels : [];
+    }
+
+    function normalizeArrows(idea, candles) {
+      const arrows = Array.isArray(idea?.chart_data?.arrows) ? idea.chart_data.arrows : [];
+      if (arrows.length) return arrows;
+
+      if (!candles.length) return [];
+      const fromIndex = Math.max(0, candles.length - 6);
+      const toIndex = candles.length - 1;
+      const bullish = String(idea.direction || idea.bias || "").toLowerCase() !== "bearish";
+
+      return [{
+        text: bullish ? "Ожидаем рост" : "Ожидаем снижение",
+        fromIndex,
+        toIndex,
+        fromPrice: candles[fromIndex].close,
+        toPrice: bullish ? candles[toIndex].close + 0.0015 : candles[toIndex].close - 0.0015
+      }];
+    }
+
+    function normalizePatterns(idea) {
+      return Array.isArray(idea?.chart_data?.patterns) ? idea.chart_data.patterns : [];
+    }
+
+    function zoneStyle(type) {
+      const raw = String(type || "").toLowerCase();
+      if (["bullish_ob", "demand", "buy_zone"].includes(raw)) {
+        return { fill: "rgba(34,197,94,0.18)", stroke: "#22c55e" };
+      }
+      if (["bearish_ob", "supply", "sell_zone"].includes(raw)) {
+        return { fill: "rgba(239,68,68,0.18)", stroke: "#ef4444" };
+      }
+      if (["fvg", "imbalance"].includes(raw)) {
+        return { fill: "rgba(139,92,246,0.18)", stroke: "#8b5cf6" };
+      }
+      return { fill: "rgba(56,189,248,0.16)", stroke: "#38bdf8" };
+    }
+
+    function fitCanvas(canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return { ctx, width: rect.width, height: rect.height };
+    }
+
+    function drawRoundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    function drawLabel(ctx, x, y, text, color = "#ffffff", bg = "rgba(8,17,31,0.82)") {
+      ctx.font = "12px Arial";
+      const padX = 6;
+      const padY = 4;
+      const w = ctx.measureText(text).width + padX * 2;
+      const h = 20;
+
+      ctx.fillStyle = bg;
+      drawRoundRect(ctx, x, y - h, w, h, 8);
+      ctx.fill();
+
+      ctx.fillStyle = color;
+      ctx.fillText(text, x + padX, y - 5);
+    }
+
+    function drawArrow(ctx, x1, y1, x2, y2, color, text) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      const angle = Math.atan2(y2 - y1, x2 - x1);
+      const headLen = 12;
+      ctx.beginPath();
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+      ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+      ctx.closePath();
+      ctx.fill();
+
+      if (text) {
+        drawLabel(ctx, x2 + 8, y2 - 10, text, color, "rgba(11,23,48,0.92)");
+      }
+      ctx.restore();
+    }
+
+    function renderChart(canvas, idea, compact = false) {
+      const { ctx, width, height } = fitCanvas(canvas);
+
+      const candles = normalizeCandles(idea);
+      const zones = normalizeZones(idea);
+      const levels = normalizeLevels(idea);
+      const arrows = normalizeArrows(idea, candles);
+      const patterns = normalizePatterns(idea);
+
+      const padLeft = compact ? 8 : 52;
+      const padRight = compact ? 8 : 26;
+      const padTop = compact ? 8 : 30;
+      const padBottom = compact ? 8 : 34;
+
+      const plotX = padLeft;
+      const plotY = padTop;
+      const plotW = width - padLeft - padRight;
+      const plotH = height - padTop - padBottom;
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#08111f";
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.strokeStyle = "#13233c";
+      ctx.lineWidth = 1;
+
+      for (let i = 0; i <= 10; i++) {
+        const x = plotX + (plotW * i / 10);
+        ctx.beginPath();
+        ctx.moveTo(x, plotY);
+        ctx.lineTo(x, plotY + plotH);
+        ctx.stroke();
+      }
+
+      for (let i = 0; i <= 6; i++) {
+        const y = plotY + (plotH * i / 6);
+        ctx.beginPath();
+        ctx.moveTo(plotX, y);
+        ctx.lineTo(plotX + plotW, y);
+        ctx.stroke();
+      }
+
+      if (!candles.length) return;
+
+      const priceMin = Math.min(
+        ...candles.map(c => c.low),
+        ...levels.map(l => Number(l.price || 0)).filter(Boolean),
+        ...zones.map(z => Number(z.from || z.priceFrom || 0)).filter(Boolean),
+        ...zones.map(z => Number(z.to || z.priceTo || 0)).filter(Boolean),
+        ...arrows.map(a => Number(a.toPrice || 0)).filter(Boolean),
+      );
+
+      const priceMax = Math.max(
+        ...candles.map(c => c.high),
+        ...levels.map(l => Number(l.price || 0)).filter(Boolean),
+        ...zones.map(z => Number(z.from || z.priceFrom || 0)).filter(Boolean),
+        ...zones.map(z => Number(z.to || z.priceTo || 0)).filter(Boolean),
+        ...arrows.map(a => Number(a.toPrice || 0)).filter(Boolean),
+      );
+
+      const minPrice = priceMin - (priceMax - priceMin) * 0.12;
+      const maxPrice = priceMax + (priceMax - priceMin) * 0.12;
+
+      function yForPrice(price) {
+        return plotY + (maxPrice - price) / (maxPrice - minPrice) * plotH;
+      }
+
+      function xForIndex(index) {
+        if (candles.length === 1) return plotX + plotW / 2;
+        return plotX + (index / (candles.length - 1)) * plotW;
+      }
+
+      if (!compact) {
+        ctx.strokeStyle = "#233553";
+        ctx.strokeRect(plotX, plotY, plotW, plotH);
+      }
+
+      zones.forEach((zone) => {
+        const startIndex = Math.max(0, Number(zone.startIndex ?? 0));
+        const endIndex = Math.min(candles.length - 1, Number(zone.endIndex ?? candles.length - 1));
+        const x1 = xForIndex(startIndex) - 12;
+        const x2 = xForIndex(endIndex) + 12;
+        const y1 = yForPrice(Number(zone.to ?? zone.priceTo ?? 0));
+        const y2 = yForPrice(Number(zone.from ?? zone.priceFrom ?? 0));
+
+        const style = zoneStyle(zone.type);
+        ctx.save();
+        ctx.fillStyle = style.fill;
+        ctx.strokeStyle = style.stroke;
+        ctx.lineWidth = 2;
+        drawRoundRect(ctx, x1, Math.min(y1, y2), Math.max(24, x2 - x1), Math.abs(y2 - y1), 10);
+        ctx.fill();
+        ctx.stroke();
+
+        if (!compact) {
+          drawLabel(ctx, x1 + 8, Math.min(y1, y2) + 22, String(zone.label || "Зона"), style.stroke);
+        }
+        ctx.restore();
+      });
+
+      levels.forEach((level) => {
+        const y = yForPrice(Number(level.price || 0));
+        ctx.save();
+        ctx.strokeStyle = "#ffffff";
+        ctx.setLineDash([8, 6]);
+        ctx.lineWidth = compact ? 1 : 2;
+        ctx.beginPath();
+        ctx.moveTo(plotX, y);
+        ctx.lineTo(plotX + plotW, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (!compact) {
+          drawLabel(ctx, plotX + plotW - 180, y - 6, String(level.label || "Уровень"), "#ffffff");
+        }
+        ctx.restore();
+      });
+
+      const candleWidth = Math.max(compact ? 4 : 8, Math.min(compact ? 10 : 16, plotW / candles.length / 2));
+
+      candles.forEach((candle, i) => {
+        const x = xForIndex(i);
+        const openY = yForPrice(candle.open);
+        const closeY = yForPrice(candle.close);
+        const highY = yForPrice(candle.high);
+        const lowY = yForPrice(candle.low);
+
+        const bull = candle.close >= candle.open;
+        const color = bull ? "#22c55e" : "#ef4444";
+
+        ctx.strokeStyle = "#dbe7f7";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, highY);
+        ctx.lineTo(x, lowY);
+        ctx.stroke();
+
+        const bodyTop = Math.min(openY, closeY);
+        const bodyHeight = Math.max(3, Math.abs(closeY - openY));
+
+        ctx.fillStyle = color;
+        ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
+      });
+
+      if (!compact) {
+        patterns.forEach((pattern) => {
+          if (!Array.isArray(pattern.points) || pattern.points.length < 2) return;
+
+          ctx.save();
+          ctx.strokeStyle = "#38bdf8";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+
+          pattern.points.forEach((point, idx) => {
+            let pIndex = candles.findIndex(c => Math.abs(new Date(c.time).getTime() - new Date(point.time).getTime()) < 1000);
+            if (pIndex < 0) pIndex = idx;
+            const x = xForIndex(Math.min(candles.length - 1, Math.max(0, pIndex)));
+            const y = yForPrice(Number(point.price || candle.close || 0));
+
+            if (idx === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+
+          ctx.stroke();
+
+          const first = pattern.points[0];
+          drawLabel(ctx, plotX + 14, plotY + 22, String(pattern.name || "Паттерн"), "#38bdf8");
+          ctx.restore();
+        });
+      }
+
+      arrows.forEach((arrow) => {
+        const fromIndex = Math.max(0, Number(arrow.fromIndex ?? candles.length - 6));
+        const toIndex = Math.min(candles.length - 1, Number(arrow.toIndex ?? candles.length - 1));
+
+        const x1 = xForIndex(fromIndex);
+        const x2 = xForIndex(toIndex);
+        const y1 = yForPrice(Number(arrow.fromPrice ?? candles[fromIndex].close));
+        const y2 = yForPrice(Number(arrow.toPrice ?? candles[toIndex].close));
+
+        drawArrow(ctx, x1, y1, x2, y2, "#facc15", compact ? "" : String(arrow.text || "Сценарий"));
+      });
+
+      if (!compact) {
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "700 16px Arial";
+        ctx.fillText(`${idea.symbol || idea.instrument || "IDEA"} · График`, plotX + 8, 20);
+      }
+    }
+
+    function openIdeaModal(idea) {
+      activeIdea = idea;
+
+      const symbol = idea.symbol || idea.instrument || "Идея";
+      const directionRu = getDirectionRu(idea.direction || idea.bias);
+      const timeframe = idea.timeframe || "Интрадей";
+      const confidence = idea.confidence ?? "-";
+
+      modalTitle.textContent = `${symbol} — ${directionRu}`;
+      modalSub.textContent = `${timeframe} · Уверенность ${confidence}%`;
+
+      setSection(modalSummary, getText(idea.summary_ru, idea.summary));
+      setSection(modalTechnical, getText(idea.technical_ru, idea.technical, idea.analysis?.fundamental_ru));
+      setSection(modalVolume, getText(idea.analysis?.volume_ru, idea.volume_analysis_ru));
+      setSection(modalCDelta, getText(idea.analysis?.cumulative_delta_ru, idea.cumulative_delta_ru));
+      setSection(modalPatterns, getText(idea.analysis?.pattern_ru, idea.pattern_analysis_ru));
+      setSection(modalLiquidity, getText(idea.analysis?.liquidity_ru, idea.liquidity_ru));
+      setSection(modalOptions, getText(idea.options_ru, idea.options, idea.analysis?.options_ru));
+      setSection(modalScenario, getText(idea.scenario_ru, idea.scenario, idea.trade_plan?.alternative_scenario_ru));
+      setSection(modalTargets, getText(idea.targets_ru, idea.targets, [idea.trade_plan?.target_1, idea.trade_plan?.target_2].filter(Boolean).join(" / ")));
+      setSection(modalInvalidation, getText(idea.invalidation_ru, idea.invalidation, idea.trade_plan?.invalidation));
+
+      modal.classList.add("open");
+      setTimeout(() => renderChart(modalChart, idea, false), 40);
+
+      if (resizeHandler) {
+        window.removeEventListener("resize", resizeHandler);
+      }
+
+      resizeHandler = () => {
+        if (activeIdea) renderChart(modalChart, activeIdea, false);
+        document.querySelectorAll(".preview-canvas").forEach((canvas) => {
+          const raw = canvas.getAttribute("data-idea");
+          if (!raw) return;
+          try {
+            renderChart(canvas, JSON.parse(raw), true);
+          } catch {}
+        });
+      };
+
+      window.addEventListener("resize", resizeHandler);
+    }
+
+    function closeIdeaModal() {
+      modal.classList.remove("open");
+      activeIdea = null;
+    }
+
+    function renderIdeas(ideas) {
+      if (!ideas.length) {
+        ideasGrid.innerHTML = `<div class="empty">Идеи пока не найдены.</div>`;
+        return;
+      }
+
+      ideasGrid.innerHTML = ideas.map((idea, idx) => {
+        const tags = Array.isArray(idea.tags) ? idea.tags : [];
+        const summary = getText(idea.summary_ru, idea.summary);
+        const symbol = idea.symbol || idea.instrument || idea.pair || "";
+        const direction = getDirectionRu(idea.direction || idea.bias || "neutral");
+        const timeframe = idea.timeframe || "Интрадей";
+        const confidence = idea.confidence ?? "-";
+
+        return `
+          <div class="card" data-idea='${escapeHtml(JSON.stringify(idea))}'>
+            <div class="card-head">
+              <div>
+                <div class="symbol">${escapeHtml(symbol)}</div>
+                <div class="meta">${escapeHtml(direction)} · ${escapeHtml(timeframe)} · ${escapeHtml(String(confidence))}%</div>
+              </div>
+              <button class="watch-btn" type="button">Открыть</button>
+            </div>
+
+            <div class="preview-shell">
+              <canvas class="preview-canvas" id="preview-${idx}" data-idea='${escapeHtml(JSON.stringify(idea))}'></canvas>
+            </div>
+
+            <p class="summary">${escapeHtml(summary)}</p>
+
+            <div class="tags">
+              ${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      document.querySelectorAll(".preview-canvas").forEach((canvas) => {
+        try {
+          const idea = JSON.parse(canvas.getAttribute("data-idea"));
+          renderChart(canvas, idea, true);
+        } catch (e) {
+          console.error(e);
+        }
+      });
+
+      document.querySelectorAll(".card").forEach((card) => {
+        card.addEventListener("click", () => {
+          const idea = JSON.parse(card.dataset.idea);
+          openIdeaModal(idea);
+        });
+      });
+    }
+
+    async function loadIdeas() {
+      try {
+        const response = await fetch("/ideas/market", { cache: "no-store" });
+        const data = await response.json();
+        const ideas = normalizeIdeas(data);
+        renderIdeas(ideas);
+      } catch (error) {
+        ideasGrid.innerHTML = `<div class="empty">Не удалось загрузить идеи.</div>`;
+        console.error(error);
+      }
+    }
+
+    closeModalBtn.addEventListener("click", closeIdeaModal);
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) closeIdeaModal();
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeIdeaModal();
+    });
+
+    loadIdeas();
+  </script>
 </body>
 </html>
