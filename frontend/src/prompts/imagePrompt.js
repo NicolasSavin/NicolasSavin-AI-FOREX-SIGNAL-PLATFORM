@@ -1,18 +1,15 @@
 export const buildIdeaImagePrompt = (idea) => `
 Create a realistic forex trading chart for ${idea.symbol}.
-Show a clear candlestick chart on a dark professional trading terminal.
 
-Required elements:
-- obvious candlestick structure
+Show:
+- clear candlestick chart
 - order blocks
-- imbalance / FVG zones
-- support and resistance levels
+- imbalance (FVG)
 - liquidity zones
-- arrows showing expected direction: ${idea.direction}
-- entry area
-- stop loss / invalidation
-- take profit targets
-- short analytical labels that explain the logic
+- support/resistance
+- arrows showing direction ${idea.direction}
+- entry, stop loss, take profit
 
-The image must look like a real trading analysis chart, not abstract finance art.
+Style: professional trading terminal
+NOT abstract art
 `;
