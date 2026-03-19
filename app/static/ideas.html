@@ -120,26 +120,15 @@
     }
 
     .summary {
-      margin: 0 0 10px;
+      margin: 0 0 12px;
       color: #d7e0ee;
       font-size: 13px;
       line-height: 1.35;
       display: -webkit-box;
-      -webkit-line-clamp: 3;
+      -webkit-line-clamp: 4;
       -webkit-box-orient: vertical;
       overflow: hidden;
-      min-height: 52px;
-    }
-
-    .chart {
-      width: 100%;
-      height: 120px;
-      object-fit: cover;
-      border-radius: 12px;
-      display: block;
-      margin-bottom: 10px;
-      background: #0f172a;
-      border: 1px solid #162744;
+      min-height: 70px;
     }
 
     .tags {
@@ -173,7 +162,7 @@
     }
 
     .modal-card {
-      width: min(980px, 100%);
+      width: min(1040px, 100%);
       max-height: 90vh;
       overflow-y: auto;
       background: #0b1730;
@@ -213,8 +202,8 @@
 
     .modal-image {
       width: 100%;
-      min-height: 240px;
-      max-height: 440px;
+      min-height: 320px;
+      max-height: 560px;
       object-fit: contain;
       border-radius: 16px;
       display: block;
@@ -251,6 +240,20 @@
       font-size: 14px;
       max-width: 380px;
     }
+
+    @media (max-width: 640px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .modal-card {
+        padding: 16px;
+      }
+
+      .modal-image {
+        min-height: 220px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -258,7 +261,7 @@
     <div class="topbar">
       <div class="topbar-left">
         <h1>AI-идеи по рынку</h1>
-        <p>Короткие карточки в списке. Полный разбор только по клику.</p>
+        <p>В списке только короткие карточки. График и полный разбор открываются по клику.</p>
       </div>
       <a class="home-link" href="/">На главную</a>
     </div>
@@ -392,7 +395,6 @@
 
       ideasGrid.innerHTML = ideas.map((idea) => {
         const tags = Array.isArray(idea.tags) ? idea.tags : [];
-        const image = normalizeImagePath(idea);
         const summary = idea.summary || idea.summary_ru || idea.description || "";
         const symbol = idea.symbol || idea.instrument || idea.pair || "";
         const direction = idea.direction || idea.bias || "NEUTRAL";
@@ -412,8 +414,6 @@
             </div>
 
             <p class="summary">${escapeHtml(summary)}</p>
-
-            <img class="chart" src="${escapeHtml(image)}" alt="chart" onerror="this.src='/static/default-chart.png'" />
 
             <div class="tags">
               ${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
