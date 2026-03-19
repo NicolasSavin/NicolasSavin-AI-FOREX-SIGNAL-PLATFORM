@@ -1,90 +1,130 @@
 <!doctype html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI FOREX SIGNAL PLATFORM v3.6</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body data-page="home">
-    <div class="page-shell">
-      <header class="site-header">
-        <div>
-          <p class="eyebrow">AI FOREX SIGNAL PLATFORM</p>
-          <h1>Премиум-панель торговых сигналов</h1>
-          <p class="lead">
-            Главная страница разделяет актуальные сигналы и архив, показывает статистику отработки и раскрывает идею сетапа через детальную свечную визуализацию.
-          </p>
-        </div>
-        <nav class="top-nav">
-          <a class="is-active" href="/">Сигналы</a>
-          <a href="/ideas">Идеи</a>
-          <a href="/news">Новости</a>
-          <a href="/calendar">Календарь</a>
-          <a href="/heatmap/page">Тепловая карта</a>
-        </nav>
-      </header>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Forex Signal Platform</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #08111f;
+      color: #ffffff;
+    }
 
-      <section class="ticker-panel" aria-label="Тикер сигналов">
-        <div class="ticker-track" id="ticker">Загрузка тикера сигналов…</div>
-      </section>
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 48px 20px;
+    }
 
-      <main class="content-stack dashboard-layout">
-        <section class="signals-panel stats-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="section-kicker">Signal stats</p>
-              <h2>Статистика сигналов</h2>
-              <p class="section-text">
-                Формула успеха учитывает только статусы <strong>hit</strong> и <strong>missed</strong>.
-                Если закрытых результатов нет, платформа честно показывает 0%.
-              </p>
-            </div>
-            <div class="signal-summary">
-              <div>
-                <span>Обновлено</span>
-                <strong id="summaryUpdatedAt">—</strong>
-              </div>
-              <div>
-                <span>Всего записей</span>
-                <strong id="summaryCount">—</strong>
-              </div>
-            </div>
-          </div>
+    .badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: #0f1f38;
+      color: #7dd3fc;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
 
-          <section class="stats-grid" id="statsGrid" aria-label="Статистика сигналов"></section>
-        </section>
+    h1 {
+      margin: 0 0 12px;
+      font-size: 40px;
+      line-height: 1.1;
+    }
 
-        <section class="signals-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="section-kicker">Live feed</p>
-              <h2>Актуальные сигналы</h2>
-              <p class="section-text">
-                Здесь остаются только сетапы со статусом <strong>active</strong>, готовые к сопровождению.
-              </p>
-            </div>
-          </div>
+    p {
+      margin: 0 0 18px;
+      color: #cbd5e1;
+      font-size: 16px;
+      line-height: 1.5;
+      max-width: 760px;
+    }
 
-          <section class="cards signal-dashboard-grid" id="activeSignalsGrid" aria-label="Актуальные сигналы"></section>
-        </section>
+    .actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 28px;
+    }
 
-        <section class="signals-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="section-kicker">Archive</p>
-              <h2>Архив сигналов</h2>
-              <p class="section-text">
-                Архив хранит закрытые, отменённые и истёкшие сценарии для последующего анализа качества.
-              </p>
-            </div>
-          </div>
+    .btn {
+      display: inline-block;
+      padding: 12px 18px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 600;
+    }
 
-          <section class="cards signal-dashboard-grid" id="archiveSignalsGrid" aria-label="Архив сигналов"></section>
-        </section>
-      </main>
+    .btn-primary {
+      background: #22d3ee;
+      color: #04111d;
+    }
+
+    .btn-secondary {
+      background: #13233c;
+      color: #ffffff;
+      border: 1px solid #223552;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-top: 40px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, #0b1730 0%, #0a1426 100%);
+      border: 1px solid #1e2d49;
+      border-radius: 18px;
+      padding: 18px;
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .card p {
+      margin: 0;
+      font-size: 14px;
+      color: #aebed3;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="badge">AI Forex Signal Platform</div>
+    <h1>Главная страница платформы</h1>
+    <p>
+      Здесь должна быть главная страница, а не лента идей. Страница идей открывается отдельно.
+    </p>
+
+    <div class="actions">
+      <a class="btn btn-primary" href="/ideas">Открыть идеи</a>
+      <a class="btn btn-secondary" href="/ideas/market">API идей</a>
+      <a class="btn btn-secondary" href="/news/market">Новости рынка</a>
+      <a class="btn btn-secondary" href="/calendar/events">Календарь</a>
     </div>
 
-    <script type="module" src="/static/home.js"></script>
-  </body>
+    <div class="grid">
+      <div class="card">
+        <h3>Идеи</h3>
+        <p>Компактная лента сценариев должна быть только на отдельной странице /ideas.</p>
+      </div>
+      <div class="card">
+        <h3>Новости</h3>
+        <p>Рыночные события и фундаментальные триггеры можно смотреть отдельно через API.</p>
+      </div>
+      <div class="card">
+        <h3>Календарь</h3>
+        <p>Экономические события и важные релизы доступны отдельным маршрутом.</p>
+      </div>
+    </div>
+  </div>
+</body>
 </html>
