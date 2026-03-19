@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Ideas</title>
+  <title>AI-идеи по рынку</title>
   <style>
     :root {
       --bg: #08111f;
@@ -13,6 +13,11 @@
       --text: #ffffff;
       --muted: #9fb0c7;
       --tag: #13233c;
+      --accent: #facc15;
+      --green: #22c55e;
+      --red: #ef4444;
+      --violet: #8b5cf6;
+      --cyan: #38bdf8;
     }
 
     * { box-sizing: border-box; }
@@ -110,7 +115,7 @@
 
     .watch-btn {
       border: none;
-      background: #facc15;
+      background: var(--accent);
       color: #111827;
       border-radius: 999px;
       padding: 6px 10px;
@@ -129,6 +134,40 @@
       -webkit-box-orient: vertical;
       overflow: hidden;
       min-height: 70px;
+    }
+
+    .preview-box {
+      width: 100%;
+      border-radius: 16px;
+      overflow: hidden;
+      margin: 0 0 12px;
+      border: 1px solid #162744;
+      background: #091325;
+    }
+
+    .preview-button {
+      width: 100%;
+      display: block;
+      padding: 0;
+      margin: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .preview-image {
+      width: 100%;
+      height: 180px;
+      object-fit: cover;
+      display: block;
+      background: #0a1220;
+    }
+
+    .preview-svg {
+      width: 100%;
+      height: 180px;
+      display: block;
+      background: #08111f;
     }
 
     .tags {
@@ -162,8 +201,8 @@
     }
 
     .modal-card {
-      width: min(1040px, 100%);
-      max-height: 90vh;
+      width: min(1100px, 100%);
+      max-height: 92vh;
       overflow-y: auto;
       background: #0b1730;
       border: 1px solid var(--border);
@@ -200,20 +239,36 @@
       cursor: pointer;
     }
 
-    .modal-image {
+    .modal-image,
+    .modal-svg-wrap {
       width: 100%;
       min-height: 320px;
-      max-height: 560px;
-      object-fit: contain;
       border-radius: 16px;
       display: block;
       margin-bottom: 18px;
       background: #111827;
       border: 1px solid #162744;
+      overflow: hidden;
+    }
+
+    .modal-image {
+      max-height: 620px;
+      object-fit: contain;
+    }
+
+    .modal-svg {
+      width: 100%;
+      height: 560px;
+      display: block;
+      background: #08111f;
     }
 
     .section {
       margin-bottom: 16px;
+    }
+
+    .section.hidden {
+      display: none;
     }
 
     .section-title {
@@ -229,6 +284,7 @@
       font-size: 14px;
       line-height: 1.5;
       color: #eef4ff;
+      white-space: pre-line;
     }
 
     .empty {
@@ -250,8 +306,10 @@
         padding: 16px;
       }
 
-      .modal-image {
+      .modal-image,
+      .modal-svg {
         min-height: 220px;
+        height: 320px;
       }
     }
   </style>
@@ -261,7 +319,7 @@
     <div class="topbar">
       <div class="topbar-left">
         <h1>AI-идеи по рынку</h1>
-        <p>В списке только короткие карточки. График и полный разбор открываются по клику.</p>
+        <p>В списке только короткие карточки. Полный разбор и график открываются по клику.</p>
       </div>
       <a class="home-link" href="/">На главную</a>
     </div>
@@ -279,55 +337,61 @@
         <button id="close-modal" class="close-btn">Закрыть</button>
       </div>
 
-      <img id="modal-image" class="modal-image" src="/static/default-chart.png" alt="chart" onerror="this.src='/static/default-chart.png'" />
+      <img id="modal-image" class="modal-image" alt="График" style="display:none;" />
+      <div id="modal-svg-wrap" class="modal-svg-wrap" style="display:none;"></div>
 
-      <div class="section">
-        <div class="section-title">Summary</div>
+      <div id="section-summary" class="section">
+        <div class="section-title">СВОДКА</div>
         <p id="modal-summary" class="section-text"></p>
       </div>
 
-      <div class="section">
-        <div class="section-title">Technical Logic</div>
+      <div id="section-technical" class="section">
+        <div class="section-title">ТЕХНИЧЕСКАЯ ЛОГИКА</div>
         <p id="modal-technical" class="section-text"></p>
       </div>
 
-      <div class="section">
+      <div id="section-volume" class="section">
+        <div class="section-title">АНАЛИЗ ОБЪЁМОВ</div>
+        <p id="modal-volume" class="section-text"></p>
+      </div>
+
+      <div id="section-cdelta" class="section">
+        <div class="section-title">КУМУЛЯТИВНАЯ ДЕЛЬТА</div>
+        <p id="modal-cdelta" class="section-text"></p>
+      </div>
+
+      <div id="section-patterns" class="section">
+        <div class="section-title">АНАЛИЗ ПАТТЕРНОВ</div>
+        <p id="modal-patterns" class="section-text"></p>
+      </div>
+
+      <div id="section-smc" class="section">
         <div class="section-title">SMC / ICT</div>
         <p id="modal-smc" class="section-text"></p>
       </div>
 
-      <div class="section">
-        <div class="section-title">Wave Analysis</div>
-        <p id="modal-waves" class="section-text"></p>
-      </div>
-
-      <div class="section">
-        <div class="section-title">Volume</div>
-        <p id="modal-volume" class="section-text"></p>
-      </div>
-
-      <div class="section">
-        <div class="section-title">Liquidity</div>
+      <div id="section-liquidity" class="section">
+        <div class="section-title">АНАЛИЗ ЛИКВИДНОСТИ</div>
         <p id="modal-liquidity" class="section-text"></p>
       </div>
 
-      <div class="section">
-        <div class="section-title">Options Analysis</div>
+      <div id="section-options" class="section">
+        <div class="section-title">ОПЦИОННЫЙ АНАЛИЗ</div>
         <p id="modal-options" class="section-text"></p>
       </div>
 
-      <div class="section">
-        <div class="section-title">Scenario</div>
+      <div id="section-scenario" class="section">
+        <div class="section-title">СЦЕНАРИЙ</div>
         <p id="modal-scenario" class="section-text"></p>
       </div>
 
-      <div class="section">
-        <div class="section-title">Targets</div>
+      <div id="section-targets" class="section">
+        <div class="section-title">ЦЕЛИ</div>
         <p id="modal-targets" class="section-text"></p>
       </div>
 
-      <div class="section">
-        <div class="section-title">Invalidation</div>
+      <div id="section-invalidation" class="section">
+        <div class="section-title">ИНВАЛИДАЦИЯ</div>
         <p id="modal-invalidation" class="section-text"></p>
       </div>
     </div>
@@ -341,16 +405,31 @@
     const modalTitle = document.getElementById("modal-title");
     const modalSub = document.getElementById("modal-sub");
     const modalImage = document.getElementById("modal-image");
+    const modalSvgWrap = document.getElementById("modal-svg-wrap");
+
     const modalSummary = document.getElementById("modal-summary");
     const modalTechnical = document.getElementById("modal-technical");
-    const modalSmc = document.getElementById("modal-smc");
-    const modalWaves = document.getElementById("modal-waves");
     const modalVolume = document.getElementById("modal-volume");
+    const modalCDelta = document.getElementById("modal-cdelta");
+    const modalPatterns = document.getElementById("modal-patterns");
+    const modalSmc = document.getElementById("modal-smc");
     const modalLiquidity = document.getElementById("modal-liquidity");
     const modalOptions = document.getElementById("modal-options");
     const modalScenario = document.getElementById("modal-scenario");
     const modalTargets = document.getElementById("modal-targets");
     const modalInvalidation = document.getElementById("modal-invalidation");
+
+    const sectionSummary = document.getElementById("section-summary");
+    const sectionTechnical = document.getElementById("section-technical");
+    const sectionVolume = document.getElementById("section-volume");
+    const sectionCDelta = document.getElementById("section-cdelta");
+    const sectionPatterns = document.getElementById("section-patterns");
+    const sectionSmc = document.getElementById("section-smc");
+    const sectionLiquidity = document.getElementById("section-liquidity");
+    const sectionOptions = document.getElementById("section-options");
+    const sectionScenario = document.getElementById("section-scenario");
+    const sectionTargets = document.getElementById("section-targets");
+    const sectionInvalidation = document.getElementById("section-invalidation");
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -369,6 +448,39 @@
       return [];
     }
 
+    function getDirectionRu(value) {
+      const raw = String(value || "").trim().toLowerCase();
+      if (["bullish", "buy", "long", "рост"].includes(raw)) return "БЫЧИЙ";
+      if (["bearish", "sell", "short", "снижение"].includes(raw)) return "МЕДВЕЖИЙ";
+      if (["neutral", "watch", "flat", "range"].includes(raw)) return "НЕЙТРАЛЬНЫЙ";
+      return String(value || "НЕЙТРАЛЬНЫЙ").toUpperCase();
+    }
+
+    function getTimeframeRu(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "Интрадей";
+      if (raw.toLowerCase() === "intraday") return "Интрадей";
+      return raw;
+    }
+
+    function translateChartLabel(label) {
+      const raw = String(label || "").trim().toLowerCase();
+
+      if (raw === "range") return "Диапазон";
+      if (raw === "upper liquidity") return "Верхняя ликвидность";
+      if (raw === "lower liquidity") return "Нижняя ликвидность";
+      if (raw === "fvg") return "FVG";
+      if (raw === "imbalance") return "Имбаланс";
+      if (raw === "bullish_ob") return "Бычий ордерблок";
+      if (raw === "bearish_ob") return "Медвежий ордерблок";
+      if (raw === "demand") return "Зона спроса";
+      if (raw === "supply") return "Зона предложения";
+      if (raw === "buy_zone") return "Зона покупок";
+      if (raw === "sell_zone") return "Зона продаж";
+
+      return String(label || "");
+    }
+
     function normalizeImagePath(idea) {
       let src =
         idea.chart_image ||
@@ -377,7 +489,7 @@
         idea.chartImage ||
         "";
 
-      if (!src) return "/static/default-chart.png";
+      if (!src) return "";
 
       src = String(src).trim();
 
@@ -386,6 +498,7 @@
       if (src.startsWith("static/")) return "/" + src;
       if (src.startsWith("/generated_charts/")) return "/static" + src;
       if (src.startsWith("generated_charts/")) return "/static/" + src;
+
       if (src.includes("generated_charts/")) {
         const idx = src.indexOf("generated_charts/");
         return "/static/" + src.slice(idx);
@@ -394,27 +507,240 @@
       return src.startsWith("/") ? src : "/static/" + src;
     }
 
-    function openIdeaModal(idea) {
-      modalTitle.textContent = `${idea.symbol || idea.instrument || "Idea"} — ${idea.direction || idea.bias || ""}`;
-      modalSub.textContent = `${idea.timeframe || "Intraday"} · Confidence ${idea.confidence ?? "-"}%`;
-      modalImage.src = normalizeImagePath(idea);
+    function shouldUseImage(src) {
+      if (!src) return false;
+      return !src.includes("default-chart.png");
+    }
 
-      modalSummary.textContent = idea.summary || idea.summary_ru || idea.description || "";
-      modalTechnical.textContent = idea.technical || idea.analysis?.fundamental_ru || "";
-      modalSmc.textContent = idea.analysis?.smc_ict_ru || "";
-      modalWaves.textContent = idea.analysis?.waves_ru || "";
-      modalVolume.textContent = idea.analysis?.volume_ru || "";
-      modalLiquidity.textContent = idea.analysis?.liquidity_ru || "";
-      modalOptions.textContent = idea.options || "";
-      modalScenario.textContent = idea.scenario || idea.trade_plan?.alternative_scenario_ru || "";
-      modalTargets.textContent = idea.targets || [idea.trade_plan?.target_1, idea.trade_plan?.target_2].filter(Boolean).join(" / ");
-      modalInvalidation.textContent = idea.invalidation || idea.trade_plan?.invalidation || "";
+    function getText(...values) {
+      for (const value of values) {
+        if (value !== undefined && value !== null && String(value).trim() !== "") {
+          return String(value).trim();
+        }
+      }
+      return "";
+    }
+
+    function setSection(sectionEl, textEl, text) {
+      const value = getText(text);
+      if (!value) {
+        sectionEl.classList.add("hidden");
+        textEl.textContent = "";
+        return;
+      }
+      sectionEl.classList.remove("hidden");
+      textEl.textContent = value;
+    }
+
+    function colorByZoneType(type) {
+      const raw = String(type || "").toLowerCase();
+      if (["demand", "bullish_ob", "buy_zone"].includes(raw)) {
+        return { fill: "rgba(34,197,94,0.18)", stroke: "#22c55e" };
+      }
+      if (["supply", "bearish_ob", "sell_zone"].includes(raw)) {
+        return { fill: "rgba(239,68,68,0.18)", stroke: "#ef4444" };
+      }
+      if (["fvg", "imbalance"].includes(raw)) {
+        return { fill: "rgba(139,92,246,0.18)", stroke: "#8b5cf6" };
+      }
+      return { fill: "rgba(56,189,248,0.16)", stroke: "#38bdf8" };
+    }
+
+    function renderSvgChart(idea, height = 560) {
+      const chart = idea?.chart || {};
+      const zones = Array.isArray(chart.zones) ? chart.zones : [];
+      const levels = Array.isArray(chart.levels) ? chart.levels : [];
+      const path = Array.isArray(chart.path) ? chart.path : [];
+
+      const width = 1000;
+      const h = height;
+      const px = (x) => (Number(x || 0) / 100) * width;
+      const py = (y) => (Number(y || 0) / 100) * h;
+
+      const gridX = [];
+      const gridY = [];
+      for (let x = 0; x <= 100; x += 10) {
+        gridX.push(`<line x1="${px(x)}" y1="0" x2="${px(x)}" y2="${h}" stroke="#13233c" stroke-width="1" />`);
+      }
+      for (let y = 0; y <= 100; y += 10) {
+        gridY.push(`<line x1="0" y1="${py(y)}" x2="${width}" y2="${py(y)}" stroke="#13233c" stroke-width="1" />`);
+      }
+
+      const zoneSvg = zones.map((zone) => {
+        const x1 = px(zone.x1 ?? 20);
+        const y1 = py(zone.y1 ?? 30);
+        const x2 = px(zone.x2 ?? 80);
+        const y2 = py(zone.y2 ?? 60);
+        const w = Math.max(0, x2 - x1);
+        const hRect = Math.max(0, y2 - y1);
+        const colors = colorByZoneType(zone.type);
+        const label = translateChartLabel(zone.label || zone.type);
+
+        return `
+          <rect x="${x1}" y="${y1}" width="${w}" height="${hRect}" fill="${colors.fill}" stroke="${colors.stroke}" stroke-width="2" rx="8" />
+          <text x="${x1 + 10}" y="${y1 + 20}" fill="#ffffff" font-size="16" font-weight="700">${escapeHtml(label)}</text>
+        `;
+      }).join("");
+
+      const levelSvg = levels.map((level) => {
+        const x = px(level.x ?? 80);
+        const y = py(level.y ?? 50);
+        const label = translateChartLabel(level.label);
+
+        return `
+          <line x1="${x - 46}" y1="${y}" x2="${x + 46}" y2="${y}" stroke="#ffffff" stroke-width="2" />
+          <circle cx="${x}" cy="${y}" r="5" fill="#ffffff" />
+          <text x="${x + 12}" y="${y - 10}" fill="#ffffff" font-size="15" font-weight="700">${escapeHtml(label)}</text>
+        `;
+      }).join("");
+
+      let priceLine = "";
+      let markers = "";
+
+      if (path.length) {
+        const points = path.map((p) => `${px(p.x)},${py(p.y)}`).join(" ");
+        priceLine = `<polyline points="${points}" fill="none" stroke="#facc15" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />`;
+        markers = path.map((p) => `<circle cx="${px(p.x)}" cy="${py(p.y)}" r="5" fill="#facc15" />`).join("");
+      }
+
+      const title = `${escapeHtml(idea.symbol || idea.instrument || "Идея")} · График AI-идеи`;
+
+      return `
+        <svg class="modal-svg" viewBox="0 0 ${width} ${h}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="График">
+          <rect x="0" y="0" width="${width}" height="${h}" fill="#08111f" />
+          ${gridX.join("")}
+          ${gridY.join("")}
+          <text x="26" y="30" fill="#ffffff" font-size="18" font-weight="700">${title}</text>
+          ${zoneSvg}
+          ${levelSvg}
+          ${priceLine}
+          ${markers}
+        </svg>
+      `;
+    }
+
+    function renderPreview(idea, small = false) {
+      const src = normalizeImagePath(idea);
+
+      if (shouldUseImage(src)) {
+        const cls = small ? "preview-image" : "modal-image";
+        return `<img class="${cls}" src="${escapeHtml(src)}" alt="График ${escapeHtml(idea.symbol || idea.instrument || "")}" />`;
+      }
+
+      const svg = renderSvgChart(idea, small ? 180 : 560);
+      if (small) {
+        return svg.replace('class="modal-svg"', 'class="preview-svg"');
+      }
+      return svg;
+    }
+
+    function openIdeaModal(idea) {
+      const symbol = idea.symbol || idea.instrument || "Идея";
+      const directionRu = getDirectionRu(idea.direction || idea.bias || "neutral");
+      const timeframeRu = getTimeframeRu(idea.timeframe || "Intraday");
+      const confidence = idea.confidence ?? "-";
+
+      modalTitle.textContent = `${symbol} — ${directionRu}`;
+      modalSub.textContent = `${timeframeRu} · Уверенность ${confidence}%`;
+
+      const imageSrc = normalizeImagePath(idea);
+      if (shouldUseImage(imageSrc)) {
+        modalSvgWrap.style.display = "none";
+        modalSvgWrap.innerHTML = "";
+        modalImage.style.display = "block";
+        modalImage.src = imageSrc;
+        modalImage.alt = `График ${symbol}`;
+      } else {
+        modalImage.style.display = "none";
+        modalImage.removeAttribute("src");
+        modalSvgWrap.style.display = "block";
+        modalSvgWrap.innerHTML = renderSvgChart(idea, 560);
+      }
+
+      setSection(sectionSummary, modalSummary,
+        getText(idea.summary_ru, idea.summary, idea.description_ru, idea.description)
+      );
+
+      setSection(sectionTechnical, modalTechnical,
+        getText(idea.technical_ru, idea.technical, idea.analysis?.fundamental_ru)
+      );
+
+      setSection(sectionVolume, modalVolume,
+        getText(
+          idea.analysis?.volume_ru,
+          idea.volume_analysis_ru,
+          idea.volumeAnalysisRu,
+          idea.volume
+        )
+      );
+
+      setSection(sectionCDelta, modalCDelta,
+        getText(
+          idea.analysis?.cumulative_delta_ru,
+          idea.analysis?.cum_delta_ru,
+          idea.cumulative_delta_ru,
+          idea.cum_delta_ru,
+          idea.cumulativeDeltaRu
+        )
+      );
+
+      setSection(sectionPatterns, modalPatterns,
+        getText(
+          idea.analysis?.pattern_ru,
+          idea.analysis?.patterns_ru,
+          idea.pattern_analysis_ru,
+          idea.patternAnalysisRu
+        )
+      );
+
+      setSection(sectionSmc, modalSmc,
+        getText(idea.analysis?.smc_ict_ru)
+      );
+
+      setSection(sectionLiquidity, modalLiquidity,
+        getText(
+          idea.analysis?.liquidity_ru,
+          idea.liquidity_ru
+        )
+      );
+
+      setSection(sectionOptions, modalOptions,
+        getText(idea.options_ru, idea.options, idea.analysis?.options_ru)
+      );
+
+      setSection(sectionScenario, modalScenario,
+        getText(
+          idea.scenario_ru,
+          idea.scenario,
+          idea.trade_plan?.alternative_scenario_ru
+        )
+      );
+
+      setSection(sectionTargets, modalTargets,
+        getText(
+          idea.targets_ru,
+          idea.targets,
+          [idea.trade_plan?.target_1, idea.trade_plan?.target_2].filter(Boolean).join(" / ")
+        )
+      );
+
+      setSection(sectionInvalidation, modalInvalidation,
+        getText(
+          idea.invalidation_ru,
+          idea.invalidation,
+          idea.trade_plan?.invalidation
+        )
+      );
 
       modal.classList.add("open");
     }
 
     function closeIdeaModal() {
       modal.classList.remove("open");
+      modalImage.style.display = "none";
+      modalImage.removeAttribute("src");
+      modalSvgWrap.style.display = "none";
+      modalSvgWrap.innerHTML = "";
     }
 
     function renderIdeas(ideas) {
@@ -425,10 +751,10 @@
 
       ideasGrid.innerHTML = ideas.map((idea) => {
         const tags = Array.isArray(idea.tags) ? idea.tags : [];
-        const summary = idea.summary || idea.summary_ru || idea.description || "";
+        const summary = getText(idea.summary_ru, idea.summary, idea.description_ru, idea.description);
         const symbol = idea.symbol || idea.instrument || idea.pair || "";
-        const direction = idea.direction || idea.bias || "NEUTRAL";
-        const timeframe = idea.timeframe || "Intraday";
+        const direction = getDirectionRu(idea.direction || idea.bias || "neutral");
+        const timeframe = getTimeframeRu(idea.timeframe || "Intraday");
         const confidence = idea.confidence ?? "-";
 
         return `
@@ -440,7 +766,13 @@
                   ${escapeHtml(direction)} · ${escapeHtml(timeframe)} · ${escapeHtml(String(confidence))}%
                 </div>
               </div>
-              <button class="watch-btn" type="button">Watch</button>
+              <button class="watch-btn" type="button">Открыть</button>
+            </div>
+
+            <div class="preview-box">
+              <button class="preview-button" type="button">
+                ${renderPreview(idea, true)}
+              </button>
             </div>
 
             <p class="summary">${escapeHtml(summary)}</p>
@@ -475,6 +807,10 @@
     closeModalBtn.addEventListener("click", closeIdeaModal);
     modal.addEventListener("click", (event) => {
       if (event.target === modal) closeIdeaModal();
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeIdeaModal();
     });
 
     loadIdeas();
