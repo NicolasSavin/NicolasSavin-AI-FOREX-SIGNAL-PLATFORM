@@ -1,40 +1,412 @@
 <!doctype html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Идеи</title>
-    <link rel="stylesheet" href="/static/ideas.css" />
-  </head>
-  <body>
-    <div class="page-shell">
-      <header class="site-header">
-        <div>
-          <p class="eyebrow">AI Ideas</p>
-          <h1>Подробные AI-идеи по рынку</h1>
-          <p class="lead">
-            Идеи формируются по значимым новостям и показывают подробный разбор с картинкой сценария.
-          </p>
-        </div>
-      </header>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Ideas</title>
+  <style>
+    :root {
+      --bg: #08111f;
+      --panel: #0b1730;
+      --panel-2: #0d1b34;
+      --border: #1d2c47;
+      --text: #ffffff;
+      --muted: #9fb0c7;
+      --accent: #22d3ee;
+      --tag: #13233c;
+    }
 
-      <main class="content-stack">
-        <section class="panel">
-          <div class="panel-heading compact">
-            <div>
-              <p class="section-kicker">Актуальные идеи</p>
-              <h2>AI-разбор рыночных сценариев</h2>
-            </div>
-          </div>
+    * { box-sizing: border-box; }
 
-          <div id="ideasUpdatedAt" class="ideas-updated-at">Обновление: загрузка...</div>
-          <div id="ideasContainer" class="ideas-container">
-            <div class="ideas-loading">Загрузка идей...</div>
-          </div>
-        </section>
-      </main>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 16px 40px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 22px;
+      flex-wrap: wrap;
+    }
+
+    .topbar-left h1 {
+      margin: 0 0 6px;
+      font-size: 28px;
+      line-height: 1.1;
+    }
+
+    .topbar-left p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    .home-link {
+      display: inline-block;
+      text-decoration: none;
+      color: var(--text);
+      background: #13233c;
+      border: 1px solid #233553;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px;
+      cursor: pointer;
+    }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .symbol {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 3px;
+    }
+
+    .meta {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    .watch-btn {
+      border: none;
+      background: #facc15;
+      color: #111827;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .summary {
+      margin: 0 0 10px;
+      color: #d7e0ee;
+      font-size: 13px;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: 52px;
+    }
+
+    .chart {
+      width: 100%;
+      height: 145px;
+      object-fit: cover;
+      border-radius: 12px;
+      display: block;
+      margin-bottom: 10px;
+      background: #0f172a;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tag {
+      background: var(--tag);
+      color: #dbe7f7;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 11px;
+      line-height: 1;
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.72);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      z-index: 1000;
+    }
+
+    .modal.open {
+      display: flex;
+    }
+
+    .modal-card {
+      width: min(980px, 100%);
+      max-height: 90vh;
+      overflow-y: auto;
+      background: #0b1730;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 20px;
+    }
+
+    .modal-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+
+    .modal-top h2 {
+      margin: 0 0 6px;
+      font-size: 24px;
+    }
+
+    .modal-sub {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .close-btn {
+      border: none;
+      background: #13233c;
+      color: #fff;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .modal-image {
+      width: 100%;
+      border-radius: 16px;
+      display: block;
+      margin-bottom: 18px;
+      background: #111827;
+    }
+
+    .section {
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .section-text {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #eef4ff;
+    }
+
+    .empty {
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 22px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="topbar-left">
+        <h1>AI-идеи по рынку</h1>
+        <p>Короткие карточки в списке. Полный разбор только по клику.</p>
+      </div>
+      <a class="home-link" href="/">На главную</a>
     </div>
 
-    <script src="/static/ideas.js"></script>
-  </body>
+    <div id="ideas-grid" class="grid"></div>
+  </div>
+
+  <div id="idea-modal" class="modal">
+    <div class="modal-card">
+      <div class="modal-top">
+        <div>
+          <h2 id="modal-title">Идея</h2>
+          <div id="modal-sub" class="modal-sub"></div>
+        </div>
+        <button id="close-modal" class="close-btn">Закрыть</button>
+      </div>
+
+      <img id="modal-image" class="modal-image" src="/static/default-chart.png" alt="chart" />
+
+      <div class="section">
+        <div class="section-title">Summary</div>
+        <p id="modal-summary" class="section-text"></p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Technical Logic</div>
+        <p id="modal-technical" class="section-text"></p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Options Analysis</div>
+        <p id="modal-options" class="section-text"></p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Scenario</div>
+        <p id="modal-scenario" class="section-text"></p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Targets</div>
+        <p id="modal-targets" class="section-text"></p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Invalidation</div>
+        <p id="modal-invalidation" class="section-text"></p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const ideasGrid = document.getElementById("ideas-grid");
+    const modal = document.getElementById("idea-modal");
+    const closeModalBtn = document.getElementById("close-modal");
+
+    const modalTitle = document.getElementById("modal-title");
+    const modalSub = document.getElementById("modal-sub");
+    const modalImage = document.getElementById("modal-image");
+    const modalSummary = document.getElementById("modal-summary");
+    const modalTechnical = document.getElementById("modal-technical");
+    const modalOptions = document.getElementById("modal-options");
+    const modalScenario = document.getElementById("modal-scenario");
+    const modalTargets = document.getElementById("modal-targets");
+    const modalInvalidation = document.getElementById("modal-invalidation");
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function normalizeIdeas(data) {
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data?.ideas)) return data.ideas;
+      if (Array.isArray(data?.items)) return data.items;
+      if (Array.isArray(data?.signals)) return data.signals;
+      return [];
+    }
+
+    function openIdeaModal(idea) {
+      modalTitle.textContent = `${idea.symbol || "Idea"} — ${idea.direction || ""}`;
+      modalSub.textContent = `${idea.timeframe || "Intraday"} · Confidence ${idea.confidence ?? "-"}%`;
+      modalImage.src = idea.image || idea.chart_url || "/static/default-chart.png";
+      modalSummary.textContent = idea.summary || idea.description || "";
+      modalTechnical.textContent = idea.technical || "";
+      modalOptions.textContent = idea.options || "";
+      modalScenario.textContent = idea.scenario || "";
+      modalTargets.textContent = idea.targets || "";
+      modalInvalidation.textContent = idea.invalidation || "";
+      modal.classList.add("open");
+    }
+
+    function closeIdeaModal() {
+      modal.classList.remove("open");
+    }
+
+    function renderIdeas(ideas) {
+      if (!ideas.length) {
+        ideasGrid.innerHTML = `<div class="empty">Идеи пока не найдены.</div>`;
+        return;
+      }
+
+      ideasGrid.innerHTML = ideas.map((idea) => {
+        const tags = Array.isArray(idea.tags) ? idea.tags : [];
+        const image = idea.image || idea.chart_url || "/static/default-chart.png";
+        const summary = idea.summary || idea.description || "";
+        return `
+          <div class="card" data-idea='${escapeHtml(JSON.stringify(idea))}'>
+            <div class="card-head">
+              <div>
+                <div class="symbol">${escapeHtml(idea.symbol || idea.pair || "")}</div>
+                <div class="meta">
+                  ${escapeHtml(idea.direction || idea.bias || "-")} ·
+                  ${escapeHtml(idea.timeframe || "Intraday")} ·
+                  ${escapeHtml(String(idea.confidence ?? "-"))}%
+                </div>
+              </div>
+              <button class="watch-btn" type="button">Watch</button>
+            </div>
+
+            <p class="summary">${escapeHtml(summary)}</p>
+
+            <img class="chart" src="${escapeHtml(image)}" alt="chart" />
+
+            <div class="tags">
+              ${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      document.querySelectorAll(".card").forEach((card) => {
+        card.addEventListener("click", () => {
+          const idea = JSON.parse(card.dataset.idea);
+          openIdeaModal(idea);
+        });
+      });
+    }
+
+    async function loadIdeas() {
+      try {
+        const response = await fetch("/ideas/market");
+        const data = await response.json();
+        const ideas = normalizeIdeas(data);
+        renderIdeas(ideas);
+      } catch (error) {
+        ideasGrid.innerHTML = `<div class="empty">Не удалось загрузить идеи.</div>`;
+        console.error(error);
+      }
+    }
+
+    closeModalBtn.addEventListener("click", closeIdeaModal);
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) closeIdeaModal();
+    });
+
+    loadIdeas();
+  </script>
+</body>
 </html>
