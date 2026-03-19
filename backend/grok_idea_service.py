@@ -1,5 +1,15 @@
+import os
+
 # =========================
-# AI IDEA GENERATION SERVICE (UPDATED)
+# API KEY
+# =========================
+
+# ВСТАВЬ СВОЙ КЛЮЧ СЮДА
+OPENAI_API_KEY = "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"
+
+
+# =========================
+# IDEA LOGIC
 # =========================
 
 def should_publish_idea(ctx):
@@ -50,10 +60,6 @@ def build_idea_payload(ctx):
     }
 
 
-# =========================
-# MAIN FUNCTION
-# =========================
-
 def generate_trade_idea(ctx):
     market_state = classify_market_state(ctx)
 
@@ -65,10 +71,12 @@ def generate_trade_idea(ctx):
 
 
 # =========================
-# TEST DATA (можешь удалить потом)
+# TEST
 # =========================
 
 if __name__ == "__main__":
+    print("OPENAI_API_KEY:", OPENAI_API_KEY[:12] + "..." if OPENAI_API_KEY and OPENAI_API_KEY != "ВСТАВЬ_СЮДА_СВОЙ_OPENAI_API_KEY" else "KEY NOT SET")
+
     ctx = {
         "symbol": "DXY",
         "news_event": True,
