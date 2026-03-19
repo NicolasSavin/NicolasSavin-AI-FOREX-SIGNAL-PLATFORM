@@ -1,9 +1,10 @@
 fastapi
 uvicorn
+requests
+matplotlib
 pandas
 numpy
 yfinance
-requests
 beautifulsoup4
 selenium
 chromedriver-autoinstaller
