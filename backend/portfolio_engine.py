@@ -14,10 +14,17 @@ class PortfolioEngine:
         self._chart_generator = ChartGenerator()
 
     def market_ideas(self) -> dict:
-        news_payload = self._news_provider.market_news(active_signals=[])
-        raw_news = news_payload.get("news", [])
+        try:
+            news_payload = self._news_provider.market_news(active_signals=[])
+            raw_news = news_payload.get("news", [])
+        except Exception:
+            raw_news = []
 
-        ideas = self._ideas_from_news(raw_news)
+        try:
+            ideas = self._ideas_from_news(raw_news)
+        except Exception:
+            ideas = []
+
         if not ideas:
             ideas = [self._empty_idea()]
 
@@ -27,7 +34,13 @@ class PortfolioEngine:
         }
 
     def market_news(self, active_signals: list[dict] | None = None) -> dict:
-        return self._news_provider.market_news(active_signals=active_signals)
+        try:
+            return self._news_provider.market_news(active_signals=active_signals)
+        except Exception:
+            return {
+                "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "news": [],
+            }
 
     def calendar_events(self) -> dict:
         return {
@@ -47,7 +60,7 @@ class PortfolioEngine:
         for signal in signals:
             rows.append(
                 {
-                    "pair": signal["symbol"],
+                    "pair": signal.get("symbol"),
                     "change_percent": signal.get("distance_to_target_percent"),
                     "data_status": signal.get("data_status", "unavailable"),
                     "label": "real" if signal.get("data_status") == "real" else "proxy",
@@ -90,12 +103,20 @@ class PortfolioEngine:
 
             used_instruments.add(instrument)
 
-            idea = self._grok_idea_service.build_detailed_idea_from_news(item, instrument)
+            try:
+                idea = self._grok_idea_service.build_detailed_idea_from_news(item, instrument)
+            except Exception:
+                idea = self._fallback_news_idea(item, instrument)
+
             if idea:
                 try:
-                    idea["chart_image"] = self._chart_generator.generate_chart(instrument, idea)
+                    chart_path = self._chart_generator.generate_chart(instrument, idea)
+                    idea["chart_image"] = chart_path
+                    idea["image"] = chart_path
                 except Exception:
                     idea["chart_image"] = None
+                    idea["image"] = "/static/default-chart.png"
+
                 ideas.append(idea)
 
             if len(ideas) >= 5:
@@ -131,16 +152,94 @@ class PortfolioEngine:
 
         return preferred[0] if preferred else assets[0]
 
+    def _fallback_news_idea(self, item: dict, instrument: str) -> dict:
+        title = str(item.get("title") or "Идея по новости").strip()
+        summary = str(
+            item.get("summary_ru")
+            or item.get("description_ru")
+            or item.get("summary")
+            or item.get("description")
+            or f"После новости по {instrument} рынок требует подтверждения сценария."
+        ).strip()
+
+        return {
+            "title": title,
+            "label": "WATCH",
+            "instrument": instrument,
+            "symbol": instrument,
+            "direction": "NEUTRAL",
+            "confidence": 55,
+            "timeframe": "Intraday",
+            "summary": summary,
+            "summary_ru": summary,
+            "news_title": title,
+            "technical": f"По {instrument} нужен дополнительный technical confirmation после новости.",
+            "options": f"По {instrument} стоит учитывать опционные уровни как потенциальные зоны притяжения цены.",
+            "scenario": f"По {instrument} базовый сценарий пока наблюдательный до подтверждения структуры.",
+            "targets": "Waiting for confirmation",
+            "invalidation": "Scenario not confirmed yet",
+            "image": "/static/default-chart.png",
+            "tags": ["News", "Watching", "Options"],
+            "analysis": {
+                "fundamental_ru": f"{title}. Фундаментальный фон по {instrument} изменился, но сетап еще формируется.",
+                "smc_ict_ru": f"По {instrument} нужен структурный сигнал после новости.",
+                "pattern_ru": "Паттерн пока не подтвержден.",
+                "waves_ru": "Волновая структура нейтральна.",
+                "volume_ru": "Объемы пока не дали сильного сигнала.",
+                "liquidity_ru": "Ликвидность остается ключевым ориентиром.",
+            },
+            "trade_plan": {
+                "bias": "neutral",
+                "entry_zone": f"Ожидание подтверждения по {instrument}.",
+                "invalidation": "Не применяется до подтверждения сетапа.",
+                "target_1": "Нет подтвержденной цели",
+                "target_2": "Нет подтвержденной цели",
+                "alternative_scenario_ru": "Рынок может остаться в диапазоне до появления нового импульса.",
+            },
+            "chart": {
+                "pattern_type": "wait_mode",
+                "bias": "neutral",
+                "zones": [{"type": "range", "label": "Range", "x1": 20, "y1": 42, "x2": 78, "y2": 66}],
+                "levels": [
+                    {"label": "Upper Liquidity", "x": 80, "y": 36},
+                    {"label": "Lower Liquidity", "x": 80, "y": 72},
+                ],
+                "path": [
+                    {"x": 18, "y": 60},
+                    {"x": 32, "y": 56},
+                    {"x": 46, "y": 60},
+                    {"x": 60, "y": 54},
+                    {"x": 76, "y": 58},
+                ],
+            },
+            "chart_image": None,
+        }
+
     def _empty_idea(self) -> dict:
         return {
             "title": "Нет подходящей новости для новой идеи",
             "label": "WATCH",
             "instrument": "MARKET",
+            "symbol": "MARKET",
+            "direction": "NEUTRAL",
+            "confidence": 50,
+            "timeframe": "Intraday",
+            "summary": (
+                "Идея публикуется после появления значимой новости по конкретному инструменту. "
+                "Сейчас в ленте нет события, которое даёт достаточно сильный и понятный сценарий."
+            ),
             "summary_ru": (
                 "Идея публикуется после появления значимой новости по конкретному инструменту. "
                 "Сейчас в ленте нет события, которое даёт достаточно сильный и понятный сценарий."
             ),
             "news_title": "Нет новой релевантной новости",
+            "technical": "Технический сценарий пока не подтвержден.",
+            "options": "Опционный анализ пока не дает приоритетного направления.",
+            "scenario": "Режим наблюдения до появления нового триггера.",
+            "targets": "Нет цели до появления сценария.",
+            "invalidation": "Не применяется, так как активной идеи нет.",
+            "image": "/static/default-chart.png",
+            "tags": ["Watching", "Neutral"],
             "analysis": {
                 "fundamental_ru": "Фундаментального триггера для новой идеи сейчас недостаточно.",
                 "smc_ict_ru": "Рыночная структура требует наблюдения до появления нового драйвера.",
