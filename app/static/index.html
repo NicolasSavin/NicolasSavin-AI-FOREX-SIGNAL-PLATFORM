@@ -11,11 +11,13 @@
       background: #08111f;
       color: #ffffff;
     }
+
     .wrap {
       max-width: 1100px;
       margin: 0 auto;
       padding: 48px 20px;
     }
+
     .badge {
       display: inline-block;
       padding: 6px 12px;
@@ -27,11 +29,13 @@
       text-transform: uppercase;
       margin-bottom: 16px;
     }
+
     h1 {
       margin: 0 0 12px;
       font-size: 40px;
       line-height: 1.1;
     }
+
     p {
       margin: 0 0 18px;
       color: #cbd5e1;
@@ -39,12 +43,14 @@
       line-height: 1.5;
       max-width: 760px;
     }
+
     .actions {
       display: flex;
       gap: 12px;
       flex-wrap: wrap;
       margin-top: 28px;
     }
+
     .btn {
       display: inline-block;
       padding: 12px 18px;
@@ -52,14 +58,41 @@
       text-decoration: none;
       font-weight: 600;
     }
+
     .btn-primary {
       background: #22d3ee;
       color: #04111d;
     }
+
     .btn-secondary {
       background: #13233c;
       color: #ffffff;
       border: 1px solid #223552;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-top: 40px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, #0b1730 0%, #0a1426 100%);
+      border: 1px solid #1e2d49;
+      border-radius: 18px;
+      padding: 18px;
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .card p {
+      margin: 0;
+      font-size: 14px;
+      color: #aebed3;
     }
   </style>
 </head>
@@ -67,13 +100,30 @@
   <div class="wrap">
     <div class="badge">AI Forex Signal Platform</div>
     <h1>Главная страница платформы</h1>
-    <p>Это отдельная главная страница. Идеи должны открываться только на /ideas.</p>
+    <p>
+      Это отдельная главная страница. Страница идей открывается только по адресу <strong>/ideas</strong>.
+    </p>
 
     <div class="actions">
       <a class="btn btn-primary" href="/ideas">Открыть идеи</a>
       <a class="btn btn-secondary" href="/ideas/market">API идей</a>
       <a class="btn btn-secondary" href="/news/market">Новости рынка</a>
       <a class="btn btn-secondary" href="/calendar/events">Календарь</a>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Идеи</h3>
+        <p>Компактная лента сценариев должна быть только на отдельной странице /ideas.</p>
+      </div>
+      <div class="card">
+        <h3>Новости</h3>
+        <p>Рыночные события и фундаментальные триггеры можно смотреть отдельно.</p>
+      </div>
+      <div class="card">
+        <h3>Календарь</h3>
+        <p>Экономические события и важные релизы доступны отдельным маршрутом.</p>
+      </div>
     </div>
   </div>
 </body>
