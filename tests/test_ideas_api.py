@@ -44,11 +44,12 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["symbol"] == "EURUSD"
     assert payload[0]["timeframe"] == "M15"
     assert payload[0]["direction"] == "bullish"
-    assert payload[0]["summary"] == (
+    assert payload[0]["summary"] == "BUY Тестовая идея для EURUSD"
+    assert payload[0]["short_text"] == payload[0]["summary"]
+    assert payload[0]["full_text"] == (
         "Тестовая идея для EURUSD. Ждём подтверждение сценария по текущей структуре. "
         "Идея отменяется при сломе исходной структуры. Цель будет уточняться после появления подтверждения."
     )
-    assert payload[0]["full_text"] == payload[0]["summary"]
 
 
 def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) -> None:
@@ -81,11 +82,12 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
 
     payload = service.build_api_ideas()
 
-    assert payload[0]["summary"] == (
+    assert payload[0]["summary"] == "SELL Краткий preview остаётся в карточке"
+    assert payload[0]["short_text"] == payload[0]["summary"]
+    assert payload[0]["full_text"] == (
         "Краткий preview остаётся в карточке. Контекст для detail-view. "
         "Нужен триггер на вход от зоны 1.271. Возврат выше 1.276 ломает сценарий. 1.262 / 1.258."
     )
-    assert payload[0]["full_text"] == payload[0]["summary"]
     assert payload[0]["entry"] == "1.271"
     assert payload[0]["stopLoss"] == "1.276"
     assert payload[0]["takeProfit"] == "1.262"
@@ -147,7 +149,8 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
 
     assert payload[0]["source"] == "openrouter_ai"
     assert payload[0]["symbol"] == "EURUSD"
-    assert payload[0]["summary"] == payload[0]["full_text"]
+    assert payload[0]["short_text"] == payload[0]["summary"]
+    assert payload[0]["summary"].startswith("BUY ")
     assert "HTF" in payload[0]["summary"]
     assert payload[0]["label"] == "BUY IDEA"
 
