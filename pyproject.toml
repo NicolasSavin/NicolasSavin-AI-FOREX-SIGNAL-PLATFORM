@@ -1,6 +1,7 @@
 [project]
 name = "forex-signal-platform"
 version = "3.0.0"
+requires-python = ">=3.11,<3.13"
 dependencies = [
   "fastapi",
   "uvicorn",
@@ -11,7 +12,8 @@ dependencies = [
   "beautifulsoup4",
   "selenium",
   "chromedriver-autoinstaller",
-  "openai",
+  "openai==1.51.2",
+  "httpx==0.27.2",
   "scikit-learn",
   "ta",
   "python-dotenv"
