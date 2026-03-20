@@ -31,15 +31,24 @@ EURUSD, GBPUSD, USDJPY, USDCAD, EURGBP, EURCHF
 - timeframe (M15/H1/H4)
 - direction (bullish/bearish/neutral)
 - confidence (60-80)
-- summary (1-2 строки)
+- summary
+- full_text
 - entry
 - stopLoss
 - takeProfit
-- context
-- trigger
-- invalidation
-- target
 - tags (массив)
+
+Требования к summary/full_text:
+- это один и тот же цельный narrative-текст
+- без заголовков и без разделения на блоки
+- 3-5 предложений максимум
+- внутри логически должны присутствовать: HTF/MTF/LTF структура, направление, зона supply/demand, сценарий, trigger, invalidation, target
+
+Верни в каждом объекте:
+{
+  "summary": "полный narrative",
+  "full_text": "полный narrative"
+}
 
 Формат строго JSON array.
 """.strip()
@@ -50,7 +59,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "M15",
         "direction": "bullish",
         "confidence": 72,
-        "summary": "EURUSD сохраняет бычий уклон. Приоритет — continuation.",
+        "summary": "EURUSD сохраняет bullish-структуру на HTF, а на MTF/LTF после отката в demand-зону 1.0849 сохраняется сценарий continuation вверх. Приоритет — long только после импульсного подтверждения от зоны и удержания локального HL. Сценарий теряет силу при пробое 1.0832 и сломе текущей структуры. Ближайшая цель — buy-side liquidity в районе 1.0876.",
+        "full_text": "EURUSD сохраняет bullish-структуру на HTF, а на MTF/LTF после отката в demand-зону 1.0849 сохраняется сценарий continuation вверх. Приоритет — long только после импульсного подтверждения от зоны и удержания локального HL. Сценарий теряет силу при пробое 1.0832 и сломе текущей структуры. Ближайшая цель — buy-side liquidity в районе 1.0876.",
         "entry": 1.0849,
         "stopLoss": 1.0832,
         "takeProfit": 1.0876,
@@ -67,7 +77,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "H1",
         "direction": "bearish",
         "confidence": 68,
-        "summary": "GBPUSD удерживает медвежий уклон после снятия buy-side liquidity.",
+        "summary": "GBPUSD остаётся bearish на HTF, а на MTF/LTF цена тестирует supply-зону 1.2715 после снятия buy-side liquidity. Базовый сценарий — sell continuation вниз, если в premium появится слабая реакция покупателей и подтверждённый отбой. Сценарий отменяется при закреплении выше 1.2741 и возврате контроля к покупателю. Цель — sell-side liquidity в районе 1.2668.",
+        "full_text": "GBPUSD остаётся bearish на HTF, а на MTF/LTF цена тестирует supply-зону 1.2715 после снятия buy-side liquidity. Базовый сценарий — sell continuation вниз, если в premium появится слабая реакция покупателей и подтверждённый отбой. Сценарий отменяется при закреплении выше 1.2741 и возврате контроля к покупателю. Цель — sell-side liquidity в районе 1.2668.",
         "entry": 1.2715,
         "stopLoss": 1.2741,
         "takeProfit": 1.2668,
@@ -84,7 +95,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "H4",
         "direction": "neutral",
         "confidence": 64,
-        "summary": "USDJPY консолидируется. Приоритет — ждать подтверждение выхода из диапазона.",
+        "summary": "USDJPY на HTF остаётся нейтральным, а на MTF/LTF формирует диапазон вокруг demand/supply-границ с подготовкой к импульсу. Приоритет — работать только по подтверждённому выходу из структуры и retest ключевой зоны 149.82. Сценарий теряет актуальность при возврате под 149.21 внутрь диапазона. Целью выступает ликвидность над максимумами в районе 150.96.",
+        "full_text": "USDJPY на HTF остаётся нейтральным, а на MTF/LTF формирует диапазон вокруг demand/supply-границ с подготовкой к импульсу. Приоритет — работать только по подтверждённому выходу из структуры и retest ключевой зоны 149.82. Сценарий теряет актуальность при возврате под 149.21 внутрь диапазона. Целью выступает ликвидность над максимумами в районе 150.96.",
         "entry": 149.82,
         "stopLoss": 149.21,
         "takeProfit": 150.96,
@@ -101,7 +113,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "M15",
         "direction": "bearish",
         "confidence": 71,
-        "summary": "USDCAD удерживает медвежий intraday-уклон. Приоритет — sell continuation после отката.",
+        "summary": "USDCAD сохраняет bearish-структуру на HTF, а на MTF/LTF идёт откат в supply-зону 1.3484 внутри intraday continuation. Приоритет — искать short после слабой реакции покупателей и подтверждения продавца от premium. Сценарий отменяется при возврате выше 1.3502 и пробое локального lower high. Цель — sell-side liquidity под минимумом в районе 1.3451.",
+        "full_text": "USDCAD сохраняет bearish-структуру на HTF, а на MTF/LTF идёт откат в supply-зону 1.3484 внутри intraday continuation. Приоритет — искать short после слабой реакции покупателей и подтверждения продавца от premium. Сценарий отменяется при возврате выше 1.3502 и пробое локального lower high. Цель — sell-side liquidity под минимумом в районе 1.3451.",
         "entry": 1.3484,
         "stopLoss": 1.3502,
         "takeProfit": 1.3451,
@@ -118,7 +131,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "H1",
         "direction": "bullish",
         "confidence": 66,
-        "summary": "EURGBP формирует бычье восстановление от discount-зоны. Базовый сценарий — продолжение после подтверждения.",
+        "summary": "EURGBP удерживает bullish-структуру на HTF, а на MTF/LTF формирует continuation после реакции от demand-зоны 0.8526. Приоритет — long при подтверждённом импульсе выше локального range и удержании higher low. Сценарий отменяется при потере demand и уходе ниже 0.8508. Цель — buy-side liquidity над локальным максимумом в районе 0.8563.",
+        "full_text": "EURGBP удерживает bullish-структуру на HTF, а на MTF/LTF формирует continuation после реакции от demand-зоны 0.8526. Приоритет — long при подтверждённом импульсе выше локального range и удержании higher low. Сценарий отменяется при потере demand и уходе ниже 0.8508. Цель — buy-side liquidity над локальным максимумом в районе 0.8563.",
         "entry": 0.8526,
         "stopLoss": 0.8508,
         "takeProfit": 0.8563,
@@ -135,7 +149,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "H4",
         "direction": "bearish",
         "confidence": 63,
-        "summary": "EURCHF торгуется под давлением внутри медвежьего swing-сценария. Приоритет — sell on rally.",
+        "summary": "EURCHF на HTF остаётся bearish, а на MTF/LTF откатывается в supply/premium-зону 0.9587 внутри swing-сценария. Приоритет — sell on rally после подтверждения слабости покупателей и реакции от imbalance. Сценарий отменяется при закреплении выше 0.9621 и сломе последнего swing high. Цель — sell-side liquidity и тест уровня 0.9528.",
+        "full_text": "EURCHF на HTF остаётся bearish, а на MTF/LTF откатывается в supply/premium-зону 0.9587 внутри swing-сценария. Приоритет — sell on rally после подтверждения слабости покупателей и реакции от imbalance. Сценарий отменяется при закреплении выше 0.9621 и сломе последнего swing high. Цель — sell-side liquidity и тест уровня 0.9528.",
         "entry": 0.9587,
         "stopLoss": 0.9621,
         "takeProfit": 0.9528,
@@ -327,6 +342,19 @@ class TradeIdeaService:
         idea_id = existing.get("idea_id") if existing else self._idea_id(symbol, timeframe, setup_type, created_at)
         status = self._status_from_signal(signal, existing=existing)
         rationale = signal.get("reason_ru") or signal.get("description_ru") or "Структурное подтверждение сценария ограничено."
+        summary_text = signal.get("description_ru") or f"{symbol} {timeframe}: торговая идея обновлена."
+        idea_context = signal.get("idea_context_ru") or signal.get("market_context", {}).get("summaryRu") or rationale
+        trigger = signal.get("trigger_ru") or f"Триггер — подтверждение входа в зоне {self._format_zone(entry_value)} по текущей структуре."
+        invalidation = signal.get("invalidation_ru") or "Идея отменяется при сломе исходной структуры."
+        target = signal.get("target_ru") or f"Ближайшая цель: {self._format_price(take_profit)}."
+        full_text = self._build_full_text(
+            signal,
+            summary=summary_text,
+            idea_context=idea_context,
+            trigger=trigger,
+            invalidation=invalidation,
+            target=target,
+        )
 
         return {
             "idea_id": idea_id,
@@ -349,11 +377,12 @@ class TradeIdeaService:
             "change_summary": self._change_summary(signal, existing),
             "title": f"{symbol} {timeframe}: {action} idea",
             "label": "BUY IDEA" if action == "BUY" else "SELL IDEA" if action == "SELL" else "WATCH",
-            "summary_ru": signal.get("description_ru") or f"{symbol} {timeframe}: торговая идея обновлена.",
-            "idea_context": signal.get("idea_context_ru") or signal.get("market_context", {}).get("summaryRu") or rationale,
-            "trigger": signal.get("trigger_ru") or f"Триггер — подтверждение входа в зоне {self._format_zone(entry_value)} по текущей структуре.",
-            "invalidation": signal.get("invalidation_ru") or "Идея отменяется при сломе исходной структуры.",
-            "target": signal.get("target_ru") or f"Ближайшая цель: {self._format_price(take_profit)}.",
+            "summary_ru": full_text,
+            "full_text": full_text,
+            "idea_context": idea_context,
+            "trigger": trigger,
+            "invalidation": invalidation,
+            "target": target,
             "chart_data": signal.get("chart_data") or signal.get("chartData"),
             "news_title": "AI trade idea",
             "analysis": {
@@ -442,6 +471,37 @@ class TradeIdeaService:
     def _to_legacy_card(idea: dict[str, Any]) -> dict[str, Any]:
         return idea
 
+    @classmethod
+    def _build_full_text(
+        cls,
+        row: dict[str, Any],
+        *,
+        summary: str,
+        idea_context: str,
+        trigger: str,
+        invalidation: str,
+        target: str,
+    ) -> str:
+        direct_text = row.get("full_text") or row.get("fullText")
+        if isinstance(direct_text, str) and direct_text.strip():
+            return direct_text.strip()
+
+        unique_parts: list[str] = []
+        for value in (summary, idea_context, trigger, invalidation, target):
+            text = str(value or "").strip()
+            if not text:
+                continue
+            normalized = text.casefold()
+            if any(existing.casefold() == normalized for existing in unique_parts):
+                continue
+            unique_parts.append(text)
+
+        narrative = " ".join(unique_parts)
+        narrative = re.sub(r"\s+", " ", narrative).strip()
+        if narrative and narrative[-1] not in ".!?":
+            narrative = f"{narrative}."
+        return narrative or "Идея подготовлена без расширенного narrative-описания."
+
     def _normalize_for_api(self, ideas: list[dict[str, Any]], *, source: str) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
         for row in ideas:
@@ -489,6 +549,14 @@ class TradeIdeaService:
                 or self._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2"))
                 or (f"Ближайшая цель: {take_profit}." if take_profit != "—" else "Цель будет уточняться после появления подтверждения.")
             )
+            full_text = self._build_full_text(
+                row,
+                summary=str(summary),
+                idea_context=str(idea_context),
+                trigger=str(trigger),
+                invalidation=str(invalidation),
+                target=str(target),
+            )
             chart_data = row.get("chartData") or row.get("chart_data")
             tags = row.get("tags")
             if not isinstance(tags, list) or not tags:
@@ -509,8 +577,9 @@ class TradeIdeaService:
                         "direction": direction,
                         "bias": direction,
                         "confidence": int(confidence),
-                        "summary": str(summary),
-                        "summary_ru": str(summary),
+                        "summary": full_text,
+                        "summary_ru": full_text,
+                        "full_text": full_text,
                         "entry": entry,
                         "stopLoss": stop_loss,
                         "takeProfit": take_profit,
