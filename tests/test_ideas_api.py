@@ -93,6 +93,7 @@ def test_build_api_ideas_uses_demo_fallback_when_storage_empty(tmp_path: Path) -
     payload = service.build_api_ideas()
 
     assert payload
+    assert len(payload) >= 6
     assert all(item["is_fallback"] for item in payload)
     assert all(item["source"] == "demo_fallback" for item in payload)
 
@@ -152,14 +153,26 @@ def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path
     payload = service.build_openrouter_api_ideas()
 
     assert payload
+    assert len(payload) >= 6
     assert all(item["is_fallback"] for item in payload)
+    assert all(item["source"] == "openrouter_fallback" for item in payload)
+
+
+def test_list_api_ideas_falls_back_when_ai_returns_empty(monkeypatch, tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    monkeypatch.setattr(service, "build_openrouter_api_ideas", lambda: [])
+
+    payload = service.list_api_ideas()
+
+    assert payload
+    assert len(payload) >= 6
     assert all(item["source"] == "openrouter_fallback" for item in payload)
 
 
 def test_api_ideas_route_exists_and_returns_payload(monkeypatch) -> None:
     monkeypatch.setattr(
         trade_idea_service,
-        "build_openrouter_api_ideas",
+        "list_api_ideas",
         lambda: [
             {
                 "id": "eurusd-m15-bullish",

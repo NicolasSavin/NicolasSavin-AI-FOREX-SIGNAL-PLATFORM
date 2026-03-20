@@ -46,6 +46,13 @@ const fallbackIdeas = [
     confidence: 72,
     summary: "EURUSD на M15 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
     summary_ru: "EURUSD на M15 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
+    entry: 1.0849,
+    stopLoss: 1.0832,
+    takeProfit: 1.0876,
+    context: "Восходящая структура.",
+    trigger: "Подтверждение реакции от зоны.",
+    invalidation: "Пробой локального HL.",
+    target: "Предыдущий максимум / buy-side liquidity.",
     tags: ["Fallback", "SMC", "Liquidity", "M15", "EURUSD"],
     is_fallback: true,
   },
@@ -60,7 +67,98 @@ const fallbackIdeas = [
     confidence: 69,
     summary: "GBPUSD на H1 остаётся под давлением после снятия buy-side liquidity. Базовый сценарий — sell on pullback.",
     summary_ru: "GBPUSD на H1 остаётся под давлением после снятия buy-side liquidity. Базовый сценарий — sell on pullback.",
+    entry: 1.2715,
+    stopLoss: 1.2741,
+    takeProfit: 1.2668,
+    context: "Слабая реакция от premium-зоны.",
+    trigger: "Отбой после ретеста imbalance.",
+    invalidation: "Закрепление выше локального swing high.",
+    target: "Возврат к sell-side liquidity.",
     tags: ["Fallback", "SMC", "Pullback", "H1", "GBPUSD"],
+    is_fallback: true,
+  },
+  {
+    id: "usdjpy-h4-neutral-demo",
+    symbol: "USDJPY",
+    pair: "USDJPY",
+    timeframe: "H4",
+    tf: "H4",
+    direction: "neutral",
+    bias: "neutral",
+    confidence: 64,
+    summary: "USDJPY консолидируется в диапазоне. Приоритет — ждать подтверждение выхода.",
+    summary_ru: "USDJPY консолидируется в диапазоне. Приоритет — ждать подтверждение выхода.",
+    entry: 149.82,
+    stopLoss: 149.21,
+    takeProfit: 150.96,
+    context: "Диапазон перед импульсом.",
+    trigger: "Подтверждённый breakout и retest.",
+    invalidation: "Возврат внутрь диапазона.",
+    target: "Ликвидность над максимумами диапазона.",
+    tags: ["Fallback", "Liquidity", "Range", "H4", "USDJPY"],
+    is_fallback: true,
+  },
+  {
+    id: "usdcad-m15-bearish-demo",
+    symbol: "USDCAD",
+    pair: "USDCAD",
+    timeframe: "M15",
+    tf: "M15",
+    direction: "bearish",
+    bias: "bearish",
+    confidence: 71,
+    summary: "USDCAD удерживает медвежий intraday-уклон. Базовый сценарий — sell continuation после отката.",
+    summary_ru: "USDCAD удерживает медвежий intraday-уклон. Базовый сценарий — sell continuation после отката.",
+    entry: 1.3484,
+    stopLoss: 1.3502,
+    takeProfit: 1.3451,
+    context: "Нисходящая структура с давлением из premium-зоны.",
+    trigger: "Слабая реакция покупателей на ретесте supply.",
+    invalidation: "Возврат выше локального lower high.",
+    target: "Ближайшая sell-side liquidity под intraday-минимумом.",
+    tags: ["Fallback", "SMC", "Liquidity", "M15", "USDCAD"],
+    is_fallback: true,
+  },
+  {
+    id: "eurgbp-h1-bullish-demo",
+    symbol: "EURGBP",
+    pair: "EURGBP",
+    timeframe: "H1",
+    tf: "H1",
+    direction: "bullish",
+    bias: "bullish",
+    confidence: 66,
+    summary: "EURGBP формирует бычье восстановление от discount-зоны. Приоритет — continuation после подтверждения.",
+    summary_ru: "EURGBP формирует бычье восстановление от discount-зоны. Приоритет — continuation после подтверждения.",
+    entry: 0.8526,
+    stopLoss: 0.8508,
+    takeProfit: 0.8563,
+    context: "Цена удерживает higher low после снятия sell-side liquidity.",
+    trigger: "Подтверждённый импульс выше локального range.",
+    invalidation: "Потеря спроса и возврат ниже demand-зоны.",
+    target: "Тест ближайшего buy-side liquidity.",
+    tags: ["Fallback", "SMC", "Continuation", "H1", "EURGBP"],
+    is_fallback: true,
+  },
+  {
+    id: "eurchf-h4-bearish-demo",
+    symbol: "EURCHF",
+    pair: "EURCHF",
+    timeframe: "H4",
+    tf: "H4",
+    direction: "bearish",
+    bias: "bearish",
+    confidence: 63,
+    summary: "EURCHF торгуется под давлением внутри медвежьего swing-сценария. Приоритет — sell on rally.",
+    summary_ru: "EURCHF торгуется под давлением внутри медвежьего swing-сценария. Приоритет — sell on rally.",
+    entry: 0.9587,
+    stopLoss: 0.9621,
+    takeProfit: 0.9528,
+    context: "Рынок сохраняет lower highs после отката в premium.",
+    trigger: "Подтверждение слабости покупателей после ретеста imbalance.",
+    invalidation: "Закрепление выше последнего swing high.",
+    target: "Возврат к sell-side liquidity и предыдущему минимуму диапазона.",
+    tags: ["Fallback", "SMC", "Swing", "H4", "EURCHF"],
     is_fallback: true,
   },
 ];
@@ -103,7 +201,7 @@ function normalizeIdea(idea) {
     stopLoss: idea?.stopLoss ?? idea?.stop_loss ?? "—",
     takeProfit: idea?.takeProfit ?? idea?.take_profit ?? "—",
     chartData: idea?.chartData ?? idea?.chart_data ?? null,
-    ideaContext: idea?.ideaContext ?? idea?.idea_context ?? idea?.idea_context_ru ?? idea?.rationale ?? summary,
+    ideaContext: idea?.ideaContext ?? idea?.idea_context ?? idea?.idea_context_ru ?? idea?.context ?? idea?.rationale ?? summary,
     trigger: idea?.trigger ?? idea?.trigger_ru ?? (idea?.entry || idea?.entry_zone ? `Ждём подтверждение в зоне ${idea?.entry || idea?.entry_zone}.` : "Ждём подтверждение сценария по структуре."),
     invalidation: idea?.invalidation ?? idea?.invalidation_ru ?? idea?.trade_plan?.invalidation ?? "Идея отменяется при сломе исходной структуры.",
     target: idea?.target ?? idea?.target_ru ?? idea?.trade_plan?.target_1 ?? (idea?.takeProfit || idea?.take_profit ? `Ближайшая цель: ${idea?.takeProfit || idea?.take_profit}.` : "Цель будет уточняться после появления подтверждения."),
@@ -113,8 +211,8 @@ function normalizeIdea(idea) {
 }
 
 function normalizeIdeas(data) {
-  if (Array.isArray(data)) return data.map(normalizeIdea);
-  if (Array.isArray(data?.ideas)) return data.ideas.map(normalizeIdea);
+  if (Array.isArray(data)) return data.filter(Boolean).map(normalizeIdea);
+  if (Array.isArray(data?.ideas)) return data.ideas.filter(Boolean).map(normalizeIdea);
   return [];
 }
 
@@ -130,12 +228,12 @@ function populateFilters(ideas) {
 }
 
 function getFilteredIdeas() {
-  const symbol = symbolFilter.value;
-  const timeframe = timeframeFilter.value;
+  const symbol = String(symbolFilter.value || "ALL").trim().toUpperCase();
+  const timeframe = String(timeframeFilter.value || "ALL").trim().toUpperCase();
 
   return allIdeas.filter((idea) => {
-    const currentSymbol = idea.symbol || idea.pair;
-    const currentTf = idea.timeframe || idea.tf;
+    const currentSymbol = String(idea.symbol || idea.pair || "").trim().toUpperCase();
+    const currentTf = String(idea.timeframe || idea.tf || "").trim().toUpperCase();
     const symbolOk = symbol === "ALL" || currentSymbol === symbol;
     const tfOk = timeframe === "ALL" || currentTf === timeframe;
     return symbolOk && tfOk;
@@ -571,12 +669,13 @@ async function load() {
     const data = await res.json();
     allIdeas = normalizeIdeas(data);
     if (!allIdeas.length) {
+      console.warn("Получен пустой массив идей из /api/ideas.");
       throw new Error("ideas_empty_payload");
     }
     populateFilters(allIdeas);
     applyFilters();
   } catch (error) {
-    console.error("Не удалось загрузить /api/ideas, включаем fallback.", error);
+    console.warn("Не удалось загрузить /api/ideas, включаем fallback.", error);
     allIdeas = normalizeIdeas(fallbackIdeas);
     populateFilters(allIdeas);
     renderIdeas(allIdeas, "Источник идей временно недоступен — показан резервный demo-набор.");
