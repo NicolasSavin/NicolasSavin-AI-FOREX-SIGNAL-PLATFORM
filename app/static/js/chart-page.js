@@ -28,6 +28,54 @@ let candleSeries = null;
 let currentChartPayload = null;
 let detailRequestId = 0;
 const CHART_REQUEST_TIMEOUT_MS = 5000;
+
+function toUnixSeconds(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+  }
+  const numeric = Number(String(value).trim());
+  if (Number.isFinite(numeric)) {
+    return numeric > 1e12 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+}
+
+function normalizeChartCandles(rawCandles) {
+  if (!Array.isArray(rawCandles)) return [];
+  return rawCandles
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const time = toUnixSeconds(item.time ?? item.datetime ?? item.timestamp ?? item.date);
+      const open = Number(item.open);
+      const high = Number(item.high);
+      const low = Number(item.low);
+      const close = Number(item.close);
+      if (![time, open, high, low, close].every(Number.isFinite)) return null;
+      return { time, open, high, low, close };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time);
+}
+
+function normalizeChartResponse(payload) {
+  const rawCandles = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.candles)
+      ? payload.candles
+      : Array.isArray(payload?.data)
+        ? payload.data
+        : [];
+  const normalizedCandles = normalizeChartCandles(rawCandles);
+  console.debug("[ideas detail] raw chart response", payload);
+  console.debug("[ideas detail] normalized candles length", normalizedCandles.length);
+  console.debug("[ideas detail] first normalized candle", normalizedCandles[0] || null);
+  return {
+    ...(payload && typeof payload === "object" ? payload : {}),
+    candles: normalizedCandles,
+  };
+}
 const fallbackIdeas = [
   {
     id: "eurusd-m15-bullish-demo",
@@ -429,6 +477,14 @@ function ensureChart() {
   });
 }
 
+function destroyChart() {
+  currentChartPayload = null;
+  if (!chart) return;
+  chart.remove();
+  chart = null;
+  candleSeries = null;
+}
+
 function resetChartState() {
   currentChartPayload = null;
   if (chart) {
@@ -659,7 +715,9 @@ function drawOverlay() {
 }
 
 async function resolveChartData(idea) {
-  if (idea.chartData?.candles?.length) return idea.chartData;
+  if (idea.chartData?.candles?.length || Array.isArray(idea.chartData) || Array.isArray(idea.chartData?.data)) {
+    return normalizeChartResponse(idea.chartData);
+  }
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort('chart_timeout'), CHART_REQUEST_TIMEOUT_MS);
@@ -671,8 +729,8 @@ async function resolveChartData(idea) {
       signal: controller.signal,
     });
     if (!res.ok) return null;
-    const payload = await res.json();
-    return payload?.candles?.length ? payload : null;
+    const payload = normalizeChartResponse(await res.json());
+    return payload.candles.length ? payload : null;
   } catch (error) {
     if (error?.name === 'AbortError') {
       console.warn('Chart request timeout for idea detail-view.', idea?.symbol, idea?.timeframe);
@@ -704,7 +762,7 @@ async function openIdea(idea) {
   if (payload?.candles?.length) {
     hideChartPlaceholder();
     currentChartPayload = payload;
-
+    console.debug("[ideas detail] calling setData with candles", payload.candles.length);
     candleSeries.setData(payload.candles);
     chart.timeScale().fitContent();
     updateDetailStatus("Detail-view заполнен: единый текст, уровни и график доступны.");
@@ -715,6 +773,11 @@ async function openIdea(idea) {
     return;
   }
 
+  console.debug("[ideas detail] fallback triggered", {
+    reason: "empty_normalized_candles",
+    symbol: idea.symbol,
+    timeframe: idea.timeframe,
+  });
   showChartPlaceholder("Chart unavailable");
   updateDetailStatus("График недоступен, поэтому detail-view завершил загрузку и показал fallback вместо вечного loading.");
 }
@@ -761,5 +824,6 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("resize", () => {
   resizeChart();
 });
+window.addEventListener("beforeunload", destroyChart);
 
 load();

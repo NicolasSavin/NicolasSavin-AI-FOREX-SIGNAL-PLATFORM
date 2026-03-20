@@ -10,48 +10,23 @@ from typing import Any
 
 import requests
 
+from app.services.chart_data_service import ChartDataService
 from app.services.storage.json_storage import JsonStorage
 from backend.signal_engine import SignalEngine
 
 
 DEFAULT_IDEA_TIMEFRAMES = ["M15", "H1", "H4"]
+AI_IDEA_MARKETS = [("EURUSD", "M15"), ("GBPUSD", "H1"), ("USDJPY", "H4"), ("USDCAD", "M15"), ("EURGBP", "H1"), ("EURCHF", "H4")]
+TIMEFRAME_DISTANCE_LIMITS = {"M15": 0.015, "H1": 0.025, "H4": 0.06}
+DEFAULT_MARKET_CONTEXT_WINDOW = 20
 ACTIVE_STATUSES = {"watching", "active", "updated", "triggered"}
 CLOSED_STATUSES = {"tp_hit", "sl_hit", "invalidated", "archived"}
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_SYSTEM_PROMPT = "Ты профессиональный трейдинг-аналитик (Forex, SMC, liquidity).\n\nОтвечай ТОЛЬКО JSON массивом без текста."
-OPENROUTER_USER_PROMPT = """
-Сгенерируй 6 торговых идей.
-
-Инструменты:
-EURUSD, GBPUSD, USDJPY, USDCAD, EURGBP, EURCHF
-
-Каждая идея должна содержать:
-- id
-- symbol
-- timeframe (M15/H1/H4)
-- direction (bullish/bearish/neutral)
-- confidence (60-80)
-- summary
-- full_text
-- entry
-- stopLoss
-- takeProfit
-- tags (массив)
-
-Требования к summary/full_text:
-- это один и тот же цельный narrative-текст
-- без заголовков и без разделения на блоки
-- 3-5 предложений максимум
-- внутри логически должны присутствовать: HTF/MTF/LTF структура, направление, зона supply/demand, сценарий, trigger, invalidation, target
-
-Верни в каждом объекте:
-{
-  "summary": "полный narrative",
-  "full_text": "полный narrative"
-}
-
-Формат строго JSON array.
-""".strip()
+OPENROUTER_SYSTEM_PROMPT = (
+    "Ты профессиональный трейдинг-аналитик (Forex, SMC, liquidity). "
+    "Используй только переданные market data и не придумывай disconnected price levels. "
+    "Отвечай ТОЛЬКО JSON массивом без текста."
+)
 DEMO_FALLBACK_IDEAS = [
     {
         "id": "eurusd-m15-bullish",
@@ -166,8 +141,9 @@ logger = logging.getLogger(__name__)
 
 
 class TradeIdeaService:
-    def __init__(self, signal_engine: SignalEngine) -> None:
+    def __init__(self, signal_engine: SignalEngine, chart_data_service: ChartDataService | None = None) -> None:
         self.signal_engine = signal_engine
+        self.chart_data_service = chart_data_service or ChartDataService()
         self.idea_store = JsonStorage("signals_data/trade_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
         self.legacy_store = JsonStorage("signals_data/market_ideas.json", {"updated_at_utc": None, "ideas": []})
@@ -220,13 +196,18 @@ class TradeIdeaService:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        market_snapshots = self._collect_market_snapshots()
+        if not market_snapshots:
+            logger.warning("openrouter_market_data_unavailable")
+            return self.fallback_ideas(reason="market_data_unavailable")
+
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": OPENROUTER_SYSTEM_PROMPT},
-                {"role": "user", "content": OPENROUTER_USER_PROMPT},
+                {"role": "user", "content": self._build_openrouter_user_prompt(market_snapshots)},
             ],
-            "temperature": 0.8,
+            "temperature": 0.35,
         }
 
         try:
@@ -249,11 +230,201 @@ class TradeIdeaService:
             logger.warning("openrouter_empty_payload")
             return self.fallback_ideas(reason="empty_ai_payload")
 
-        normalized = self._normalize_for_api(parsed, source="openrouter_ai")
+        prepared = self._validate_ai_ideas(parsed, market_snapshots)
+        normalized = self._normalize_for_api(prepared, source="openrouter_ai")
         if not normalized:
             logger.warning("openrouter_normalization_failed")
             return self.fallback_ideas(reason="normalization_failed")
         return normalized
+
+    def _collect_market_snapshots(self) -> list[dict[str, Any]]:
+        snapshots: list[dict[str, Any]] = []
+        for symbol, timeframe in AI_IDEA_MARKETS:
+            chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
+            candles = chart_payload.get("candles") if isinstance(chart_payload, dict) else None
+            if not isinstance(candles, list) or not candles:
+                logger.warning("idea_market_snapshot_missing symbol=%s tf=%s", symbol, timeframe)
+                continue
+
+            latest_close = self._extract_numeric_level(candles[-1], "close")
+            if latest_close is None:
+                logger.warning("idea_market_snapshot_invalid_close symbol=%s tf=%s", symbol, timeframe)
+                continue
+
+            snapshots.append(
+                {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "latest_close": latest_close,
+                    "market_reference_price": latest_close,
+                    "atr": self._estimate_atr(candles),
+                    "recent_candles": candles[-DEFAULT_MARKET_CONTEXT_WINDOW:],
+                    "market_context": self._build_market_context(candles, latest_close),
+                }
+            )
+        return snapshots
+
+    @staticmethod
+    def _build_market_context(candles: list[dict[str, Any]], latest_close: float) -> dict[str, Any]:
+        recent = candles[-DEFAULT_MARKET_CONTEXT_WINDOW:]
+        highs = [float(item["high"]) for item in recent if item.get("high") is not None]
+        lows = [float(item["low"]) for item in recent if item.get("low") is not None]
+        if not highs or not lows:
+            return {"range_high": latest_close, "range_low": latest_close, "range_mid": latest_close}
+        range_high = max(highs)
+        range_low = min(lows)
+        return {
+            "range_high": range_high,
+            "range_low": range_low,
+            "range_mid": (range_high + range_low) / 2,
+        }
+
+    def _build_openrouter_user_prompt(self, market_snapshots: list[dict[str, Any]]) -> str:
+        prompt_payload = [
+            {
+                "symbol": snapshot["symbol"],
+                "timeframe": snapshot["timeframe"],
+                "latest_close": snapshot["latest_close"],
+                "market_reference_price": snapshot["market_reference_price"],
+                "market_context": snapshot["market_context"],
+                "recent_candles": snapshot["recent_candles"],
+            }
+            for snapshot in market_snapshots
+        ]
+        return (
+            "Сгенерируй ровно "
+            f"{len(prompt_payload)} торговых идей, по одной на каждый market snapshot.\n\n"
+            "Используй только market data из блока snapshots ниже.\n"
+            "entry / stopLoss / takeProfit должны быть реалистичны относительно latest_close и текущей структуры.\n"
+            "Нельзя возвращать уровни, оторванные от текущего рынка.\n"
+            "Если идея bullish: stopLoss < entry < takeProfit.\n"
+            "Если идея bearish: takeProfit < entry < stopLoss.\n"
+            "Для intraday M15/H1 уровни должны оставаться рядом с текущим рынком.\n"
+            "Если нейтральный сценарий невозможен без сделки, всё равно верни реалистичные уровни рядом с current price.\n\n"
+            "Каждая идея должна содержать поля:\n"
+            "id, symbol, timeframe, direction, confidence, summary, full_text, entry, stopLoss, takeProfit, tags.\n"
+            "summary/full_text: цельный narrative 3-5 предложений, без заголовков.\n\n"
+            f"snapshots={json.dumps(prompt_payload, ensure_ascii=False)}\n\n"
+            "Формат ответа: строго JSON array."
+        )
+
+    def _validate_ai_ideas(self, ideas: list[dict[str, Any]], market_snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        snapshot_map = {(item["symbol"], item["timeframe"]): item for item in market_snapshots}
+        validated: list[dict[str, Any]] = []
+
+        for raw in ideas:
+            if not isinstance(raw, dict):
+                continue
+            symbol = self._extract_symbol(raw)
+            timeframe = self._extract_timeframe(raw)
+            snapshot = snapshot_map.get((symbol, timeframe))
+            if snapshot is None:
+                logger.warning("idea_validation_missing_snapshot symbol=%s tf=%s", symbol, timeframe)
+                continue
+            validated.append(self._sanitize_ai_idea(raw, snapshot))
+
+        return validated
+
+    def _sanitize_ai_idea(self, raw: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+        symbol = snapshot["symbol"]
+        timeframe = snapshot["timeframe"]
+        latest_close = float(snapshot["latest_close"])
+        atr = float(snapshot["atr"])
+        direction = self._extract_direction(raw)
+        precision = self._precision_for_price(latest_close)
+        entry = self._extract_numeric_level(raw, "entry")
+        stop_loss = self._extract_numeric_level(raw, "stopLoss", "stop_loss")
+        take_profit = self._extract_numeric_level(raw, "takeProfit", "take_profit")
+
+        validation_reasons: list[str] = []
+        if entry is None or stop_loss is None or take_profit is None:
+            validation_reasons.append("missing_numeric_levels")
+
+        distance_limit = self._distance_limit(latest_close, timeframe, atr)
+        if entry is not None and abs(entry - latest_close) > distance_limit:
+            validation_reasons.append("entry_too_far_from_market")
+
+        if direction == "bullish" and not (stop_loss is not None and entry is not None and take_profit is not None and stop_loss < entry < take_profit):
+            validation_reasons.append("bullish_structure_invalid")
+        if direction == "bearish" and not (take_profit is not None and entry is not None and stop_loss is not None and take_profit < entry < stop_loss):
+            validation_reasons.append("bearish_structure_invalid")
+
+        corrected = self._soft_correct_levels(
+            direction=direction,
+            latest_close=latest_close,
+            atr=atr,
+            entry=entry,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            timeframe=timeframe,
+            precision=precision,
+        )
+        correction_applied = bool(validation_reasons) or corrected["entry"] != entry or corrected["stopLoss"] != stop_loss or corrected["takeProfit"] != take_profit
+
+        return {
+            **raw,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "entry": corrected["entry"],
+            "stopLoss": corrected["stopLoss"],
+            "takeProfit": corrected["takeProfit"],
+            "latest_close": round(latest_close, precision),
+            "market_reference_price": round(latest_close, precision),
+            "validation": {
+                "status": "corrected" if correction_applied else "valid",
+                "reasons": validation_reasons,
+                "distance_limit": round(distance_limit, precision),
+            },
+        }
+
+    def _soft_correct_levels(
+        self,
+        *,
+        direction: str,
+        latest_close: float,
+        atr: float,
+        entry: float | None,
+        stop_loss: float | None,
+        take_profit: float | None,
+        timeframe: str,
+        precision: int,
+    ) -> dict[str, float]:
+        step = max(atr, latest_close * 0.0015 if timeframe in {"M15", "H1"} else latest_close * 0.003)
+        entry_value = entry if entry is not None and abs(entry - latest_close) <= self._distance_limit(latest_close, timeframe, atr) else latest_close
+
+        if direction == "bearish":
+            stop_value = stop_loss if stop_loss is not None and stop_loss > entry_value else entry_value + step
+            take_value = take_profit if take_profit is not None and take_profit < entry_value else entry_value - step * 1.8
+        else:
+            stop_value = stop_loss if stop_loss is not None and stop_loss < entry_value else entry_value - step
+            take_value = take_profit if take_profit is not None and take_profit > entry_value else entry_value + step * 1.8
+
+        return {
+            "entry": round(entry_value, precision),
+            "stopLoss": round(stop_value, precision),
+            "takeProfit": round(take_value, precision),
+        }
+
+    @staticmethod
+    def _estimate_atr(candles: list[dict[str, Any]]) -> float:
+        recent = candles[-14:] if len(candles) >= 14 else candles
+        ranges: list[float] = []
+        for item in recent:
+            try:
+                ranges.append(abs(float(item["high"]) - float(item["low"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return sum(ranges) / len(ranges) if ranges else 0.0
+
+    @staticmethod
+    def _precision_for_price(value: float) -> int:
+        return 3 if value >= 100 else 5
+
+    @staticmethod
+    def _distance_limit(latest_close: float, timeframe: str, atr: float) -> float:
+        percent_limit = latest_close * TIMEFRAME_DISTANCE_LIMITS.get(timeframe, TIMEFRAME_DISTANCE_LIMITS["H1"])
+        atr_limit = atr * (3 if timeframe in {"M15", "H1"} else 4)
+        return max(percent_limit, atr_limit, latest_close * 0.001)
 
     def list_api_ideas(self) -> list[dict[str, Any]]:
         ideas = self.build_openrouter_api_ideas()
@@ -383,6 +554,8 @@ class TradeIdeaService:
             "trigger": trigger,
             "invalidation": invalidation,
             "target": target,
+            "latest_close": signal.get("latest_close"),
+            "market_reference_price": signal.get("market_reference_price") or signal.get("latest_close"),
             "chart_data": signal.get("chart_data") or signal.get("chartData"),
             "news_title": "AI trade idea",
             "analysis": {
@@ -622,6 +795,8 @@ class TradeIdeaService:
             entry_value = self._extract_numeric_level(row, "entry", "entry_zone")
             stop_loss_value = self._extract_numeric_level(row, "stopLoss", "stop_loss")
             take_profit_value = self._extract_numeric_level(row, "takeProfit", "take_profit")
+            latest_close = self._extract_numeric_level(row, "latest_close", "market_reference_price")
+            market_reference_price = self._extract_numeric_level(row, "market_reference_price", "latest_close")
 
             normalized.append(
                 self._decorate_api_idea(
@@ -641,6 +816,8 @@ class TradeIdeaService:
                         "entry": entry,
                         "stopLoss": stop_loss,
                         "takeProfit": take_profit,
+                        "latest_close": latest_close,
+                        "market_reference_price": market_reference_price,
                         "chartData": chart_data,
                         "ideaContext": str(idea_context),
                         "trigger": str(trigger),
@@ -671,6 +848,7 @@ class TradeIdeaService:
                         "entry_value": entry_value,
                         "stop_loss_value": stop_loss_value,
                         "take_profit_value": take_profit_value,
+                        "validation": row.get("validation") if isinstance(row.get("validation"), dict) else None,
                         "is_fallback": bool(row.get("is_fallback", False)),
                     },
                     source=source,
