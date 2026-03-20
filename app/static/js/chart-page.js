@@ -34,6 +34,8 @@ let activeIdea = null;
 let chart = null;
 let candleSeries = null;
 let currentChartPayload = null;
+let detailRequestId = 0;
+const CHART_REQUEST_TIMEOUT_MS = 5000;
 const fallbackIdeas = [
   {
     id: "eurusd-m15-bullish-demo",
@@ -605,19 +607,33 @@ function drawOverlay() {
 async function resolveChartData(idea) {
   if (idea.chartData?.candles?.length) return idea.chartData;
 
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort('chart_timeout'), CHART_REQUEST_TIMEOUT_MS);
+
   try {
-    const res = await fetch(`/api/chart/${idea.symbol}/${idea.timeframe}`, { cache: "no-store" });
+    const params = new URLSearchParams({ tf: idea.timeframe || 'H1' });
+    const res = await fetch(`/api/chart/${encodeURIComponent(idea.symbol)}?${params.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
     if (!res.ok) return null;
     const payload = await res.json();
     return payload?.candles?.length ? payload : null;
   } catch (error) {
+    if (error?.name === 'AbortError') {
+      console.warn('Chart request timeout for idea detail-view.', idea?.symbol, idea?.timeframe);
+      return null;
+    }
     console.warn("Chart data unavailable for idea detail-view.", error);
     return null;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
 async function openIdea(idea) {
   activeIdea = idea;
+  const requestId = ++detailRequestId;
   modalTitle.textContent = `${idea.symbol} — ${getDirectionRu(idea.direction)}`;
   modalSub.textContent = `${idea.timeframe} · Уверенность ${idea.confidence}%`;
   modal.classList.add("open");
@@ -629,6 +645,8 @@ async function openIdea(idea) {
   showChartPlaceholder("Загружаем график для идеи...");
 
   const payload = await resolveChartData(idea);
+  if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
+
   if (payload?.candles?.length) {
     hideChartPlaceholder();
     currentChartPayload = payload;
@@ -652,13 +670,14 @@ async function openIdea(idea) {
   analysisLiquidity.textContent = idea.trigger || "Ликвидность и подтверждение пока не уточнены.";
   analysisDivergence.textContent = idea.invalidation || "Инвалидация пока не указана.";
   analysisPattern.textContent = idea.target || "Цель пока не указана.";
-  showChartPlaceholder("Chart unavailable — detail-view продолжает работать без chartData.");
-  updateDetailStatus("График недоступен, поэтому показаны summary, логика идеи, уровни и fallback-описание вместо пустой модалки.");
+  showChartPlaceholder("Chart unavailable");
+  updateDetailStatus("График недоступен, поэтому detail-view завершил загрузку и показал fallback вместо вечного loading.");
 }
 
 function closeModal() {
   modal.classList.remove("open");
   activeIdea = null;
+  detailRequestId += 1;
   showChartPlaceholder("График для этой идеи сейчас недоступен.");
 }
 
