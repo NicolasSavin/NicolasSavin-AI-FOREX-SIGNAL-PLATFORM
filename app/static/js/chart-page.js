@@ -20,6 +20,36 @@ let activeIdea = null;
 let chart = null;
 let candleSeries = null;
 let currentChartPayload = null;
+const fallbackIdeas = [
+  {
+    id: "eurusd-m15-bullish-demo",
+    symbol: "EURUSD",
+    pair: "EURUSD",
+    timeframe: "M15",
+    tf: "M15",
+    direction: "bullish",
+    bias: "bullish",
+    confidence: 72,
+    summary: "EURUSD на M15 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
+    summary_ru: "EURUSD на M15 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
+    tags: ["Fallback", "SMC", "Liquidity", "M15", "EURUSD"],
+    is_fallback: true,
+  },
+  {
+    id: "gbpusd-h1-bearish-demo",
+    symbol: "GBPUSD",
+    pair: "GBPUSD",
+    timeframe: "H1",
+    tf: "H1",
+    direction: "bearish",
+    bias: "bearish",
+    confidence: 69,
+    summary: "GBPUSD на H1 остаётся под давлением после снятия buy-side liquidity. Базовый сценарий — sell on pullback.",
+    summary_ru: "GBPUSD на H1 остаётся под давлением после снятия buy-side liquidity. Базовый сценарий — sell on pullback.",
+    tags: ["Fallback", "SMC", "Pullback", "H1", "GBPUSD"],
+    is_fallback: true,
+  },
+];
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -37,9 +67,32 @@ function getDirectionRu(value) {
   return "НЕЙТРАЛЬНЫЙ";
 }
 
+function normalizeIdea(idea) {
+  const symbol = String(idea?.symbol || idea?.pair || idea?.instrument || "MARKET").toUpperCase();
+  const timeframe = String(idea?.timeframe || idea?.tf || "H1").toUpperCase();
+  const direction = String(idea?.direction || idea?.bias || "neutral").toLowerCase();
+  const summary = idea?.summary_ru || idea?.summary || idea?.description_ru || idea?.rationale || "";
+
+  return {
+    ...idea,
+    id: idea?.id || idea?.idea_id || `${symbol}-${timeframe}-${direction}`,
+    symbol,
+    pair: symbol,
+    timeframe,
+    tf: timeframe,
+    direction,
+    bias: direction,
+    confidence: Number(idea?.confidence ?? idea?.confidence_percent ?? idea?.probability_percent ?? 0),
+    summary,
+    summary_ru: summary,
+    tags: Array.isArray(idea?.tags) ? idea.tags : [symbol, timeframe, getDirectionRu(direction)],
+    is_fallback: Boolean(idea?.is_fallback),
+  };
+}
+
 function normalizeIdeas(data) {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.ideas)) return data.ideas;
+  if (Array.isArray(data)) return data.map(normalizeIdea);
+  if (Array.isArray(data?.ideas)) return data.ideas.map(normalizeIdea);
   return [];
 }
 
@@ -59,25 +112,27 @@ function getFilteredIdeas() {
   const timeframe = timeframeFilter.value;
 
   return allIdeas.filter((idea) => {
-    const symbolOk = symbol === "ALL" || idea.symbol === symbol;
-    const tfOk = timeframe === "ALL" || idea.timeframe === timeframe;
+    const currentSymbol = idea.symbol || idea.pair;
+    const currentTf = idea.timeframe || idea.tf;
+    const symbolOk = symbol === "ALL" || currentSymbol === symbol;
+    const tfOk = timeframe === "ALL" || currentTf === timeframe;
     return symbolOk && tfOk;
   });
 }
 
-function renderIdeas(ideas) {
+function renderIdeas(ideas, notice = "") {
   if (!ideas.length) {
     ideasRoot.innerHTML = `<div class="empty">По выбранным фильтрам идеи не найдены.</div>`;
     return;
   }
 
-  ideasRoot.innerHTML = ideas.map((idea, idx) => {
+  const cardsMarkup = ideas.map((idea, idx) => {
     const tags = Array.isArray(idea.tags) ? idea.tags : [];
     const symbol = idea.symbol || "";
     const direction = getDirectionRu(idea.direction || "NEUTRAL");
     const timeframe = idea.timeframe || "";
     const confidence = idea.confidence ?? "-";
-    const summary = idea.summary_ru || "";
+    const summary = idea.summary_ru || idea.summary || "";
 
     return `
       <div class="card" data-index="${idx}">
@@ -94,6 +149,8 @@ function renderIdeas(ideas) {
       </div>
     `;
   }).join("");
+
+  ideasRoot.innerHTML = `${notice ? `<div class="empty">${escapeHtml(notice)}</div>` : ""}${cardsMarkup}`;
 
   document.querySelectorAll(".card").forEach((card, idx) => {
     card.addEventListener("click", () => openIdea(ideas[idx]));
@@ -377,14 +434,20 @@ function closeModal() {
 
 async function load() {
   try {
-    const res = await fetch("/ideas/market");
+    const res = await fetch("/api/ideas", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     allIdeas = normalizeIdeas(data);
+    if (!allIdeas.length) {
+      throw new Error("ideas_empty_payload");
+    }
     populateFilters(allIdeas);
     applyFilters();
   } catch (error) {
-    ideasRoot.innerHTML = `<div class="empty">Не удалось загрузить идеи.</div>`;
-    console.error(error);
+    console.error("Не удалось загрузить /api/ideas, включаем fallback.", error);
+    allIdeas = normalizeIdeas(fallbackIdeas);
+    populateFilters(allIdeas);
+    renderIdeas(allIdeas, "Источник идей временно недоступен — показан резервный demo-набор.");
   }
 }
 
