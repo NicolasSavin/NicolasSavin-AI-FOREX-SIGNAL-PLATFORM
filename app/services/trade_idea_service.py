@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from hashlib import sha1
+import json
+import logging
+import os
 import re
 from typing import Any
+
+import requests
 
 from app.services.storage.json_storage import JsonStorage
 from backend.signal_engine import SignalEngine
@@ -12,38 +17,86 @@ from backend.signal_engine import SignalEngine
 DEFAULT_IDEA_TIMEFRAMES = ["M15", "H1", "H4"]
 ACTIVE_STATUSES = {"watching", "active", "updated", "triggered"}
 CLOSED_STATUSES = {"tp_hit", "sl_hit", "invalidated", "archived"}
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_SYSTEM_PROMPT = "Ты профессиональный трейдинг-аналитик (Forex, SMC, liquidity).\n\nОтвечай ТОЛЬКО JSON массивом без текста."
+OPENROUTER_USER_PROMPT = """
+Сгенерируй 6 торговых идей.
+
+Инструменты:
+EURUSD, GBPUSD, USDJPY, USDCAD, EURGBP, EURCHF
+
+Каждая идея должна содержать:
+- id
+- symbol
+- timeframe (M15/H1/H4)
+- direction (bullish/bearish/neutral)
+- confidence (60-80)
+- summary (1-2 строки)
+- entry
+- stopLoss
+- takeProfit
+- context
+- trigger
+- invalidation
+- target
+- tags (массив)
+
+Формат строго JSON array.
+""".strip()
 DEMO_FALLBACK_IDEAS = [
     {
-        "id": "eurusd-m15-bullish-demo",
+        "id": "eurusd-m15-bullish",
         "symbol": "EURUSD",
         "timeframe": "M15",
         "direction": "bullish",
         "confidence": 72,
-        "summary": "EURUSD на M15 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
-        "tags": ["Fallback", "SMC", "Liquidity", "M15", "EURUSD"],
+        "summary": "EURUSD сохраняет бычий уклон. Приоритет — continuation.",
+        "entry": 1.0849,
+        "stopLoss": 1.0832,
+        "takeProfit": 1.0876,
+        "context": "Восходящая структура",
+        "trigger": "Реакция от зоны",
+        "invalidation": "Пробой HL",
+        "target": "Ликвидность сверху",
+        "tags": ["SMC", "M15"],
         "is_fallback": True,
     },
     {
-        "id": "gbpusd-h1-bearish-demo",
+        "id": "gbpusd-h1-bearish",
         "symbol": "GBPUSD",
         "timeframe": "H1",
         "direction": "bearish",
-        "confidence": 69,
-        "summary": "GBPUSD на H1 остаётся под давлением после снятия buy-side liquidity. Базовый сценарий — sell on pullback.",
-        "tags": ["Fallback", "SMC", "Pullback", "H1", "GBPUSD"],
+        "confidence": 68,
+        "summary": "GBPUSD удерживает медвежий уклон после снятия buy-side liquidity.",
+        "entry": 1.2715,
+        "stopLoss": 1.2741,
+        "takeProfit": 1.2668,
+        "context": "Слабая реакция от premium-зоны",
+        "trigger": "Отбой после ретеста imbalance",
+        "invalidation": "Закрепление выше локального swing high",
+        "target": "Возврат к sell-side liquidity",
+        "tags": ["SMC", "H1"],
         "is_fallback": True,
     },
     {
-        "id": "xauusd-h4-bullish-demo",
-        "symbol": "XAUUSD",
+        "id": "usdjpy-h4-neutral",
+        "symbol": "USDJPY",
         "timeframe": "H4",
-        "direction": "bullish",
-        "confidence": 74,
-        "summary": "Золото на H4 удерживает bullish bias, пока цена остаётся выше зоны спроса и не теряет структуру.",
-        "tags": ["Fallback", "Gold", "H4", "Demand", "XAUUSD"],
+        "direction": "neutral",
+        "confidence": 64,
+        "summary": "USDJPY консолидируется. Приоритет — ждать подтверждение выхода из диапазона.",
+        "entry": 149.82,
+        "stopLoss": 149.21,
+        "takeProfit": 150.96,
+        "context": "Диапазон перед импульсом",
+        "trigger": "Подтверждённый breakout и retest",
+        "invalidation": "Возврат внутрь диапазона",
+        "target": "Ликвидность над максимумами диапазона",
+        "tags": ["Liquidity", "H4"],
         "is_fallback": True,
     },
 ]
+logger = logging.getLogger(__name__)
 
 
 class TradeIdeaService:
@@ -84,6 +137,62 @@ class TradeIdeaService:
             return legacy
 
         return [self._decorate_api_idea(idea, source="demo_fallback") for idea in DEMO_FALLBACK_IDEAS]
+
+    def fallback_ideas(self) -> list[dict[str, Any]]:
+        logger.info("ideas_fallback_used")
+        return self._normalize_for_api(DEMO_FALLBACK_IDEAS, source="openrouter_fallback")
+
+    def build_openrouter_api_ideas(self) -> list[dict[str, Any]]:
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat")
+
+        if not api_key:
+            logger.warning("openrouter_missing_api_key")
+            print("OpenRouter AI: пропущен вызов, отсутствует OPENROUTER_API_KEY")
+            return self.fallback_ideas()
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": OPENROUTER_SYSTEM_PROMPT},
+                {"role": "user", "content": OPENROUTER_USER_PROMPT},
+            ],
+            "temperature": 0.8,
+        }
+
+        try:
+            logger.info("openrouter_request_started model=%s", model)
+            print(f"OpenRouter AI: вызывается модель {model}")
+            response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.exception("openrouter_api_error")
+            print(f"OpenRouter AI: ошибка API: {exc}")
+            return self.fallback_ideas()
+
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            logger.exception("openrouter_json_error")
+            print(f"OpenRouter AI: ошибка JSON: {exc}")
+            return self.fallback_ideas()
+
+        if not isinstance(parsed, list) or not parsed:
+            logger.warning("openrouter_empty_payload")
+            print("OpenRouter AI: пустой или невалидный список идей, используется fallback")
+            return self.fallback_ideas()
+
+        normalized = self._normalize_for_api(parsed, source="openrouter_ai")
+        if not normalized:
+            logger.warning("openrouter_normalization_failed")
+            print("OpenRouter AI: не удалось нормализовать идеи, используется fallback")
+            return self.fallback_ideas()
+        return normalized
 
     def upsert_trade_idea(self, signal: dict) -> dict[str, Any]:
         store = self.idea_store.read()
@@ -305,6 +414,7 @@ class TradeIdeaService:
                 row.get("ideaContext")
                 or row.get("idea_context")
                 or row.get("idea_context_ru")
+                or row.get("context")
                 or row.get("rationale")
                 or analysis.get("fundamental_ru")
                 or summary
@@ -332,6 +442,10 @@ class TradeIdeaService:
             if not isinstance(tags, list) or not tags:
                 tags = [source, symbol, timeframe, direction]
 
+            entry_value = self._extract_numeric_level(row, "entry", "entry_zone")
+            stop_loss_value = self._extract_numeric_level(row, "stopLoss", "stop_loss")
+            take_profit_value = self._extract_numeric_level(row, "takeProfit", "take_profit")
+
             normalized.append(
                 self._decorate_api_idea(
                     {
@@ -354,6 +468,30 @@ class TradeIdeaService:
                         "invalidation": str(invalidation),
                         "target": str(target),
                         "tags": [str(tag) for tag in tags if tag],
+                        "instrument": symbol,
+                        "title": f"{symbol} {timeframe}: {direction}",
+                        "label": "BUY IDEA" if direction == "bullish" else "SELL IDEA" if direction == "bearish" else "WATCH",
+                        "news_title": "OpenRouter AI",
+                        "analysis": {
+                            "fundamental_ru": str(idea_context),
+                            "smc_ict_ru": str(summary),
+                            "pattern_ru": str(trigger),
+                            "waves_ru": "Волновый сценарий требует дополнительного подтверждения.",
+                            "volume_ru": "Объёмные выводы основаны на косвенных признаках без биржевого потока.",
+                            "liquidity_ru": str(target),
+                        },
+                        "trade_plan": {
+                            "bias": direction,
+                            "entry_zone": entry,
+                            "entry_trigger": str(trigger),
+                            "invalidation": str(invalidation),
+                            "target_1": take_profit,
+                            "target_2": take_profit,
+                            "alternative_scenario_ru": "Если подтверждение не появится, сценарий следует пропустить.",
+                        },
+                        "entry_value": entry_value,
+                        "stop_loss_value": stop_loss_value,
+                        "take_profit_value": take_profit_value,
                         "is_fallback": bool(row.get("is_fallback", False)),
                     },
                     source=source,
@@ -379,6 +517,21 @@ class TradeIdeaService:
             if text:
                 return text
         return "—"
+
+    @staticmethod
+    def _extract_numeric_level(row: dict[str, Any], *keys: str) -> float | None:
+        for key in keys:
+            value = row.get(key)
+            if value in (None, "", "—"):
+                continue
+            if isinstance(value, (int, float)):
+                return float(value)
+            text = str(value).strip().replace(",", ".")
+            try:
+                return float(text)
+            except ValueError:
+                continue
+        return None
 
     @staticmethod
     def _combine_targets(*targets: Any) -> str:

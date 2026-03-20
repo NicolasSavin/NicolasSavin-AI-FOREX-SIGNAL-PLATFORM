@@ -158,10 +158,10 @@ async def market_ideas():
 @app.get("/api/ideas")
 async def api_ideas():
     try:
-        await trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
+        return trade_idea_service.build_openrouter_api_ideas()
     except Exception as exc:
-        logger.warning("ideas_refresh_failed: %s", exc)
-    return trade_idea_service.build_api_ideas()
+        logger.warning("ideas_openrouter_failed: %s", exc)
+        return trade_idea_service.fallback_ideas()
 
 
 @app.get("/news/market", response_model=NewsListResponse)
