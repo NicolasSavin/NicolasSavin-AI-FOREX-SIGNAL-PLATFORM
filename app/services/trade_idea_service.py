@@ -58,7 +58,7 @@ DEMO_FALLBACK_IDEAS = [
         "trigger": "Реакция от зоны",
         "invalidation": "Пробой HL",
         "target": "Ликвидность сверху",
-        "tags": ["SMC", "M15"],
+        "tags": ["SMC", "Liquidity", "M15", "EURUSD"],
         "is_fallback": True,
     },
     {
@@ -75,7 +75,7 @@ DEMO_FALLBACK_IDEAS = [
         "trigger": "Отбой после ретеста imbalance",
         "invalidation": "Закрепление выше локального swing high",
         "target": "Возврат к sell-side liquidity",
-        "tags": ["SMC", "H1"],
+        "tags": ["SMC", "Pullback", "H1", "GBPUSD"],
         "is_fallback": True,
     },
     {
@@ -92,7 +92,58 @@ DEMO_FALLBACK_IDEAS = [
         "trigger": "Подтверждённый breakout и retest",
         "invalidation": "Возврат внутрь диапазона",
         "target": "Ликвидность над максимумами диапазона",
-        "tags": ["Liquidity", "H4"],
+        "tags": ["Liquidity", "Range", "H4", "USDJPY"],
+        "is_fallback": True,
+    },
+    {
+        "id": "usdcad-m15-bearish",
+        "symbol": "USDCAD",
+        "timeframe": "M15",
+        "direction": "bearish",
+        "confidence": 71,
+        "summary": "USDCAD удерживает медвежий intraday-уклон. Приоритет — sell continuation после отката.",
+        "entry": 1.3484,
+        "stopLoss": 1.3502,
+        "takeProfit": 1.3451,
+        "context": "Нисходящая структура с давлением из premium-зоны.",
+        "trigger": "Слабая реакция покупателей на ретесте supply.",
+        "invalidation": "Возврат выше локального lower high.",
+        "target": "Ближайшая sell-side liquidity под intraday-минимумом.",
+        "tags": ["SMC", "Liquidity", "M15", "USDCAD"],
+        "is_fallback": True,
+    },
+    {
+        "id": "eurgbp-h1-bullish",
+        "symbol": "EURGBP",
+        "timeframe": "H1",
+        "direction": "bullish",
+        "confidence": 66,
+        "summary": "EURGBP формирует бычье восстановление от discount-зоны. Базовый сценарий — продолжение после подтверждения.",
+        "entry": 0.8526,
+        "stopLoss": 0.8508,
+        "takeProfit": 0.8563,
+        "context": "Цена удерживает higher low после снятия sell-side liquidity.",
+        "trigger": "Подтверждённый импульс выше локального intraday range.",
+        "invalidation": "Потеря спроса и возврат ниже demand-зоны.",
+        "target": "Тест ближайшего buy-side liquidity над локальным максимумом.",
+        "tags": ["SMC", "Continuation", "H1", "EURGBP"],
+        "is_fallback": True,
+    },
+    {
+        "id": "eurchf-h4-bearish",
+        "symbol": "EURCHF",
+        "timeframe": "H4",
+        "direction": "bearish",
+        "confidence": 63,
+        "summary": "EURCHF торгуется под давлением внутри медвежьего swing-сценария. Приоритет — sell on rally.",
+        "entry": 0.9587,
+        "stopLoss": 0.9621,
+        "takeProfit": 0.9528,
+        "context": "Рынок сохраняет lower highs после отката в premium.",
+        "trigger": "Подтверждение слабости покупателей после ретеста imbalance.",
+        "invalidation": "Закрепление выше последнего swing high.",
+        "target": "Возврат к sell-side liquidity и предыдущему минимуму диапазона.",
+        "tags": ["SMC", "Swing", "H4", "EURCHF"],
         "is_fallback": True,
     },
 ]
@@ -138,8 +189,8 @@ class TradeIdeaService:
 
         return [self._decorate_api_idea(idea, source="demo_fallback") for idea in DEMO_FALLBACK_IDEAS]
 
-    def fallback_ideas(self) -> list[dict[str, Any]]:
-        logger.info("ideas_fallback_used")
+    def fallback_ideas(self, *, reason: str = "unspecified") -> list[dict[str, Any]]:
+        logger.warning("fallback activated reason=%s", reason)
         return self._normalize_for_api(DEMO_FALLBACK_IDEAS, source="openrouter_fallback")
 
     def build_openrouter_api_ideas(self) -> list[dict[str, Any]]:
@@ -148,8 +199,7 @@ class TradeIdeaService:
 
         if not api_key:
             logger.warning("openrouter_missing_api_key")
-            print("OpenRouter AI: пропущен вызов, отсутствует OPENROUTER_API_KEY")
-            return self.fallback_ideas()
+            return self.fallback_ideas(reason="missing_api_key")
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -165,34 +215,36 @@ class TradeIdeaService:
         }
 
         try:
-            logger.info("openrouter_request_started model=%s", model)
-            print(f"OpenRouter AI: вызывается модель {model}")
+            logger.info("AI request started model=%s", model)
             response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
+            logger.info("AI response received status=%s", getattr(response, "status_code", "unknown"))
         except requests.RequestException as exc:
             logger.exception("openrouter_api_error")
-            print(f"OpenRouter AI: ошибка API: {exc}")
-            return self.fallback_ideas()
+            return self.fallback_ideas(reason="request_failed")
 
         try:
             content = response.json()["choices"][0]["message"]["content"]
             parsed = json.loads(content)
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            logger.exception("openrouter_json_error")
-            print(f"OpenRouter AI: ошибка JSON: {exc}")
-            return self.fallback_ideas()
+            logger.exception("parse failed")
+            return self.fallback_ideas(reason="parse_failed")
 
         if not isinstance(parsed, list) or not parsed:
             logger.warning("openrouter_empty_payload")
-            print("OpenRouter AI: пустой или невалидный список идей, используется fallback")
-            return self.fallback_ideas()
+            return self.fallback_ideas(reason="empty_ai_payload")
 
         normalized = self._normalize_for_api(parsed, source="openrouter_ai")
         if not normalized:
             logger.warning("openrouter_normalization_failed")
-            print("OpenRouter AI: не удалось нормализовать идеи, используется fallback")
-            return self.fallback_ideas()
+            return self.fallback_ideas(reason="normalization_failed")
         return normalized
+
+    def list_api_ideas(self) -> list[dict[str, Any]]:
+        ideas = self.build_openrouter_api_ideas()
+        if isinstance(ideas, list) and ideas:
+            return ideas
+        return self.fallback_ideas(reason="empty_route_payload")
 
     def upsert_trade_idea(self, signal: dict) -> dict[str, Any]:
         store = self.idea_store.read()
