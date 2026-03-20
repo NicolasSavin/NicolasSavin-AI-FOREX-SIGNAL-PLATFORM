@@ -290,15 +290,15 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 
 ## AI Chat
 - Чат отвечает только по forex, сигналам, риску, аналитике и самой платформе.
-- Ключ OpenAI хранится только на backend через `.env`.
+- Ключ OpenRouter хранится только на backend через environment variables Render / `.env`, без хранения реальных секретов в репозитории.
 - System prompt запрещает гарантии прибыли и выдумывание котировок/новостей.
 - Если live-данных нет, ассистент обязан прямо сообщать об этом.
 
 ### Переменные окружения
 ```env
-OPENAI_API_KEY=
-OPENAI_MODEL=
-OPENAI_TIMEOUT=30
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=deepseek/deepseek-chat
+OPENROUTER_TIMEOUT=30
 CHAT_ENABLED=true
 SENTIMENT_PROVIDER=mock
 OANDA_SENTIMENT_BASE_URL=

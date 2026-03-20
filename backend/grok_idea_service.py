@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import os
 
-# =========================
-# API KEY
-# =========================
-
-OPENAI_API_KEY = "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"
 
 
 class GrokIdeaService:
     def __init__(self, api_key: str | None = None):
-        self.api_key = api_key or OPENAI_API_KEY
+        self.api_key = (api_key or os.getenv("OPENROUTER_API_KEY") or "").strip()
 
     def should_publish_idea(self, ctx: dict) -> bool:
         return (

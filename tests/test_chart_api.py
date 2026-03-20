@@ -33,6 +33,17 @@ def test_chart_data_service_normalizes_twelvedata_payload(monkeypatch) -> None:
     assert payload['candles'][0]['time'] < payload['candles'][1]['time']
 
 
+
+def test_chart_data_service_treats_blank_env_key_as_missing(monkeypatch) -> None:
+    monkeypatch.setenv('TWELVEDATA_API_KEY', '   ')
+    service = ChartDataService()
+
+    payload = service.get_chart('GBPUSD', 'H1')
+
+    assert payload['status'] == 'unavailable'
+    assert 'TWELVEDATA_API_KEY' in payload['message_ru']
+
+
 def test_chart_data_service_returns_unavailable_without_key(monkeypatch) -> None:
     service = ChartDataService()
     monkeypatch.setattr(service, 'api_key', '')
