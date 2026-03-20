@@ -66,3 +66,20 @@ def test_chart_route_returns_payload(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()['candles'][0]['close'] == 1.0865
+
+
+def test_chart_route_returns_fallback_on_service_exception(monkeypatch) -> None:
+    def _boom(symbol, timeframe):
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(chart_data_service, 'get_chart', _boom)
+
+    client = TestClient(app)
+    response = client.get('/api/chart/EURUSD?tf=M15')
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['status'] == 'unavailable'
+    assert payload['candles'] == []
+    assert payload['symbol'] == 'EURUSD'
+    assert payload['timeframe'] == 'M15'
