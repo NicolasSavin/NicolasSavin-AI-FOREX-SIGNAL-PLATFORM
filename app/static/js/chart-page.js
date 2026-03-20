@@ -14,6 +14,20 @@ const analysisPattern = document.getElementById("analysis-pattern");
 
 const chartHost = document.getElementById("chart-host");
 const overlayCanvas = document.getElementById("chart-overlay");
+const chartPlaceholder = document.getElementById("chart-placeholder");
+const chartPlaceholderText = document.getElementById("chart-placeholder-text");
+
+const ideaSummary = document.getElementById("idea-summary");
+const levelEntry = document.getElementById("level-entry");
+const levelSl = document.getElementById("level-sl");
+const levelTp = document.getElementById("level-tp");
+const levelRr = document.getElementById("level-rr");
+const logicContext = document.getElementById("logic-context");
+const logicScenario = document.getElementById("logic-scenario");
+const logicTrigger = document.getElementById("logic-trigger");
+const logicInvalidation = document.getElementById("logic-invalidation");
+const logicTarget = document.getElementById("logic-target");
+const detailStatus = document.getElementById("detail-status");
 
 let allIdeas = [];
 let activeIdea = null;
@@ -85,6 +99,14 @@ function normalizeIdea(idea) {
     confidence: Number(idea?.confidence ?? idea?.confidence_percent ?? idea?.probability_percent ?? 0),
     summary,
     summary_ru: summary,
+    entry: idea?.entry ?? idea?.entry_zone ?? "—",
+    stopLoss: idea?.stopLoss ?? idea?.stop_loss ?? "—",
+    takeProfit: idea?.takeProfit ?? idea?.take_profit ?? "—",
+    chartData: idea?.chartData ?? idea?.chart_data ?? null,
+    ideaContext: idea?.ideaContext ?? idea?.idea_context ?? idea?.idea_context_ru ?? idea?.rationale ?? summary,
+    trigger: idea?.trigger ?? idea?.trigger_ru ?? (idea?.entry || idea?.entry_zone ? `Ждём подтверждение в зоне ${idea?.entry || idea?.entry_zone}.` : "Ждём подтверждение сценария по структуре."),
+    invalidation: idea?.invalidation ?? idea?.invalidation_ru ?? idea?.trade_plan?.invalidation ?? "Идея отменяется при сломе исходной структуры.",
+    target: idea?.target ?? idea?.target_ru ?? idea?.trade_plan?.target_1 ?? (idea?.takeProfit || idea?.take_profit ? `Ближайшая цель: ${idea?.takeProfit || idea?.take_profit}.` : "Цель будет уточняться после появления подтверждения."),
     tags: Array.isArray(idea?.tags) ? idea.tags : [symbol, timeframe, getDirectionRu(direction)],
     is_fallback: Boolean(idea?.is_fallback),
   };
@@ -161,6 +183,62 @@ function applyFilters() {
   renderIdeas(getFilteredIdeas());
 }
 
+function normalizeLevel(value) {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const normalized = String(value).replace(",", ".").trim();
+  if (!normalized || normalized === "—") return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatLevel(value) {
+  if (value == null || value === "" || value === "—") return "—";
+  const numeric = normalizeLevel(value);
+  if (numeric == null) return String(value);
+  return numeric.toFixed(5).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function calculateRiskReward(idea) {
+  const entry = normalizeLevel(idea.entry);
+  const stop = normalizeLevel(idea.stopLoss);
+  const target = normalizeLevel(idea.takeProfit);
+  if (entry == null || stop == null || target == null) return "—";
+
+  const risk = Math.abs(entry - stop);
+  const reward = Math.abs(target - entry);
+  if (!risk || !Number.isFinite(risk) || !Number.isFinite(reward)) return "—";
+  return `${(reward / risk).toFixed(2)}R`;
+}
+
+function buildScenarioText(idea) {
+  const direction = getDirectionRu(idea.direction).toLowerCase();
+  const entry = formatLevel(idea.entry);
+  const target = formatLevel(idea.takeProfit);
+  if (entry !== "—" && target !== "—") {
+    return `Базовый сценарий: ${direction} сценарий сохраняется, если цена подтверждает движение от ${entry} с прицелом на ${target}.`;
+  }
+  return `Базовый сценарий: ${direction} сценарий работает, пока структура идеи остаётся актуальной.`;
+}
+
+function setTextContent(node, value, fallback = "—") {
+  node.textContent = value && String(value).trim() ? String(value).trim() : fallback;
+}
+
+function renderDetailText(idea) {
+  setTextContent(ideaSummary, idea.summary_ru || idea.summary, "Идея доступна без расширенного summary.");
+  setTextContent(levelEntry, formatLevel(idea.entry));
+  setTextContent(levelSl, formatLevel(idea.stopLoss));
+  setTextContent(levelTp, formatLevel(idea.takeProfit));
+  setTextContent(levelRr, calculateRiskReward(idea));
+
+  setTextContent(logicContext, idea.ideaContext || idea.summary_ru || idea.summary, "Контекст идеи пока не был передан backend.");
+  setTextContent(logicScenario, buildScenarioText(idea));
+  setTextContent(logicTrigger, idea.trigger, "Триггер пока не указан.");
+  setTextContent(logicInvalidation, idea.invalidation, "Инвалидация пока не указана.");
+  setTextContent(logicTarget, idea.target, "Цель пока не указана.");
+}
+
 function ensureChart() {
   if (chart) return;
 
@@ -195,6 +273,30 @@ function ensureChart() {
     wickUpColor: "#22c55e",
     wickDownColor: "#ef4444",
   });
+}
+
+function resetChartState() {
+  currentChartPayload = null;
+  if (chart) {
+    candleSeries.setData([]);
+    chart.timeScale().fitContent();
+  }
+  const ctx = fitOverlayCanvas();
+  ctx.clearRect(0, 0, overlayCanvas.clientWidth, overlayCanvas.clientHeight);
+}
+
+function showChartPlaceholder(message) {
+  chartPlaceholder.classList.add("open");
+  chartPlaceholderText.textContent = message;
+}
+
+function hideChartPlaceholder() {
+  chartPlaceholder.classList.remove("open");
+  chartPlaceholderText.textContent = "График для этой идеи сейчас недоступен.";
+}
+
+function updateDetailStatus(message) {
+  detailStatus.textContent = message;
 }
 
 function resizeChart() {
@@ -402,34 +504,64 @@ function drawOverlay() {
   });
 }
 
+async function resolveChartData(idea) {
+  if (idea.chartData?.candles?.length) return idea.chartData;
+
+  try {
+    const res = await fetch(`/api/chart/${idea.symbol}/${idea.timeframe}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const payload = await res.json();
+    return payload?.candles?.length ? payload : null;
+  } catch (error) {
+    console.warn("Chart data unavailable for idea detail-view.", error);
+    return null;
+  }
+}
+
 async function openIdea(idea) {
   activeIdea = idea;
   modalTitle.textContent = `${idea.symbol} — ${getDirectionRu(idea.direction)}`;
   modalSub.textContent = `${idea.timeframe} · Уверенность ${idea.confidence}%`;
   modal.classList.add("open");
 
+  renderDetailText(idea);
+  updateDetailStatus("Загружаем detail-view идеи и проверяем доступность графика.");
   ensureChart();
+  resetChartState();
+  showChartPlaceholder("Загружаем график для идеи...");
 
-  const res = await fetch(`/api/chart/${idea.symbol}/${idea.timeframe}`);
-  const payload = await res.json();
-  currentChartPayload = payload;
+  const payload = await resolveChartData(idea);
+  if (payload?.candles?.length) {
+    hideChartPlaceholder();
+    currentChartPayload = payload;
 
-  candleSeries.setData(payload.candles);
-  chart.timeScale().fitContent();
+    candleSeries.setData(payload.candles);
+    chart.timeScale().fitContent();
 
-  analysisSmc.textContent = payload.overlays?.analysis?.smc_ru || "";
-  analysisLiquidity.textContent = payload.overlays?.analysis?.liquidity_ru || "";
-  analysisDivergence.textContent = payload.overlays?.analysis?.divergence_ru || "";
-  analysisPattern.textContent = payload.overlays?.analysis?.pattern_ru || "";
+    analysisSmc.textContent = payload.overlays?.analysis?.smc_ru || idea.ideaContext || idea.summary_ru || "SMC-контекст пока недоступен.";
+    analysisLiquidity.textContent = payload.overlays?.analysis?.liquidity_ru || idea.trigger || "Ликвидность пока не уточнена.";
+    analysisDivergence.textContent = payload.overlays?.analysis?.divergence_ru || idea.invalidation || "Дивергенция не передана.";
+    analysisPattern.textContent = payload.overlays?.analysis?.pattern_ru || idea.target || "Паттерн не передан.";
+    updateDetailStatus("Detail-view заполнен: summary, логика, уровни и график доступны.");
 
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => drawOverlay());
-  });
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => drawOverlay());
+    });
+    return;
+  }
+
+  analysisSmc.textContent = idea.ideaContext || idea.summary_ru || "SMC-контекст пока недоступен.";
+  analysisLiquidity.textContent = idea.trigger || "Ликвидность и подтверждение пока не уточнены.";
+  analysisDivergence.textContent = idea.invalidation || "Инвалидация пока не указана.";
+  analysisPattern.textContent = idea.target || "Цель пока не указана.";
+  showChartPlaceholder("Chart unavailable — detail-view продолжает работать без chartData.");
+  updateDetailStatus("График недоступен, поэтому показаны summary, логика идеи, уровни и fallback-описание вместо пустой модалки.");
 }
 
 function closeModal() {
   modal.classList.remove("open");
   activeIdea = null;
+  showChartPlaceholder("График для этой идеи сейчас недоступен.");
 }
 
 async function load() {

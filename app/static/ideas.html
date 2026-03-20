@@ -222,6 +222,30 @@
       margin-bottom: 18px;
     }
 
+    .chart-placeholder {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 10px;
+      text-align: center;
+      padding: 24px;
+      color: var(--muted);
+      background: linear-gradient(180deg, rgba(8, 17, 31, 0.72) 0%, rgba(8, 17, 31, 0.94) 100%);
+    }
+
+    .chart-placeholder.open {
+      display: flex;
+    }
+
+    .chart-placeholder strong {
+      color: #eef4ff;
+      font-size: 16px;
+    }
+
     .chart-host {
       position: absolute;
       inset: 0;
@@ -233,6 +257,69 @@
       inset: 0;
       z-index: 2;
       pointer-events: none;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .detail-card {
+      background: linear-gradient(180deg, #0c1a33 0%, #0a1529 100%);
+      border: 1px solid #1d2c47;
+      border-radius: 16px;
+      padding: 16px 18px;
+    }
+
+    .detail-card h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .detail-summary {
+      margin: 0;
+      color: #eef4ff;
+      line-height: 1.65;
+    }
+
+    .logic-list,
+    .levels-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .logic-item,
+    .level-item {
+      display: grid;
+      gap: 4px;
+    }
+
+    .logic-label,
+    .level-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .logic-value,
+    .level-value {
+      color: #eef4ff;
+      line-height: 1.55;
+      white-space: pre-line;
+    }
+
+    .status-note {
+      margin-bottom: 18px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(250, 204, 21, 0.08);
+      border: 1px solid rgba(250, 204, 21, 0.18);
+      color: #f9e58a;
+      font-size: 14px;
+      line-height: 1.5;
     }
 
     .analysis-grid {
@@ -262,6 +349,12 @@
       line-height: 1.65;
       color: #eef4ff;
       white-space: pre-line;
+    }
+
+    @media (max-width: 900px) {
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 640px) {
@@ -312,9 +405,43 @@
         <button id="close-modal" class="close-btn">Закрыть</button>
       </div>
 
+      <div class="detail-grid">
+        <section class="detail-card">
+          <h3>Summary</h3>
+          <p id="idea-summary" class="detail-summary"></p>
+        </section>
+
+        <section class="detail-card">
+          <h3>Уровни</h3>
+          <div class="levels-list">
+            <div class="level-item"><div class="level-label">Entry</div><div id="level-entry" class="level-value"></div></div>
+            <div class="level-item"><div class="level-label">SL</div><div id="level-sl" class="level-value"></div></div>
+            <div class="level-item"><div class="level-label">TP</div><div id="level-tp" class="level-value"></div></div>
+            <div class="level-item"><div class="level-label">RR</div><div id="level-rr" class="level-value"></div></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="detail-card" style="margin-bottom: 12px;">
+        <h3>Логика идеи</h3>
+        <div class="logic-list">
+          <div class="logic-item"><div class="logic-label">Краткий контекст</div><div id="logic-context" class="logic-value"></div></div>
+          <div class="logic-item"><div class="logic-label">Сценарий</div><div id="logic-scenario" class="logic-value"></div></div>
+          <div class="logic-item"><div class="logic-label">Подтверждение / trigger</div><div id="logic-trigger" class="logic-value"></div></div>
+          <div class="logic-item"><div class="logic-label">Invalidation</div><div id="logic-invalidation" class="logic-value"></div></div>
+          <div class="logic-item"><div class="logic-label">Target</div><div id="logic-target" class="logic-value"></div></div>
+        </div>
+      </section>
+
+      <div id="detail-status" class="status-note"></div>
+
       <div class="chart-wrap">
         <div id="chart-host" class="chart-host"></div>
         <canvas id="chart-overlay" class="overlay"></canvas>
+        <div id="chart-placeholder" class="chart-placeholder">
+          <strong>Chart unavailable</strong>
+          <span id="chart-placeholder-text">График для этой идеи сейчас недоступен.</span>
+        </div>
       </div>
 
       <div class="analysis-grid">

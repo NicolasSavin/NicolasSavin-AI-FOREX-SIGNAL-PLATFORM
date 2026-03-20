@@ -46,6 +46,46 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["summary"] == "Тестовая идея для EURUSD."
 
 
+def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.idea_store.write(
+        {
+            "updated_at_utc": "2026-03-20T00:00:00+00:00",
+            "ideas": [
+                {
+                    "idea_id": "idea-2",
+                    "symbol": "GBPUSD",
+                    "timeframe": "H1",
+                    "bias": "bearish",
+                    "confidence": 67,
+                    "summary_ru": "Краткий preview остаётся в карточке.",
+                    "rationale": "Контекст для detail-view.",
+                    "entry_zone": "1.271",
+                    "stop_loss": 1.276,
+                    "take_profit": 1.262,
+                    "trade_plan": {
+                        "invalidation": "Возврат выше 1.276 ломает сценарий.",
+                        "target_1": "1.262",
+                        "target_2": "1.258",
+                    },
+                    "status": "active",
+                }
+            ],
+        }
+    )
+
+    payload = service.build_api_ideas()
+
+    assert payload[0]["summary"] == "Краткий preview остаётся в карточке."
+    assert payload[0]["entry"] == "1.271"
+    assert payload[0]["stopLoss"] == "1.276"
+    assert payload[0]["takeProfit"] == "1.262"
+    assert payload[0]["ideaContext"] == "Контекст для detail-view."
+    assert payload[0]["trigger"]
+    assert payload[0]["invalidation"] == "Возврат выше 1.276 ломает сценарий."
+    assert payload[0]["target"] == "1.262 / 1.258"
+
+
 def test_build_api_ideas_uses_demo_fallback_when_storage_empty(tmp_path: Path) -> None:
     service = _service(tmp_path)
 
