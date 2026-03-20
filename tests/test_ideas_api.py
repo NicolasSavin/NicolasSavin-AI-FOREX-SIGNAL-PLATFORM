@@ -144,6 +144,17 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setattr("app.services.trade_idea_service.requests.post", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(
+        service.chart_data_service,
+        "get_chart",
+        lambda symbol, timeframe: {
+            "status": "ok",
+            "candles": [
+                {"time": 1710929700, "open": 1.084, "high": 1.085, "low": 1.0835, "close": 1.0848},
+                {"time": 1710930600, "open": 1.0848, "high": 1.0855, "low": 1.0842, "close": 1.085},
+            ],
+        },
+    )
 
     payload = service.build_openrouter_api_ideas()
 
@@ -153,6 +164,63 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["summary"].startswith("BUY ")
     assert "HTF" in payload[0]["summary"]
     assert payload[0]["label"] == "BUY IDEA"
+    assert payload[0]["market_reference_price"] == payload[0]["latest_close"] == 1.085
+
+
+def test_build_openrouter_api_ideas_corrects_disconnected_levels(monkeypatch, tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                [
+                                    {
+                                        "id": "eurusd-m15-bullish-ai",
+                                        "symbol": "EURUSD",
+                                        "timeframe": "M15",
+                                        "direction": "bullish",
+                                        "confidence": 71,
+                                        "summary": "EURUSD idea.",
+                                        "full_text": "EURUSD idea.",
+                                        "entry": 1.25,
+                                        "stopLoss": 1.2,
+                                        "takeProfit": 1.3,
+                                        "tags": ["SMC"],
+                                    }
+                                ]
+                            )
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr("app.services.trade_idea_service.requests.post", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(
+        service.chart_data_service,
+        "get_chart",
+        lambda symbol, timeframe: {
+            "status": "ok",
+            "candles": [
+                {"time": 1710929700, "open": 1.084, "high": 1.0852, "low": 1.0839, "close": 1.0848},
+                {"time": 1710930600, "open": 1.0848, "high": 1.0854, "low": 1.0841, "close": 1.085},
+            ],
+        },
+    )
+
+    payload = service.build_openrouter_api_ideas()
+
+    assert payload[0]["entry"] == "1.085"
+    assert float(payload[0]["stopLoss"]) < float(payload[0]["entry"]) < float(payload[0]["takeProfit"])
+    assert payload[0]["validation"]["status"] == "corrected"
+    assert "entry_too_far_from_market" in payload[0]["validation"]["reasons"]
 
 
 def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path: Path) -> None:
