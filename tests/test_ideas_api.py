@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -96,14 +97,69 @@ def test_build_api_ideas_uses_demo_fallback_when_storage_empty(tmp_path: Path) -
     assert all(item["source"] == "demo_fallback" for item in payload)
 
 
-def test_api_ideas_route_exists_and_returns_payload(monkeypatch) -> None:
-    async def fake_generate_or_refresh(_pairs=None):
-        return {}
+def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Path) -> None:
+    service = _service(tmp_path)
 
-    monkeypatch.setattr(trade_idea_service, "generate_or_refresh", fake_generate_or_refresh)
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                [
+                                    {
+                                        "id": "eurusd-m15-bullish-ai",
+                                        "symbol": "EURUSD",
+                                        "timeframe": "M15",
+                                        "direction": "bullish",
+                                        "confidence": 73,
+                                        "summary": "AI idea for EURUSD.",
+                                        "entry": 1.0851,
+                                        "stopLoss": 1.0837,
+                                        "takeProfit": 1.0879,
+                                        "context": "Восходящая структура",
+                                        "trigger": "Реакция от demand",
+                                        "invalidation": "Потеря локального HL",
+                                        "target": "Buy-side liquidity",
+                                        "tags": ["SMC", "M15"],
+                                    }
+                                ]
+                            )
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr("app.services.trade_idea_service.requests.post", lambda *args, **kwargs: _Response())
+
+    payload = service.build_openrouter_api_ideas()
+
+    assert payload[0]["source"] == "openrouter_ai"
+    assert payload[0]["symbol"] == "EURUSD"
+    assert payload[0]["summary"] == "AI idea for EURUSD."
+    assert payload[0]["label"] == "BUY IDEA"
+
+
+def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    payload = service.build_openrouter_api_ideas()
+
+    assert payload
+    assert all(item["is_fallback"] for item in payload)
+    assert all(item["source"] == "openrouter_fallback" for item in payload)
+
+
+def test_api_ideas_route_exists_and_returns_payload(monkeypatch) -> None:
     monkeypatch.setattr(
         trade_idea_service,
-        "build_api_ideas",
+        "build_openrouter_api_ideas",
         lambda: [
             {
                 "id": "eurusd-m15-bullish",
