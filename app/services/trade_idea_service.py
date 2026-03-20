@@ -530,6 +530,28 @@ class TradeIdeaService:
             return False
         sentence_count = cls._sentence_count(text)
         lowered = text.casefold()
+        has_event = any(
+            token in lowered
+            for token in (
+                "order block",
+                "ob ",
+                "imbalance",
+                "fvg",
+                "liquidity sweep",
+                "sweep",
+                "ликвид",
+                "bos",
+                "choch",
+                "клин",
+                "канал",
+                "треуг",
+                "пробой",
+                "retest",
+                "ретест",
+                "импульс",
+                "displacement",
+            )
+        )
         has_trigger = "триггер" in lowered
         has_invalidation = "отмен" in lowered or "invalid" in lowered or "слом" in lowered
         has_target = "цел" in lowered or "ликвид" in lowered or "liquidity" in lowered or "take profit" in lowered or "tp" in lowered
@@ -541,7 +563,7 @@ class TradeIdeaService:
             or "диверген" in lowered
         )
         has_levels = bool(re.search(r"\d", text))
-        return 5 <= sentence_count <= 8 and has_trigger and has_invalidation and has_target and has_confirmation and has_levels
+        return 5 <= sentence_count <= 8 and has_event and has_trigger and has_invalidation and has_target and has_confirmation and has_levels
 
     @classmethod
     def _compose_professional_narrative(
@@ -571,6 +593,20 @@ class TradeIdeaService:
         context_hint = re.sub(r"\s+", " ", str(idea_context or summary or direct_text or "")).strip()
         context_hint = re.sub(r"\bHTF\b|\bMTF\b|\bLTF\b|bias|continuation|desk-level|mitigation|displacement|dealing range", "", context_hint, flags=re.IGNORECASE)
         context_hint = cls._strip_analysis_labels(re.sub(r"\s+", " ", context_hint).strip(" .,-"))
+        event_sentence = cls._build_event_sentence(
+            row,
+            direction=direction,
+            symbol=symbol,
+            timeframe=timeframe,
+            zone_text=zone_text,
+            stop_loss=stop_loss,
+        )
+        rationale_sentence = cls._build_rationale_sentence(
+            direction=direction,
+            context_hint=context_hint,
+            zone_text=zone_text,
+            target_text=target_text,
+        )
         trigger_text = cls._build_trigger_sentence(trigger, direction=direction, zone_text=zone_text, target_text=target_text)
         confirmation_text = cls._build_confirmation_sentence(
             direction=direction,
@@ -590,20 +626,15 @@ class TradeIdeaService:
         first_sentence = f"{symbol} на {timeframe} держит {structure_text} структуру"
         if current_price != "—":
             first_sentence += f", цена сейчас около {current_price}"
-        if zone_text != "—":
-            first_sentence += f" и рядом с зоной {zone_text}"
         first_sentence += f", поэтому рынок читается как {cls._market_phase_phrase(direction)}."
         sentences.append(first_sentence)
-        sentences.append(
-            f"Зона {zone_text} работает как SMC/ICT-область реакции, {cls._wave_phrase(direction)}, а по Wyckoff это больше похоже на фазу {cls._wyckoff_phase(direction)}, где ликвидность тянет цену к {target_text}."
-        )
+        sentences.append(event_sentence)
+        sentences.append(rationale_sentence)
         scenario_sentence = f"Основной сценарий — {'лонг' if direction == 'bullish' else 'шорт' if direction == 'bearish' else 'сделка по направлению выхода'}"
         if zone_text != "—":
             scenario_sentence += f" от {zone_text}"
         if target_text:
             scenario_sentence += f" с движением к {target_text}"
-        if context_hint and len(context_hint.split()) <= 20:
-            scenario_sentence += f", потому что {context_hint}"
         sentences.append(f"{scenario_sentence}.")
         sentences.append(trigger_text)
         sentences.append(confirmation_text)
@@ -662,8 +693,8 @@ class TradeIdeaService:
         if trigger_core:
             return f"Триггер — {trigger_core[0].lower() + trigger_core[1:] if len(trigger_core) > 1 else trigger_core}."
         default_map = {
-            "bullish": f"Триггер — возврат в {zone_text}, затем бычье поглощение или пробой локального хая на младшем ТФ, чтобы цена пошла к {target_text}.",
-            "bearish": f"Триггер — тест {zone_text}, затем слабая реакция покупателей и пробой локального лоя на младшем ТФ, чтобы цена пошла к {target_text}.",
+            "bullish": f"Триггер — возврат в зону {zone_text}, затем бычья реакция и BOS вверх на младшем ТФ, чтобы цена пошла к {target_text}.",
+            "bearish": f"Триггер — тест зоны {zone_text}, затем слабая реакция покупателей и BOS вниз на младшем ТФ, чтобы цена пошла к {target_text}.",
             "neutral": f"Триггер — выход из диапазона у {zone_text} с ретестом границы и удержанием импульса в сторону {target_text}.",
         }
         return default_map.get(direction, default_map["neutral"])
@@ -696,7 +727,7 @@ class TradeIdeaService:
         ).casefold()
 
         if any(token in combined_text for token in ("клин", "канал", "треуг", "breakout", "пробой", "retest", "ретест")):
-            clues.append("паттерн на младшем ТФ завершает тайминг входа")
+            clues.append("паттерн на младшем ТФ должен завершиться явным пробоем в сторону сценария")
         else:
             clues.append("локальный паттерн должен закончиться пробоем в сторону сценария")
 
@@ -721,6 +752,79 @@ class TradeIdeaService:
             clues.append("сентимент остаётся только фильтром, а не поводом входить без реакции цены")
 
         return f"Подтверждение — у зоны {zone_text} {', '.join(clues[:5])}."
+
+    @classmethod
+    def _build_event_sentence(
+        cls,
+        row: dict[str, Any],
+        *,
+        direction: str,
+        symbol: str,
+        timeframe: str,
+        zone_text: str,
+        stop_loss: str,
+    ) -> str:
+        market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
+        analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+        trade_plan = row.get("trade_plan") if isinstance(row.get("trade_plan"), dict) else {}
+        source_text = " ".join(
+            str(part or "")
+            for part in (
+                row.get("summary"),
+                row.get("summary_ru"),
+                row.get("full_text"),
+                row.get("rationale"),
+                row.get("context"),
+                row.get("idea_context"),
+                row.get("idea_context_ru"),
+                row.get("trigger"),
+                row.get("trigger_ru"),
+                trade_plan.get("entry_trigger"),
+                market_context.get("patternSummaryRu"),
+                market_context.get("summaryRu"),
+                analysis.get("pattern_ru"),
+                analysis.get("smc_ict_ru"),
+                analysis.get("liquidity_ru"),
+            )
+        ).casefold()
+
+        if any(token in source_text for token in ("order block", "ob", "supply", "demand")):
+            block_label = "bullish order block" if direction == "bullish" else "bearish order block" if direction == "bearish" else "order block"
+            return f"Цена сейчас тестирует {block_label} {zone_text}, и именно эта зона даёт основу для входа."
+        if any(token in source_text for token in ("imbalance", "fvg", "fair value gap")):
+            return f"Цена вернулась в FVG {zone_text}, поэтому идея строится на реакции от imbalance прямо в этой области."
+        if any(token in source_text for token in ("sweep", "liquidity sweep", "ликвид", "стоп")):
+            sweep_level = stop_loss if stop_loss != "—" else zone_text
+            return f"Перед сетапом рынок снял ликвидность у {sweep_level} и вернулся к рабочей зоне {zone_text}, поэтому вход ищем только после разворота от этого события."
+        if any(token in source_text for token in ("bos", "choch", "break of structure", "change of character")):
+            structure_label = "BOS вверх" if direction == "bullish" else "BOS вниз" if direction == "bearish" else "CHOCH"
+            return f"Внутри зоны {zone_text} уже виден {structure_label}, поэтому вход привязан к смене локальной структуры, а не просто к уровню."
+        if any(token in source_text for token in ("клин", "канал", "треуг", "range", "диапазон", "пробой", "breakout")):
+            return f"Рынок подошёл к зоне {zone_text} внутри паттерна, и идея ждёт пробой этой формы в сторону основного движения."
+        if any(token in source_text for token in ("импульс", "displacement")):
+            return f"Из зоны {zone_text} уже проходил импульс, поэтому текущий возврат туда выглядит как точка для продолжения движения."
+        return (
+            f"{symbol} на {timeframe} вернулся к зоне {zone_text}, и вход рассматривается только как реакция на ретест этой области, "
+            f"а не как случайная сделка посередине диапазона."
+        )
+
+    @classmethod
+    def _build_rationale_sentence(
+        cls,
+        *,
+        direction: str,
+        context_hint: str,
+        zone_text: str,
+        target_text: str,
+    ) -> str:
+        reason_core = context_hint or cls._wave_phrase(direction)
+        reason_core = reason_core[0].lower() + reason_core[1:] if len(reason_core) > 1 else reason_core
+        if zone_text != "—":
+            return (
+                f"Почему вход именно здесь: зона {zone_text} совпадает с текущей структурой, "
+                f"а {reason_core}, поэтому рынок может протянуть цену к {target_text}."
+            )
+        return f"Почему вход именно здесь: {reason_core}, и это даёт потенциал движения к {target_text}."
 
     @staticmethod
     def _clean_sentence(text: str) -> str:
@@ -1282,7 +1386,11 @@ class TradeIdeaService:
             "- не пиши форматом 'SMC: ...', 'Volumes: ...', 'Divergence: ...'\n"
             "- SMC / ICT должны давать зону и структуру, паттерн — тайминг входа, объёмы / CumDelta / дивергенция — подтверждение или слабость, фундаментал — общий bias, Wyckoff и волны — фазу движения, сентимент — фильтр толпы против smart money\n"
             "- потом дай главный сценарий: откуда вход, куда цель и почему рынок должен пройти именно туда\n"
+            "- обязательно прямо объясни ПОЧЕМУ вход именно от entry: какое событие произошло, где именно оно произошло и почему это даёт точку входа\n"
+            "- обязательно назови хотя бы ОДНО конкретное событие из price action / SMC: order block, FVG / imbalance, liquidity sweep, BOS, CHOCH, пробой клина, пробой канала, пробой диапазона, пробой треугольника, displacement\n"
+            "- если называешь событие, обязательно привяжи его к уровню или зоне в тексте: например order block 1.1550-1.1570, FVG 1.1545-1.1560, liquidity sweep ниже 1.1530\n"
             "- обязательно отдельно и ясно пропиши trigger: какое конкретно действие цены должно произойти для входа\n"
+            "- trigger не должен быть абстрактным; пиши, что именно ждём: реакцию, импульс, BOS/CHOCH, пробой паттерна, возврат под/выше уровень\n"
             "- после trigger дай подтверждение: что именно нужно увидеть в объёмах, delta, дивергенции или паттерне\n"
             "- затем укажи invalidation и target отдельными предложениями внутри того же цельного текста\n"
             "- уровни ОБЯЗАТЕЛЬНО вписывай прямо в текст, например: зона 1.1550-1.1570, цель 1.1600, отмена ниже 1.1525\n"
@@ -1290,6 +1398,7 @@ class TradeIdeaService:
             "- текст должен читаться как execution-ready setup, а не как обзор рынка\n"
             "- не пиши абстракции вроде 'при подтверждении' без объяснения, что именно является подтверждением\n"
             "- обязательно включи основной сценарий, trigger, подтверждение, invalidation, цель и логику движения цены\n"
+            "- итог должен звучать как реальный trading setup трейдера: 5-8 предложений, без воды, с чётким reason/trigger/invalidation\n"
             "- если каких-то данных нет, не выдумывай их; опирайся только на цену и переданный контекст\n\n"
             "ЖЁСТКИЕ ПРАВИЛА ПО УРОВНЯМ:\n"
             "- Use latest_close as the ONLY valid market reference.\n"
