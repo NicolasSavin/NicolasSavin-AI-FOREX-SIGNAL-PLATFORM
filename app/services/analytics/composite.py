@@ -10,43 +10,53 @@ class CompositeSignalScoringService:
         technical_signal: float,
         features: FeatureExtractionResult,
         fundamental: FundamentalScoreSummary,
-    ) -> CompositeSignalScore:
+        sentiment_score: float = 0.0,
+        sentiment_weight: float = 0.12,
+    ) -> tuple[CompositeSignalScore, dict[str, float], float]:
         orderflow_raw = self._orderflow_signal(features)
         derivatives_raw = self._derivatives_signal(features)
         fundamental_raw = self._clip(fundamental.net_score)
         technical_raw = self._clip(technical_signal)
         pattern_raw = self._clip(features.pattern_score.value or 0.0)
+        sentiment_raw = self._clip(sentiment_score)
+        remainder = max(0.0, 1 - sentiment_weight)
 
         components = [
             self._build_component(
                 name="technical",
                 raw_signal=technical_raw,
-                weight=0.3,
+                weight=round(0.3 * remainder, 4),
                 note_ru="Техническая компонента приходит из действующего signal engine и confidence score.",
             ),
             self._build_component(
                 name="patterns",
                 raw_signal=pattern_raw,
-                weight=0.1,
+                weight=round(0.1 * remainder, 4),
                 note_ru="Графические паттерны добавлены как подтверждающий модуль и не заменяют основную логику сигналов.",
             ),
             self._build_component(
                 name="orderflow",
                 raw_signal=orderflow_raw,
-                weight=0.2,
+                weight=round(0.2 * remainder, 4),
                 note_ru="Orderflow строится из spread, imbalance, delta и cumulative delta.",
             ),
             self._build_component(
                 name="derivatives",
                 raw_signal=derivatives_raw,
-                weight=0.2,
+                weight=round(0.2 * remainder, 4),
                 note_ru="Derivatives учитывает basis, OI change, put/call ratios и IV skew.",
             ),
             self._build_component(
                 name="fundamental",
                 raw_signal=fundamental_raw,
-                weight=0.2,
+                weight=round(0.2 * remainder, 4),
                 note_ru="Fundamental агрегирует news relevance/impact/direction/time decay и macro events.",
+            ),
+            self._build_component(
+                name="sentiment",
+                raw_signal=sentiment_raw,
+                weight=round(sentiment_weight, 4),
+                note_ru="Sentiment — только подтверждающий contrarian-фактор и никогда не создаёт сигнал сам по себе.",
             ),
         ]
         total_raw = sum(component.weighted_contribution for component in components)
@@ -57,7 +67,8 @@ class CompositeSignalScoringService:
             bias = "bearish"
         else:
             bias = "neutral"
-        return CompositeSignalScore(total_score_0_100=score_0_100, bias=bias, components=components)
+        breakdown = {component.name: component.weighted_contribution for component in components}
+        return CompositeSignalScore(total_score_0_100=score_0_100, bias=bias, components=components), breakdown, breakdown["sentiment"]
 
     def _orderflow_signal(self, features: FeatureExtractionResult) -> float:
         imbalance = features.order_book_imbalance.value or 0.0

@@ -1,6 +1,13 @@
-# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.7
+# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.8
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
+
+## Что обновлено в версии 3.8
+- Добавлен backend-only AI forex assistant: новый модуль `backend/chat_service.py` и endpoint `POST /api/chat` с безопасным forex-only prompt, без API-ключей на frontend.
+- Добавлен sentiment layer: `backend/sentiment_provider.py`, модель `SentimentSnapshot`, safe mock/external provider схема и интеграция sentiment в analytics response и signal engine как подтверждающий фактор.
+- Добавлена persistent trade idea система: идеи теперь имеют `idea_id`, хранятся в JSON storage, не исчезают между обновлениями и обновляются по тем же `symbol + timeframe + setup_type`, пока жизненный цикл активен.
+- Endpoint `/ideas/market` остаётся обратносуместимым для текущего UI: старые поля сохранены, но дополнительно всегда возвращаются `idea_id`, `symbol`, `timeframe`, `status`, `sentiment`, `version`, `change_summary`.
+- UI карточек и layout не менялись: визуальная структура страниц сохранена.
 
 ## Что обновлено в версии 3.7
 - Добавлен отдельный модуль графических паттернов: `backend/pattern_detector.py` и `backend/pattern_visualization.py`.
@@ -75,7 +82,21 @@
 
 ### Analytics API
 - `GET /api/analytics/capabilities` — показывает, какие наборы данных уже работают и какие пока заглушки
-- `GET /api/analytics/signals/{symbol}` — отдаёт нормализованный analytics bundle, вычисленные признаки, данные по графическим паттернам, fundamental score и composite signal score
+- `GET /api/analytics/signals/{symbol}` — отдаёт нормализованный analytics bundle, вычисленные признаки, данные по графическим паттернам, `sentiment`, `compositeScoreBreakdown`, `sentimentImpact`, fundamental score и composite signal score
+
+### AI Chat API
+- `POST /api/chat` — backend-only forex assistant. Ответ имеет контракт:
+
+```json
+{
+  "reply": "...",
+  "source": "openai",
+  "dataStatus": "live|fallback",
+  "warnings": []
+}
+```
+
+Если OpenAI недоступен или выключен, сервер честно возвращает fallback-ответ без выдуманных market data.
 
 ## Контракты данных
 ### Расширенная модель сигнала
@@ -107,8 +128,35 @@
 - `chartPatterns`
 - `patternSummary`
 - `patternSignalImpact`
+- `sentiment`
+- `idea_id`
 - `createdAt/created_at_utc`
 - `updatedAt/updated_at_utc`
+
+### Persistent Trade Idea contract
+Каждая идея теперь имеет устойчивую идентичность и lifecycle:
+- `idea_id`
+- `symbol`
+- `timeframe`
+- `setup_type`
+- `status` (`watching`, `active`, `updated`, `triggered`, `tp_hit`, `sl_hit`, `invalidated`, `archived`)
+- `bias`
+- `confidence`
+- `entry_zone`
+- `stop_loss`
+- `take_profit`
+- `sentiment`
+- `rationale`
+- `created_at`
+- `updated_at`
+- `version`
+- `change_summary`
+
+Важно:
+- идея **обновляется**, а не пересоздаётся, если совпадают `symbol`, `timeframe`, `setup_type` и lifecycle ещё активен;
+- при новом lifecycle создаётся новая идея с новым `idea_id`;
+- `symbol` и `timeframe` всегда остаются в ответе API;
+- текущий UI не менялся, поэтому карточки продолжают рендериться в прежнем дизайне.
 
 ### Модель статистики сигналов
 Ответ `GET /api/signals` дополнительно содержит:
@@ -219,13 +267,53 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 - `news impact score`
 - `macro event impact score`
 - `pattern score` + `patternFeatures`
+- `sentiment` как supplementary contrarian layer
 
 ### Что уже реально работает
 - RSS news feed connector через открытые источники, без синтетических новостей.
 - Normalization layer, feature extraction, fundamental scoring и composite signal scoring.
 - Integration c текущим `backend.signal_engine` для technical component composite score.
+- Sentiment layer как дополнительный фактор веса `~0.10–0.15`, который только усиливает или ослабляет confidence, но не создаёт сигнал сам по себе.
 - Mock connectors для orderflow/derivatives с явной маркировкой `mock`, чтобы безопасно разрабатывать контракт и downstream-логику.
 
 ### Что пока заглушка
 - Экономический календарь пока остаётся `stub` до подключения проверенного live source.
 - Tick, quotes, futures, OI и options пока работают как `mock providers`, а не как реальные биржевые feed-коннекторы.
+- External sentiment provider работает только как безопасная оболочка вокруг реально заданного URL. Никакой выдуманный OANDA API не используется; при ошибке источник помечается как `unavailable`.
+
+## AI Chat
+- Чат отвечает только по forex, сигналам, риску, аналитике и самой платформе.
+- Ключ OpenAI хранится только на backend через `.env`.
+- System prompt запрещает гарантии прибыли и выдумывание котировок/новостей.
+- Если live-данных нет, ассистент обязан прямо сообщать об этом.
+
+### Переменные окружения
+```env
+OPENAI_API_KEY=
+OPENAI_MODEL=
+OPENAI_TIMEOUT=30
+CHAT_ENABLED=true
+SENTIMENT_PROVIDER=mock
+OANDA_SENTIMENT_BASE_URL=
+OANDA_SENTIMENT_API_KEY=
+SENTIMENT_WEIGHT=0.12
+```
+
+## Sentiment
+- Sentiment — это **дополнительный**, а не основной слой принятия решения.
+- Используется contrarian-логика:
+  - `long >= 65%` → contrarian bearish
+  - `short >= 65%` → contrarian bullish
+  - `extreme >= 70%`
+- В analytics теперь возвращаются:
+  - `sentiment`
+  - `compositeScoreBreakdown.sentiment`
+  - `sentimentImpact`
+- Если внешний источник не настроен или недоступен, система безопасно возвращает `unavailable`/`mock` без выдумывания данных.
+
+## Persistent Trade Ideas
+- Trade idea карточки теперь backed by persistent storage.
+- Идея не исчезает при каждом обновлении backend: система обновляет уже существующую запись, если это тот же lifecycle.
+- При сломе сценария идея помечается как `invalidated`, а при новом lifecycle создаётся новая запись.
+- Это поведение реализовано без изменения текущего UI и без изменения существующего дизайна карточек.
+- Sentiment внутри trade idea используется только как дополнительный контекст и не даёт гарантий результата.
