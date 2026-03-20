@@ -7,10 +7,7 @@ const modalTitle = document.getElementById("modal-title");
 const modalSub = document.getElementById("modal-sub");
 const closeModalBtn = document.getElementById("close-modal");
 
-const analysisSmc = document.getElementById("analysis-smc");
-const analysisLiquidity = document.getElementById("analysis-liquidity");
-const analysisDivergence = document.getElementById("analysis-divergence");
-const analysisPattern = document.getElementById("analysis-pattern");
+const analysisText = document.getElementById("analysis-text");
 
 const chartHost = document.getElementById("chart-host");
 const overlayCanvas = document.getElementById("chart-overlay");
@@ -22,11 +19,6 @@ const levelEntry = document.getElementById("level-entry");
 const levelSl = document.getElementById("level-sl");
 const levelTp = document.getElementById("level-tp");
 const levelRr = document.getElementById("level-rr");
-const logicContext = document.getElementById("logic-context");
-const logicScenario = document.getElementById("logic-scenario");
-const logicTrigger = document.getElementById("logic-trigger");
-const logicInvalidation = document.getElementById("logic-invalidation");
-const logicTarget = document.getElementById("logic-target");
 const detailStatus = document.getElementById("detail-status");
 
 let allIdeas = [];
@@ -181,11 +173,85 @@ function getDirectionRu(value) {
   return "НЕЙТРАЛЬНЫЙ";
 }
 
+function getDirectionLabel(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (["bullish", "buy", "long"].includes(raw)) return "BUY";
+  if (["bearish", "sell", "short"].includes(raw)) return "SELL";
+  return "NEUTRAL";
+}
+
+function normalizeWhitespace(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function truncateText(value, limit = 92) {
+  const text = normalizeWhitespace(value);
+  if (!text || text.length <= limit) return text;
+  return `${text.slice(0, limit - 1).trimEnd()}…`;
+}
+
+function buildShortText(idea) {
+  const direct = normalizeWhitespace(idea?.short_text || idea?.shortText);
+  if (direct) return truncateText(direct);
+
+  const base = normalizeWhitespace(idea?.summary_ru || idea?.summary || idea?.full_text || idea?.fullText);
+  let compact = base.split(/(?<=[.!?])\s+/)[0] || base;
+  compact = compact.split(/\s[—-]\s/)[0] || compact;
+  compact = compact.replace(/[.!?]+$/, "").trim();
+
+  const direction = getDirectionLabel(idea?.direction || idea?.bias);
+  if (compact && !compact.toUpperCase().startsWith(direction)) {
+    compact = `${direction} ${compact}`;
+  }
+
+  return truncateText(compact || `${direction} ждать подтверждение структуры`);
+}
+
+function buildFullText(idea) {
+  const direct = normalizeWhitespace(idea?.full_text || idea?.fullText || idea?.narrative);
+  if (direct) return direct;
+
+  const segments = [
+    idea?.summary,
+    idea?.summary_ru,
+    idea?.ideaContext,
+    idea?.trigger,
+    idea?.invalidation,
+    idea?.target,
+  ];
+  const unique = [];
+  const seen = new Set();
+
+  segments.forEach((segment) => {
+    const text = normalizeWhitespace(segment);
+    if (!text) return;
+    const key = text.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push(text.replace(/[.!?]+$/, ""));
+  });
+
+  const joined = unique.join(". ").trim();
+  if (!joined) return "Идея подготовлена без расширенного аналитического текста.";
+  return /[.!?]$/.test(joined) ? joined : `${joined}.`;
+}
+
 function normalizeIdea(idea) {
   const symbol = String(idea?.symbol || idea?.pair || idea?.instrument || "MARKET").toUpperCase();
   const timeframe = String(idea?.timeframe || idea?.tf || "H1").toUpperCase();
   const direction = String(idea?.direction || idea?.bias || "neutral").toLowerCase();
   const summary = idea?.summary_ru || idea?.summary || idea?.description_ru || idea?.rationale || "";
+  const fullText = buildFullText({
+    ...idea,
+    summary,
+    summary_ru: summary,
+  });
+  const shortText = buildShortText({
+    ...idea,
+    summary,
+    summary_ru: summary,
+    full_text: fullText,
+  });
 
   return {
     ...idea,
@@ -197,8 +263,10 @@ function normalizeIdea(idea) {
     direction,
     bias: direction,
     confidence: Number(idea?.confidence ?? idea?.confidence_percent ?? idea?.probability_percent ?? 0),
-    summary,
-    summary_ru: summary,
+    summary: shortText,
+    summary_ru: shortText,
+    short_text: shortText,
+    full_text: fullText,
     entry: idea?.entry ?? idea?.entry_zone ?? "—",
     stopLoss: idea?.stopLoss ?? idea?.stop_loss ?? "—",
     takeProfit: idea?.takeProfit ?? idea?.take_profit ?? "—",
@@ -254,7 +322,7 @@ function renderIdeas(ideas, notice = "") {
     const direction = getDirectionRu(idea.direction || "NEUTRAL");
     const timeframe = idea.timeframe || "";
     const confidence = idea.confidence ?? "-";
-    const summary = idea.summary_ru || idea.summary || "";
+    const summary = buildShortText(idea);
 
     return `
       <div class="card" data-index="${idx}">
@@ -311,32 +379,18 @@ function calculateRiskReward(idea) {
   return `${(reward / risk).toFixed(2)}R`;
 }
 
-function buildScenarioText(idea) {
-  const direction = getDirectionRu(idea.direction).toLowerCase();
-  const entry = formatLevel(idea.entry);
-  const target = formatLevel(idea.takeProfit);
-  if (entry !== "—" && target !== "—") {
-    return `Базовый сценарий: ${direction} сценарий сохраняется, если цена подтверждает движение от ${entry} с прицелом на ${target}.`;
-  }
-  return `Базовый сценарий: ${direction} сценарий работает, пока структура идеи остаётся актуальной.`;
-}
-
 function setTextContent(node, value, fallback = "—") {
   node.textContent = value && String(value).trim() ? String(value).trim() : fallback;
 }
 
 function renderDetailText(idea) {
-  setTextContent(ideaSummary, idea.summary_ru || idea.summary, "Идея доступна без расширенного summary.");
+  const fullText = buildFullText(idea);
+  setTextContent(ideaSummary, fullText, "Идея доступна без расширенного summary.");
+  setTextContent(analysisText, fullText, "Идея доступна без расширенного summary.");
   setTextContent(levelEntry, formatLevel(idea.entry));
   setTextContent(levelSl, formatLevel(idea.stopLoss));
   setTextContent(levelTp, formatLevel(idea.takeProfit));
   setTextContent(levelRr, calculateRiskReward(idea));
-
-  setTextContent(logicContext, idea.ideaContext || idea.summary_ru || idea.summary, "Контекст идеи пока не был передан backend.");
-  setTextContent(logicScenario, buildScenarioText(idea));
-  setTextContent(logicTrigger, idea.trigger, "Триггер пока не указан.");
-  setTextContent(logicInvalidation, idea.invalidation, "Инвалидация пока не указана.");
-  setTextContent(logicTarget, idea.target, "Цель пока не указана.");
 }
 
 function ensureChart() {
@@ -653,12 +707,7 @@ async function openIdea(idea) {
 
     candleSeries.setData(payload.candles);
     chart.timeScale().fitContent();
-
-    analysisSmc.textContent = payload.overlays?.analysis?.smc_ru || idea.ideaContext || idea.summary_ru || "SMC-контекст пока недоступен.";
-    analysisLiquidity.textContent = payload.overlays?.analysis?.liquidity_ru || idea.trigger || "Ликвидность пока не уточнена.";
-    analysisDivergence.textContent = payload.overlays?.analysis?.divergence_ru || idea.invalidation || "Дивергенция не передана.";
-    analysisPattern.textContent = payload.overlays?.analysis?.pattern_ru || idea.target || "Паттерн не передан.";
-    updateDetailStatus("Detail-view заполнен: summary, логика, уровни и график доступны.");
+    updateDetailStatus("Detail-view заполнен: единый текст, уровни и график доступны.");
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => drawOverlay());
@@ -666,10 +715,6 @@ async function openIdea(idea) {
     return;
   }
 
-  analysisSmc.textContent = idea.ideaContext || idea.summary_ru || "SMC-контекст пока недоступен.";
-  analysisLiquidity.textContent = idea.trigger || "Ликвидность и подтверждение пока не уточнены.";
-  analysisDivergence.textContent = idea.invalidation || "Инвалидация пока не указана.";
-  analysisPattern.textContent = idea.target || "Цель пока не указана.";
   showChartPlaceholder("Chart unavailable");
   updateDetailStatus("График недоступен, поэтому detail-view завершил загрузку и показал fallback вместо вечного loading.");
 }

@@ -129,7 +129,11 @@
       color: #d7e0ee;
       font-size: 13px;
       line-height: 1.45;
-      min-height: 58px;
+      min-height: 40px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
 
     .tags {
@@ -284,19 +288,16 @@
       line-height: 1.65;
     }
 
-    .logic-list,
     .levels-list {
       display: grid;
       gap: 10px;
     }
 
-    .logic-item,
     .level-item {
       display: grid;
       gap: 4px;
     }
 
-    .logic-label,
     .level-label {
       font-size: 12px;
       text-transform: uppercase;
@@ -304,7 +305,6 @@
       color: var(--muted);
     }
 
-    .logic-value,
     .level-value {
       color: #eef4ff;
       line-height: 1.55;
@@ -407,7 +407,7 @@
 
       <div class="detail-grid">
         <section class="detail-card">
-          <h3>Summary</h3>
+          <h3>Анализ</h3>
           <p id="idea-summary" class="detail-summary"></p>
         </section>
 
@@ -422,17 +422,6 @@
         </section>
       </div>
 
-      <section class="detail-card" style="margin-bottom: 12px;">
-        <h3>Логика идеи</h3>
-        <div class="logic-list">
-          <div class="logic-item"><div class="logic-label">Краткий контекст</div><div id="logic-context" class="logic-value"></div></div>
-          <div class="logic-item"><div class="logic-label">Сценарий</div><div id="logic-scenario" class="logic-value"></div></div>
-          <div class="logic-item"><div class="logic-label">Подтверждение / trigger</div><div id="logic-trigger" class="logic-value"></div></div>
-          <div class="logic-item"><div class="logic-label">Invalidation</div><div id="logic-invalidation" class="logic-value"></div></div>
-          <div class="logic-item"><div class="logic-label">Target</div><div id="logic-target" class="logic-value"></div></div>
-        </div>
-      </section>
-
       <div id="detail-status" class="status-note"></div>
 
       <div class="chart-wrap">
@@ -446,20 +435,8 @@
 
       <div class="analysis-grid">
         <div class="analysis-block">
-          <div class="analysis-title">SMC</div>
-          <p id="analysis-smc" class="analysis-text"></p>
-        </div>
-        <div class="analysis-block">
-          <div class="analysis-title">Ликвидность</div>
-          <p id="analysis-liquidity" class="analysis-text"></p>
-        </div>
-        <div class="analysis-block">
-          <div class="analysis-title">Дивергенция</div>
-          <p id="analysis-divergence" class="analysis-text"></p>
-        </div>
-        <div class="analysis-block">
-          <div class="analysis-title">Паттерн</div>
-          <p id="analysis-pattern" class="analysis-text"></p>
+          <div class="analysis-title">Идея</div>
+          <p id="analysis-text" class="analysis-text"></p>
         </div>
       </div>
     </div>

@@ -502,6 +502,55 @@ class TradeIdeaService:
             narrative = f"{narrative}."
         return narrative or "Идея подготовлена без расширенного narrative-описания."
 
+    @classmethod
+    def _build_short_text(
+        cls,
+        row: dict[str, Any],
+        *,
+        direction: str,
+        summary: str,
+        full_text: str,
+        trigger: str,
+        target: str,
+    ) -> str:
+        direct_text = row.get("short_text") or row.get("shortText")
+        if isinstance(direct_text, str) and direct_text.strip():
+            return re.sub(r"\s+", " ", direct_text).strip()
+
+        source_text = re.sub(r"\s+", " ", str(summary or full_text or "")).strip()
+        if not source_text:
+            source_text = re.sub(r"\s+", " ", str(full_text or "")).strip()
+
+        compact = source_text
+        compact = re.split(r"(?<=[.!?])\s+", compact, maxsplit=1)[0].strip() or compact
+        compact = re.split(r"\s[—-]\s", compact, maxsplit=1)[0].strip() or compact
+        compact = compact.rstrip(".!?")
+
+        direction_label = "BUY" if direction == "bullish" else "SELL" if direction == "bearish" else "NEUTRAL"
+        lowered = compact.casefold()
+        if compact and not lowered.startswith(direction_label.casefold()):
+            compact = f"{direction_label} {compact}"
+
+        compact = re.sub(r"\s+", " ", compact).strip()
+        if len(compact) > 92:
+            compact = compact[:89].rstrip(" ,;:-") + "…"
+
+        fallback_map = {
+            "bullish": "BUY от demand при подтверждении → цель ликвидность сверху",
+            "bearish": "SELL от supply → приоритет движение вниз",
+            "neutral": "NEUTRAL: ждать подтверждение структуры",
+        }
+        fallback_text = fallback_map.get(direction, fallback_map["neutral"])
+
+        if compact:
+            return compact
+
+        joined = " ".join(part for part in [trigger, target] if str(part or "").strip()).strip()
+        if joined:
+            return f"{direction_label} {joined}".strip()
+
+        return fallback_text
+
     def _normalize_for_api(self, ideas: list[dict[str, Any]], *, source: str) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
         for row in ideas:
@@ -557,6 +606,14 @@ class TradeIdeaService:
                 invalidation=str(invalidation),
                 target=str(target),
             )
+            short_text = self._build_short_text(
+                row,
+                direction=direction,
+                summary=str(summary),
+                full_text=str(full_text),
+                trigger=str(trigger),
+                target=str(target),
+            )
             chart_data = row.get("chartData") or row.get("chart_data")
             tags = row.get("tags")
             if not isinstance(tags, list) or not tags:
@@ -577,8 +634,9 @@ class TradeIdeaService:
                         "direction": direction,
                         "bias": direction,
                         "confidence": int(confidence),
-                        "summary": full_text,
-                        "summary_ru": full_text,
+                        "summary": short_text,
+                        "summary_ru": short_text,
+                        "short_text": short_text,
                         "full_text": full_text,
                         "entry": entry,
                         "stopLoss": stop_loss,
