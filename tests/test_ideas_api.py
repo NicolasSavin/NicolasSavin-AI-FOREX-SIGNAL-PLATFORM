@@ -46,10 +46,10 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["direction"] == "bullish"
     assert payload[0]["summary"] == "BUY Тестовая идея для EURUSD"
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert payload[0]["full_text"] == (
-        "Тестовая идея для EURUSD. Ждём подтверждение сценария по текущей структуре. "
-        "Идея отменяется при сломе исходной структуры. Цель будет уточняться после появления подтверждения."
-    )
+    assert "HTF/MTF/LTF" in payload[0]["full_text"]
+    assert "Инвалидация сценария остаётся жёсткой" in payload[0]["full_text"]
+    assert "Если подтверждение сохранится" in payload[0]["full_text"]
+    assert payload[0]["full_text"].count(".") >= 6
 
 
 def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) -> None:
@@ -84,10 +84,11 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
 
     assert payload[0]["summary"] == "SELL Краткий preview остаётся в карточке"
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert payload[0]["full_text"] == (
-        "Краткий preview остаётся в карточке. Контекст для detail-view. "
-        "Нужен триггер на вход от зоны 1.271. Возврат выше 1.276 ломает сценарий. 1.262 / 1.258."
-    )
+    assert "premium-зоны предложения" in payload[0]["full_text"]
+    assert "Контекст для detail-view." in payload[0]["full_text"]
+    assert "Возврат выше 1.276 ломает сценарий." in payload[0]["full_text"]
+    assert "1.262 / 1.258." in payload[0]["full_text"]
+    assert payload[0]["full_text"].count(".") >= 6
     assert payload[0]["entry"] == "1.271"
     assert payload[0]["stopLoss"] == "1.276"
     assert payload[0]["takeProfit"] == "1.262"
@@ -128,7 +129,6 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
                                         "timeframe": "M15",
                                         "direction": "bullish",
                                         "confidence": 73,
-                                        "summary": "EURUSD сохраняет bullish-структуру на HTF, а на MTF/LTF после отката в demand-зону 1.0851 сохраняется сценарий continuation вверх. Приоритет — long только после импульсного подтверждения от зоны. Сценарий отменяется при потере 1.0837. Цель — buy-side liquidity в районе 1.0879.",
                                         "full_text": "EURUSD сохраняет bullish-структуру на HTF, а на MTF/LTF после отката в demand-зону 1.0851 сохраняется сценарий continuation вверх. Приоритет — long только после импульсного подтверждения от зоны. Сценарий отменяется при потере 1.0837. Цель — buy-side liquidity в районе 1.0879.",
                                         "entry": 1.0851,
                                         "stopLoss": 1.0837,
@@ -152,6 +152,8 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["short_text"] == payload[0]["summary"]
     assert payload[0]["summary"].startswith("BUY ")
     assert "HTF" in payload[0]["summary"]
+    assert payload[0]["full_text"].count(".") >= 6
+    assert "Инвалидация сценария остаётся жёсткой" in payload[0]["full_text"]
     assert payload[0]["label"] == "BUY IDEA"
 
 

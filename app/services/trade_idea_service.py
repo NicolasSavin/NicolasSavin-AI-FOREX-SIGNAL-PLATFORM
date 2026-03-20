@@ -31,23 +31,25 @@ EURUSD, GBPUSD, USDJPY, USDCAD, EURGBP, EURCHF
 - timeframe (M15/H1/H4)
 - direction (bullish/bearish/neutral)
 - confidence (60-80)
-- summary
 - full_text
 - entry
 - stopLoss
 - takeProfit
 - tags (массив)
 
-Требования к summary/full_text:
-- это один и тот же цельный narrative-текст
+Требования к full_text:
+- верни ОДИН цельный narrative-текст в поле full_text
 - без заголовков и без разделения на блоки
-- 3-5 предложений максимум
-- внутри логически должны присутствовать: HTF/MTF/LTF структура, направление, зона supply/demand, сценарий, trigger, invalidation, target
+- 6-12 предложений
+- профессиональный стиль, как у опытного трейдера / аналитика prop-firm
+- внутри одного текста логически учти по возможности: HTF/MTF/LTF market structure, BOS/CHoCH, liquidity, sweeps, imbalance/FVG, order blocks, premium/discount, ICT dealing range / raid / displacement / mitigation, графические паттерны, гармонические паттерны, дивергенции RSI/MACD, объёмы, опционный фон, макро/доллар/risk-on/risk-off, волновую структуру, cumulative delta
+- не делай список формата "SMC: ...", "ICT: ..." и т.д.
+- в narrative обязательно должны быть: основной сценарий, подтверждение, invalidation, цель и логика движения цены
+- если каких-то данных нет, не выдумывай их и не делай отдельный дисклеймер-список; просто органично опирайся на то, что подтверждено структурой цены
 
 Верни в каждом объекте:
 {
-  "summary": "полный narrative",
-  "full_text": "полный narrative"
+  "full_text": "длинный профессиональный анализ"
 }
 
 Формат строго JSON array.
@@ -483,24 +485,124 @@ class TradeIdeaService:
         target: str,
     ) -> str:
         direct_text = row.get("full_text") or row.get("fullText")
-        if isinstance(direct_text, str) and direct_text.strip():
-            return direct_text.strip()
+        direct_clean = re.sub(r"\s+", " ", str(direct_text or "")).strip()
 
-        unique_parts: list[str] = []
-        for value in (summary, idea_context, trigger, invalidation, target):
-            text = str(value or "").strip()
-            if not text:
-                continue
-            normalized = text.casefold()
-            if any(existing.casefold() == normalized for existing in unique_parts):
-                continue
-            unique_parts.append(text)
+        if cls._is_professional_narrative(direct_clean):
+            return direct_clean
 
-        narrative = " ".join(unique_parts)
+        return cls._compose_professional_narrative(
+            row,
+            summary=summary,
+            idea_context=idea_context,
+            trigger=trigger,
+            invalidation=invalidation,
+            target=target,
+            direct_text=direct_clean,
+        )
+
+    @staticmethod
+    def _sentence_count(text: str) -> int:
+        return len([part for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part.strip()])
+
+    @classmethod
+    def _is_professional_narrative(cls, text: str) -> bool:
+        if not text:
+            return False
+        sentence_count = cls._sentence_count(text)
+        lowered = text.casefold()
+        has_invalidation = "отмен" in lowered or "invalid" in lowered or "слом" in lowered
+        has_target = "цел" in lowered or "liquidity" in lowered or "take profit" in lowered
+        has_confirmation = "подтверж" in lowered or "триггер" in lowered or "закреп" in lowered
+        return sentence_count >= 6 and has_invalidation and has_target and has_confirmation
+
+    @classmethod
+    def _compose_professional_narrative(
+        cls,
+        row: dict[str, Any],
+        *,
+        summary: str,
+        idea_context: str,
+        trigger: str,
+        invalidation: str,
+        target: str,
+        direct_text: str,
+    ) -> str:
+        symbol = cls._extract_symbol(row)
+        timeframe = cls._extract_timeframe(row)
+        direction = cls._extract_direction(row)
+        direction_ru = "восходящий" if direction == "bullish" else "нисходящий" if direction == "bearish" else "нейтральный"
+        entry = cls._extract_level(row, "entry", "entry_zone")
+        stop_loss = cls._extract_level(row, "stopLoss", "stop_loss")
+        take_profit = cls._extract_level(row, "takeProfit", "take_profit")
+        trade_plan = row.get("trade_plan") if isinstance(row.get("trade_plan"), dict) else {}
+        analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+
+        context_text = cls._clean_sentence(
+            direct_text
+            or summary
+            or idea_context
+            or analysis.get("smc_ict_ru")
+            or "Текущий сетап требует чтения структуры через последовательность swing high/swing low и реакцию цены на ключевые зоны."
+        )
+        idea_context_text = cls._clean_sentence(
+            idea_context or analysis.get("fundamental_ru") or "Макрофон и кросс-рыночный контекст в этой идее используются как фильтр, а не как единственный драйвер входа."
+        )
+        trigger_text = cls._clean_sentence(
+            trigger
+            or trade_plan.get("entry_trigger")
+            or (f"Подтверждением станет реакция цены в рабочей зоне {entry} с последующим displacement и удержанием локальной структуры." if entry != "—" else "Подтверждением станет импульсный выход из локального диапазона с последующим удержанием структуры.")
+        )
+        invalidation_text = cls._clean_sentence(invalidation or trade_plan.get("invalidation") or "Сценарий отменяется при сломе исходной структуры.")
+        target_text = cls._clean_sentence(target or cls._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2")) or "Ближайшая цель будет уточняться после подтверждения.")
+
+        zone_side = "discount-зоны спроса" if direction == "bullish" else "premium-зоны предложения" if direction == "bearish" else "границ dealing range"
+        liquidity_side = "buy-side liquidity" if direction == "bullish" else "sell-side liquidity" if direction == "bearish" else "ликвидности по обеим сторонам диапазона"
+        orderflow_text = (
+            "Импульсное развитие будет сильнее, если displacement поддержится объёмным подтверждением и кумулятивной дельтой в сторону покупателей."
+            if direction == "bullish"
+            else "Продолжение вниз станет качественнее, если displacement подтвердится слабостью встречного спроса и агрессией продавца по proxy orderflow."
+            if direction == "bearish"
+            else "Для нейтрального сценария важнее дождаться, какая сторона первой снимет ликвидность и закрепит импульс после возврата в dealing range."
+        )
+        pattern_text = (
+            analysis.get("pattern_ru")
+            or "Графическая формация здесь читается скорее как continuation/accumulation context, а не как самостоятельный сигнал против структуры."
+        )
+        waves_text = (
+            analysis.get("waves_ru")
+            or "Волновая картина поддерживает идею импульсной ноги с коррекционной паузой, поэтому вход оправдан только после подтверждения окончания коррекции."
+        )
+        derivatives_text = (
+            "Опционный и фундаментальный слой следует трактовать как вторичный фильтр: при отсутствии верифицированного дилерского давления приоритет остаётся за реакцией цены на ликвидность и дисбаланс."
+        )
+
+        sentences = [
+            f"{symbol} на {timeframe} сохраняет {direction_ru} сценарий, и базовая логика строится вокруг того, как цена ведёт себя относительно HTF/MTF/LTF структуры, локальных BOS/CHoCH и возврата в область {zone_side}.",
+            context_text,
+            f"Сейчас приоритетен основной сценарий продолжения в сторону {liquidity_side}: рынок сначала собирает ближайшую ликвидность, затем проверяет imbalance/FVG и order block, после чего при наличии mitigation может развить следующую импульсную ногу.",
+            f"{pattern_text} {waves_text}",
+            idea_context_text,
+            trigger_text,
+            orderflow_text,
+            derivatives_text,
+            f"Инвалидация сценария остаётся жёсткой: {invalidation_text}" + (f" Ключевой защитный уровень находится вблизи {stop_loss}." if stop_loss != "—" else ""),
+            f"Если подтверждение сохранится, целевая логика движения остаётся прежней — {target_text}" + (f" Основная техническая цель по уровню находится в районе {take_profit}." if take_profit != "—" else ""),
+        ]
+
+        narrative = " ".join(cls._clean_sentence(sentence) for sentence in sentences if str(sentence or "").strip())
         narrative = re.sub(r"\s+", " ", narrative).strip()
         if narrative and narrative[-1] not in ".!?":
             narrative = f"{narrative}."
         return narrative or "Идея подготовлена без расширенного narrative-описания."
+
+    @staticmethod
+    def _clean_sentence(text: str) -> str:
+        clean = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not clean:
+            return ""
+        if clean[-1] not in ".!?":
+            clean = f"{clean}."
+        return clean
 
     @classmethod
     def _build_short_text(
@@ -559,6 +661,8 @@ class TradeIdeaService:
             direction = self._extract_direction(row)
             summary = (
                 row.get("summary")
+                or row.get("full_text")
+                or row.get("fullText")
                 or row.get("summary_ru")
                 or row.get("description_ru")
                 or row.get("rationale")
