@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from app.services.storage.json_storage import JsonStorage
+from backend.data_provider import DataProvider
 from backend.signal_engine import SignalEngine
 
 
@@ -19,41 +20,20 @@ ACTIVE_STATUSES = {"watching", "active", "updated", "triggered"}
 CLOSED_STATUSES = {"tp_hit", "sl_hit", "invalidated", "archived"}
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_SYSTEM_PROMPT = "Ты профессиональный трейдинг-аналитик (Forex, SMC, liquidity).\n\nОтвечай ТОЛЬКО JSON массивом без текста."
-OPENROUTER_USER_PROMPT = """
-Сгенерируй 6 торговых идей.
-
-Инструменты:
-EURUSD, GBPUSD, USDJPY, USDCAD, EURGBP, EURCHF
-
-Каждая идея должна содержать:
-- id
-- symbol
-- timeframe (M15/H1/H4)
-- direction (bullish/bearish/neutral)
-- confidence (60-80)
-- full_text
-- entry
-- stopLoss
-- takeProfit
-- tags (массив)
-
-Требования к full_text:
-- верни ОДИН цельный narrative-текст в поле full_text
-- без заголовков и без разделения на блоки
-- 6-12 предложений
-- профессиональный стиль, как у опытного трейдера / аналитика prop-firm
-- внутри одного текста логически учти по возможности: HTF/MTF/LTF market structure, BOS/CHoCH, liquidity, sweeps, imbalance/FVG, order blocks, premium/discount, ICT dealing range / raid / displacement / mitigation, графические паттерны, гармонические паттерны, дивергенции RSI/MACD, объёмы, опционный фон, макро/доллар/risk-on/risk-off, волновую структуру, cumulative delta
-- не делай список формата "SMC: ...", "ICT: ..." и т.д.
-- в narrative обязательно должны быть: основной сценарий, подтверждение, invalidation, цель и логика движения цены
-- если каких-то данных нет, не выдумывай их и не делай отдельный дисклеймер-список; просто органично опирайся на то, что подтверждено структурой цены
-
-Верни в каждом объекте:
-{
-  "full_text": "длинный профессиональный анализ"
+OPENROUTER_IDEA_SPECS = [
+    ("EURUSD", "M15"),
+    ("GBPUSD", "H1"),
+    ("USDJPY", "H4"),
+    ("USDCAD", "M15"),
+    ("EURGBP", "H1"),
+    ("EURCHF", "H4"),
+]
+MAX_ENTRY_DEVIATION_PCT = {
+    "M15": 0.5,
+    "H1": 1.0,
+    "H4": 2.0,
 }
-
-Формат строго JSON array.
-""".strip()
+CANDLE_CONTEXT_COUNT = 40
 DEMO_FALLBACK_IDEAS = [
     {
         "id": "eurusd-m15-bullish",
@@ -170,6 +150,7 @@ logger = logging.getLogger(__name__)
 class TradeIdeaService:
     def __init__(self, signal_engine: SignalEngine) -> None:
         self.signal_engine = signal_engine
+        self.data_provider = DataProvider()
         self.idea_store = JsonStorage("signals_data/trade_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
         self.legacy_store = JsonStorage("signals_data/market_ideas.json", {"updated_at_utc": None, "ideas": []})
@@ -218,15 +199,21 @@ class TradeIdeaService:
             logger.warning("openrouter_missing_api_key")
             return self.fallback_ideas(reason="missing_api_key")
 
+        market_references = self._build_market_references()
+        if len(market_references) != len(OPENROUTER_IDEA_SPECS):
+            logger.warning("openrouter_market_data_incomplete")
+            return self._build_market_aligned_fallbacks(market_references, reason="market_data_unavailable")
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        user_prompt = self._build_openrouter_prompt(market_references)
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": OPENROUTER_SYSTEM_PROMPT},
-                {"role": "user", "content": OPENROUTER_USER_PROMPT},
+                {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.8,
         }
@@ -249,12 +236,12 @@ class TradeIdeaService:
 
         if not isinstance(parsed, list) or not parsed:
             logger.warning("openrouter_empty_payload")
-            return self.fallback_ideas(reason="empty_ai_payload")
+            return self._build_market_aligned_fallbacks(market_references, reason="empty_ai_payload")
 
-        normalized = self._normalize_for_api(parsed, source="openrouter_ai")
+        normalized = self._normalize_openrouter_payload(parsed, market_references)
         if not normalized:
             logger.warning("openrouter_normalization_failed")
-            return self.fallback_ideas(reason="normalization_failed")
+            return self._build_market_aligned_fallbacks(market_references, reason="normalization_failed")
         return normalized
 
     def list_api_ideas(self) -> list[dict[str, Any]]:
@@ -776,11 +763,239 @@ class TradeIdeaService:
                         "stop_loss_value": stop_loss_value,
                         "take_profit_value": take_profit_value,
                         "is_fallback": bool(row.get("is_fallback", False)),
+                        "latest_close": row.get("latest_close"),
+                        "market_reference_price": row.get("market_reference_price"),
+                        "levels_validated": row.get("levels_validated"),
+                        "levels_source": row.get("levels_source"),
+                        "validation_errors": row.get("validation_errors") or [],
                     },
                     source=source,
                 )
             )
         return normalized
+
+    def _build_market_references(self) -> dict[tuple[str, str], dict[str, Any]]:
+        references: dict[tuple[str, str], dict[str, Any]] = {}
+        for symbol, timeframe in OPENROUTER_IDEA_SPECS:
+            snapshot = self.data_provider.snapshot_sync(symbol, timeframe=timeframe)
+            candles = snapshot.get("candles") if isinstance(snapshot.get("candles"), list) else []
+            latest_close = candles[-1]["close"] if candles else snapshot.get("close")
+            if snapshot.get("data_status") != "real" or latest_close in (None, "") or not candles:
+                logger.warning("idea_market_reference_unavailable symbol=%s timeframe=%s", symbol, timeframe)
+                continue
+            references[(symbol, timeframe)] = {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "latest_close": float(latest_close),
+                "recent_candles": candles[-CANDLE_CONTEXT_COUNT:],
+                "market_context": {
+                    "source": snapshot.get("source"),
+                    "message": snapshot.get("message"),
+                    "candle_count": len(candles),
+                    "price_change_pct": self._compute_price_change_pct(candles),
+                    "range_pct": self._compute_range_pct(candles),
+                },
+            }
+        return references
+
+    def _build_openrouter_prompt(self, market_references: dict[tuple[str, str], dict[str, Any]]) -> str:
+        contexts = [
+            {
+                "symbol": ref["symbol"],
+                "timeframe": ref["timeframe"],
+                "latest_close": ref["latest_close"],
+                "recent_candles": ref["recent_candles"],
+                "market_context": ref["market_context"],
+            }
+            for _, ref in sorted(market_references.items())
+        ]
+        return (
+            "Сгенерируй 6 торговых идей строго по переданным market contexts.\n\n"
+            "Каждая идея должна соответствовать ОДНОЙ записи из списка contexts и содержать:\n"
+            "- id\n- symbol\n- timeframe\n- direction (bullish/bearish/neutral)\n- confidence (60-80)\n- full_text\n- entry\n- stopLoss\n- takeProfit\n- tags (массив)\n\n"
+            "Требования к full_text:\n"
+            "- верни ОДИН цельный narrative-текст в поле full_text\n"
+            "- без заголовков и без разделения на блоки\n"
+            "- 6-12 предложений\n"
+            "- профессиональный стиль, как у опытного трейдера / аналитика prop-firm\n"
+            "- обязательно включи основной сценарий, подтверждение, invalidation, цель и логику движения цены\n"
+            "- если каких-то данных нет, не выдумывай их; опирайся только на цену и переданный контекст\n\n"
+            "ЖЁСТКИЕ ПРАВИЛА ПО УРОВНЯМ:\n"
+            "- Use the provided latest_close as the current market reference.\n"
+            "- Your entry, stopLoss, and takeProfit must be realistic relative to latest_close.\n"
+            "- Do not return disconnected price levels from another market regime.\n"
+            "- Intraday ideas must stay close to current market structure unless explicitly described as a wider swing setup.\n"
+            "- Return levels consistent with direction and current price context.\n"
+            "- Для bullish: stopLoss < entry < takeProfit.\n"
+            "- Для bearish: takeProfit < entry < stopLoss.\n"
+            "- Для neutral не делай агрессивный directional setup без основания; уровни должны оставаться осторожными и близкими к текущему рынку.\n"
+            "- Для M15/H1 entry должен быть близок к latest_close, если ты явно не описываешь swing setup.\n\n"
+            "Верни строго JSON array и ничего кроме него.\n\n"
+            f"contexts = {json.dumps(contexts, ensure_ascii=False)}"
+        )
+
+    def _normalize_openrouter_payload(
+        self,
+        ideas: list[dict[str, Any]],
+        market_references: dict[tuple[str, str], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        prepared: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for row in ideas:
+            symbol = self._extract_symbol(row)
+            timeframe = self._extract_timeframe(row)
+            reference = market_references.get((symbol, timeframe))
+            if reference is None:
+                logger.warning("idea_reference_missing symbol=%s timeframe=%s", symbol, timeframe)
+                continue
+            validated_row = self._validate_ai_levels(row, reference)
+            prepared.append(validated_row)
+            seen.add((symbol, timeframe))
+
+        for symbol, timeframe in OPENROUTER_IDEA_SPECS:
+            key = (symbol, timeframe)
+            if key not in seen and key in market_references:
+                prepared.append(self._build_market_aligned_fallback_idea(market_references[key], reason="missing_ai_idea"))
+
+        normalized = self._normalize_for_api(prepared, source="openrouter_ai")
+        return normalized
+
+    def _validate_ai_levels(self, row: dict[str, Any], reference: dict[str, Any]) -> dict[str, Any]:
+        latest_close = float(reference["latest_close"])
+        direction = self._extract_direction(row)
+        timeframe = reference["timeframe"]
+        entry = self._extract_numeric_level(row, "entry", "entry_zone")
+        stop_loss = self._extract_numeric_level(row, "stopLoss", "stop_loss")
+        take_profit = self._extract_numeric_level(row, "takeProfit", "take_profit")
+
+        validation_errors: list[str] = []
+        for label, value in (("entry", entry), ("stopLoss", stop_loss), ("takeProfit", take_profit)):
+            if value is None or value != value:
+                validation_errors.append(f"{label}_missing")
+
+        if entry is not None:
+            deviation_pct = abs((entry - latest_close) / latest_close) * 100 if latest_close else 0.0
+            max_deviation_pct = MAX_ENTRY_DEVIATION_PCT.get(timeframe, 1.0)
+            if deviation_pct > max_deviation_pct:
+                validation_errors.append(f"entry_deviation_exceeded:{deviation_pct:.3f}>{max_deviation_pct:.3f}")
+
+        if entry is not None and stop_loss is not None and take_profit is not None:
+            if direction == "bullish" and not (stop_loss < entry < take_profit):
+                validation_errors.append("bullish_inconsistent")
+            elif direction == "bearish" and not (take_profit < entry < stop_loss):
+                validation_errors.append("bearish_inconsistent")
+            elif direction == "neutral":
+                neutral_deviation_pct = abs((take_profit - stop_loss) / latest_close) * 100 if latest_close else 0.0
+                if neutral_deviation_pct > MAX_ENTRY_DEVIATION_PCT.get(timeframe, 1.0) * 3:
+                    validation_errors.append("neutral_too_aggressive")
+
+        if validation_errors:
+            fallback = self._build_market_aligned_fallback_idea(reference, raw_row=row, reason=";".join(validation_errors))
+            fallback["levels_validated"] = False
+            fallback["levels_source"] = "fallback"
+            fallback["validation_errors"] = validation_errors
+            return fallback
+
+        payload = dict(row)
+        payload["entry"] = round(entry, self._price_precision(latest_close))
+        payload["stopLoss"] = round(stop_loss, self._price_precision(latest_close))
+        payload["takeProfit"] = round(take_profit, self._price_precision(latest_close))
+        payload["latest_close"] = latest_close
+        payload["market_reference_price"] = latest_close
+        payload["levels_validated"] = True
+        payload["levels_source"] = "ai"
+        payload["validation_errors"] = []
+        return payload
+
+    def _build_market_aligned_fallbacks(
+        self,
+        market_references: dict[tuple[str, str], dict[str, Any]],
+        *,
+        reason: str,
+    ) -> list[dict[str, Any]]:
+        if not market_references:
+            return self.fallback_ideas(reason=reason)
+        prepared = [
+            self._build_market_aligned_fallback_idea(market_references[(symbol, timeframe)], reason=reason)
+            for symbol, timeframe in OPENROUTER_IDEA_SPECS
+            if (symbol, timeframe) in market_references
+        ]
+        return self._normalize_for_api(prepared, source="openrouter_fallback")
+
+    def _build_market_aligned_fallback_idea(
+        self,
+        reference: dict[str, Any],
+        *,
+        raw_row: dict[str, Any] | None = None,
+        reason: str,
+    ) -> dict[str, Any]:
+        symbol = reference["symbol"]
+        timeframe = reference["timeframe"]
+        latest_close = float(reference["latest_close"])
+        candles = reference["recent_candles"]
+        first_close = float(candles[0]["close"])
+        direction = "bullish" if latest_close > first_close else "bearish" if latest_close < first_close else "neutral"
+        precision = self._price_precision(latest_close)
+        entry = latest_close
+        band_pct = min(MAX_ENTRY_DEVIATION_PCT.get(timeframe, 1.0) / 100, max(self._compute_range_pct(candles) / 100 / 2, 0.001))
+        if direction == "bullish":
+            stop_loss = latest_close * (1 - band_pct)
+            take_profit = latest_close * (1 + band_pct * 1.6)
+        elif direction == "bearish":
+            stop_loss = latest_close * (1 + band_pct)
+            take_profit = latest_close * (1 - band_pct * 1.6)
+        else:
+            stop_loss = latest_close * (1 - band_pct * 0.8)
+            take_profit = latest_close * (1 + band_pct * 0.8)
+
+        return {
+            "id": raw_row.get("id") if raw_row else f"{symbol.lower()}-{timeframe.lower()}-fallback",
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "direction": direction,
+            "confidence": raw_row.get("confidence", 62) if raw_row else 62,
+            "full_text": (
+                f"{symbol} на {timeframe} использует fallback-сценарий, потому что AI-уровни не прошли backend validation. "
+                f"Latest close {self._format_price(latest_close)} используется как текущий рыночный reference, поэтому entry удержан рядом с рынком, "
+                "а stopLoss/takeProfit выставлены относительно ближайшей структуры последних свечей. "
+                "Сценарий остаётся рабочим только при подтверждении текущего импульса и теряет силу при нарушении защитного уровня. "
+                "Цели и invalidation построены вокруг текущего диапазона, а не вокруг устаревшего рыночного режима. "
+                f"Причина fallback: {reason}."
+            ),
+            "entry": round(entry, precision),
+            "stopLoss": round(stop_loss, precision),
+            "takeProfit": round(take_profit, precision),
+            "tags": ["validated", "fallback", timeframe, symbol],
+            "latest_close": latest_close,
+            "market_reference_price": latest_close,
+            "levels_validated": False,
+            "levels_source": "fallback",
+            "validation_errors": [reason],
+            "is_fallback": True,
+        }
+
+    @staticmethod
+    def _compute_price_change_pct(candles: list[dict[str, Any]]) -> float:
+        if len(candles) < 2:
+            return 0.0
+        first_close = float(candles[0]["close"])
+        last_close = float(candles[-1]["close"])
+        if not first_close:
+            return 0.0
+        return round(((last_close - first_close) / first_close) * 100, 4)
+
+    @staticmethod
+    def _compute_range_pct(candles: list[dict[str, Any]]) -> float:
+        if not candles:
+            return 0.0
+        high = max(float(candle["high"]) for candle in candles)
+        low = min(float(candle["low"]) for candle in candles)
+        base = float(candles[-1]["close"]) or 1.0
+        return round(((high - low) / base) * 100, 4)
+
+    @staticmethod
+    def _price_precision(price: float) -> int:
+        return 3 if price >= 20 else 5
 
     @staticmethod
     def _decorate_api_idea(idea: dict[str, Any], *, source: str) -> dict[str, Any]:

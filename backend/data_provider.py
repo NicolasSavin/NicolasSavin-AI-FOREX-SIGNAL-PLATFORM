@@ -18,6 +18,9 @@ class DataProvider:
     """Collects and normalizes OHLCV market snapshots from yfinance."""
 
     async def snapshot(self, symbol: str, timeframe: str = "H1") -> dict:
+        return self.snapshot_sync(symbol, timeframe=timeframe)
+
+    def snapshot_sync(self, symbol: str, timeframe: str = "H1") -> dict:
         ticker_symbol = symbol.upper().replace("/", "")
         source_symbol = f"{ticker_symbol}=X"
         tf = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["H1"])

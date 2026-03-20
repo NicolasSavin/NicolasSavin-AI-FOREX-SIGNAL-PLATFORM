@@ -112,6 +112,18 @@ def test_build_api_ideas_uses_demo_fallback_when_storage_empty(tmp_path: Path) -
 def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Path) -> None:
     service = _service(tmp_path)
 
+    market_snapshot = {
+        "data_status": "real",
+        "source": "Yahoo Finance",
+        "message": "ok",
+        "close": 1.0852,
+        "candles": [
+            {"open": 1.0840, "high": 1.0848, "low": 1.0836, "close": 1.0845},
+            {"open": 1.0845, "high": 1.0854, "low": 1.0841, "close": 1.0852},
+        ]
+        * 30,
+    }
+
     class _Response:
         def raise_for_status(self) -> None:
             return None
@@ -143,6 +155,15 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
             }
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        service.data_provider,
+        "snapshot_sync",
+        lambda symbol, timeframe="H1": (
+            market_snapshot | {"close": 149.22, "candles": [{"open": 149.0, "high": 149.4, "low": 148.8, "close": 149.22}] * 45}
+            if symbol == "USDJPY"
+            else market_snapshot
+        ),
+    )
     monkeypatch.setattr("app.services.trade_idea_service.requests.post", lambda *args, **kwargs: _Response())
 
     payload = service.build_openrouter_api_ideas()
@@ -155,6 +176,10 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["full_text"].count(".") >= 6
     assert "Инвалидация сценария остаётся жёсткой" in payload[0]["full_text"]
     assert payload[0]["label"] == "BUY IDEA"
+    assert payload[0]["latest_close"] == 1.0852
+    assert payload[0]["market_reference_price"] == 1.0852
+    assert payload[0]["levels_validated"] is True
+    assert payload[0]["levels_source"] == "ai"
 
 
 def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path: Path) -> None:
@@ -167,6 +192,67 @@ def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path
     assert len(payload) >= 6
     assert all(item["is_fallback"] for item in payload)
     assert all(item["source"] == "openrouter_fallback" for item in payload)
+
+
+def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_are_disconnected(monkeypatch, tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    def _snapshot(symbol: str, timeframe: str = "H1") -> dict:
+        price = 149.22 if symbol == "USDJPY" else 1.1568
+        return {
+            "data_status": "real",
+            "source": "Yahoo Finance",
+            "message": "ok",
+            "close": price,
+            "candles": [
+                {"open": price * 0.999, "high": price * 1.001, "low": price * 0.998, "close": price}
+                for _ in range(45)
+            ],
+        }
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                [
+                                    {
+                                        "id": "eurusd-m15-bad",
+                                        "symbol": "EURUSD",
+                                        "timeframe": "M15",
+                                        "direction": "bullish",
+                                        "confidence": 70,
+                                        "full_text": "EURUSD narrative with old regime levels. Подтверждение есть. Инвалидация есть. Цель есть. HTF context. MTF context.",
+                                        "entry": 1.0849,
+                                        "stopLoss": 1.0832,
+                                        "takeProfit": 1.0876,
+                                        "tags": ["SMC", "M15"],
+                                    }
+                                ]
+                            )
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(service.data_provider, "snapshot_sync", _snapshot)
+    monkeypatch.setattr("app.services.trade_idea_service.requests.post", lambda *args, **kwargs: _Response())
+
+    payload = service.build_openrouter_api_ideas()
+    eurusd = next(item for item in payload if item["symbol"] == "EURUSD" and item["timeframe"] == "M15")
+
+    assert eurusd["levels_validated"] is False
+    assert eurusd["levels_source"] == "fallback"
+    assert eurusd["latest_close"] == 1.1568
+    assert abs(float(eurusd["entry"]) - 1.1568) < 0.0001
+    assert eurusd["source"] == "openrouter_ai"
+    assert eurusd["validation_errors"]
 
 
 def test_list_api_ideas_falls_back_when_ai_returns_empty(monkeypatch, tmp_path: Path) -> None:
