@@ -195,6 +195,17 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["meta"]["levels_source"] == "ai"
 
 
+def test_build_openrouter_api_ideas_falls_back_with_blank_key(monkeypatch, tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "   ")
+
+    payload = service.build_openrouter_api_ideas()
+
+    assert payload
+    assert len(payload) >= 6
+    assert all(item["source"] == "openrouter_fallback" for item in payload)
+
+
 def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path: Path) -> None:
     service = _service(tmp_path)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)

@@ -4,12 +4,12 @@ from datetime import datetime, timezone
 from hashlib import sha1
 import json
 import logging
-import os
 import re
 from typing import Any
 
 import requests
 
+from app.core.env import get_openrouter_api_key, get_openrouter_model
 from app.services.chart_data_service import ChartDataService
 from app.services.storage.json_storage import JsonStorage
 from backend.data_provider import DataProvider
@@ -194,8 +194,8 @@ class TradeIdeaService:
         return self._normalize_for_api(DEMO_FALLBACK_IDEAS, source="openrouter_fallback")
 
     def build_openrouter_api_ideas(self) -> list[dict[str, Any]]:
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat")
+        api_key = get_openrouter_api_key()
+        model = get_openrouter_model()
 
         if not api_key:
             logger.warning("openrouter_missing_api_key")

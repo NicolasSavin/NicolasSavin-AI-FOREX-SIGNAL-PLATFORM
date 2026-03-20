@@ -8,6 +8,8 @@ from typing import Any
 
 import requests
 
+from app.core.env import get_twelvedata_api_key
+
 logger = logging.getLogger(__name__)
 
 TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
@@ -24,7 +26,7 @@ DEFAULT_CHART_LIMIT = 50
 class ChartDataService:
     def __init__(self) -> None:
         self.api_url = os.getenv("TWELVEDATA_API_URL", TWELVEDATA_URL)
-        self.api_key = os.getenv("TWELVEDATA_API_KEY", "").strip()
+        self.api_key = get_twelvedata_api_key() or ""
         self.timeout_seconds = float(os.getenv("TWELVEDATA_TIMEOUT", str(DEFAULT_CHART_TIMEOUT_SECONDS)))
         self.output_size = int(os.getenv("TWELVEDATA_OUTPUTSIZE", str(DEFAULT_CHART_LIMIT)))
 

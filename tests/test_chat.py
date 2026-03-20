@@ -8,16 +8,16 @@ from app.main import app
 from backend.chat_service import ChatRequest, ForexChatService
 
 
-def test_chat_fallback_when_openai_not_configured() -> None:
+def test_chat_fallback_when_openrouter_not_configured() -> None:
     service = ForexChatService()
     service.enabled = True
     service.client = None
 
     response = asyncio.run(service.chat(ChatRequest(message="Объясни риск по EURUSD.")))
 
-    assert response.source == "openai"
+    assert response.source == "openrouter"
     assert response.dataStatus == "fallback"
-    assert "openai_not_configured" in response.warnings
+    assert "openrouter_not_configured" in response.warnings
 
 
 def test_chat_rejects_out_of_scope_questions() -> None:
@@ -35,4 +35,4 @@ def test_chat_endpoint_contract() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert set(payload.keys()) == {"reply", "source", "dataStatus", "warnings"}
-    assert payload["source"] == "openai"
+    assert payload["source"] == "openrouter"

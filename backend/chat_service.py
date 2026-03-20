@@ -4,6 +4,8 @@ import os
 from typing import Any
 
 from openai import AsyncOpenAI
+
+from app.core.env import get_openrouter_api_key, get_openrouter_model
 from pydantic import BaseModel, Field
 
 
@@ -34,11 +36,15 @@ class ChatResponse(BaseModel):
 
 class ForexChatService:
     def __init__(self) -> None:
-        self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
-        self.timeout = float(os.getenv("OPENAI_TIMEOUT", "30"))
+        self.api_key = get_openrouter_api_key() or ""
+        self.model = get_openrouter_model()
+        self.timeout = float(os.getenv("OPENROUTER_TIMEOUT", os.getenv("OPENAI_TIMEOUT", "30")))
         self.enabled = os.getenv("CHAT_ENABLED", "true").strip().lower() == "true"
-        self.client = AsyncOpenAI(api_key=self.api_key, timeout=self.timeout) if self.api_key else None
+        self.client = (
+            AsyncOpenAI(api_key=self.api_key, base_url="https://openrouter.ai/api/v1", timeout=self.timeout)
+            if self.api_key
+            else None
+        )
 
     async def chat(self, payload: ChatRequest) -> ChatResponse:
         message = payload.message.strip()
@@ -56,8 +62,8 @@ class ForexChatService:
 
         if not self.client:
             return self._fallback(
-                "OpenAI не настроен на backend. Могу отвечать только в режиме безопасного fallback без внешней модели.",
-                warnings=["openai_not_configured"],
+                "OpenRouter не настроен на backend. Могу отвечать только в режиме безопасного fallback без внешней модели.",
+                warnings=["openrouter_not_configured"],
             )
 
         try:
@@ -77,11 +83,11 @@ class ForexChatService:
                     "Модель не вернула содержательный ответ. Попробуйте уточнить вопрос по сигналу, риску или аналитике.",
                     warnings=["empty_model_response"],
                 )
-            return ChatResponse(reply=text, source="openai", dataStatus="live", warnings=[])
+            return ChatResponse(reply=text, source="openrouter", dataStatus="live", warnings=[])
         except Exception:
             return self._fallback(
                 "Не удалось получить ответ от AI-модели. Попробуйте позже или задайте более узкий вопрос по forex-сценарию.",
-                warnings=["openai_request_failed"],
+                warnings=["openrouter_request_failed"],
             )
 
     @staticmethod
@@ -120,4 +126,4 @@ class ForexChatService:
 
     @staticmethod
     def _fallback(message: str, *, warnings: list[str]) -> ChatResponse:
-        return ChatResponse(reply=message, source="openai", dataStatus="fallback", warnings=warnings)
+        return ChatResponse(reply=message, source="openrouter", dataStatus="fallback", warnings=warnings)
