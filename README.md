@@ -7,7 +7,7 @@
 - Добавлен sentiment layer: `backend/sentiment_provider.py`, модель `SentimentSnapshot`, safe mock/external provider схема и интеграция sentiment в analytics response и signal engine как подтверждающий фактор.
 - Добавлена persistent trade idea система: идеи теперь имеют `idea_id`, хранятся в JSON storage, не исчезают между обновлениями и обновляются по тем же `symbol + timeframe + setup_type`, пока жизненный цикл активен.
 - Endpoint `/ideas/market` остаётся обратносуместимым для текущего UI: старые поля сохранены, но дополнительно всегда возвращаются `idea_id`, `symbol`, `timeframe`, `status`, `sentiment`, `version`, `change_summary`.
-- UI карточек и layout не менялись: визуальная структура страниц сохранена.
+- Страница `/ideas` теперь сохраняет прежний layout, но разделяет short scenario в списке и desk-style full card в modal detail-view: краткая карточка остаётся компактной, а полная показывает `detail_brief`, сценарии, аналитические секции и итоговый trading plan.
 
 ## Что обновлено в версии 3.7
 - Добавлен отдельный модуль графических паттернов: `backend/pattern_detector.py` и `backend/pattern_visualization.py`.
@@ -151,6 +151,11 @@
 - `updated_at`
 - `version`
 - `change_summary`
+- `short_scenario_ru` / `short_text` — сверхкраткий сценарий для карточки списка
+- `detail_brief.header` — market price / daily change / bias / confidence / confluence
+- `detail_brief.scenarios` — primary / swing / invalidation
+- `detail_brief.sections[]` — секции (`smc_ict`, `chart_patterns`, `harmonic`, `waves`, `fundamental`, `wyckoff`, `volume_profile`, `divergences`, `cumdelta`, `sentiment`, `liquidity`) только при реально доступных данных
+- `detail_brief.trade_plan` — entry / stop / take profits / R:R / primary / alternative scenario
 
 Важно:
 - идея **обновляется**, а не пересоздаётся, если совпадают `symbol`, `timeframe`, `setup_type` и lifecycle ещё активен;
@@ -318,5 +323,5 @@ TWELVEDATA_OUTPUTSIZE=50
 - Trade idea карточки теперь backed by persistent storage.
 - Идея не исчезает при каждом обновлении backend: система обновляет уже существующую запись, если это тот же lifecycle.
 - При сломе сценария идея помечается как `invalidated`, а при новом lifecycle создаётся новая запись.
-- Это поведение реализовано без изменения текущего UI и без изменения существующего дизайна карточек.
+- Это поведение реализовано без радикального изменения текущего UI: список на `/ideas` оставлен компактным, а depth анализа перенесён в modal full card.
 - Sentiment внутри trade idea используется только как дополнительный контекст и не даёт гарантий результата.

@@ -288,6 +288,40 @@
       line-height: 1.65;
     }
 
+    .detail-summary-strong {
+      font-size: 16px;
+      line-height: 1.8;
+    }
+
+    .detail-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .metric-chip {
+      border-radius: 14px;
+      border: 1px solid #1d2c47;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 12px;
+    }
+
+    .metric-chip-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+
+    .metric-chip-value {
+      color: #eef4ff;
+      font-size: 15px;
+      line-height: 1.45;
+      font-weight: 700;
+    }
+
     .levels-list {
       display: grid;
       gap: 10px;
@@ -326,6 +360,7 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 12px;
+      margin-bottom: 14px;
     }
 
     .analysis-block {
@@ -349,6 +384,48 @@
       line-height: 1.65;
       color: #eef4ff;
       white-space: pre-line;
+    }
+
+    .scenario-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .scenario-card {
+      background: linear-gradient(180deg, #0c1a33 0%, #0a1529 100%);
+      border: 1px solid #1d2c47;
+      border-radius: 16px;
+      padding: 16px 18px;
+    }
+
+    .scenario-card h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      color: #eef4ff;
+    }
+
+    .scenario-card p {
+      margin: 0;
+      color: #d7e0ee;
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .analysis-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: rgba(250, 204, 21, 0.08);
+      border: 1px solid rgba(250, 204, 21, 0.16);
+      color: #f9e58a;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }
 
     @media (max-width: 900px) {
@@ -407,8 +484,9 @@
 
       <div class="detail-grid">
         <section class="detail-card">
-          <h3>Анализ</h3>
-          <p id="idea-summary" class="detail-summary"></p>
+          <h3>Summary / Narrative</h3>
+          <p id="idea-summary" class="detail-summary detail-summary-strong"></p>
+          <div id="detail-metrics" class="detail-metrics"></div>
         </section>
 
         <section class="detail-card">
@@ -424,6 +502,21 @@
 
       <div id="detail-status" class="status-note"></div>
 
+      <div class="scenario-grid">
+        <section class="scenario-card">
+          <h3>Основной сценарий · 1–7 дней</h3>
+          <p id="scenario-primary"></p>
+        </section>
+        <section class="scenario-card">
+          <h3>Среднесрочный сценарий · 1–4 недели</h3>
+          <p id="scenario-swing"></p>
+        </section>
+        <section class="scenario-card">
+          <h3>Инвалидация</h3>
+          <p id="scenario-invalidation"></p>
+        </section>
+      </div>
+
       <div class="chart-wrap">
         <div id="chart-host" class="chart-host"></div>
         <canvas id="chart-overlay" class="overlay"></canvas>
@@ -435,10 +528,16 @@
 
       <div class="analysis-grid">
         <div class="analysis-block">
-          <div class="analysis-title">Идея</div>
+          <div class="analysis-title">Desk Narrative</div>
           <p id="analysis-text" class="analysis-text"></p>
         </div>
+        <div class="analysis-block">
+          <div class="analysis-title">Trading Plan</div>
+          <p id="trading-plan-text" class="analysis-text"></p>
+        </div>
       </div>
+
+      <div id="analysis-sections" class="analysis-grid"></div>
     </div>
   </div>
 
