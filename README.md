@@ -6,6 +6,7 @@
 - Добавлен backend-only AI forex assistant: новый модуль `backend/chat_service.py` и endpoint `POST /api/chat` с безопасным forex-only prompt, без API-ключей на frontend.
 - Добавлен sentiment layer: `backend/sentiment_provider.py`, модель `SentimentSnapshot`, safe mock/external provider схема и интеграция sentiment в analytics response и signal engine как подтверждающий фактор.
 - Добавлена persistent trade idea система: идеи теперь имеют `idea_id`, хранятся в JSON storage, не исчезают между обновлениями и обновляются по тем же `symbol + timeframe + setup_type`, пока жизненный цикл активен.
+- Backend генерации `/api/ideas` теперь сначала берёт реальные свечи через `ChartDataService` (тот же источник, что и `GET /api/chart/{symbol}?tf={timeframe}`), вычисляет `latest_close`, передаёт в AI последние 40 свечей и валидирует `entry/stopLoss/takeProfit` по deviation-лимитам `M15 0.3% / H1 0.5% / H4 1.0%`; при ошибке AI автоматически включается market-aligned fallback с `levels_source`, `levels_validated`, `entry_deviation_pct` и `meta`.
 - Endpoint `/ideas/market` остаётся обратносуместимым для текущего UI: старые поля сохранены, но дополнительно всегда возвращаются `idea_id`, `symbol`, `timeframe`, `status`, `sentiment`, `version`, `change_summary`.
 - Страница `/ideas` теперь сохраняет прежний layout, но разделяет short scenario в списке и desk-style full card в modal detail-view: краткая карточка остаётся компактной, а полная показывает `detail_brief`, сценарии, аналитические секции и итоговый trading plan.
 

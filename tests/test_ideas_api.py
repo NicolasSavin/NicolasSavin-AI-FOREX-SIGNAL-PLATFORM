@@ -116,11 +116,10 @@ def test_build_api_ideas_uses_demo_fallback_when_storage_empty(tmp_path: Path) -
 def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Path) -> None:
     service = _service(tmp_path)
 
-    market_snapshot = {
-        "data_status": "real",
-        "source": "Yahoo Finance",
-        "message": "ok",
-        "close": 1.0852,
+    market_chart = {
+        "status": "ok",
+        "source": "twelvedata",
+        "message_ru": None,
         "candles": [
             {"open": 1.0840, "high": 1.0848, "low": 1.0836, "close": 1.0845},
             {"open": 1.0845, "high": 1.0854, "low": 1.0841, "close": 1.0852},
@@ -160,12 +159,17 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setattr(
-        service.data_provider,
-        "snapshot_sync",
+        service.chart_data_service,
+        "get_chart",
         lambda symbol, timeframe="H1": (
-            market_snapshot | {"close": 149.22, "candles": [{"open": 149.0, "high": 149.4, "low": 148.8, "close": 149.22}] * 45}
+            market_chart
+            | {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "candles": [{"open": 149.0, "high": 149.4, "low": 148.8, "close": 149.22}] * 45,
+            }
             if symbol == "USDJPY"
-            else market_snapshot
+            else market_chart | {"symbol": symbol, "timeframe": timeframe}
         ),
     )
     monkeypatch.setattr("app.services.trade_idea_service.requests.post", lambda *args, **kwargs: _Response())
@@ -182,8 +186,11 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["label"] == "BUY IDEA"
     assert payload[0]["latest_close"] == 1.0852
     assert payload[0]["market_reference_price"] == 1.0852
+    assert payload[0]["entry_deviation_pct"] < 0.3
     assert payload[0]["levels_validated"] is True
     assert payload[0]["levels_source"] == "ai"
+    assert payload[0]["meta"]["latest_close"] == 1.0852
+    assert payload[0]["meta"]["levels_source"] == "ai"
 
 
 def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path: Path) -> None:
@@ -201,13 +208,14 @@ def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path
 def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_are_disconnected(monkeypatch, tmp_path: Path) -> None:
     service = _service(tmp_path)
 
-    def _snapshot(symbol: str, timeframe: str = "H1") -> dict:
+    def _chart(symbol: str, timeframe: str = "H1") -> dict:
         price = 149.22 if symbol == "USDJPY" else 1.1568
         return {
-            "data_status": "real",
-            "source": "Yahoo Finance",
-            "message": "ok",
-            "close": price,
+            "status": "ok",
+            "source": "twelvedata",
+            "message_ru": None,
+            "symbol": symbol,
+            "timeframe": timeframe,
             "candles": [
                 {"open": price * 0.999, "high": price * 1.001, "low": price * 0.998, "close": price}
                 for _ in range(45)
@@ -245,7 +253,7 @@ def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_
             }
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr(service.data_provider, "snapshot_sync", _snapshot)
+    monkeypatch.setattr(service.chart_data_service, "get_chart", _chart)
     monkeypatch.setattr("app.services.trade_idea_service.requests.post", lambda *args, **kwargs: _Response())
 
     payload = service.build_openrouter_api_ideas()
@@ -257,6 +265,9 @@ def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_
     assert abs(float(eurusd["entry"]) - 1.1568) < 0.0001
     assert eurusd["source"] == "openrouter_ai"
     assert eurusd["validation_errors"]
+    assert eurusd["meta"]["latest_close"] == 1.1568
+    assert eurusd["meta"]["levels_source"] == "fallback"
+    assert eurusd["entry_deviation_pct"] > 0.3
 
 
 def test_list_api_ideas_falls_back_when_ai_returns_empty(monkeypatch, tmp_path: Path) -> None:
