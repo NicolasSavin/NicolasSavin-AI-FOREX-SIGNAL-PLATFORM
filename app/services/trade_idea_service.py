@@ -530,11 +530,18 @@ class TradeIdeaService:
             return False
         sentence_count = cls._sentence_count(text)
         lowered = text.casefold()
+        has_trigger = "триггер" in lowered
         has_invalidation = "отмен" in lowered or "invalid" in lowered or "слом" in lowered
         has_target = "цел" in lowered or "ликвид" in lowered or "liquidity" in lowered or "take profit" in lowered or "tp" in lowered
-        has_confirmation = "подтверж" in lowered or "триггер" in lowered or "закреп" in lowered
+        has_confirmation = (
+            "подтверж" in lowered
+            or "объ" in lowered
+            or "cumdelta" in lowered
+            or "delta" in lowered
+            or "диверген" in lowered
+        )
         has_levels = bool(re.search(r"\d", text))
-        return 4 <= sentence_count <= 8 and has_invalidation and has_target and has_confirmation and has_levels
+        return 5 <= sentence_count <= 8 and has_trigger and has_invalidation and has_target and has_confirmation and has_levels
 
     @classmethod
     def _compose_professional_narrative(
@@ -556,23 +563,22 @@ class TradeIdeaService:
         stop_loss = cls._extract_level(row, "stopLoss", "stop_loss")
         take_profit = cls._extract_level(row, "takeProfit", "take_profit")
         trade_plan = row.get("trade_plan") if isinstance(row.get("trade_plan"), dict) else {}
+        analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
         current_price = cls._extract_level(market_context, "current_price")
         structure_text = {"bullish": "восходящую", "bearish": "нисходящую", "neutral": "боковую"}.get(direction, "рабочую")
-        liquidity_side = {"bullish": "сверху", "bearish": "снизу", "neutral": "по обе стороны диапазона"}.get(direction, "рядом")
-        structure_event = {"bullish": "BOS вверх", "bearish": "CHOCH/BOS вниз", "neutral": "работы внутри диапазона"}.get(direction, "текущего импульса")
         zone_text = entry if entry != "—" else current_price
         target_text = take_profit if take_profit != "—" else cls._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2")) or target.rstrip(".")
         context_hint = re.sub(r"\s+", " ", str(idea_context or summary or direct_text or "")).strip()
         context_hint = re.sub(r"\bHTF\b|\bMTF\b|\bLTF\b|bias|continuation|desk-level|mitigation|displacement|dealing range", "", context_hint, flags=re.IGNORECASE)
-        context_hint = re.sub(r"\s+", " ", context_hint).strip(" .,-")
-
-        confirmation_core = re.sub(r"\s+", " ", str(trigger or trade_plan.get("entry_trigger") or "")).strip().rstrip(".")
-        if confirmation_core:
-            confirmation_text = f"Подтверждение — {confirmation_core[0].lower() + confirmation_core[1:] if len(confirmation_core) > 1 else confirmation_core}."
-        elif zone_text != "—":
-            confirmation_text = f"Подтверждение — реакция от {zone_text}, импульс в сторону сценария и удержание локальной структуры."
-        else:
-            confirmation_text = "Подтверждение — явный импульс в сторону сценария и удержание локальной структуры."
+        context_hint = cls._strip_analysis_labels(re.sub(r"\s+", " ", context_hint).strip(" .,-"))
+        trigger_text = cls._build_trigger_sentence(trigger, direction=direction, zone_text=zone_text, target_text=target_text)
+        confirmation_text = cls._build_confirmation_sentence(
+            direction=direction,
+            analysis=analysis,
+            market_context=market_context,
+            context_hint=context_hint,
+            zone_text=zone_text,
+        )
 
         invalidation_core = re.sub(r"\s+", " ", str(invalidation or trade_plan.get("invalidation") or "Сценарий отменяется при сломе структуры.")).strip().rstrip(".")
         if stop_loss != "—" and stop_loss not in invalidation_core:
@@ -586,31 +592,135 @@ class TradeIdeaService:
             first_sentence += f", цена сейчас около {current_price}"
         if zone_text != "—":
             first_sentence += f" и рядом с зоной {zone_text}"
+        first_sentence += f", поэтому рынок читается как {cls._market_phase_phrase(direction)}."
         sentences.append(first_sentence)
-
-        if context_hint and len(context_hint.split()) <= 18 and not re.search(r"\d", context_hint):
-            sentences.append(context_hint)
-
+        sentences.append(
+            f"Зона {zone_text} работает как SMC/ICT-область реакции, {cls._wave_phrase(direction)}, а по Wyckoff это больше похоже на фазу {cls._wyckoff_phase(direction)}, где ликвидность тянет цену к {target_text}."
+        )
+        scenario_sentence = f"Основной сценарий — {'лонг' if direction == 'bullish' else 'шорт' if direction == 'bearish' else 'сделка по направлению выхода'}"
         if zone_text != "—":
-            sentences.append(
-                f"Ликвидность {liquidity_side} лежит в районе {target_text}, а после {structure_event} рынок может дать реакцию от зоны {zone_text}."
-            )
-            sentences.append(
-                f"Основной сценарий — вход от {zone_text} с целью на {target_text}, если цена удержит зону и пойдёт по структуре."
-            )
-        else:
-            sentences.append(
-                f"Ликвидность {liquidity_side} лежит в районе {target_text}, поэтому основной сценарий — ждать подтверждение движения к этой цели."
-            )
-
+            scenario_sentence += f" от {zone_text}"
+        if target_text:
+            scenario_sentence += f" с движением к {target_text}"
+        if context_hint and len(context_hint.split()) <= 20:
+            scenario_sentence += f", потому что {context_hint}"
+        sentences.append(f"{scenario_sentence}.")
+        sentences.append(trigger_text)
         sentences.append(confirmation_text)
         sentences.append(invalidation_text)
+        sentences.append(f"Цель — снять ликвидность у {target_text} и держать сценарий только пока структура ведёт цену именно туда.")
 
         narrative = " ".join(cls._clean_sentence(sentence) for sentence in sentences if str(sentence or "").strip())
         narrative = re.sub(r"\s+", " ", narrative).strip()
         if narrative and narrative[-1] not in ".!?":
             narrative = f"{narrative}."
         return narrative or "Идея подготовлена без расширенного narrative-описания."
+
+    @staticmethod
+    def _strip_analysis_labels(text: str) -> str:
+        if not text:
+            return ""
+        clean = re.sub(
+            r"\b(SMC|ICT|Volumes?|Volume Profile|Divergence|Divergences|CumDelta|Sentiment|Wyckoff|Waves?|Patterns?|Pattern|Fundamental|Liquidity)\s*:\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(r"\s+", " ", clean).strip(" .,-")
+
+    @staticmethod
+    def _market_phase_phrase(direction: str) -> str:
+        return {
+            "bullish": "поиск отката в discount перед продолжением вверх",
+            "bearish": "коррекция в premium перед продолжением вниз",
+            "neutral": "сжатие внутри диапазона перед выходом к ликвидности",
+        }.get(direction, "поиск реакции внутри рабочей зоны")
+
+    @staticmethod
+    def _wave_phrase(direction: str) -> str:
+        return {
+            "bullish": "текущий откат выглядит как коррекционная волна перед новым импульсом",
+            "bearish": "текущий рост больше похож на коррекционную волну перед новым снижением",
+            "neutral": "волновая структура ещё сжимается и ждёт импульса на выход из диапазона",
+        }.get(direction, "волновая структура пока даёт только рабочий каркас")
+
+    @staticmethod
+    def _wyckoff_phase(direction: str) -> str:
+        return {
+            "bullish": "накопления после теста спроса",
+            "bearish": "распределения после теста предложения",
+            "neutral": "range с набором ликвидности по краям",
+        }.get(direction, "переоценки диапазона")
+
+    @classmethod
+    def _build_trigger_sentence(cls, trigger: str, *, direction: str, zone_text: str, target_text: str) -> str:
+        trigger_core = cls._strip_analysis_labels(re.sub(r"\s+", " ", str(trigger or "")).strip().rstrip("."))
+        lowered = trigger_core.casefold()
+        if trigger_core and "триггер" in lowered:
+            normalized = re.sub(r"^нужен\s+", "", trigger_core, flags=re.IGNORECASE)
+            return cls._clean_sentence(f"Триггер — {normalized[0].lower() + normalized[1:] if len(normalized) > 1 else normalized}")
+        if trigger_core:
+            return f"Триггер — {trigger_core[0].lower() + trigger_core[1:] if len(trigger_core) > 1 else trigger_core}."
+        default_map = {
+            "bullish": f"Триггер — возврат в {zone_text}, затем бычье поглощение или пробой локального хая на младшем ТФ, чтобы цена пошла к {target_text}.",
+            "bearish": f"Триггер — тест {zone_text}, затем слабая реакция покупателей и пробой локального лоя на младшем ТФ, чтобы цена пошла к {target_text}.",
+            "neutral": f"Триггер — выход из диапазона у {zone_text} с ретестом границы и удержанием импульса в сторону {target_text}.",
+        }
+        return default_map.get(direction, default_map["neutral"])
+
+    @classmethod
+    def _build_confirmation_sentence(
+        cls,
+        *,
+        direction: str,
+        analysis: dict[str, Any],
+        market_context: dict[str, Any],
+        context_hint: str,
+        zone_text: str,
+    ) -> str:
+        clues: list[str] = []
+        combined_text = " ".join(
+            cls._strip_analysis_labels(str(item or ""))
+            for item in (
+                analysis.get("volume_ru"),
+                analysis.get("divergence_ru"),
+                analysis.get("cumdelta_ru"),
+                analysis.get("cumulative_delta_ru"),
+                analysis.get("pattern_ru"),
+                analysis.get("fundamental_ru"),
+                analysis.get("waves_ru"),
+                analysis.get("wyckoff_ru"),
+                context_hint,
+                market_context.get("patternSummaryRu"),
+            )
+        ).casefold()
+
+        if any(token in combined_text for token in ("клин", "канал", "треуг", "breakout", "пробой", "retest", "ретест")):
+            clues.append("паттерн на младшем ТФ завершает тайминг входа")
+        else:
+            clues.append("локальный паттерн должен закончиться пробоем в сторону сценария")
+
+        if any(token in combined_text for token in ("объ", "volume", "profile")):
+            clues.append("объём не должен поддерживать встречное движение")
+        else:
+            clues.append("рост встречного объёма должен оставаться слабым")
+
+        if any(token in combined_text for token in ("cumdelta", "delta")):
+            clues.append("CumDelta должен смещаться в сторону основного импульса")
+        else:
+            clues.append("delta должна показать агрессию в сторону входа")
+
+        if any(token in combined_text for token in ("диверген", "diverg")):
+            clues.append("дивергенция не должна спорить со сделкой")
+        else:
+            clues.append("осцилляторы не должны давать сильную обратную дивергенцию")
+
+        if any(token in combined_text for token in ("sentiment", "сентимент", "толп")):
+            clues.append("сентимент толпы не должен ломать этот сценарий")
+        else:
+            clues.append("сентимент остаётся только фильтром, а не поводом входить без реакции цены")
+
+        return f"Подтверждение — у зоны {zone_text} {', '.join(clues[:5])}."
 
     @staticmethod
     def _clean_sentence(text: str) -> str:
@@ -835,16 +945,17 @@ class TradeIdeaService:
         target: str,
     ) -> str:
         bias_ru = {
-            "bullish": "long continuation / buy-the-dip",
-            "bearish": "short continuation / sell-the-rally",
-            "neutral": "wait-and-see / breakout validation",
-        }.get(direction, "wait-and-see / breakout validation")
+            "bullish": "лонговый сценарий после отката",
+            "bearish": "шортовый сценарий после коррекции",
+            "neutral": "ожидание выхода из диапазона",
+        }.get(direction, "рабочий сценарий по структуре")
         sentences = [
-            f"{symbol} на {timeframe} торгуется с bias {bias_ru}; приоритет отдаётся сценарию, в котором цена подтверждает идею через структуру, ликвидность и реакцию в рабочей зоне, а не через одиночный импульс.",
+            f"{symbol} на {timeframe} сейчас читается как {bias_ru}, где решение строится вокруг структуры, ликвидности и реакции цены в рабочей зоне, а не вокруг одного сигнала.",
             summary,
             idea_context,
-            f"Desk-level чтение здесь такое: триггером служит {trigger.rstrip('.')} а сценарий остаётся валиден только до тех пор, пока не выполнится инвалидация: {invalidation.rstrip('.')}.",
-            f"Если подтверждение сохраняется, базовая траектория движения остаётся к {target.rstrip('.')}.",
+            f"Триггер описан прямо: {trigger.rstrip('.')}, и вход имеет смысл только если объёмы, delta, паттерн и общая фаза рынка поддержат это действие цены.",
+            f"Инвалидация остаётся жёсткой: {invalidation.rstrip('.')}.",
+            f"Если подтверждение пришло, цена должна тянуться к {target.rstrip('.')}.",
         ]
         return " ".join(cls._clean_sentence(item) for item in sentences if str(item or "").strip())
 
@@ -1164,15 +1275,21 @@ class TradeIdeaService:
             "Требования к full_text:\n"
             "- верни ОДИН цельный текст в поле full_text\n"
             "- без заголовков, списков и разделения на блоки\n"
-            "- 4-8 коротких предложений\n"
+            "- 5-8 коротких предложений\n"
             "- стиль: живой комментарий трейдера, без AI-воды и без сложных слов\n"
-            "- сначала дай контекст: структура рынка и где сейчас цена\n"
-            "- затем опиши SMC / ICT логику: где ликвидность, был ли импульс или смена структуры, от какой зоны ждёшь реакцию\n"
-            "- потом дай главный сценарий: откуда вход, куда цель, что должно произойти\n"
-            "- отдельно укажи подтверждение входа и отмену сценария\n"
+            "- сначала дай контекст: структура рынка, где сейчас цена и какая рабочая зона\n"
+            "- затем свяжи SMC / ICT, паттерн, объёмы, дивергенцию, CumDelta, фундаментал, волны, Wyckoff и сентимент в один сценарий, а не в список отдельных блоков\n"
+            "- не пиши форматом 'SMC: ...', 'Volumes: ...', 'Divergence: ...'\n"
+            "- SMC / ICT должны давать зону и структуру, паттерн — тайминг входа, объёмы / CumDelta / дивергенция — подтверждение или слабость, фундаментал — общий bias, Wyckoff и волны — фазу движения, сентимент — фильтр толпы против smart money\n"
+            "- потом дай главный сценарий: откуда вход, куда цель и почему рынок должен пройти именно туда\n"
+            "- обязательно отдельно и ясно пропиши trigger: какое конкретно действие цены должно произойти для входа\n"
+            "- после trigger дай подтверждение: что именно нужно увидеть в объёмах, delta, дивергенции или паттерне\n"
+            "- затем укажи invalidation и target отдельными предложениями внутри того же цельного текста\n"
             "- уровни ОБЯЗАТЕЛЬНО вписывай прямо в текст, например: зона 1.1550-1.1570, цель 1.1600, отмена ниже 1.1525\n"
             "- не используй заумные слова вроде desk-level, continuation bias, mitigation, dealing range, displacement, premium array\n"
-            "- обязательно включи основной сценарий, подтверждение, invalidation, цель и логику движения цены\n"
+            "- текст должен читаться как execution-ready setup, а не как обзор рынка\n"
+            "- не пиши абстракции вроде 'при подтверждении' без объяснения, что именно является подтверждением\n"
+            "- обязательно включи основной сценарий, trigger, подтверждение, invalidation, цель и логику движения цены\n"
             "- если каких-то данных нет, не выдумывай их; опирайся только на цену и переданный контекст\n\n"
             "ЖЁСТКИЕ ПРАВИЛА ПО УРОВНЯМ:\n"
             "- Use latest_close as the ONLY valid market reference.\n"
@@ -1322,11 +1439,12 @@ class TradeIdeaService:
             "direction": direction,
             "confidence": raw_row.get("confidence", 62) if raw_row else 62,
             "full_text": (
-                f"{symbol} на {timeframe} использует запасной сценарий, потому что AI-уровни не прошли проверку. "
-                f"Цена сейчас около {self._format_price(latest_close)}, поэтому вход оставлен рядом с рынком — {self._format_price(entry)}. "
-                f"Основной сценарий — работать от {self._format_price(entry)} к {self._format_price(take_profit)} только после подтверждения импульса. "
+                f"{symbol} на {timeframe} остаётся в рабочей структуре, а fallback использует только актуальную цену около {self._format_price(latest_close)} и зону {self._format_price(entry)}. "
+                f"Основной сценарий — {'лонг' if direction == 'bullish' else 'шорт' if direction == 'bearish' else 'работа по факту выхода'} от {self._format_price(entry)} к {self._format_price(take_profit)}, потому что ближайшая ликвидность стоит именно там. "
+                f"Триггер — реакция от {self._format_price(entry)} и пробой локальной микроструктуры в сторону сценария на младшем ТФ. "
+                f"Подтверждение — встречный объём должен слабеть, delta должна смещаться в сторону сделки, а паттерн не должен спорить со входом. "
                 f"Сценарий отменяется при пробое {self._format_price(stop_loss)}. "
-                f"Причина fallback: {reason}."
+                f"Цель — снять ликвидность у {self._format_price(take_profit)}; fallback включён, потому что исходный AI-текст не прошёл валидацию: {reason}."
             ),
             "entry": round(entry, precision),
             "stopLoss": round(stop_loss, precision),
