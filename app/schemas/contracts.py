@@ -60,6 +60,7 @@ __all__ = [
     "HeatmapResponse",
     "LiquidityZone",
     "MarketIdeasResponse",
+    "MarketNewsResponse",
     "MarketSnapshotResponse",
     "Mt4BridgeResponse",
     "Mt4BridgeSignal",
@@ -172,6 +173,11 @@ class Mt4ExportResponse(BaseModel):
 class MarketIdeasResponse(BaseModel):
     updated_at_utc: datetime
     ideas: list[dict[str, Any]]
+
+
+class MarketNewsResponse(BaseModel):
+    updated_at_utc: datetime
+    news: list[dict[str, Any]]
 
 
 class NewsSignalRelation(BaseModel):

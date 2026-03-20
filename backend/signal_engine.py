@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from uuid import uuid4
 
 from backend.data_provider import DataProvider
 from backend.feature_builder import FeatureBuilder
 from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
+from backend.sentiment_provider import build_sentiment_provider
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
 TIMEFRAME_STACKS = {
@@ -25,12 +27,15 @@ class SignalEngine:
         self.feature_builder = FeatureBuilder()
         self.pattern_detector = PatternDetector()
         self.risk_engine = RiskEngine()
+        self.sentiment_provider = build_sentiment_provider()
+        self.sentiment_weight = float(os.getenv("SENTIMENT_WEIGHT", "0.12"))
 
     async def generate_live_signals(self, pairs: list[str], timeframes: list[str] | None = None) -> list[dict]:
         output: list[dict] = []
         requested_timeframes = self._normalize_timeframes(timeframes)
         for symbol in pairs:
             snapshots_cache: dict[str, dict] = {}
+            sentiment = self.sentiment_provider.get_snapshot(symbol)
             for timeframe in requested_timeframes:
                 stack = TIMEFRAME_STACKS[timeframe]
                 htf = await self._snapshot_for(symbol, stack["htf"], snapshots_cache)
@@ -50,6 +55,7 @@ class SignalEngine:
                         htf_features,
                         mtf_features,
                         ltf_features,
+                        sentiment.model_dump(mode="json"),
                     )
                 )
         return output
@@ -79,6 +85,7 @@ class SignalEngine:
         htf_features: dict,
         mtf_features: dict,
         ltf_features: dict,
+        sentiment: dict,
     ) -> dict:
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
@@ -148,6 +155,11 @@ class SignalEngine:
                 pattern_impact,
             )
 
+        sentiment_alignment = self._sentiment_alignment(action, sentiment)
+        sentiment_delta = self._sentiment_delta(sentiment_alignment, sentiment)
+        confidence += sentiment_delta
+        confidence = max(45, min(confidence, 92))
+
         progress = self._build_progress(action, price, price, stop, take)
         signal_time = datetime.now(timezone.utc).isoformat()
         pattern_summary_ru = mtf_pattern_summary.get("patternSummaryRu") or "Явные графические паттерны не обнаружены"
@@ -179,6 +191,8 @@ class SignalEngine:
             "progress": progress,
             "data_status": mtf["data_status"],
             "created_at_utc": signal_time,
+            "idea_id": self._idea_id(symbol, timeframe, action, mtf_pattern_summary),
+            "sentiment": sentiment,
             "chart_patterns": mtf_patterns,
             "pattern_summary": mtf_pattern_summary,
             "pattern_signal_impact": pattern_impact,
@@ -197,6 +211,8 @@ class SignalEngine:
                 "patternScore": mtf_pattern_summary.get("patternScore", 0.0),
                 "patternBias": mtf_pattern_summary.get("patternBias", "neutral"),
                 "patternAlignment": pattern_impact.get("patternAlignmentWithSignal", "neutral"),
+                "sentimentAlignment": sentiment_alignment,
+                "sentimentImpact": round(sentiment_delta / 100, 4),
             },
         }
 
@@ -241,6 +257,8 @@ class SignalEngine:
             },
             "data_status": snapshot.get("data_status", "unavailable"),
             "created_at_utc": signal_time,
+            "idea_id": self._idea_id(symbol, timeframe, "NO_TRADE", summary),
+            "sentiment": snapshot.get("sentiment") or {},
             "chart_patterns": chart_patterns or [],
             "pattern_summary": summary,
             "pattern_signal_impact": impact,
@@ -253,6 +271,31 @@ class SignalEngine:
                 "patternSummaryRu": summary.get("patternSummaryRu", "Явные графические паттерны не обнаружены"),
             },
         }
+
+    def _sentiment_alignment(self, action: str, sentiment: dict) -> str:
+        bias = sentiment.get("contrarian_bias", "neutral")
+        if action == "BUY" and bias == "bullish":
+            return "aligns"
+        if action == "SELL" and bias == "bearish":
+            return "aligns"
+        if action in {"BUY", "SELL"} and bias in {"bullish", "bearish"}:
+            return "conflicts"
+        return "neutral"
+
+    def _sentiment_delta(self, alignment: str, sentiment: dict) -> int:
+        if sentiment.get("data_status") == "unavailable":
+            return 0
+        scaled = round(float(sentiment.get("confidence", 0.0)) * self.sentiment_weight * 100)
+        if alignment == "aligns":
+            return scaled
+        if alignment == "conflicts":
+            return -scaled
+        return 0
+
+    @staticmethod
+    def _idea_id(symbol: str, timeframe: str, action: str, pattern_summary: dict) -> str:
+        pattern = pattern_summary.get("dominantPattern", "structure")
+        return f"idea-{symbol.lower()}-{timeframe.lower()}-{action.lower()}-{pattern}"
 
     def _build_progress(self, action: str, current_price: float, entry: float, stop: float, take: float) -> dict:
         total_path = abs(take - entry)

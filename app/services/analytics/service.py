@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 
 from app.schemas.analytics import (
     AnalyticsCapabilityResponse,
     AnalyticsSignalResponse,
     AnalyticsStubDescriptor,
+    SentimentSnapshot,
 )
 from app.services.analytics.composite import CompositeSignalScoringService
 from app.services.analytics.connectors import (
@@ -30,6 +32,7 @@ from app.services.analytics.providers import (
     StubEconomicCalendarProvider,
 )
 from backend.signal_engine import SignalEngine
+from backend.sentiment_provider import build_sentiment_provider
 
 
 class SignalAnalyticsService:
@@ -46,6 +49,8 @@ class SignalAnalyticsService:
         self.feature_extractor = AnalyticsFeatureExtractor()
         self.fundamental_service = FundamentalScoringService()
         self.composite_service = CompositeSignalScoringService()
+        self.sentiment_provider = build_sentiment_provider()
+        self.sentiment_weight = float(os.getenv("SENTIMENT_WEIGHT", "0.12"))
 
     async def build_signal_analytics(self, symbol: str) -> AnalyticsSignalResponse:
         symbol = symbol.upper().strip()
@@ -56,6 +61,7 @@ class SignalAnalyticsService:
         raw_options = await self.options_connector.load(symbol)
         raw_news = await self.news_connector.load(symbol)
         raw_calendar = await self.calendar_connector.load(symbol)
+        sentiment = SentimentSnapshot(**self.sentiment_provider.get_snapshot(symbol).model_dump(mode="json"))
 
         bundle = self.normalizer.normalize_bundle(
             symbol=symbol,
@@ -81,10 +87,12 @@ class SignalAnalyticsService:
             pattern_summary=pattern_summary,
             pattern_signal_impact=pattern_signal_impact,
         )
-        composite = self.composite_service.score(
+        composite, breakdown, sentiment_impact = self.composite_service.score(
             technical_signal=technical_signal,
             features=features,
             fundamental=fundamental,
+            sentiment_score=sentiment.sentiment_score,
+            sentiment_weight=self.sentiment_weight,
         )
         return AnalyticsSignalResponse(
             symbol=symbol,
@@ -92,7 +100,10 @@ class SignalAnalyticsService:
             normalized=bundle,
             features=features,
             fundamental=fundamental,
+            sentiment=sentiment,
             composite=composite,
+            compositeScoreBreakdown=breakdown,
+            sentimentImpact=sentiment_impact,
             technical_score_source=technical_source,
             chartPatterns=chart_patterns,
             patternSummary=pattern_summary,
@@ -113,6 +124,7 @@ class SignalAnalyticsService:
                 AnalyticsStubDescriptor(dataset="news_feed", status="working", detail_ru="Работает реальный RSS news connector + normalization + fundamental/news scoring."),
                 AnalyticsStubDescriptor(dataset="economic_calendar", status="stub", detail_ru="Пока только типизированная заглушка и API contract без верифицированного live source."),
                 AnalyticsStubDescriptor(dataset="chart_patterns", status="working", detail_ru="Работает эвристический detector графических паттернов и интеграция в composite score."),
+                AnalyticsStubDescriptor(dataset="sentiment", status="working", detail_ru="Работает sentiment layer с безопасным mock/external provider и contrarian scoring без выдуманного OANDA API."),
                 AnalyticsStubDescriptor(dataset="composite_signal_score", status="working", detail_ru="Работает сводный score из technical/patterns/orderflow/derivatives/fundamental."),
             ],
         )

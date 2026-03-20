@@ -13,6 +13,7 @@ ImpactLevel = Literal["low", "medium", "high"]
 SentimentDirection = Literal["bullish", "bearish", "neutral"]
 OptionType = Literal["call", "put"]
 TradeSide = Literal["buy", "sell", "unknown"]
+SentimentDataStatus = Literal["live", "mock", "unavailable"]
 
 
 class SourceDescriptor(BaseModel):
@@ -190,8 +191,25 @@ class FundamentalScoreSummary(BaseModel):
     items: list[FundamentalComponentScore] = Field(default_factory=list)
 
 
+class SentimentSnapshot(BaseModel):
+    symbol: str
+    source: str
+    timestamp: datetime
+    long_pct: float
+    short_pct: float
+    net_long_pct: float
+    net_short_pct: float
+    retail_bias: SentimentDirection
+    contrarian_bias: SentimentDirection
+    extreme: bool
+    extreme_level: float
+    sentiment_score: float
+    confidence: float
+    data_status: SentimentDataStatus
+
+
 class ScoreComponent(BaseModel):
-    name: Literal["technical", "patterns", "orderflow", "derivatives", "fundamental"]
+    name: Literal["technical", "patterns", "orderflow", "derivatives", "fundamental", "sentiment"]
     raw_signal: float
     weight: float
     weighted_contribution: float
@@ -217,7 +235,10 @@ class AnalyticsSignalResponse(BaseModel):
     normalized: NormalizedAnalyticsBundle
     features: FeatureExtractionResult
     fundamental: FundamentalScoreSummary
+    sentiment: SentimentSnapshot
     composite: CompositeSignalScore
+    composite_score_breakdown: dict[str, float] = Field(default_factory=dict, alias="compositeScoreBreakdown")
+    sentiment_impact: float = Field(default=0.0, alias="sentimentImpact")
     technical_score_source: str
     chart_patterns: list[DetectedChartPattern] = Field(default_factory=list, alias="chartPatterns")
     pattern_summary: PatternAnalysisSummary = Field(default_factory=PatternAnalysisSummary, alias="patternSummary")
