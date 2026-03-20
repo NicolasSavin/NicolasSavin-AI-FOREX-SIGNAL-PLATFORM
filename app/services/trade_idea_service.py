@@ -29,11 +29,9 @@ OPENROUTER_IDEA_SPECS = [
     ("EURGBP", "H1"),
     ("EURCHF", "H4"),
 ]
-MAX_ENTRY_DEVIATION_PCT = {
-    "M15": 0.3,
-    "H1": 0.5,
-    "H4": 1.0,
-}
+LEVEL_ENTRY_MAX_DEVIATION_PCT = 0.5
+LEVEL_STOP_LOSS_OFFSET = 0.0020
+LEVEL_TAKE_PROFIT_OFFSET = 0.0040
 CANDLE_CONTEXT_COUNT = 40
 DEMO_FALLBACK_IDEAS = [
     {
@@ -1349,6 +1347,7 @@ class TradeIdeaService:
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "latest_close": float(latest_close),
+                "current_price": float(latest_close),
                 "recent_candles": candles[-CANDLE_CONTEXT_COUNT:],
                 "market_context": {
                     "source": chart_payload.get("source"),
@@ -1367,6 +1366,7 @@ class TradeIdeaService:
                 "symbol": ref["symbol"],
                 "timeframe": ref["timeframe"],
                 "latest_close": ref["latest_close"],
+                "current_price": ref.get("current_price", ref["latest_close"]),
                 "recent_candles": ref["recent_candles"],
                 "market_context": ref["market_context"],
             }
@@ -1401,17 +1401,16 @@ class TradeIdeaService:
             "- итог должен звучать как реальный trading setup трейдера: 5-8 предложений, без воды, с чётким reason/trigger/invalidation\n"
             "- если каких-то данных нет, не выдумывай их; опирайся только на цену и переданный контекст\n\n"
             "ЖЁСТКИЕ ПРАВИЛА ПО УРОВНЯМ:\n"
-            "- Use latest_close as the ONLY valid market reference.\n"
-            "- Your entry MUST be near latest_close.\n"
-            "- DO NOT generate prices from another market regime.\n"
-            "- All levels must be realistic relative to current price.\n"
-            "- Intraday setups MUST stay close to current market price.\n"
-            "- If levels are not aligned with latest_close, the response is invalid.\n"
-            "- Return levels consistent with direction and current price context.\n"
+            "- Use current_price (equal to latest_close) as the ONLY valid market reference.\n"
+            "- Pass current_price directly into your reasoning and DO NOT invent prices from another market regime.\n"
+            "- BUY / bullish formula: entry = current_price, stopLoss = current_price - 0.0020, takeProfit = current_price + 0.0040.\n"
+            "- SELL / bearish formula: entry = current_price, stopLoss = current_price + 0.0020, takeProfit = current_price - 0.0040.\n"
+            "- Entry MUST stay within ±0.5% of current_price.\n"
+            "- If levels are not aligned with current_price, the response is invalid.\n"
+            "- DO NOT generate artificial levels or prices 'from your head'.\n"
             "- Для bullish: stopLoss < entry < takeProfit.\n"
             "- Для bearish: takeProfit < entry < stopLoss.\n"
-            "- Для neutral не делай агрессивный directional setup без основания; уровни должны оставаться осторожными и близкими к текущему рынку.\n"
-            "- Deviation limits for entry vs latest_close: M15 <= 0.3%, H1 <= 0.5%, H4 <= 1.0%.\n\n"
+            "- Для neutral не делай агрессивный directional setup без основания; уровни должны оставаться осторожными и близкими к current_price.\n\n"
             "Верни строго JSON array и ничего кроме него.\n\n"
             f"contexts = {json.dumps(contexts, ensure_ascii=False)}"
         )
@@ -1444,13 +1443,17 @@ class TradeIdeaService:
 
     def _validate_ai_levels(self, row: dict[str, Any], reference: dict[str, Any]) -> dict[str, Any]:
         latest_close = float(reference["latest_close"])
+        current_price = float(reference.get("current_price", latest_close))
         direction = self._extract_direction(row)
-        timeframe = reference["timeframe"]
-        precision = self._price_precision(latest_close)
+        precision = self._price_precision(current_price)
         entry = self._extract_numeric_level(row, "entry", "entry_zone")
         stop_loss = self._extract_numeric_level(row, "stopLoss", "stop_loss")
         take_profit = self._extract_numeric_level(row, "takeProfit", "take_profit")
-        deviation_pct = abs((entry - latest_close) / latest_close) * 100 if entry is not None and latest_close else 0.0
+        expected_entry, expected_stop_loss, expected_take_profit = self._derive_market_aligned_levels(
+            current_price=current_price,
+            direction=direction,
+        )
+        deviation_pct = abs((entry - current_price) / current_price) * 100 if entry is not None and current_price else 0.0
 
         validation_errors: list[str] = []
         for label, value in (("entry", entry), ("stopLoss", stop_loss), ("takeProfit", take_profit)):
@@ -1458,7 +1461,7 @@ class TradeIdeaService:
                 validation_errors.append(f"{label}_missing")
 
         if entry is not None:
-            max_deviation_pct = MAX_ENTRY_DEVIATION_PCT.get(timeframe, 1.0)
+            max_deviation_pct = LEVEL_ENTRY_MAX_DEVIATION_PCT
             if deviation_pct > max_deviation_pct:
                 validation_errors.append(f"entry_deviation_exceeded:{deviation_pct:.3f}>{max_deviation_pct:.3f}")
 
@@ -1468,9 +1471,15 @@ class TradeIdeaService:
             elif direction == "bearish" and not (take_profit < entry < stop_loss):
                 validation_errors.append("bearish_inconsistent")
             elif direction == "neutral":
-                neutral_deviation_pct = abs((take_profit - stop_loss) / latest_close) * 100 if latest_close else 0.0
-                if neutral_deviation_pct > MAX_ENTRY_DEVIATION_PCT.get(timeframe, 1.0) * 3:
+                neutral_deviation_pct = abs((take_profit - stop_loss) / current_price) * 100 if current_price else 0.0
+                if neutral_deviation_pct > LEVEL_ENTRY_MAX_DEVIATION_PCT * 2:
                     validation_errors.append("neutral_too_aggressive")
+            if not self._levels_match_expected(
+                actual=(entry, stop_loss, take_profit),
+                expected=(expected_entry, expected_stop_loss, expected_take_profit),
+                precision=precision,
+            ):
+                validation_errors.append("levels_not_rebased_to_current_price")
 
         if validation_errors:
             fallback = self._build_market_aligned_fallback_idea(reference, raw_row=row, reason=";".join(validation_errors))
@@ -1487,20 +1496,22 @@ class TradeIdeaService:
             return fallback
 
         payload = dict(row)
-        payload["entry"] = round(entry, precision)
-        payload["stopLoss"] = round(stop_loss, precision)
-        payload["takeProfit"] = round(take_profit, precision)
+        payload["entry"] = round(expected_entry, precision)
+        payload["stopLoss"] = round(expected_stop_loss, precision)
+        payload["takeProfit"] = round(expected_take_profit, precision)
         payload["latest_close"] = latest_close
-        payload["market_reference_price"] = latest_close
+        payload["current_price"] = current_price
+        payload["market_reference_price"] = current_price
         payload["entry_deviation_pct"] = round(deviation_pct, 4)
         payload["levels_validated"] = True
-        payload["levels_source"] = "ai"
+        payload["levels_source"] = "current_price_formula"
         payload["validation_errors"] = []
         payload["meta"] = {
             "latest_close": latest_close,
+            "current_price": current_price,
             "entry_deviation_pct": payload["entry_deviation_pct"],
             "levels_validated": True,
-            "levels_source": "ai",
+            "levels_source": "current_price_formula",
         }
         return payload
 
@@ -1529,15 +1540,13 @@ class TradeIdeaService:
         symbol = reference["symbol"]
         timeframe = reference["timeframe"]
         latest_close = float(reference["latest_close"])
+        current_price = float(reference.get("current_price", latest_close))
         candles = reference["recent_candles"]
         first_close = float(candles[0]["close"])
         direction = "bullish" if latest_close > first_close else "bearish" if latest_close < first_close else "neutral"
-        precision = self._price_precision(latest_close)
-        entry = latest_close
-        stop_loss, take_profit = self._derive_fallback_levels(
-            candles=candles,
-            latest_close=latest_close,
-            timeframe=timeframe,
+        precision = self._price_precision(current_price)
+        entry, stop_loss, take_profit = self._derive_market_aligned_levels(
+            current_price=current_price,
             direction=direction,
         )
 
@@ -1548,7 +1557,7 @@ class TradeIdeaService:
             "direction": direction,
             "confidence": raw_row.get("confidence", 62) if raw_row else 62,
             "full_text": (
-                f"{symbol} на {timeframe} остаётся в рабочей структуре, а fallback использует только актуальную цену около {self._format_price(latest_close)} и зону {self._format_price(entry)}. "
+                f"{symbol} на {timeframe} остаётся в рабочей структуре, а fallback использует только актуальную цену около {self._format_price(current_price)} и зону {self._format_price(entry)}. "
                 f"Основной сценарий — {'лонг' if direction == 'bullish' else 'шорт' if direction == 'bearish' else 'работа по факту выхода'} от {self._format_price(entry)} к {self._format_price(take_profit)}, потому что ближайшая ликвидность стоит именно там. "
                 f"Триггер — реакция от {self._format_price(entry)} и пробой локальной микроструктуры в сторону сценария на младшем ТФ. "
                 f"Подтверждение — встречный объём должен слабеть, delta должна смещаться в сторону сделки, а паттерн не должен спорить со входом. "
@@ -1560,7 +1569,8 @@ class TradeIdeaService:
             "takeProfit": round(take_profit, precision),
             "tags": ["validated", "fallback", timeframe, symbol],
             "latest_close": latest_close,
-            "market_reference_price": latest_close,
+            "current_price": current_price,
+            "market_reference_price": current_price,
             "entry_deviation_pct": 0.0,
             "levels_validated": False,
             "levels_source": "fallback",
@@ -1568,76 +1578,43 @@ class TradeIdeaService:
             "is_fallback": True,
             "meta": {
                 "latest_close": latest_close,
+                "current_price": current_price,
                 "entry_deviation_pct": 0.0,
                 "levels_validated": False,
                 "levels_source": "fallback",
             },
         }
 
-    def _derive_fallback_levels(
+    def _derive_market_aligned_levels(
         self,
         *,
-        candles: list[dict[str, Any]],
-        latest_close: float,
-        timeframe: str,
+        current_price: float,
         direction: str,
-    ) -> tuple[float, float]:
-        precision = self._price_precision(latest_close)
-        max_band_pct = MAX_ENTRY_DEVIATION_PCT.get(timeframe, 1.0) / 100
-        swing_highs, swing_lows = self._find_swings(candles)
-        all_highs = sorted({float(candle["high"]) for candle in candles if float(candle["high"]) > latest_close})
-        all_lows = sorted({float(candle["low"]) for candle in candles if float(candle["low"]) < latest_close}, reverse=True)
-
-        nearest_swing_high = next((level for level in swing_highs if level > latest_close), None)
-        nearest_swing_low = next((level for level in swing_lows if level < latest_close), None)
-        nearest_range_high = all_highs[0] if all_highs else latest_close * (1 + max_band_pct)
-        nearest_range_low = all_lows[0] if all_lows else latest_close * (1 - max_band_pct)
-
-        if direction == "bullish":
-            stop_loss = nearest_swing_low or nearest_range_low
-            take_profit = nearest_swing_high or nearest_range_high
-            if take_profit <= latest_close:
-                take_profit = latest_close * (1 + max_band_pct)
-            if stop_loss >= latest_close:
-                stop_loss = latest_close * (1 - max_band_pct)
-        elif direction == "bearish":
-            stop_loss = nearest_swing_high or nearest_range_high
-            take_profit = nearest_swing_low or nearest_range_low
-            if stop_loss <= latest_close:
-                stop_loss = latest_close * (1 + max_band_pct)
-            if take_profit >= latest_close:
-                take_profit = latest_close * (1 - max_band_pct)
+    ) -> tuple[float, float, float]:
+        precision = self._price_precision(current_price)
+        entry = round(current_price, precision)
+        if direction == "bearish":
+            stop_loss = current_price + LEVEL_STOP_LOSS_OFFSET
+            take_profit = current_price - LEVEL_TAKE_PROFIT_OFFSET
+        elif direction == "neutral":
+            stop_loss = current_price - LEVEL_STOP_LOSS_OFFSET
+            take_profit = current_price + LEVEL_STOP_LOSS_OFFSET
         else:
-            stop_loss = nearest_swing_low or nearest_range_low
-            take_profit = nearest_swing_high or nearest_range_high
-            if stop_loss >= latest_close:
-                stop_loss = latest_close * (1 - max_band_pct * 0.8)
-            if take_profit <= latest_close:
-                take_profit = latest_close * (1 + max_band_pct * 0.8)
-
-        return round(stop_loss, precision), round(take_profit, precision)
+            stop_loss = current_price - LEVEL_STOP_LOSS_OFFSET
+            take_profit = current_price + LEVEL_TAKE_PROFIT_OFFSET
+        return entry, round(stop_loss, precision), round(take_profit, precision)
 
     @staticmethod
-    def _find_swings(candles: list[dict[str, Any]]) -> tuple[list[float], list[float]]:
-        if len(candles) < 3:
-            highs = sorted({float(candle["high"]) for candle in candles})
-            lows = sorted({float(candle["low"]) for candle in candles}, reverse=True)
-            return highs, lows
-
-        swing_highs: list[float] = []
-        swing_lows: list[float] = []
-        for index in range(1, len(candles) - 1):
-            prev_candle = candles[index - 1]
-            candle = candles[index]
-            next_candle = candles[index + 1]
-            high = float(candle["high"])
-            low = float(candle["low"])
-            if high >= float(prev_candle["high"]) and high >= float(next_candle["high"]):
-                swing_highs.append(high)
-            if low <= float(prev_candle["low"]) and low <= float(next_candle["low"]):
-                swing_lows.append(low)
-
-        return sorted(set(swing_highs)), sorted(set(swing_lows), reverse=True)
+    def _levels_match_expected(
+        *,
+        actual: tuple[float | None, float | None, float | None],
+        expected: tuple[float, float, float],
+        precision: int,
+    ) -> bool:
+        if any(value is None for value in actual):
+            return False
+        rounded_actual = tuple(round(float(value), precision) for value in actual if value is not None)
+        return rounded_actual == expected
 
     @staticmethod
     def _compute_price_change_pct(candles: list[dict[str, Any]]) -> float:

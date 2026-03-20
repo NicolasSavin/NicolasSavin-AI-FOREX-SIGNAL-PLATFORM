@@ -150,9 +150,9 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
                                         "direction": "bullish",
                                         "confidence": 73,
                                         "full_text": "EURUSD сохраняет bullish-структуру на HTF, а на MTF/LTF после отката в demand-зону 1.0851 сохраняется сценарий continuation вверх. Приоритет — long только после импульсного подтверждения от зоны. Сценарий отменяется при потере 1.0837. Цель — buy-side liquidity в районе 1.0879.",
-                                        "entry": 1.0851,
-                                        "stopLoss": 1.0837,
-                                        "takeProfit": 1.0879,
+                                        "entry": 1.0852,
+                                        "stopLoss": 1.0832,
+                                        "takeProfit": 1.0892,
                                         "tags": ["SMC", "M15"],
                                     }
                                 ]
@@ -188,17 +188,17 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert "цель" in payload[0]["summary"]
     assert payload[0]["full_text"].count(".") >= 5
     assert "Почему вход именно здесь" in payload[0]["full_text"]
-    assert "зона 1.0851" in payload[0]["full_text"]
+    assert "зона 1.0852" in payload[0]["full_text"]
     assert "Триггер" in payload[0]["full_text"]
     assert "Сценарий отменяется" in payload[0]["full_text"]
     assert payload[0]["label"] == "BUY IDEA"
     assert payload[0]["latest_close"] == 1.0852
     assert payload[0]["market_reference_price"] == 1.0852
-    assert payload[0]["entry_deviation_pct"] < 0.3
+    assert payload[0]["entry_deviation_pct"] <= 0.5
     assert payload[0]["levels_validated"] is True
-    assert payload[0]["levels_source"] == "ai"
+    assert payload[0]["levels_source"] == "current_price_formula"
     assert payload[0]["meta"]["latest_close"] == 1.0852
-    assert payload[0]["meta"]["levels_source"] == "ai"
+    assert payload[0]["meta"]["levels_source"] == "current_price_formula"
 
 
 def test_build_openrouter_api_ideas_falls_back_with_blank_key(monkeypatch, tmp_path: Path) -> None:
@@ -282,6 +282,8 @@ def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_
     assert eurusd["levels_source"] == "fallback"
     assert eurusd["latest_close"] == 1.1568
     assert abs(float(eurusd["entry"]) - 1.1568) < 0.0001
+    assert abs(float(eurusd["stopLoss"]) - 1.1548) < 0.0001
+    assert abs(float(eurusd["takeProfit"]) - 1.1588) < 0.0001
     assert eurusd["source"] == "openrouter_ai"
     assert eurusd["validation_errors"]
     assert eurusd["meta"]["latest_close"] == 1.1568
@@ -298,6 +300,7 @@ def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_pa
                 "symbol": "EURUSD",
                 "timeframe": "M15",
                 "latest_close": 1.1552,
+                "current_price": 1.1552,
                 "recent_candles": [{"open": 1.1548, "high": 1.1555, "low": 1.1542, "close": 1.1552}] * 40,
                 "market_context": {"summaryRu": "Тест зоны предложения."},
             }
@@ -305,6 +308,8 @@ def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_pa
     )
 
     assert "ПОЧЕМУ вход именно от entry" in prompt
+    assert "current_price" in prompt
+    assert "entry = current_price" in prompt
     assert "order block, FVG / imbalance, liquidity sweep, BOS, CHOCH" in prompt
     assert "trigger не должен быть абстрактным" in prompt
     assert "reason/trigger/invalidation" in prompt
