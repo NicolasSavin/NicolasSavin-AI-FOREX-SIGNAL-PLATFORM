@@ -29,27 +29,42 @@ class ChartDataService:
         self.output_size = int(os.getenv("TWELVEDATA_OUTPUTSIZE", str(DEFAULT_CHART_LIMIT)))
 
     def get_chart(self, symbol: str, timeframe: str) -> dict[str, Any]:
+        logger.info("chart_request_started symbol=%s tf=%s", symbol, timeframe)
+
         normalized_symbol = self._normalize_symbol(symbol)
         normalized_tf = self._normalize_timeframe(timeframe)
+        provider_symbol = self._format_twelvedata_symbol(normalized_symbol)
+        provider_interval = TIMEFRAME_MAPPING.get(normalized_tf)
+
+        logger.info(
+            "chart_request_mapped requested_symbol=%s requested_tf=%s mapped_symbol=%s mapped_tf=%s provider_symbol=%s provider_interval=%s",
+            symbol,
+            timeframe,
+            normalized_symbol,
+            normalized_tf,
+            provider_symbol,
+            provider_interval,
+        )
 
         if normalized_tf not in TIMEFRAME_MAPPING:
-            return self._unavailable_payload(
+            logger.warning("twelvedata_failed symbol=%s tf=%s reason=unsupported_timeframe", normalized_symbol, normalized_tf)
+            return self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Неподдерживаемый таймфрейм для свечного графика.",
             )
 
         if not self.api_key:
-            logger.warning("twelvedata_missing_api_key symbol=%s tf=%s", normalized_symbol, normalized_tf)
-            return self._unavailable_payload(
+            logger.warning("twelvedata_failed symbol=%s tf=%s reason=missing_api_key", normalized_symbol, normalized_tf)
+            return self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Свечной API не настроен: отсутствует TWELVEDATA_API_KEY.",
             )
 
         params = {
-            "symbol": self._format_twelvedata_symbol(normalized_symbol),
-            "interval": TIMEFRAME_MAPPING[normalized_tf],
+            "symbol": provider_symbol,
+            "interval": provider_interval,
             "outputsize": self.output_size,
             "apikey": self.api_key,
             "format": "JSON",
@@ -60,15 +75,15 @@ class ChartDataService:
             response.raise_for_status()
             payload = response.json()
         except requests.RequestException as exc:
-            logger.warning("twelvedata_request_failed symbol=%s tf=%s error=%s", normalized_symbol, normalized_tf, exc)
-            return self._unavailable_payload(
+            logger.warning("twelvedata_failed symbol=%s tf=%s reason=request_exception error=%s", normalized_symbol, normalized_tf, exc)
+            return self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Не удалось загрузить реальные свечные данные из Twelve Data.",
             )
         except ValueError:
-            logger.warning("twelvedata_invalid_json symbol=%s tf=%s", normalized_symbol, normalized_tf)
-            return self._unavailable_payload(
+            logger.warning("twelvedata_failed symbol=%s tf=%s reason=invalid_json", normalized_symbol, normalized_tf)
+            return self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Свечной API вернул некорректный ответ.",
@@ -76,13 +91,13 @@ class ChartDataService:
 
         if payload.get("status") == "error":
             logger.warning(
-                "twelvedata_api_error symbol=%s tf=%s code=%s message=%s",
+                "twelvedata_failed symbol=%s tf=%s reason=api_error code=%s message=%s",
                 normalized_symbol,
                 normalized_tf,
                 payload.get("code"),
                 payload.get("message"),
             )
-            return self._unavailable_payload(
+            return self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru=f"Twelve Data недоступен: {payload.get('message') or 'неизвестная ошибка'}.",
@@ -90,11 +105,14 @@ class ChartDataService:
 
         candles = self._normalize_candles(payload.get("values"))
         if not candles:
-            return self._unavailable_payload(
+            logger.warning("twelvedata_failed symbol=%s tf=%s reason=empty_candles", normalized_symbol, normalized_tf)
+            return self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Свечной API не вернул candles для выбранной идеи.",
             )
+
+        logger.info("twelvedata_success symbol=%s tf=%s candles=%s", normalized_symbol, normalized_tf, len(candles))
 
         return {
             "symbol": normalized_symbol,
@@ -105,7 +123,7 @@ class ChartDataService:
             "candles": candles,
             "meta": {
                 "provider": "Twelve Data",
-                "interval": TIMEFRAME_MAPPING[normalized_tf],
+                "interval": provider_interval,
                 "outputsize": len(candles),
             },
         }
@@ -176,8 +194,8 @@ class ChartDataService:
         except (TypeError, ValueError):
             return None
 
-    @staticmethod
-    def _unavailable_payload(*, symbol: str, timeframe: str, message_ru: str) -> dict[str, Any]:
+    @classmethod
+    def build_unavailable_payload(cls, *, symbol: str, timeframe: str, message_ru: str) -> dict[str, Any]:
         return {
             "symbol": symbol,
             "timeframe": timeframe,

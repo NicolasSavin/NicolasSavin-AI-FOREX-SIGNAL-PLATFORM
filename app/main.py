@@ -237,7 +237,15 @@ async def analytics_signal(symbol: str) -> AnalyticsSignalResponse:
 @app.get("/api/chart/{symbol}/{tf}")
 async def api_chart(symbol: str, tf: str | None = None):
     chart_tf = (tf or "H1").upper()
-    return await asyncio.to_thread(chart_data_service.get_chart, symbol, chart_tf)
+    try:
+        return await asyncio.to_thread(chart_data_service.get_chart, symbol, chart_tf)
+    except Exception:
+        logger.exception("chart_route_failed symbol=%s tf=%s", symbol, chart_tf)
+        return chart_data_service.build_unavailable_payload(
+            symbol=chart_data_service._normalize_symbol(symbol),
+            timeframe=chart_tf,
+            message_ru="Свечной API временно недоступен. Попробуйте обновить detail-view позже.",
+        )
 
 
 @app.post("/api/chat", response_model=ChatResponse)
