@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 # =========================
 # API KEY
 # =========================
@@ -44,6 +46,11 @@ class GrokIdeaService:
         }
 
     def build_idea_payload(self, ctx: dict) -> dict:
+        options_text = self._build_options_text(ctx, ctx.get("symbol"), ctx.get("direction"))
+        tags = list(ctx.get("tags", ["SMC", "Liquidity"]))
+        if not options_text:
+            tags = [tag for tag in tags if str(tag).strip().lower() != "options"]
+
         return {
             "symbol": ctx.get("symbol"),
             "direction": ctx.get("direction"),
@@ -51,12 +58,12 @@ class GrokIdeaService:
             "timeframe": ctx.get("timeframe", "Intraday"),
             "summary": ctx.get("entry_logic", ""),
             "technical": ", ".join(ctx.get("confirmations", [])),
-            "options": ctx.get("options_context", ""),
+            "options": options_text,
             "scenario": ctx.get("scenario", ""),
             "targets": ctx.get("targets", ""),
             "invalidation": ctx.get("invalidation", ""),
             "image": ctx.get("image", "/static/default-chart.png"),
-            "tags": ctx.get("tags", ["SMC", "Liquidity"]),
+            "tags": tags,
         }
 
     def generate_trade_idea(self, ctx: dict) -> dict | None:
@@ -96,7 +103,7 @@ class GrokIdeaService:
         label = "WATCH" if direction == "NEUTRAL" else "SETUP"
 
         technical_points = self._build_technical_points(direction, instrument, summary_ru)
-        options_text = self._build_options_text(instrument, direction)
+        options_text = self._build_options_text(news_item, instrument, direction)
         scenario_text = self._build_scenario_text(instrument, direction)
         targets_text = self._build_targets_text(instrument, direction)
         invalidation_text = self._build_invalidation_text(instrument, direction)
@@ -116,7 +123,7 @@ class GrokIdeaService:
             "targets": targets_text,
             "invalidation": invalidation_text,
             "image": None,
-            "tags": self._build_tags(direction),
+            "tags": self._build_tags(direction, include_options=bool(options_text)),
 
             # old/current site fields used by existing templates
             "title": title,
@@ -131,6 +138,7 @@ class GrokIdeaService:
                 "waves_ru": self._build_waves_text(direction),
                 "volume_ru": self._build_volume_text(direction),
                 "liquidity_ru": self._build_liquidity_text(direction),
+                "options_ru": options_text,
             },
             "trade_plan": {
                 "bias": bias,
@@ -201,20 +209,82 @@ class GrokIdeaService:
             f"Нужна дополнительная реакция цены."
         )
 
-    def _build_options_text(self, instrument: str, direction: str) -> str:
-        if direction == "LONG":
-            return (
-                f"По {instrument} стоит учитывать опционные уровни выше текущей цены: "
-                f"рынок может тянуться к ним как к цели, а хеджирование фьючерсов через опционы усиливает движение."
-            )
+    def _build_options_text(self, payload: dict | None, instrument: str | None, direction: str | None) -> str:
+        levels = self._collect_option_levels(payload)
+        symbol = instrument or "инструменту"
+        if not any(levels.values()):
+            return ""
+
+        option_levels = levels["option_levels"]
+        gamma_levels = levels["gamma_levels"]
+        expiry_levels = levels["expiry_levels"]
+        parts: list[str] = []
+
+        if option_levels:
+            parts.append(f"крупный опцион на {self._join_levels(option_levels)}")
+        if gamma_levels:
+            parts.append(f"gamma-уровни на {self._join_levels(gamma_levels)}")
+        if expiry_levels:
+            parts.append(f"экспирационные уровни на {self._join_levels(expiry_levels)}")
+
+        prefix = f"По {symbol} зона усиливается наличием "
         if direction == "SHORT":
-            return (
-                f"По {instrument} опционные уровни ниже могут выступать магнитом для цены. "
-                f"Также возможно давление из-за хеджирования фьючерсов через опционы."
-            )
-        return (
-            f"По {instrument} опционный фон пока нейтральный: уровень интереса стоит учитывать как дополнительный фильтр сценария."
-        )
+            prefix = f"По {symbol} давление продавцов подтверждается через "
+        elif direction == "NEUTRAL":
+            prefix = f"По {symbol} в сценарии учитываются только реальные опционные уровни: "
+
+        return prefix + "; ".join(parts) + "."
+
+    def _collect_option_levels(self, payload: dict | None) -> dict[str, list[str]]:
+        source = payload or {}
+        return {
+            "option_levels": self._normalize_level_values(source.get("option_levels")),
+            "gamma_levels": self._normalize_level_values(source.get("gamma_levels")),
+            "expiry_levels": self._normalize_level_values(source.get("expiry_levels")),
+        }
+
+    def _normalize_level_values(self, raw: object) -> list[str]:
+        values: list[str] = []
+        if raw is None:
+            return values
+
+        if isinstance(raw, dict):
+            candidates: Iterable[object] = raw.values()
+        elif isinstance(raw, (list, tuple, set)):
+            candidates = raw
+        else:
+            candidates = [raw]
+
+        for item in candidates:
+            if isinstance(item, dict):
+                for key in ("level", "strike", "price", "value"):
+                    candidate = item.get(key)
+                    if candidate not in (None, ""):
+                        values.append(self._stringify_level(candidate))
+                        break
+            elif item not in (None, ""):
+                values.append(self._stringify_level(item))
+
+        unique: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            unique.append(value)
+        return unique
+
+    def _stringify_level(self, value: object) -> str:
+        if isinstance(value, float):
+            return f"{value:.4f}".rstrip("0").rstrip(".")
+        return str(value).strip()
+
+    def _join_levels(self, levels: list[str]) -> str:
+        if len(levels) == 1:
+            return levels[0]
+        if len(levels) == 2:
+            return f"{levels[0]} и {levels[1]}"
+        return ", ".join(levels[:-1]) + f" и {levels[-1]}"
 
     def _build_scenario_text(self, instrument: str, direction: str) -> str:
         if direction == "LONG":
@@ -237,8 +307,10 @@ class GrokIdeaService:
             return f"Сценарий по {instrument} ломается при возврате выше зоны предложения и сильной реакции покупателей."
         return f"До подтверждения структуры invalidation для {instrument} носит наблюдательный характер."
 
-    def _build_tags(self, direction: str) -> list[str]:
-        base = ["News", "Liquidity", "SMC", "Options"]
+    def _build_tags(self, direction: str, include_options: bool = True) -> list[str]:
+        base = ["News", "Liquidity", "SMC"]
+        if include_options:
+            base.append("Options")
         if direction == "LONG":
             return base + ["Bullish"]
         if direction == "SHORT":
