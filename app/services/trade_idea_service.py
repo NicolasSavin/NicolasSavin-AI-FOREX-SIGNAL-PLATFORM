@@ -42,8 +42,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "M15",
         "direction": "bullish",
         "confidence": 72,
-        "summary": "EURUSD сохраняет bullish-структуру на HTF, а на MTF/LTF после отката в demand-зону 1.0849 сохраняется сценарий continuation вверх. Приоритет — long только после импульсного подтверждения от зоны и удержания локального HL. Сценарий теряет силу при пробое 1.0832 и сломе текущей структуры. Ближайшая цель — buy-side liquidity в районе 1.0876.",
-        "full_text": "EURUSD сохраняет bullish-структуру на HTF, а на MTF/LTF после отката в demand-зону 1.0849 сохраняется сценарий continuation вверх. Приоритет — long только после импульсного подтверждения от зоны и удержания локального HL. Сценарий теряет силу при пробое 1.0832 и сломе текущей структуры. Ближайшая цель — buy-side liquidity в районе 1.0876.",
+        "summary": "EURUSD на M15 держит рост и сейчас торгуется у зоны 1.0849. После снятия ликвидности снизу приоритет остаётся за движением к 1.0876. Вход смотрим от 1.0849 только после реакции покупателей и импульса вверх. Сценарий отменяется при пробое 1.0832 и закреплении ниже.",
+        "full_text": "EURUSD на M15 держит рост и сейчас торгуется у зоны 1.0849. После снятия ликвидности снизу приоритет остаётся за движением к 1.0876. Вход смотрим от 1.0849 только после реакции покупателей и импульса вверх. Сценарий отменяется при пробое 1.0832 и закреплении ниже.",
         "entry": 1.0849,
         "stopLoss": 1.0832,
         "takeProfit": 1.0876,
@@ -60,8 +60,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "H1",
         "direction": "bearish",
         "confidence": 68,
-        "summary": "GBPUSD остаётся bearish на HTF, а на MTF/LTF цена тестирует supply-зону 1.2715 после снятия buy-side liquidity. Базовый сценарий — sell continuation вниз, если в premium появится слабая реакция покупателей и подтверждённый отбой. Сценарий отменяется при закреплении выше 1.2741 и возврате контроля к покупателю. Цель — sell-side liquidity в районе 1.2668.",
-        "full_text": "GBPUSD остаётся bearish на HTF, а на MTF/LTF цена тестирует supply-зону 1.2715 после снятия buy-side liquidity. Базовый сценарий — sell continuation вниз, если в premium появится слабая реакция покупателей и подтверждённый отбой. Сценарий отменяется при закреплении выше 1.2741 и возврате контроля к покупателю. Цель — sell-side liquidity в районе 1.2668.",
+        "summary": "GBPUSD на H1 остаётся под давлением и сейчас тестирует зону 1.2715. Ликвидность сверху уже снята, поэтому базовый сценарий — движение к 1.2668. Шорт рассматриваем от 1.2715 после слабой реакции покупателей и отбоя вниз. Сценарий отменяется при закреплении выше 1.2741.",
+        "full_text": "GBPUSD на H1 остаётся под давлением и сейчас тестирует зону 1.2715. Ликвидность сверху уже снята, поэтому базовый сценарий — движение к 1.2668. Шорт рассматриваем от 1.2715 после слабой реакции покупателей и отбоя вниз. Сценарий отменяется при закреплении выше 1.2741.",
         "entry": 1.2715,
         "stopLoss": 1.2741,
         "takeProfit": 1.2668,
@@ -78,8 +78,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "H4",
         "direction": "neutral",
         "confidence": 64,
-        "summary": "USDJPY на HTF остаётся нейтральным, а на MTF/LTF формирует диапазон вокруг demand/supply-границ с подготовкой к импульсу. Приоритет — работать только по подтверждённому выходу из структуры и retest ключевой зоны 149.82. Сценарий теряет актуальность при возврате под 149.21 внутрь диапазона. Целью выступает ликвидность над максимумами в районе 150.96.",
-        "full_text": "USDJPY на HTF остаётся нейтральным, а на MTF/LTF формирует диапазон вокруг demand/supply-границ с подготовкой к импульсу. Приоритет — работать только по подтверждённому выходу из структуры и retest ключевой зоны 149.82. Сценарий теряет актуальность при возврате под 149.21 внутрь диапазона. Целью выступает ликвидность над максимумами в районе 150.96.",
+        "summary": "USDJPY на H4 стоит в диапазоне и цена держится у 149.82. Ликвидность лежит над 150.96, но без выхода из диапазона вход не нужен. Сценарий на лонг появится только после пробоя и ретеста 149.82 с импульсом вверх. Идея отменяется при возврате под 149.21.",
+        "full_text": "USDJPY на H4 стоит в диапазоне и цена держится у 149.82. Ликвидность лежит над 150.96, но без выхода из диапазона вход не нужен. Сценарий на лонг появится только после пробоя и ретеста 149.82 с импульсом вверх. Идея отменяется при возврате под 149.21.",
         "entry": 149.82,
         "stopLoss": 149.21,
         "takeProfit": 150.96,
@@ -96,8 +96,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "M15",
         "direction": "bearish",
         "confidence": 71,
-        "summary": "USDCAD сохраняет bearish-структуру на HTF, а на MTF/LTF идёт откат в supply-зону 1.3484 внутри intraday continuation. Приоритет — искать short после слабой реакции покупателей и подтверждения продавца от premium. Сценарий отменяется при возврате выше 1.3502 и пробое локального lower high. Цель — sell-side liquidity под минимумом в районе 1.3451.",
-        "full_text": "USDCAD сохраняет bearish-структуру на HTF, а на MTF/LTF идёт откат в supply-зону 1.3484 внутри intraday continuation. Приоритет — искать short после слабой реакции покупателей и подтверждения продавца от premium. Сценарий отменяется при возврате выше 1.3502 и пробое локального lower high. Цель — sell-side liquidity под минимумом в районе 1.3451.",
+        "summary": "USDCAD на M15 держит нисходящую структуру и сейчас откатывает к 1.3484. Пока цена ниже 1.3502, приоритет за ходом к 1.3451 и снятию ликвидности снизу. Шорт смотрим от 1.3484 после слабого ретеста и импульса продавца. Сценарий ломается при уходе выше 1.3502.",
+        "full_text": "USDCAD на M15 держит нисходящую структуру и сейчас откатывает к 1.3484. Пока цена ниже 1.3502, приоритет за ходом к 1.3451 и снятию ликвидности снизу. Шорт смотрим от 1.3484 после слабого ретеста и импульса продавца. Сценарий ломается при уходе выше 1.3502.",
         "entry": 1.3484,
         "stopLoss": 1.3502,
         "takeProfit": 1.3451,
@@ -114,8 +114,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "H1",
         "direction": "bullish",
         "confidence": 66,
-        "summary": "EURGBP удерживает bullish-структуру на HTF, а на MTF/LTF формирует continuation после реакции от demand-зоны 0.8526. Приоритет — long при подтверждённом импульсе выше локального range и удержании higher low. Сценарий отменяется при потере demand и уходе ниже 0.8508. Цель — buy-side liquidity над локальным максимумом в районе 0.8563.",
-        "full_text": "EURGBP удерживает bullish-структуру на HTF, а на MTF/LTF формирует continuation после реакции от demand-зоны 0.8526. Приоритет — long при подтверждённом импульсе выше локального range и удержании higher low. Сценарий отменяется при потере demand и уходе ниже 0.8508. Цель — buy-side liquidity над локальным максимумом в районе 0.8563.",
+        "summary": "EURGBP на H1 держит рост и сейчас работает от зоны 0.8526. После снятия ликвидности снизу рынок может продолжить ход к 0.8563. Лонг рассматриваем от 0.8526 после реакции от зоны и нового импульса вверх. Сценарий отменяется при уходе ниже 0.8508.",
+        "full_text": "EURGBP на H1 держит рост и сейчас работает от зоны 0.8526. После снятия ликвидности снизу рынок может продолжить ход к 0.8563. Лонг рассматриваем от 0.8526 после реакции от зоны и нового импульса вверх. Сценарий отменяется при уходе ниже 0.8508.",
         "entry": 0.8526,
         "stopLoss": 0.8508,
         "takeProfit": 0.8563,
@@ -132,8 +132,8 @@ DEMO_FALLBACK_IDEAS = [
         "timeframe": "H4",
         "direction": "bearish",
         "confidence": 63,
-        "summary": "EURCHF на HTF остаётся bearish, а на MTF/LTF откатывается в supply/premium-зону 0.9587 внутри swing-сценария. Приоритет — sell on rally после подтверждения слабости покупателей и реакции от imbalance. Сценарий отменяется при закреплении выше 0.9621 и сломе последнего swing high. Цель — sell-side liquidity и тест уровня 0.9528.",
-        "full_text": "EURCHF на HTF остаётся bearish, а на MTF/LTF откатывается в supply/premium-зону 0.9587 внутри swing-сценария. Приоритет — sell on rally после подтверждения слабости покупателей и реакции от imbalance. Сценарий отменяется при закреплении выше 0.9621 и сломе последнего swing high. Цель — sell-side liquidity и тест уровня 0.9528.",
+        "summary": "EURCHF на H4 остаётся в нисходящей структуре и сейчас пришёл в зону 0.9587. Пока 0.9621 держит цену сверху, базовый сценарий — снижение к 0.9528. Шорт смотрим от 0.9587 после слабой реакции покупателей и импульса вниз. Сценарий отменяется при закреплении выше 0.9621.",
+        "full_text": "EURCHF на H4 остаётся в нисходящей структуре и сейчас пришёл в зону 0.9587. Пока 0.9621 держит цену сверху, базовый сценарий — снижение к 0.9528. Шорт смотрим от 0.9587 после слабой реакции покупателей и импульса вниз. Сценарий отменяется при закреплении выше 0.9621.",
         "entry": 0.9587,
         "stopLoss": 0.9621,
         "takeProfit": 0.9528,
@@ -531,9 +531,10 @@ class TradeIdeaService:
         sentence_count = cls._sentence_count(text)
         lowered = text.casefold()
         has_invalidation = "отмен" in lowered or "invalid" in lowered or "слом" in lowered
-        has_target = "цел" in lowered or "liquidity" in lowered or "take profit" in lowered
+        has_target = "цел" in lowered or "ликвид" in lowered or "liquidity" in lowered or "take profit" in lowered or "tp" in lowered
         has_confirmation = "подтверж" in lowered or "триггер" in lowered or "закреп" in lowered
-        return sentence_count >= 6 and has_invalidation and has_target and has_confirmation
+        has_levels = bool(re.search(r"\d", text))
+        return 4 <= sentence_count <= 8 and has_invalidation and has_target and has_confirmation and has_levels
 
     @classmethod
     def _compose_professional_narrative(
@@ -550,64 +551,60 @@ class TradeIdeaService:
         symbol = cls._extract_symbol(row)
         timeframe = cls._extract_timeframe(row)
         direction = cls._extract_direction(row)
-        direction_ru = "восходящий" if direction == "bullish" else "нисходящий" if direction == "bearish" else "нейтральный"
+        market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
         entry = cls._extract_level(row, "entry", "entry_zone")
         stop_loss = cls._extract_level(row, "stopLoss", "stop_loss")
         take_profit = cls._extract_level(row, "takeProfit", "take_profit")
         trade_plan = row.get("trade_plan") if isinstance(row.get("trade_plan"), dict) else {}
-        analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+        current_price = cls._extract_level(market_context, "current_price")
+        structure_text = {"bullish": "восходящую", "bearish": "нисходящую", "neutral": "боковую"}.get(direction, "рабочую")
+        liquidity_side = {"bullish": "сверху", "bearish": "снизу", "neutral": "по обе стороны диапазона"}.get(direction, "рядом")
+        structure_event = {"bullish": "BOS вверх", "bearish": "CHOCH/BOS вниз", "neutral": "работы внутри диапазона"}.get(direction, "текущего импульса")
+        zone_text = entry if entry != "—" else current_price
+        target_text = take_profit if take_profit != "—" else cls._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2")) or target.rstrip(".")
+        context_hint = re.sub(r"\s+", " ", str(idea_context or summary or direct_text or "")).strip()
+        context_hint = re.sub(r"\bHTF\b|\bMTF\b|\bLTF\b|bias|continuation|desk-level|mitigation|displacement|dealing range", "", context_hint, flags=re.IGNORECASE)
+        context_hint = re.sub(r"\s+", " ", context_hint).strip(" .,-")
 
-        context_text = cls._clean_sentence(
-            direct_text
-            or summary
-            or idea_context
-            or analysis.get("smc_ict_ru")
-            or "Текущий сетап требует чтения структуры через последовательность swing high/swing low и реакцию цены на ключевые зоны."
-        )
-        idea_context_text = cls._clean_sentence(
-            idea_context or analysis.get("fundamental_ru") or "Макрофон и кросс-рыночный контекст в этой идее используются как фильтр, а не как единственный драйвер входа."
-        )
-        trigger_text = cls._clean_sentence(
-            trigger
-            or trade_plan.get("entry_trigger")
-            or (f"Подтверждением станет реакция цены в рабочей зоне {entry} с последующим displacement и удержанием локальной структуры." if entry != "—" else "Подтверждением станет импульсный выход из локального диапазона с последующим удержанием структуры.")
-        )
-        invalidation_text = cls._clean_sentence(invalidation or trade_plan.get("invalidation") or "Сценарий отменяется при сломе исходной структуры.")
-        target_text = cls._clean_sentence(target or cls._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2")) or "Ближайшая цель будет уточняться после подтверждения.")
+        confirmation_core = re.sub(r"\s+", " ", str(trigger or trade_plan.get("entry_trigger") or "")).strip().rstrip(".")
+        if confirmation_core:
+            confirmation_text = f"Подтверждение — {confirmation_core[0].lower() + confirmation_core[1:] if len(confirmation_core) > 1 else confirmation_core}."
+        elif zone_text != "—":
+            confirmation_text = f"Подтверждение — реакция от {zone_text}, импульс в сторону сценария и удержание локальной структуры."
+        else:
+            confirmation_text = "Подтверждение — явный импульс в сторону сценария и удержание локальной структуры."
 
-        zone_side = "discount-зоны спроса" if direction == "bullish" else "premium-зоны предложения" if direction == "bearish" else "границ dealing range"
-        liquidity_side = "buy-side liquidity" if direction == "bullish" else "sell-side liquidity" if direction == "bearish" else "ликвидности по обеим сторонам диапазона"
-        orderflow_text = (
-            "Импульсное развитие будет сильнее, если displacement поддержится объёмным подтверждением и кумулятивной дельтой в сторону покупателей."
-            if direction == "bullish"
-            else "Продолжение вниз станет качественнее, если displacement подтвердится слабостью встречного спроса и агрессией продавца по proxy orderflow."
-            if direction == "bearish"
-            else "Для нейтрального сценария важнее дождаться, какая сторона первой снимет ликвидность и закрепит импульс после возврата в dealing range."
-        )
-        pattern_text = (
-            analysis.get("pattern_ru")
-            or "Графическая формация здесь читается скорее как continuation/accumulation context, а не как самостоятельный сигнал против структуры."
-        )
-        waves_text = (
-            analysis.get("waves_ru")
-            or "Волновая картина поддерживает идею импульсной ноги с коррекционной паузой, поэтому вход оправдан только после подтверждения окончания коррекции."
-        )
-        derivatives_text = (
-            "Опционный и фундаментальный слой следует трактовать как вторичный фильтр: при отсутствии верифицированного дилерского давления приоритет остаётся за реакцией цены на ликвидность и дисбаланс."
-        )
+        invalidation_core = re.sub(r"\s+", " ", str(invalidation or trade_plan.get("invalidation") or "Сценарий отменяется при сломе структуры.")).strip().rstrip(".")
+        if stop_loss != "—" and stop_loss not in invalidation_core:
+            invalidation_text = f"Сценарий отменяется при пробое {stop_loss} и закреплении за уровнем."
+        else:
+            invalidation_text = f"{invalidation_core}."
 
-        sentences = [
-            f"{symbol} на {timeframe} сохраняет {direction_ru} сценарий, и базовая логика строится вокруг того, как цена ведёт себя относительно HTF/MTF/LTF структуры, локальных BOS/CHoCH и возврата в область {zone_side}.",
-            context_text,
-            f"Сейчас приоритетен основной сценарий продолжения в сторону {liquidity_side}: рынок сначала собирает ближайшую ликвидность, затем проверяет imbalance/FVG и order block, после чего при наличии mitigation может развить следующую импульсную ногу.",
-            f"{pattern_text} {waves_text}",
-            idea_context_text,
-            trigger_text,
-            orderflow_text,
-            derivatives_text,
-            f"Инвалидация сценария остаётся жёсткой: {invalidation_text}" + (f" Ключевой защитный уровень находится вблизи {stop_loss}." if stop_loss != "—" else ""),
-            f"Если подтверждение сохранится, целевая логика движения остаётся прежней — {target_text}" + (f" Основная техническая цель по уровню находится в районе {take_profit}." if take_profit != "—" else ""),
-        ]
+        sentences: list[str] = []
+        first_sentence = f"{symbol} на {timeframe} держит {structure_text} структуру"
+        if current_price != "—":
+            first_sentence += f", цена сейчас около {current_price}"
+        if zone_text != "—":
+            first_sentence += f" и рядом с зоной {zone_text}"
+        sentences.append(first_sentence)
+
+        if context_hint and len(context_hint.split()) <= 18 and not re.search(r"\d", context_hint):
+            sentences.append(context_hint)
+
+        if zone_text != "—":
+            sentences.append(
+                f"Ликвидность {liquidity_side} лежит в районе {target_text}, а после {structure_event} рынок может дать реакцию от зоны {zone_text}."
+            )
+            sentences.append(
+                f"Основной сценарий — вход от {zone_text} с целью на {target_text}, если цена удержит зону и пойдёт по структуре."
+            )
+        else:
+            sentences.append(
+                f"Ликвидность {liquidity_side} лежит в районе {target_text}, поэтому основной сценарий — ждать подтверждение движения к этой цели."
+            )
+
+        sentences.append(confirmation_text)
+        sentences.append(invalidation_text)
 
         narrative = " ".join(cls._clean_sentence(sentence) for sentence in sentences if str(sentence or "").strip())
         narrative = re.sub(r"\s+", " ", narrative).strip()
@@ -885,10 +882,10 @@ class TradeIdeaService:
 
         smc_text = (
             analysis.get("smc_ict_ru")
-            or f"Структура читается через HTF/MTF/LTF alignment, вероятный BOS/CHOCH и работу цены вокруг {entry}; триггером остаётся реакция в dealing range с прицелом на {target}."
+            or f"Цена держит рабочую структуру и сейчас важна реакция в зоне {entry}. Если зона устоит, рынок может пройти к {target}."
         )
         if atr_percent not in (None, ""):
-            smc_text = f"{smc_text.rstrip('.')} Волатильность по ATR около {atr_percent}% помогает калибровать глубину mitigation и допустимый размер стопа."
+            smc_text = f"{smc_text.rstrip('.')} ATR около {atr_percent}% помогает понять, насколько глубокий откат ещё нормален."
         add_section("smc_ict", "SMC / ICT", smc_text)
 
         if pattern_summary and "не обнаруж" not in pattern_summary.lower():
@@ -923,7 +920,7 @@ class TradeIdeaService:
             add_section(
                 "cumdelta",
                 "CumDelta / order flow",
-                f"Прямой биржевой order flow для {row.get('symbol') or row.get('instrument') or 'инструмента'} недоступен; используем proxy-чтение через импульс {ltf_pattern}, скорость displacement и то, как цена реагирует вокруг {entry}.",
+                f"Прямой order flow для {row.get('symbol') or row.get('instrument') or 'инструмента'} недоступен. Смотрим proxy: импульс {ltf_pattern} и реакцию цены вокруг {entry}.",
                 is_proxy=True,
             )
 
@@ -936,7 +933,7 @@ class TradeIdeaService:
                 sentiment_text += f" Источник: {sentiment_source}."
             add_section("sentiment", "Сентимент / positioning", sentiment_text, is_proxy="mock" in str(sentiment_source).lower())
 
-        liquidity_text = analysis.get("liquidity_ru") or f"Рабочая логика ликвидности завязана на проход к {target} при сохранении защиты за уровнем {stop_loss}."
+        liquidity_text = analysis.get("liquidity_ru") or f"Ближайшая ликвидность стоит у {target}. Пока {stop_loss} держится, сценарий на движение к цели остаётся в силе."
         add_section("liquidity", "Ликвидность", liquidity_text)
 
         return sections
@@ -1008,12 +1005,19 @@ class TradeIdeaService:
                 target=str(target),
             )
             normalized_analysis = {
-                "fundamental_ru": str(analysis.get("fundamental_ru") or idea_context),
-                "smc_ict_ru": str(analysis.get("smc_ict_ru") or summary),
+                "fundamental_ru": str(analysis.get("fundamental_ru") or "Фундаментал здесь вторичен. Главный фильтр — реакция цены в рабочей зоне."),
+                "smc_ict_ru": str(analysis.get("smc_ict_ru") or full_text),
                 "pattern_ru": str(analysis.get("pattern_ru") or market_context.get("patternSummaryRu") or ""),
                 "waves_ru": str(analysis.get("waves_ru") or ""),
-                "volume_ru": str(analysis.get("volume_ru") or ""),
-                "liquidity_ru": str(analysis.get("liquidity_ru") or target),
+                "volume_ru": str(analysis.get("volume_ru") or "Объём смотрим только как подтверждение импульса; без реакции в зоне вход не нужен."),
+                "liquidity_ru": str(
+                    analysis.get("liquidity_ru")
+                    or (
+                        f"Ближайшая ликвидность стоит у {take_profit}. Пока {stop_loss} не сломан, рынок может тянуться к этой цели."
+                        if take_profit != "—" and stop_loss != "—"
+                        else target
+                    )
+                ),
                 "wyckoff_ru": str(analysis.get("wyckoff_ru") or ""),
                 "divergence_ru": str(analysis.get("divergence_ru") or ""),
                 "cumdelta_ru": str(analysis.get("cumdelta_ru") or analysis.get("cumulative_delta_ru") or ""),
@@ -1158,10 +1162,16 @@ class TradeIdeaService:
             "Каждая идея должна соответствовать ОДНОЙ записи из списка contexts и содержать:\n"
             "- id\n- symbol\n- timeframe\n- direction (bullish/bearish/neutral)\n- confidence (60-80)\n- full_text\n- entry\n- stopLoss\n- takeProfit\n- tags (массив)\n\n"
             "Требования к full_text:\n"
-            "- верни ОДИН цельный narrative-текст в поле full_text\n"
-            "- без заголовков и без разделения на блоки\n"
-            "- 6-12 предложений\n"
-            "- профессиональный стиль, как у опытного трейдера / аналитика prop-firm\n"
+            "- верни ОДИН цельный текст в поле full_text\n"
+            "- без заголовков, списков и разделения на блоки\n"
+            "- 4-8 коротких предложений\n"
+            "- стиль: живой комментарий трейдера, без AI-воды и без сложных слов\n"
+            "- сначала дай контекст: структура рынка и где сейчас цена\n"
+            "- затем опиши SMC / ICT логику: где ликвидность, был ли импульс или смена структуры, от какой зоны ждёшь реакцию\n"
+            "- потом дай главный сценарий: откуда вход, куда цель, что должно произойти\n"
+            "- отдельно укажи подтверждение входа и отмену сценария\n"
+            "- уровни ОБЯЗАТЕЛЬНО вписывай прямо в текст, например: зона 1.1550-1.1570, цель 1.1600, отмена ниже 1.1525\n"
+            "- не используй заумные слова вроде desk-level, continuation bias, mitigation, dealing range, displacement, premium array\n"
             "- обязательно включи основной сценарий, подтверждение, invalidation, цель и логику движения цены\n"
             "- если каких-то данных нет, не выдумывай их; опирайся только на цену и переданный контекст\n\n"
             "ЖЁСТКИЕ ПРАВИЛА ПО УРОВНЯМ:\n"
@@ -1312,11 +1322,10 @@ class TradeIdeaService:
             "direction": direction,
             "confidence": raw_row.get("confidence", 62) if raw_row else 62,
             "full_text": (
-                f"{symbol} на {timeframe} использует fallback-сценарий, потому что AI-уровни не прошли backend validation. "
-                f"Latest close {self._format_price(latest_close)} используется как текущий рыночный reference, поэтому entry удержан рядом с рынком, "
-                "а stopLoss/takeProfit выставлены по ближайшим swing high/low и ликвидности из последних свечей. "
-                "Сценарий остаётся рабочим только при подтверждении текущего импульса и теряет силу при нарушении защитного уровня. "
-                "Цели и invalidation построены вокруг текущего диапазона, а не вокруг устаревшего рыночного режима. "
+                f"{symbol} на {timeframe} использует запасной сценарий, потому что AI-уровни не прошли проверку. "
+                f"Цена сейчас около {self._format_price(latest_close)}, поэтому вход оставлен рядом с рынком — {self._format_price(entry)}. "
+                f"Основной сценарий — работать от {self._format_price(entry)} к {self._format_price(take_profit)} только после подтверждения импульса. "
+                f"Сценарий отменяется при пробое {self._format_price(stop_loss)}. "
                 f"Причина fallback: {reason}."
             ),
             "entry": round(entry, precision),
