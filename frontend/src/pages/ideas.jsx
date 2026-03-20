@@ -10,12 +10,12 @@ const mockIdeas = [
     timeframe: "Intraday",
     summary: "После новостного импульса цена подходит к зоне ликвидности.",
     technical: "Bearish order block, liquidity sweep.",
-    options: "Опционный интерес ниже текущей цены может выступать целью.",
+    options: "",
     scenario: "При удержании под зоной предложения ожидается продолжение вниз.",
     targets: "104.20 / 103.80",
     invalidation: "Закрепление выше 105.00 ломает сценарий.",
     image: "/images/default-chart.png",
-    tags: ["News", "Liquidity", "SMC", "Options"],
+    tags: ["News", "Liquidity", "SMC"],
   },
 ];
 

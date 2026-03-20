@@ -81,7 +81,7 @@ export function IdeaModal({ idea, onClose }) {
 
         <Section title="Summary" content={idea.summary} />
         <Section title="Technical Logic" content={idea.technical} />
-        <Section title="Options Analysis" content={idea.options} />
+        {idea.options ? <Section title="Options Analysis" content={idea.options} /> : null}
         <Section title="Scenario" content={idea.scenario} />
         <Section title="Targets" content={idea.targets} />
         <Section title="Invalidation" content={idea.invalidation} />
