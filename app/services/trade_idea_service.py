@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from hashlib import sha1
+import re
 from typing import Any
 
 from app.services.storage.json_storage import JsonStorage
@@ -11,6 +12,38 @@ from backend.signal_engine import SignalEngine
 DEFAULT_IDEA_TIMEFRAMES = ["M15", "H1", "H4"]
 ACTIVE_STATUSES = {"watching", "active", "updated", "triggered"}
 CLOSED_STATUSES = {"tp_hit", "sl_hit", "invalidated", "archived"}
+DEMO_FALLBACK_IDEAS = [
+    {
+        "id": "eurusd-m15-bullish-demo",
+        "symbol": "EURUSD",
+        "timeframe": "M15",
+        "direction": "bullish",
+        "confidence": 72,
+        "summary": "EURUSD на M15 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
+        "tags": ["Fallback", "SMC", "Liquidity", "M15", "EURUSD"],
+        "is_fallback": True,
+    },
+    {
+        "id": "gbpusd-h1-bearish-demo",
+        "symbol": "GBPUSD",
+        "timeframe": "H1",
+        "direction": "bearish",
+        "confidence": 69,
+        "summary": "GBPUSD на H1 остаётся под давлением после снятия buy-side liquidity. Базовый сценарий — sell on pullback.",
+        "tags": ["Fallback", "SMC", "Pullback", "H1", "GBPUSD"],
+        "is_fallback": True,
+    },
+    {
+        "id": "xauusd-h4-bullish-demo",
+        "symbol": "XAUUSD",
+        "timeframe": "H4",
+        "direction": "bullish",
+        "confidence": 74,
+        "summary": "Золото на H4 удерживает bullish bias, пока цена остаётся выше зоны спроса и не теряет структуру.",
+        "tags": ["Fallback", "Gold", "H4", "Demand", "XAUUSD"],
+        "is_fallback": True,
+    },
+]
 
 
 class TradeIdeaService:
@@ -40,6 +73,17 @@ class TradeIdeaService:
         }
         self.legacy_store.write(legacy)
         return legacy
+
+    def build_api_ideas(self) -> list[dict[str, Any]]:
+        primary = self._normalize_for_api(self.refresh_market_ideas().get("ideas", []), source="trade_ideas")
+        if primary:
+            return primary
+
+        legacy = self._normalize_for_api(self.legacy_store.read().get("ideas", []), source="legacy_store")
+        if legacy:
+            return legacy
+
+        return [self._decorate_api_idea(idea, source="demo_fallback") for idea in DEMO_FALLBACK_IDEAS]
 
     def upsert_trade_idea(self, signal: dict) -> dict[str, Any]:
         store = self.idea_store.read()
@@ -230,3 +274,82 @@ class TradeIdeaService:
     @staticmethod
     def _to_legacy_card(idea: dict[str, Any]) -> dict[str, Any]:
         return idea
+
+    def _normalize_for_api(self, ideas: list[dict[str, Any]], *, source: str) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for row in ideas:
+            symbol = self._extract_symbol(row)
+            timeframe = self._extract_timeframe(row)
+            direction = self._extract_direction(row)
+            summary = (
+                row.get("summary")
+                or row.get("summary_ru")
+                or row.get("description_ru")
+                or row.get("rationale")
+                or row.get("title")
+                or "Идея подготовлена без расширенного описания."
+            )
+            confidence = row.get("confidence") or row.get("confidence_percent") or row.get("probability_percent") or 60
+            tags = row.get("tags")
+            if not isinstance(tags, list) or not tags:
+                tags = [source, symbol, timeframe, direction]
+
+            normalized.append(
+                self._decorate_api_idea(
+                    {
+                        "id": row.get("id") or row.get("idea_id") or self._idea_id(symbol, timeframe, f"{direction}_api", summary),
+                        "symbol": symbol,
+                        "pair": symbol,
+                        "timeframe": timeframe,
+                        "tf": timeframe,
+                        "direction": direction,
+                        "bias": direction,
+                        "confidence": int(confidence),
+                        "summary": str(summary),
+                        "summary_ru": str(summary),
+                        "tags": [str(tag) for tag in tags if tag],
+                        "is_fallback": bool(row.get("is_fallback", False)),
+                    },
+                    source=source,
+                )
+            )
+        return normalized
+
+    @staticmethod
+    def _decorate_api_idea(idea: dict[str, Any], *, source: str) -> dict[str, Any]:
+        payload = dict(idea)
+        payload["source"] = source
+        return payload
+
+    @staticmethod
+    def _extract_symbol(row: dict[str, Any]) -> str:
+        for key in ("symbol", "pair", "instrument"):
+            value = row.get(key)
+            if value:
+                return str(value).upper()
+
+        title = str(row.get("title") or "").strip()
+        if ":" in title:
+            candidate = title.split(":", 1)[0].strip().upper()
+            if candidate:
+                return candidate
+
+        match = re.search(r"\b[A-Z]{3,10}\b", title.upper())
+        return match.group(0) if match else "MARKET"
+
+    @staticmethod
+    def _extract_timeframe(row: dict[str, Any]) -> str:
+        for key in ("timeframe", "tf"):
+            value = row.get(key)
+            if value:
+                return str(value).upper()
+        return "H1"
+
+    @staticmethod
+    def _extract_direction(row: dict[str, Any]) -> str:
+        raw = str(row.get("direction") or row.get("bias") or row.get("label") or "").strip().lower()
+        if raw in {"buy", "bullish", "long", "buy idea"}:
+            return "bullish"
+        if raw in {"sell", "bearish", "short", "sell idea"}:
+            return "bearish"
+        return "neutral"

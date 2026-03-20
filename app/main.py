@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -50,6 +51,7 @@ trade_idea_service = TradeIdeaService(signal_engine=signal_engine)
 chat_service = ForexChatService()
 calendar_store = JsonStorage("signals_data/calendar.json", {"updated_at_utc": None, "events": []})
 heatmap_store = JsonStorage("signals_data/heatmap.json", {"updated_at_utc": None, "rows": []})
+logger = logging.getLogger(__name__)
 
 
 class SnapshotResponse(BaseModel):
@@ -151,6 +153,15 @@ async def api_signal_news(signal_id: str) -> list[NewsItemResponse]:
 async def market_ideas():
     await trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
     return trade_idea_service.refresh_market_ideas()
+
+
+@app.get("/api/ideas")
+async def api_ideas():
+    try:
+        await trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
+    except Exception as exc:
+        logger.warning("ideas_refresh_failed: %s", exc)
+    return trade_idea_service.build_api_ideas()
 
 
 @app.get("/news/market", response_model=NewsListResponse)
