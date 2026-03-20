@@ -44,7 +44,7 @@ def test_chart_data_service_returns_unavailable_without_key(monkeypatch) -> None
     assert 'TWELVEDATA_API_KEY' in payload['message_ru']
 
 
-def test_chart_route_returns_payload(monkeypatch) -> None:
+def test_chart_route_returns_candles_array(monkeypatch) -> None:
     monkeypatch.setattr(
         chart_data_service,
         'get_chart',
@@ -65,7 +65,9 @@ def test_chart_route_returns_payload(monkeypatch) -> None:
     response = client.get('/api/chart/EURUSD?tf=M15')
 
     assert response.status_code == 200
-    assert response.json()['candles'][0]['close'] == 1.0865
+    assert response.json() == [
+        {'time': 1710929700, 'open': 1.086, 'high': 1.087, 'low': 1.085, 'close': 1.0865}
+    ]
 
 
 def test_chart_route_returns_fallback_on_service_exception(monkeypatch) -> None:
@@ -78,8 +80,4 @@ def test_chart_route_returns_fallback_on_service_exception(monkeypatch) -> None:
     response = client.get('/api/chart/EURUSD?tf=M15')
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload['status'] == 'unavailable'
-    assert payload['candles'] == []
-    assert payload['symbol'] == 'EURUSD'
-    assert payload['timeframe'] == 'M15'
+    assert response.json() == []
