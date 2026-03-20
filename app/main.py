@@ -2,6 +2,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import asyncio
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,6 +27,7 @@ from app.schemas.contracts import (
 from app.services.analytics.service import SignalAnalyticsService
 from app.services.market_data import MarketDataService
 from app.services.mt4_bridge import Mt4BridgeService
+from app.services.chart_data_service import ChartDataService
 from app.services.news_service import NewsService
 from app.services.signal_hub import DEFAULT_PAIRS, SignalHubService
 from app.services.signal_service import SignalService
@@ -48,6 +51,7 @@ signal_service = SignalService(market_data_service=market_data_service)
 signal_analytics_service = SignalAnalyticsService(signal_engine=signal_engine)
 mt4_bridge_service = Mt4BridgeService()
 trade_idea_service = TradeIdeaService(signal_engine=signal_engine)
+chart_data_service = ChartDataService()
 chat_service = ForexChatService()
 calendar_store = JsonStorage("signals_data/calendar.json", {"updated_at_utc": None, "events": []})
 heatmap_store = JsonStorage("signals_data/heatmap.json", {"updated_at_utc": None, "rows": []})
@@ -227,6 +231,13 @@ async def analytics_capabilities() -> AnalyticsCapabilityResponse:
 @app.get("/api/analytics/signals/{symbol}", response_model=AnalyticsSignalResponse)
 async def analytics_signal(symbol: str) -> AnalyticsSignalResponse:
     return await signal_analytics_service.build_signal_analytics(symbol)
+
+
+@app.get("/api/chart/{symbol}")
+@app.get("/api/chart/{symbol}/{tf}")
+async def api_chart(symbol: str, tf: str | None = None):
+    chart_tf = (tf or "H1").upper()
+    return await asyncio.to_thread(chart_data_service.get_chart, symbol, chart_tf)
 
 
 @app.post("/api/chat", response_model=ChatResponse)
