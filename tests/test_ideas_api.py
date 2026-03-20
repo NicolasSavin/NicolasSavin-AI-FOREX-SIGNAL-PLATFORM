@@ -188,16 +188,21 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert "цель" in payload[0]["summary"]
     assert payload[0]["full_text"].count(".") >= 5
     assert "Почему вход именно здесь" in payload[0]["full_text"]
-    assert "зона 1.0851" in payload[0]["full_text"]
+    assert "зона 1.0852" in payload[0]["full_text"]
     assert "Триггер" in payload[0]["full_text"]
     assert "Сценарий отменяется" in payload[0]["full_text"]
     assert payload[0]["label"] == "BUY IDEA"
     assert payload[0]["latest_close"] == 1.0852
     assert payload[0]["market_reference_price"] == 1.0852
-    assert payload[0]["entry_deviation_pct"] < 0.3
+    assert float(payload[0]["entry"]) == 1.0852
+    assert float(payload[0]["stopLoss"]) == 1.0832
+    assert float(payload[0]["takeProfit"]) == 1.0892
+    assert payload[0]["entry_deviation_pct"] == 0.0
     assert payload[0]["levels_validated"] is True
     assert payload[0]["levels_source"] == "ai"
     assert payload[0]["meta"]["latest_close"] == 1.0852
+    assert payload[0]["meta"]["current_price"] == 1.0852
+    assert payload[0]["meta"]["raw_entry"] == 1.0851
     assert payload[0]["meta"]["levels_source"] == "ai"
 
 
@@ -224,7 +229,7 @@ def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path
     assert all(item["source"] == "openrouter_fallback" for item in payload)
 
 
-def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_are_disconnected(monkeypatch, tmp_path: Path) -> None:
+def test_build_openrouter_api_ideas_rebases_ai_levels_to_current_price(monkeypatch, tmp_path: Path) -> None:
     service = _service(tmp_path)
 
     def _chart(symbol: str, timeframe: str = "H1") -> dict:
@@ -278,15 +283,19 @@ def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_
     payload = service.build_openrouter_api_ideas()
     eurusd = next(item for item in payload if item["symbol"] == "EURUSD" and item["timeframe"] == "M15")
 
-    assert eurusd["levels_validated"] is False
-    assert eurusd["levels_source"] == "fallback"
+    assert eurusd["levels_validated"] is True
+    assert eurusd["levels_source"] == "ai"
     assert eurusd["latest_close"] == 1.1568
     assert abs(float(eurusd["entry"]) - 1.1568) < 0.0001
+    assert abs(float(eurusd["stopLoss"]) - 1.1548) < 0.0001
+    assert abs(float(eurusd["takeProfit"]) - 1.1608) < 0.0001
     assert eurusd["source"] == "openrouter_ai"
     assert eurusd["validation_errors"]
     assert eurusd["meta"]["latest_close"] == 1.1568
-    assert eurusd["meta"]["levels_source"] == "fallback"
-    assert eurusd["entry_deviation_pct"] > 0.3
+    assert eurusd["meta"]["current_price"] == 1.1568
+    assert eurusd["meta"]["levels_source"] == "ai"
+    assert eurusd["meta"]["raw_entry"] == 1.0849
+    assert eurusd["entry_deviation_pct"] == 0.0
 
 
 def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_path: Path) -> None:
@@ -308,6 +317,8 @@ def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_pa
     assert "order block, FVG / imbalance, liquidity sweep, BOS, CHOCH" in prompt
     assert "trigger не должен быть абстрактным" in prompt
     assert "reason/trigger/invalidation" in prompt
+    assert "entry MUST equal current_price" in prompt
+    assert "stopLoss = current_price - 0.0020, takeProfit = current_price + 0.0040" in prompt
 
 
 def test_list_api_ideas_falls_back_when_ai_returns_empty(monkeypatch, tmp_path: Path) -> None:

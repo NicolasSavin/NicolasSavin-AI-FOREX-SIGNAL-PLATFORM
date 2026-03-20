@@ -34,6 +34,7 @@ MAX_ENTRY_DEVIATION_PCT = {
     "H1": 0.5,
     "H4": 1.0,
 }
+MAX_ACCEPTABLE_ENTRY_DEVIATION_PCT = 0.5
 CANDLE_CONTEXT_COUNT = 40
 DEMO_FALLBACK_IDEAS = [
     {
@@ -1349,6 +1350,7 @@ class TradeIdeaService:
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "latest_close": float(latest_close),
+                "current_price": float(latest_close),
                 "recent_candles": candles[-CANDLE_CONTEXT_COUNT:],
                 "market_context": {
                     "source": chart_payload.get("source"),
@@ -1367,6 +1369,7 @@ class TradeIdeaService:
                 "symbol": ref["symbol"],
                 "timeframe": ref["timeframe"],
                 "latest_close": ref["latest_close"],
+                "current_price": ref.get("current_price", ref["latest_close"]),
                 "recent_candles": ref["recent_candles"],
                 "market_context": ref["market_context"],
             }
@@ -1401,12 +1404,15 @@ class TradeIdeaService:
             "- итог должен звучать как реальный trading setup трейдера: 5-8 предложений, без воды, с чётким reason/trigger/invalidation\n"
             "- если каких-то данных нет, не выдумывай их; опирайся только на цену и переданный контекст\n\n"
             "ЖЁСТКИЕ ПРАВИЛА ПО УРОВНЯМ:\n"
-            "- Use latest_close as the ONLY valid market reference.\n"
-            "- Your entry MUST be near latest_close.\n"
-            "- DO NOT generate prices from another market regime.\n"
-            "- All levels must be realistic relative to current price.\n"
+            "- Use current_price (equal to latest_close) as the ONLY valid market reference.\n"
+            "- DO NOT generate levels from another market regime or from imagination.\n"
+            "- All levels must be recalculated relative to current_price.\n"
+            "- entry MUST equal current_price.\n"
+            "- For bullish/BUY: stopLoss = current_price - 0.0020, takeProfit = current_price + 0.0040.\n"
+            "- For bearish/SELL: stopLoss = current_price + 0.0020, takeProfit = current_price - 0.0040.\n"
+            "- entry must remain within ±0.5% of current_price; if not, the response is invalid.\n"
             "- Intraday setups MUST stay close to current market price.\n"
-            "- If levels are not aligned with latest_close, the response is invalid.\n"
+            "- If levels are not aligned with current_price, the response is invalid.\n"
             "- Return levels consistent with direction and current price context.\n"
             "- Для bullish: stopLoss < entry < takeProfit.\n"
             "- Для bearish: takeProfit < entry < stopLoss.\n"
@@ -1444,60 +1450,51 @@ class TradeIdeaService:
 
     def _validate_ai_levels(self, row: dict[str, Any], reference: dict[str, Any]) -> dict[str, Any]:
         latest_close = float(reference["latest_close"])
+        current_price = float(reference.get("current_price", latest_close))
         direction = self._extract_direction(row)
-        timeframe = reference["timeframe"]
-        precision = self._price_precision(latest_close)
-        entry = self._extract_numeric_level(row, "entry", "entry_zone")
-        stop_loss = self._extract_numeric_level(row, "stopLoss", "stop_loss")
-        take_profit = self._extract_numeric_level(row, "takeProfit", "take_profit")
-        deviation_pct = abs((entry - latest_close) / latest_close) * 100 if entry is not None and latest_close else 0.0
+        precision = self._price_precision(current_price)
+        raw_entry = self._extract_numeric_level(row, "entry", "entry_zone")
+        raw_stop_loss = self._extract_numeric_level(row, "stopLoss", "stop_loss")
+        raw_take_profit = self._extract_numeric_level(row, "takeProfit", "take_profit")
+        raw_deviation_pct = abs((raw_entry - current_price) / current_price) * 100 if raw_entry is not None and current_price else 0.0
+        entry, stop_loss, take_profit = self._derive_market_levels(current_price=current_price, direction=direction)
+        deviation_pct = abs((entry - current_price) / current_price) * 100 if current_price else 0.0
 
         validation_errors: list[str] = []
-        for label, value in (("entry", entry), ("stopLoss", stop_loss), ("takeProfit", take_profit)):
+        for label, value in (("entry", raw_entry), ("stopLoss", raw_stop_loss), ("takeProfit", raw_take_profit)):
             if value is None or value != value:
                 validation_errors.append(f"{label}_missing")
 
-        if entry is not None:
-            max_deviation_pct = MAX_ENTRY_DEVIATION_PCT.get(timeframe, 1.0)
-            if deviation_pct > max_deviation_pct:
-                validation_errors.append(f"entry_deviation_exceeded:{deviation_pct:.3f}>{max_deviation_pct:.3f}")
+        if raw_entry is not None and raw_deviation_pct > MAX_ACCEPTABLE_ENTRY_DEVIATION_PCT:
+            validation_errors.append(
+                f"raw_entry_deviation_exceeded:{raw_deviation_pct:.3f}>{MAX_ACCEPTABLE_ENTRY_DEVIATION_PCT:.3f}"
+            )
 
         if entry is not None and stop_loss is not None and take_profit is not None:
             if direction == "bullish" and not (stop_loss < entry < take_profit):
                 validation_errors.append("bullish_inconsistent")
             elif direction == "bearish" and not (take_profit < entry < stop_loss):
                 validation_errors.append("bearish_inconsistent")
-            elif direction == "neutral":
-                neutral_deviation_pct = abs((take_profit - stop_loss) / latest_close) * 100 if latest_close else 0.0
-                if neutral_deviation_pct > MAX_ENTRY_DEVIATION_PCT.get(timeframe, 1.0) * 3:
-                    validation_errors.append("neutral_too_aggressive")
-
-        if validation_errors:
-            fallback = self._build_market_aligned_fallback_idea(reference, raw_row=row, reason=";".join(validation_errors))
-            fallback["levels_validated"] = False
-            fallback["levels_source"] = "fallback"
-            fallback["validation_errors"] = validation_errors
-            fallback["entry_deviation_pct"] = round(deviation_pct, 4)
-            fallback["meta"] = {
-                "latest_close": fallback["latest_close"],
-                "entry_deviation_pct": fallback["entry_deviation_pct"],
-                "levels_validated": False,
-                "levels_source": "fallback",
-            }
-            return fallback
+            elif direction == "neutral" and deviation_pct > MAX_ACCEPTABLE_ENTRY_DEVIATION_PCT:
+                validation_errors.append("neutral_entry_deviation_exceeded")
 
         payload = dict(row)
         payload["entry"] = round(entry, precision)
         payload["stopLoss"] = round(stop_loss, precision)
         payload["takeProfit"] = round(take_profit, precision)
         payload["latest_close"] = latest_close
-        payload["market_reference_price"] = latest_close
+        payload["market_reference_price"] = current_price
         payload["entry_deviation_pct"] = round(deviation_pct, 4)
         payload["levels_validated"] = True
         payload["levels_source"] = "ai"
-        payload["validation_errors"] = []
+        payload["validation_errors"] = validation_errors
         payload["meta"] = {
             "latest_close": latest_close,
+            "current_price": current_price,
+            "raw_entry": round(raw_entry, precision) if raw_entry is not None else None,
+            "raw_stopLoss": round(raw_stop_loss, precision) if raw_stop_loss is not None else None,
+            "raw_takeProfit": round(raw_take_profit, precision) if raw_take_profit is not None else None,
+            "raw_entry_deviation_pct": round(raw_deviation_pct, 4),
             "entry_deviation_pct": payload["entry_deviation_pct"],
             "levels_validated": True,
             "levels_source": "ai",
@@ -1534,12 +1531,7 @@ class TradeIdeaService:
         direction = "bullish" if latest_close > first_close else "bearish" if latest_close < first_close else "neutral"
         precision = self._price_precision(latest_close)
         entry = latest_close
-        stop_loss, take_profit = self._derive_fallback_levels(
-            candles=candles,
-            latest_close=latest_close,
-            timeframe=timeframe,
-            direction=direction,
-        )
+        _, stop_loss, take_profit = self._derive_market_levels(current_price=latest_close, direction=direction)
 
         return {
             "id": raw_row.get("id") if raw_row else f"{symbol.lower()}-{timeframe.lower()}-fallback",
@@ -1568,54 +1560,28 @@ class TradeIdeaService:
             "is_fallback": True,
             "meta": {
                 "latest_close": latest_close,
+                "current_price": latest_close,
                 "entry_deviation_pct": 0.0,
                 "levels_validated": False,
                 "levels_source": "fallback",
             },
         }
 
-    def _derive_fallback_levels(
-        self,
-        *,
-        candles: list[dict[str, Any]],
-        latest_close: float,
-        timeframe: str,
-        direction: str,
-    ) -> tuple[float, float]:
-        precision = self._price_precision(latest_close)
-        max_band_pct = MAX_ENTRY_DEVIATION_PCT.get(timeframe, 1.0) / 100
-        swing_highs, swing_lows = self._find_swings(candles)
-        all_highs = sorted({float(candle["high"]) for candle in candles if float(candle["high"]) > latest_close})
-        all_lows = sorted({float(candle["low"]) for candle in candles if float(candle["low"]) < latest_close}, reverse=True)
-
-        nearest_swing_high = next((level for level in swing_highs if level > latest_close), None)
-        nearest_swing_low = next((level for level in swing_lows if level < latest_close), None)
-        nearest_range_high = all_highs[0] if all_highs else latest_close * (1 + max_band_pct)
-        nearest_range_low = all_lows[0] if all_lows else latest_close * (1 - max_band_pct)
-
-        if direction == "bullish":
-            stop_loss = nearest_swing_low or nearest_range_low
-            take_profit = nearest_swing_high or nearest_range_high
-            if take_profit <= latest_close:
-                take_profit = latest_close * (1 + max_band_pct)
-            if stop_loss >= latest_close:
-                stop_loss = latest_close * (1 - max_band_pct)
-        elif direction == "bearish":
-            stop_loss = nearest_swing_high or nearest_range_high
-            take_profit = nearest_swing_low or nearest_range_low
-            if stop_loss <= latest_close:
-                stop_loss = latest_close * (1 + max_band_pct)
-            if take_profit >= latest_close:
-                take_profit = latest_close * (1 - max_band_pct)
-        else:
-            stop_loss = nearest_swing_low or nearest_range_low
-            take_profit = nearest_swing_high or nearest_range_high
-            if stop_loss >= latest_close:
-                stop_loss = latest_close * (1 - max_band_pct * 0.8)
-            if take_profit <= latest_close:
-                take_profit = latest_close * (1 + max_band_pct * 0.8)
-
-        return round(stop_loss, precision), round(take_profit, precision)
+    @classmethod
+    def _derive_market_levels(cls, *, current_price: float, direction: str) -> tuple[float, float, float]:
+        precision = cls._price_precision(current_price)
+        entry = round(current_price, precision)
+        if direction == "bearish":
+            stop_loss = round(current_price + 0.0020, precision)
+            take_profit = round(current_price - 0.0040, precision)
+            return entry, stop_loss, take_profit
+        if direction == "neutral":
+            stop_loss = round(current_price - 0.0020, precision)
+            take_profit = round(current_price + 0.0020, precision)
+            return entry, stop_loss, take_profit
+        stop_loss = round(current_price - 0.0020, precision)
+        take_profit = round(current_price + 0.0040, precision)
+        return entry, stop_loss, take_profit
 
     @staticmethod
     def _find_swings(candles: list[dict[str, Any]]) -> tuple[list[float], list[float]]:
