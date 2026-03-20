@@ -44,12 +44,14 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["symbol"] == "EURUSD"
     assert payload[0]["timeframe"] == "M15"
     assert payload[0]["direction"] == "bullish"
-    assert payload[0]["summary"] == "BUY Тестовая идея для EURUSD"
+    assert payload[0]["summary"] == "Лонг → ждать подтверждение структуры."
     assert payload[0]["short_text"] == payload[0]["summary"]
     assert "HTF/MTF/LTF" in payload[0]["full_text"]
     assert "Инвалидация сценария остаётся жёсткой" in payload[0]["full_text"]
     assert "Если подтверждение сохранится" in payload[0]["full_text"]
     assert payload[0]["full_text"].count(".") >= 6
+    assert payload[0]["detail_brief"]["header"]["bias"] == "Лонг / buy-the-dip bias"
+    assert "smc_ict" in payload[0]["supported_sections"]
 
 
 def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) -> None:
@@ -82,7 +84,7 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
 
     payload = service.build_api_ideas()
 
-    assert payload[0]["summary"] == "SELL Краткий preview остаётся в карточке"
+    assert payload[0]["summary"] == "Шорт от 1.271 → цель 1.262 / 1.258, отмена выше 1.276."
     assert payload[0]["short_text"] == payload[0]["summary"]
     assert "premium-зоны предложения" in payload[0]["full_text"]
     assert "Контекст для detail-view." in payload[0]["full_text"]
@@ -96,6 +98,8 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
     assert payload[0]["trigger"]
     assert payload[0]["invalidation"] == "Возврат выше 1.276 ломает сценарий."
     assert payload[0]["target"] == "1.262 / 1.258"
+    assert payload[0]["detail_brief"]["trade_plan"]["take_profits"] == "1.262 / 1.258"
+    assert "fundamental" in payload[0]["supported_sections"]
 
 
 def test_build_api_ideas_uses_demo_fallback_when_storage_empty(tmp_path: Path) -> None:
@@ -150,8 +154,8 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["source"] == "openrouter_ai"
     assert payload[0]["symbol"] == "EURUSD"
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert payload[0]["summary"].startswith("BUY ")
-    assert "HTF" in payload[0]["summary"]
+    assert payload[0]["summary"].startswith("Лонг")
+    assert "цель" in payload[0]["summary"]
     assert payload[0]["full_text"].count(".") >= 6
     assert "Инвалидация сценария остаётся жёсткой" in payload[0]["full_text"]
     assert payload[0]["label"] == "BUY IDEA"

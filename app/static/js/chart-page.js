@@ -8,6 +8,8 @@ const modalSub = document.getElementById("modal-sub");
 const closeModalBtn = document.getElementById("close-modal");
 
 const analysisText = document.getElementById("analysis-text");
+const tradingPlanText = document.getElementById("trading-plan-text");
+const analysisSectionsRoot = document.getElementById("analysis-sections");
 
 const chartHost = document.getElementById("chart-host");
 const overlayCanvas = document.getElementById("chart-overlay");
@@ -20,6 +22,10 @@ const levelSl = document.getElementById("level-sl");
 const levelTp = document.getElementById("level-tp");
 const levelRr = document.getElementById("level-rr");
 const detailStatus = document.getElementById("detail-status");
+const detailMetrics = document.getElementById("detail-metrics");
+const scenarioPrimary = document.getElementById("scenario-primary");
+const scenarioSwing = document.getElementById("scenario-swing");
+const scenarioInvalidation = document.getElementById("scenario-invalidation");
 
 let allIdeas = [];
 let activeIdea = null;
@@ -208,6 +214,8 @@ function buildShortText(idea) {
 }
 
 function buildFullText(idea) {
+  const detailSummary = normalizeWhitespace(idea?.detail_brief?.summary_narrative);
+  if (detailSummary) return detailSummary;
   const direct = normalizeWhitespace(idea?.full_text || idea?.fullText || idea?.narrative);
   if (direct) return direct;
 
@@ -234,6 +242,59 @@ function buildFullText(idea) {
   const joined = unique.join(". ").trim();
   if (!joined) return "Идея подготовлена без расширенного аналитического текста.";
   return /[.!?]$/.test(joined) ? joined : `${joined}.`;
+}
+
+function buildDetailBrief(idea) {
+  const existing = idea?.detail_brief;
+  if (existing && typeof existing === "object") return existing;
+
+  const entry = formatLevel(idea?.entry);
+  const stop = formatLevel(idea?.stopLoss);
+  const takeProfit = formatLevel(idea?.takeProfit);
+  const supportedSections = [];
+  const sections = [];
+
+  const registerSection = (key, title, content, isProxy = false) => {
+    const text = normalizeWhitespace(content);
+    if (!text) return;
+    supportedSections.push(key);
+    sections.push({ key, title, content: text, is_proxy: isProxy });
+  };
+
+  registerSection("smc_ict", "SMC / ICT", idea?.analysis?.smc_ict_ru || idea?.summary_ru || idea?.summary);
+  registerSection("chart_patterns", "Графические паттерны", idea?.analysis?.pattern_ru);
+  registerSection("waves", "Волновой анализ", idea?.analysis?.waves_ru);
+  registerSection("fundamental", "Фундаментал / макро", idea?.analysis?.fundamental_ru || idea?.ideaContext);
+  registerSection("volume_profile", "Объёмы / Volume Profile", idea?.analysis?.volume_ru, /proxy/i.test(String(idea?.analysis?.volume_ru || "")));
+  registerSection("cumdelta", "CumDelta / order flow", idea?.analysis?.cumdelta_ru || idea?.analysis?.cumulative_delta_ru, true);
+  registerSection("liquidity", "Ликвидность", idea?.analysis?.liquidity_ru || idea?.target);
+
+  return {
+    header: {
+      market_price: entry !== "—" ? entry : "",
+      daily_change: "",
+      market_context: normalizeWhitespace(idea?.ideaContext || idea?.context),
+      bias: getDirectionRu(idea?.direction || idea?.bias),
+      confidence: Number(idea?.confidence ?? 0),
+      confluence_rating: Number(idea?.confidence ?? 0),
+    },
+    summary_narrative: buildFullText(idea),
+    scenarios: {
+      primary: normalizeWhitespace(idea?.trigger || idea?.summary),
+      swing: "Среднесрочный сценарий будет уточняться по мере удержания текущей структуры.",
+      invalidation: normalizeWhitespace(idea?.invalidation),
+    },
+    sections,
+    trade_plan: {
+      entry_zone: entry,
+      stop,
+      take_profits: takeProfit,
+      risk_reward: calculateRiskReward(idea),
+      primary_scenario: buildFullText(idea),
+      alternative_scenario: normalizeWhitespace(idea?.trade_plan?.alternative_scenario_ru || "Если подтверждение не появится, сделку лучше пропустить."),
+    },
+    supported_sections: supportedSections,
+  };
 }
 
 function normalizeIdea(idea) {
@@ -267,6 +328,13 @@ function normalizeIdea(idea) {
     summary_ru: shortText,
     short_text: shortText,
     full_text: fullText,
+    detail_brief: buildDetailBrief({
+      ...idea,
+      summary,
+      summary_ru: summary,
+      full_text: fullText,
+      short_text: shortText,
+    }),
     entry: idea?.entry ?? idea?.entry_zone ?? "—",
     stopLoss: idea?.stopLoss ?? idea?.stop_loss ?? "—",
     takeProfit: idea?.takeProfit ?? idea?.take_profit ?? "—",
@@ -383,14 +451,69 @@ function setTextContent(node, value, fallback = "—") {
   node.textContent = value && String(value).trim() ? String(value).trim() : fallback;
 }
 
+function renderMetricChips(detailBrief) {
+  if (!detailMetrics) return;
+  const header = detailBrief?.header || {};
+  const metrics = [
+    ["Цена", header.market_price || "—"],
+    ["Изм. за день", header.daily_change || "Нет данных"],
+    ["Bias", header.bias || "—"],
+    ["Confidence", header.confidence != null && header.confidence !== "" ? `${header.confidence}%` : "—"],
+    ["Confluence", header.confluence_rating != null && header.confluence_rating !== "" ? `${header.confluence_rating}%` : "—"],
+    ["Контекст", header.market_context || "Контекст не передан"],
+  ];
+  detailMetrics.innerHTML = metrics.map(([label, value]) => `
+    <div class="metric-chip">
+      <div class="metric-chip-label">${escapeHtml(label)}</div>
+      <div class="metric-chip-value">${escapeHtml(String(value))}</div>
+    </div>
+  `).join("");
+}
+
+function renderAnalysisSections(detailBrief) {
+  if (!analysisSectionsRoot) return;
+  const sections = Array.isArray(detailBrief?.sections) ? detailBrief.sections : [];
+  if (!sections.length) {
+    analysisSectionsRoot.innerHTML = "";
+    return;
+  }
+  analysisSectionsRoot.innerHTML = sections.map((section) => `
+    <section class="analysis-block">
+      <div class="analysis-title">${escapeHtml(section.title || section.key || "Секция")}</div>
+      <p class="analysis-text">${escapeHtml(section.content || "")}</p>
+      ${section.is_proxy ? '<div class="analysis-badge">proxy / derived context</div>' : ""}
+    </section>
+  `).join("");
+}
+
+function renderTradingPlan(detailBrief) {
+  const plan = detailBrief?.trade_plan || {};
+  const lines = [
+    `Entry zone: ${plan.entry_zone || "—"}`,
+    `Stop: ${plan.stop || "—"}`,
+    `Take profits: ${plan.take_profits || "—"}`,
+    `R:R: ${plan.risk_reward || "—"}`,
+    `Основной сценарий: ${plan.primary_scenario || "—"}`,
+    `Альтернативный сценарий: ${plan.alternative_scenario || "—"}`,
+  ];
+  setTextContent(tradingPlanText, lines.join("\n"), "Торговый план недоступен.");
+}
+
 function renderDetailText(idea) {
-  const fullText = buildFullText(idea);
+  const detailBrief = buildDetailBrief(idea);
+  const fullText = normalizeWhitespace(detailBrief?.summary_narrative) || buildFullText(idea);
   setTextContent(ideaSummary, fullText, "Идея доступна без расширенного summary.");
   setTextContent(analysisText, fullText, "Идея доступна без расширенного summary.");
   setTextContent(levelEntry, formatLevel(idea.entry));
   setTextContent(levelSl, formatLevel(idea.stopLoss));
   setTextContent(levelTp, formatLevel(idea.takeProfit));
   setTextContent(levelRr, calculateRiskReward(idea));
+  renderMetricChips(detailBrief);
+  setTextContent(scenarioPrimary, detailBrief?.scenarios?.primary, "Основной сценарий не передан.");
+  setTextContent(scenarioSwing, detailBrief?.scenarios?.swing, "Среднесрочный сценарий не передан.");
+  setTextContent(scenarioInvalidation, detailBrief?.scenarios?.invalidation, "Инвалидация не передана.");
+  renderTradingPlan(detailBrief);
+  renderAnalysisSections(detailBrief);
 }
 
 function ensureChart() {
@@ -689,11 +812,12 @@ async function openIdea(idea) {
   activeIdea = idea;
   const requestId = ++detailRequestId;
   modalTitle.textContent = `${idea.symbol} — ${getDirectionRu(idea.direction)}`;
-  modalSub.textContent = `${idea.timeframe} · Уверенность ${idea.confidence}%`;
+  const supported = Array.isArray(idea?.detail_brief?.supported_sections) ? idea.detail_brief.supported_sections.length : 0;
+  modalSub.textContent = `${idea.timeframe} · Уверенность ${idea.confidence}% · аналитических секций: ${supported || "—"}`;
   modal.classList.add("open");
 
   renderDetailText(idea);
-  updateDetailStatus("Загружаем detail-view идеи и проверяем доступность графика.");
+  updateDetailStatus("Загружаем desk-style detail-view идеи и проверяем доступность графика.");
   ensureChart();
   resetChartState();
   showChartPlaceholder("Загружаем график для идеи...");
@@ -707,7 +831,7 @@ async function openIdea(idea) {
 
     candleSeries.setData(payload.candles);
     chart.timeScale().fitContent();
-    updateDetailStatus("Detail-view заполнен: единый текст, уровни и график доступны.");
+    updateDetailStatus("Detail-view заполнен: narrative, сценарии, trading plan и график доступны.");
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => drawOverlay());
@@ -716,7 +840,7 @@ async function openIdea(idea) {
   }
 
   showChartPlaceholder("Chart unavailable");
-  updateDetailStatus("График недоступен, поэтому detail-view завершил загрузку и показал fallback вместо вечного loading.");
+  updateDetailStatus("График недоступен, но detail-view завершил загрузку: narrative, сценарии и trading plan показаны без чарта.");
 }
 
 function closeModal() {

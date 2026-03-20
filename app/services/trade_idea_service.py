@@ -357,6 +357,48 @@ class TradeIdeaService:
             invalidation=invalidation,
             target=target,
         )
+        short_scenario = self._build_trade_scenario_line(
+            direction=bias,
+            entry=self._format_zone(entry_value),
+            stop_loss=self._format_price(stop_loss),
+            target_1=self._format_price(take_profit),
+            target_2=self._format_price(take_profit),
+            trigger=trigger,
+        )
+        analysis_payload = {
+            "fundamental_ru": "Идея не гарантирует результат и должна использоваться только вместе с управлением риском.",
+            "smc_ict_ru": signal.get("description_ru") or "SMC/ICT контекст обновлён автоматически.",
+            "pattern_ru": signal.get("market_context", {}).get("patternSummaryRu") or "Паттерны не дали отдельного подтверждения.",
+            "waves_ru": "Волновая интерпретация носит вспомогательный характер и используется только как структурный сценарий.",
+            "volume_ru": "Объёмные выводы основаны только на доступных proxy/подтверждающих слоях.",
+            "liquidity_ru": signal.get("reason_ru") or "Ликвидность оценивается как дополнительный контекст сценария.",
+        }
+        trade_plan_payload = {
+            "bias": bias,
+            "entry_zone": self._format_zone(entry_value),
+            "entry_trigger": trigger,
+            "stop": self._format_price(stop_loss),
+            "invalidation": signal.get("invalidation_ru") or "Идея отменяется при сломе исходной структуры.",
+            "target_1": self._format_price(take_profit),
+            "target_2": self._format_price(take_profit),
+            "alternative_scenario_ru": "Если подтверждение исчезнет, идею следует пропустить или дождаться новой переоценки структуры.",
+            "primary_scenario_ru": full_text,
+        }
+        detail_brief = self._build_detail_brief(
+            signal,
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=bias,
+            confidence=int(signal.get("confidence_percent") or signal.get("probability_percent") or 0),
+            summary=summary_text,
+            full_text=full_text,
+            idea_context=idea_context,
+            trigger=trigger,
+            invalidation=invalidation,
+            target=target,
+            analysis=analysis_payload,
+            trade_plan=trade_plan_payload,
+        )
 
         return {
             "idea_id": idea_id,
@@ -379,7 +421,8 @@ class TradeIdeaService:
             "change_summary": self._change_summary(signal, existing),
             "title": f"{symbol} {timeframe}: {action} idea",
             "label": "BUY IDEA" if action == "BUY" else "SELL IDEA" if action == "SELL" else "WATCH",
-            "summary_ru": full_text,
+            "summary_ru": short_scenario,
+            "short_scenario_ru": short_scenario,
             "full_text": full_text,
             "idea_context": idea_context,
             "trigger": trigger,
@@ -387,22 +430,10 @@ class TradeIdeaService:
             "target": target,
             "chart_data": signal.get("chart_data") or signal.get("chartData"),
             "news_title": "AI trade idea",
-            "analysis": {
-                "fundamental_ru": "Идея не гарантирует результат и должна использоваться только вместе с управлением риском.",
-                "smc_ict_ru": signal.get("description_ru") or "SMC/ICT контекст обновлён автоматически.",
-                "pattern_ru": signal.get("market_context", {}).get("patternSummaryRu") or "Паттерны не дали отдельного подтверждения.",
-                "waves_ru": "Волновая интерпретация носит вспомогательный характер.",
-                "volume_ru": "Объёмные выводы основаны только на доступных proxy/подтверждающих слоях.",
-                "liquidity_ru": signal.get("reason_ru") or "Ликвидность оценивается как дополнительный контекст сценария.",
-            },
-            "trade_plan": {
-                "bias": bias,
-                "entry_zone": self._format_zone(entry_value),
-                "invalidation": signal.get("invalidation_ru") or "Идея отменяется при сломе исходной структуры.",
-                "target_1": self._format_price(take_profit),
-                "target_2": self._format_price(take_profit),
-                "alternative_scenario_ru": "Если подтверждение исчезнет, идея будет обновлена или переведена в invalidated, а не удалена.",
-            },
+            "analysis": analysis_payload,
+            "trade_plan": trade_plan_payload,
+            "detail_brief": detail_brief,
+            "supported_sections": detail_brief.get("supported_sections", []),
             "chart_image": None,
         }
 
@@ -605,6 +636,42 @@ class TradeIdeaService:
         return clean
 
     @classmethod
+    def _build_trade_scenario_line(
+        cls,
+        *,
+        direction: str,
+        entry: str,
+        stop_loss: str,
+        target_1: str,
+        target_2: str,
+        trigger: str,
+    ) -> str:
+        direction_label = {"bullish": "Лонг", "bearish": "Шорт", "neutral": "Сценарий"}.get(direction, "Сценарий")
+        entry_text = entry if entry not in {"", "—"} else ""
+        targets_text = cls._combine_targets(target_1, target_2)
+
+        if direction == "neutral":
+            trigger_text = re.sub(r"\s+", " ", str(trigger or "")).strip().rstrip(".")
+            if trigger_text:
+                return f"{direction_label}: {trigger_text} → цель {targets_text or 'по подтверждению импульса'}."
+            return "Сценарий: ждать подтверждение выхода из диапазона."
+
+        parts: list[str] = []
+        if entry_text:
+            parts.append(f"{direction_label} от {entry_text}")
+        else:
+            parts.append(direction_label)
+        if targets_text:
+            parts.append(f"→ цель {targets_text}")
+        elif trigger:
+            parts.append("→ ждать подтверждение структуры")
+        if stop_loss not in {"", "—"}:
+            invalidation_word = "ниже" if direction == "bullish" else "выше"
+            parts.append(f", отмена {invalidation_word} {stop_loss}")
+        text = " ".join(parts).replace(" ,", ",").strip()
+        return text if text.endswith(".") else f"{text}."
+
+    @classmethod
     def _build_short_text(
         cls,
         row: dict[str, Any],
@@ -618,6 +685,24 @@ class TradeIdeaService:
         direct_text = row.get("short_text") or row.get("shortText")
         if isinstance(direct_text, str) and direct_text.strip():
             return re.sub(r"\s+", " ", direct_text).strip()
+
+        direct_scenario = row.get("short_scenario_ru") or row.get("shortScenarioRu")
+        if isinstance(direct_scenario, str) and direct_scenario.strip():
+            return re.sub(r"\s+", " ", direct_scenario).strip()
+
+        scenario_line = cls._build_trade_scenario_line(
+            direction=direction,
+            entry=cls._extract_level(row, "entry", "entry_zone"),
+            stop_loss=cls._extract_level(row, "stopLoss", "stop_loss"),
+            target_1=cls._extract_level(row, "takeProfit", "take_profit"),
+            target_2=cls._extract_level(
+                row.get("trade_plan") if isinstance(row.get("trade_plan"), dict) else row,
+                "target_2",
+            ),
+            trigger=trigger,
+        )
+        if scenario_line:
+            return scenario_line
 
         source_text = re.sub(r"\s+", " ", str(summary or full_text or "")).strip()
         if not source_text:
@@ -653,6 +738,220 @@ class TradeIdeaService:
 
         return fallback_text
 
+    @classmethod
+    def _risk_reward_text(cls, entry: str, stop_loss: str, take_profit: str) -> str:
+        entry_value = cls._extract_numeric_level({"entry": entry}, "entry")
+        stop_value = cls._extract_numeric_level({"stop_loss": stop_loss}, "stop_loss")
+        target_value = cls._extract_numeric_level({"take_profit": take_profit}, "take_profit")
+        if entry_value is None or stop_value is None or target_value is None:
+            return "—"
+        risk = abs(entry_value - stop_value)
+        reward = abs(target_value - entry_value)
+        if risk <= 0:
+            return "—"
+        return f"{reward / risk:.2f}R"
+
+    @classmethod
+    def _build_detail_brief(
+        cls,
+        row: dict[str, Any],
+        *,
+        symbol: str,
+        timeframe: str,
+        direction: str,
+        confidence: int,
+        summary: str,
+        full_text: str,
+        idea_context: str,
+        trigger: str,
+        invalidation: str,
+        target: str,
+        analysis: dict[str, Any],
+        trade_plan: dict[str, Any],
+    ) -> dict[str, Any]:
+        market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
+        sentiment = row.get("sentiment") if isinstance(row.get("sentiment"), dict) else {}
+        current_price = cls._extract_level(market_context, "current_price")
+        daily_change = cls._extract_level(row, "daily_change_percent", "daily_change")
+        entry = cls._extract_level(row, "entry", "entry_zone")
+        stop_loss = cls._extract_level(row, "stopLoss", "stop_loss")
+        take_profit = cls._extract_level(row, "takeProfit", "take_profit")
+        target_2 = cls._extract_level(trade_plan, "target_2")
+        narrative_summary = cls._compose_briefing_summary(
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=direction,
+            summary=summary,
+            full_text=full_text,
+            idea_context=idea_context,
+            trigger=trigger,
+            invalidation=invalidation,
+            target=target,
+        )
+        sections = cls._build_analysis_sections(
+            row,
+            direction=direction,
+            idea_context=idea_context,
+            trigger=trigger,
+            target=target,
+            analysis=analysis,
+            trade_plan=trade_plan,
+        )
+        supported_sections = [section["key"] for section in sections]
+        confluence_rating = max(50, min(95, confidence))
+        market_bias_map = {
+            "bullish": "Лонг / buy-the-dip bias",
+            "bearish": "Шорт / sell-the-rally bias",
+            "neutral": "Нейтральный / wait-for-confirmation bias",
+        }
+        return {
+            "header": {
+                "market_price": current_price,
+                "daily_change": daily_change if daily_change != "—" else "",
+                "market_context": market_context.get("message") or market_context.get("summaryRu") or "",
+                "bias": market_bias_map.get(direction, market_bias_map["neutral"]),
+                "confidence": confidence,
+                "confluence_rating": confluence_rating,
+            },
+            "summary_narrative": narrative_summary,
+            "scenarios": {
+                "primary": cls._clean_sentence(trigger or summary),
+                "swing": cls._clean_sentence(
+                    trade_plan.get("medium_term_scenario_ru")
+                    or f"На горизонте 1–4 недели сценарий остаётся валиден, пока цена не ломает базовую структуру и сохраняет работу к {target}."
+                ),
+                "invalidation": cls._clean_sentence(invalidation),
+            },
+            "sections": sections,
+            "trade_plan": {
+                "entry_zone": entry,
+                "stop": stop_loss,
+                "take_profits": cls._combine_targets(take_profit, target_2) or target,
+                "risk_reward": cls._risk_reward_text(entry, stop_loss, take_profit),
+                "primary_scenario": cls._clean_sentence(trade_plan.get("primary_scenario_ru") or narrative_summary),
+                "alternative_scenario": cls._clean_sentence(trade_plan.get("alternative_scenario_ru")),
+            },
+            "supported_sections": supported_sections,
+        }
+
+    @classmethod
+    def _compose_briefing_summary(
+        cls,
+        *,
+        symbol: str,
+        timeframe: str,
+        direction: str,
+        summary: str,
+        full_text: str,
+        idea_context: str,
+        trigger: str,
+        invalidation: str,
+        target: str,
+    ) -> str:
+        bias_ru = {
+            "bullish": "long continuation / buy-the-dip",
+            "bearish": "short continuation / sell-the-rally",
+            "neutral": "wait-and-see / breakout validation",
+        }.get(direction, "wait-and-see / breakout validation")
+        sentences = [
+            f"{symbol} на {timeframe} торгуется с bias {bias_ru}; приоритет отдаётся сценарию, в котором цена подтверждает идею через структуру, ликвидность и реакцию в рабочей зоне, а не через одиночный импульс.",
+            summary,
+            idea_context,
+            f"Desk-level чтение здесь такое: триггером служит {trigger.rstrip('.')} а сценарий остаётся валиден только до тех пор, пока не выполнится инвалидация: {invalidation.rstrip('.')}.",
+            f"Если подтверждение сохраняется, базовая траектория движения остаётся к {target.rstrip('.')}.",
+        ]
+        return " ".join(cls._clean_sentence(item) for item in sentences if str(item or "").strip())
+
+    @classmethod
+    def _build_analysis_sections(
+        cls,
+        row: dict[str, Any],
+        *,
+        direction: str,
+        idea_context: str,
+        trigger: str,
+        target: str,
+        analysis: dict[str, Any],
+        trade_plan: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
+        sentiment = row.get("sentiment") if isinstance(row.get("sentiment"), dict) else {}
+        entry = cls._extract_level(row, "entry", "entry_zone")
+        stop_loss = cls._extract_level(row, "stopLoss", "stop_loss")
+        take_profit = cls._extract_level(row, "takeProfit", "take_profit")
+        pattern_summary = market_context.get("patternSummaryRu") or analysis.get("pattern_ru") or ""
+        atr_percent = market_context.get("atr_percent")
+        ltf_pattern = market_context.get("ltf_pattern")
+        sentiment_alignment = market_context.get("sentimentAlignment")
+        sentiment_source = sentiment.get("source")
+        sentiment_status = sentiment.get("data_status")
+        sentiment_conf = sentiment.get("confidence")
+        sections: list[dict[str, Any]] = []
+
+        def add_section(key: str, title: str, content: str, *, is_proxy: bool = False) -> None:
+            clean = re.sub(r"\s+", " ", str(content or "")).strip()
+            if not clean:
+                return
+            sections.append({"key": key, "title": title, "content": clean, "is_proxy": is_proxy})
+
+        smc_text = (
+            analysis.get("smc_ict_ru")
+            or f"Структура читается через HTF/MTF/LTF alignment, вероятный BOS/CHOCH и работу цены вокруг {entry}; триггером остаётся реакция в dealing range с прицелом на {target}."
+        )
+        if atr_percent not in (None, ""):
+            smc_text = f"{smc_text.rstrip('.')} Волатильность по ATR около {atr_percent}% помогает калибровать глубину mitigation и допустимый размер стопа."
+        add_section("smc_ict", "SMC / ICT", smc_text)
+
+        if pattern_summary and "не обнаруж" not in pattern_summary.lower():
+            add_section("chart_patterns", "Графические паттерны", pattern_summary)
+
+        if analysis.get("harmonic_ru"):
+            add_section("harmonic", "Гармонические паттерны", analysis.get("harmonic_ru"))
+
+        waves_text = analysis.get("waves_ru")
+        if waves_text:
+            add_section("waves", "Волновой анализ", waves_text)
+
+        fundamental_text = analysis.get("fundamental_ru") or idea_context
+        if sentiment_alignment:
+            fundamental_text = f"{fundamental_text.rstrip('.')} Sentiment alignment: {sentiment_alignment}."
+        add_section("fundamental", "Фундаментал / макро", fundamental_text)
+
+        if analysis.get("wyckoff_ru"):
+            add_section("wyckoff", "Wyckoff", analysis.get("wyckoff_ru"))
+
+        volume_text = analysis.get("volume_ru")
+        if volume_text:
+            add_section("volume_profile", "Объёмы / Volume Profile", volume_text, is_proxy="proxy" in volume_text.lower())
+
+        if analysis.get("divergence_ru"):
+            add_section("divergences", "Дивергенции", analysis.get("divergence_ru"))
+
+        cumdelta_text = analysis.get("cumdelta_ru") or analysis.get("cumulative_delta_ru")
+        if cumdelta_text:
+            add_section("cumdelta", "CumDelta / order flow", cumdelta_text, is_proxy="proxy" in cumdelta_text.lower())
+        elif ltf_pattern:
+            add_section(
+                "cumdelta",
+                "CumDelta / order flow",
+                f"Прямой биржевой order flow для {row.get('symbol') or row.get('instrument') or 'инструмента'} недоступен; используем proxy-чтение через импульс {ltf_pattern}, скорость displacement и то, как цена реагирует вокруг {entry}.",
+                is_proxy=True,
+            )
+
+        if sentiment and sentiment_status != "unavailable":
+            bias = sentiment.get("contrarian_bias") or sentiment.get("sentiment_score") or "neutral"
+            sentiment_text = f"Сентиментальный слой показывает bias {bias}."
+            if sentiment_conf not in (None, ""):
+                sentiment_text += f" Confidence модели: {round(float(sentiment_conf) * 100)}%."
+            if sentiment_source:
+                sentiment_text += f" Источник: {sentiment_source}."
+            add_section("sentiment", "Сентимент / positioning", sentiment_text, is_proxy="mock" in str(sentiment_source).lower())
+
+        liquidity_text = analysis.get("liquidity_ru") or f"Рабочая логика ликвидности завязана на проход к {target} при сохранении защиты за уровнем {stop_loss}."
+        add_section("liquidity", "Ликвидность", liquidity_text)
+
+        return sections
+
     def _normalize_for_api(self, ideas: list[dict[str, Any]], *, source: str) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
         for row in ideas:
@@ -675,6 +974,7 @@ class TradeIdeaService:
             take_profit = self._extract_level(row, "takeProfit", "take_profit")
             trade_plan = row.get("trade_plan") if isinstance(row.get("trade_plan"), dict) else {}
             analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+            market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
             idea_context = (
                 row.get("ideaContext")
                 or row.get("idea_context")
@@ -718,6 +1018,46 @@ class TradeIdeaService:
                 trigger=str(trigger),
                 target=str(target),
             )
+            normalized_analysis = {
+                "fundamental_ru": str(analysis.get("fundamental_ru") or idea_context),
+                "smc_ict_ru": str(analysis.get("smc_ict_ru") or summary),
+                "pattern_ru": str(analysis.get("pattern_ru") or market_context.get("patternSummaryRu") or ""),
+                "waves_ru": str(analysis.get("waves_ru") or ""),
+                "volume_ru": str(analysis.get("volume_ru") or ""),
+                "liquidity_ru": str(analysis.get("liquidity_ru") or target),
+                "wyckoff_ru": str(analysis.get("wyckoff_ru") or ""),
+                "divergence_ru": str(analysis.get("divergence_ru") or ""),
+                "cumdelta_ru": str(analysis.get("cumdelta_ru") or analysis.get("cumulative_delta_ru") or ""),
+                "harmonic_ru": str(analysis.get("harmonic_ru") or ""),
+            }
+            normalized_trade_plan = {
+                "bias": direction,
+                "entry_zone": entry,
+                "entry_trigger": str(trigger),
+                "stop": stop_loss,
+                "invalidation": str(invalidation),
+                "target_1": take_profit,
+                "target_2": self._extract_level(trade_plan, "target_2"),
+                "alternative_scenario_ru": str(
+                    trade_plan.get("alternative_scenario_ru") or "Если подтверждение не появится, сценарий следует пропустить."
+                ),
+                "primary_scenario_ru": str(trade_plan.get("primary_scenario_ru") or full_text),
+            }
+            detail_brief = self._build_detail_brief(
+                row,
+                symbol=symbol,
+                timeframe=timeframe,
+                direction=direction,
+                confidence=int(confidence),
+                summary=str(summary),
+                full_text=str(full_text),
+                idea_context=str(idea_context),
+                trigger=str(trigger),
+                invalidation=str(invalidation),
+                target=str(target),
+                analysis=normalized_analysis,
+                trade_plan=normalized_trade_plan,
+            )
             chart_data = row.get("chartData") or row.get("chart_data")
             tags = row.get("tags")
             if not isinstance(tags, list) or not tags:
@@ -741,6 +1081,7 @@ class TradeIdeaService:
                         "summary": short_text,
                         "summary_ru": short_text,
                         "short_text": short_text,
+                        "short_scenario_ru": short_text,
                         "full_text": full_text,
                         "entry": entry,
                         "stopLoss": stop_loss,
@@ -755,23 +1096,10 @@ class TradeIdeaService:
                         "title": f"{symbol} {timeframe}: {direction}",
                         "label": "BUY IDEA" if direction == "bullish" else "SELL IDEA" if direction == "bearish" else "WATCH",
                         "news_title": "OpenRouter AI",
-                        "analysis": {
-                            "fundamental_ru": str(idea_context),
-                            "smc_ict_ru": str(summary),
-                            "pattern_ru": str(trigger),
-                            "waves_ru": "Волновый сценарий требует дополнительного подтверждения.",
-                            "volume_ru": "Объёмные выводы основаны на косвенных признаках без биржевого потока.",
-                            "liquidity_ru": str(target),
-                        },
-                        "trade_plan": {
-                            "bias": direction,
-                            "entry_zone": entry,
-                            "entry_trigger": str(trigger),
-                            "invalidation": str(invalidation),
-                            "target_1": take_profit,
-                            "target_2": take_profit,
-                            "alternative_scenario_ru": "Если подтверждение не появится, сценарий следует пропустить.",
-                        },
+                        "analysis": normalized_analysis,
+                        "trade_plan": normalized_trade_plan,
+                        "detail_brief": detail_brief,
+                        "supported_sections": detail_brief.get("supported_sections", []),
                         "entry_value": entry_value,
                         "stop_loss_value": stop_loss_value,
                         "take_profit_value": take_profit_value,
