@@ -46,6 +46,8 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["direction"] == "bullish"
     assert payload[0]["summary"] == "Лонг → ждать подтверждение структуры."
     assert payload[0]["short_text"] == payload[0]["summary"]
+    assert "Почему вход именно здесь" in payload[0]["full_text"]
+    assert "вернулся к зоне" in payload[0]["full_text"]
     assert "Триггер" in payload[0]["full_text"]
     assert "Подтверждение" in payload[0]["full_text"]
     assert "Цель" in payload[0]["full_text"]
@@ -87,7 +89,9 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
     assert payload[0]["summary"] == "Шорт от 1.271 → цель 1.262 / 1.258, отмена выше 1.276."
     assert payload[0]["short_text"] == payload[0]["summary"]
     assert "коррекция в premium" in payload[0]["full_text"]
-    assert "Контекст для detail-view." in payload[0]["full_text"]
+    assert "вернулся к зоне 1.271" in payload[0]["full_text"]
+    assert "Почему вход именно здесь: зона 1.271" in payload[0]["full_text"]
+    assert "контекст для detail-view" in payload[0]["full_text"].lower()
     assert "Возврат выше 1.276 ломает сценарий." in payload[0]["full_text"]
     assert "Триггер" in payload[0]["full_text"]
     assert "Подтверждение" in payload[0]["full_text"]
@@ -183,6 +187,8 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["summary"].startswith("Лонг")
     assert "цель" in payload[0]["summary"]
     assert payload[0]["full_text"].count(".") >= 5
+    assert "Почему вход именно здесь" in payload[0]["full_text"]
+    assert "зона 1.0851" in payload[0]["full_text"]
     assert "Триггер" in payload[0]["full_text"]
     assert "Сценарий отменяется" in payload[0]["full_text"]
     assert payload[0]["label"] == "BUY IDEA"
@@ -281,6 +287,27 @@ def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_
     assert eurusd["meta"]["latest_close"] == 1.1568
     assert eurusd["meta"]["levels_source"] == "fallback"
     assert eurusd["entry_deviation_pct"] > 0.3
+
+
+def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    prompt = service._build_openrouter_prompt(
+        {
+            ("EURUSD", "M15"): {
+                "symbol": "EURUSD",
+                "timeframe": "M15",
+                "latest_close": 1.1552,
+                "recent_candles": [{"open": 1.1548, "high": 1.1555, "low": 1.1542, "close": 1.1552}] * 40,
+                "market_context": {"summaryRu": "Тест зоны предложения."},
+            }
+        }
+    )
+
+    assert "ПОЧЕМУ вход именно от entry" in prompt
+    assert "order block, FVG / imbalance, liquidity sweep, BOS, CHOCH" in prompt
+    assert "trigger не должен быть абстрактным" in prompt
+    assert "reason/trigger/invalidation" in prompt
 
 
 def test_list_api_ideas_falls_back_when_ai_returns_empty(monkeypatch, tmp_path: Path) -> None:
