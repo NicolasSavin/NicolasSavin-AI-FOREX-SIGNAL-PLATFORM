@@ -176,6 +176,7 @@ class TradeIdeaService:
             "status": status,
             "bias": bias,
             "confidence": int(signal.get("confidence_percent") or signal.get("probability_percent") or 0),
+            "entry": entry_value,
             "entry_zone": self._format_zone(entry_value),
             "stop_loss": stop_loss,
             "take_profit": take_profit,
@@ -188,6 +189,11 @@ class TradeIdeaService:
             "title": f"{symbol} {timeframe}: {action} idea",
             "label": "BUY IDEA" if action == "BUY" else "SELL IDEA" if action == "SELL" else "WATCH",
             "summary_ru": signal.get("description_ru") or f"{symbol} {timeframe}: торговая идея обновлена.",
+            "idea_context": signal.get("idea_context_ru") or signal.get("market_context", {}).get("summaryRu") or rationale,
+            "trigger": signal.get("trigger_ru") or f"Триггер — подтверждение входа в зоне {self._format_zone(entry_value)} по текущей структуре.",
+            "invalidation": signal.get("invalidation_ru") or "Идея отменяется при сломе исходной структуры.",
+            "target": signal.get("target_ru") or f"Ближайшая цель: {self._format_price(take_profit)}.",
+            "chart_data": signal.get("chart_data") or signal.get("chartData"),
             "news_title": "AI trade idea",
             "analysis": {
                 "fundamental_ru": "Идея не гарантирует результат и должна использоваться только вместе с управлением риском.",
@@ -290,6 +296,38 @@ class TradeIdeaService:
                 or "Идея подготовлена без расширенного описания."
             )
             confidence = row.get("confidence") or row.get("confidence_percent") or row.get("probability_percent") or 60
+            entry = self._extract_level(row, "entry", "entry_zone")
+            stop_loss = self._extract_level(row, "stopLoss", "stop_loss")
+            take_profit = self._extract_level(row, "takeProfit", "take_profit")
+            trade_plan = row.get("trade_plan") if isinstance(row.get("trade_plan"), dict) else {}
+            analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+            idea_context = (
+                row.get("ideaContext")
+                or row.get("idea_context")
+                or row.get("idea_context_ru")
+                or row.get("rationale")
+                or analysis.get("fundamental_ru")
+                or summary
+            )
+            trigger = (
+                row.get("trigger")
+                or row.get("trigger_ru")
+                or trade_plan.get("entry_trigger")
+                or (f"Нужен триггер на вход от зоны {entry}." if entry != "—" else "Ждём подтверждение сценария по текущей структуре.")
+            )
+            invalidation = (
+                row.get("invalidation")
+                or row.get("invalidation_ru")
+                or trade_plan.get("invalidation")
+                or "Идея отменяется при сломе исходной структуры."
+            )
+            target = (
+                row.get("target")
+                or row.get("target_ru")
+                or self._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2"))
+                or (f"Ближайшая цель: {take_profit}." if take_profit != "—" else "Цель будет уточняться после появления подтверждения.")
+            )
+            chart_data = row.get("chartData") or row.get("chart_data")
             tags = row.get("tags")
             if not isinstance(tags, list) or not tags:
                 tags = [source, symbol, timeframe, direction]
@@ -307,6 +345,14 @@ class TradeIdeaService:
                         "confidence": int(confidence),
                         "summary": str(summary),
                         "summary_ru": str(summary),
+                        "entry": entry,
+                        "stopLoss": stop_loss,
+                        "takeProfit": take_profit,
+                        "chartData": chart_data,
+                        "ideaContext": str(idea_context),
+                        "trigger": str(trigger),
+                        "invalidation": str(invalidation),
+                        "target": str(target),
                         "tags": [str(tag) for tag in tags if tag],
                         "is_fallback": bool(row.get("is_fallback", False)),
                     },
@@ -320,6 +366,26 @@ class TradeIdeaService:
         payload = dict(idea)
         payload["source"] = source
         return payload
+
+    @classmethod
+    def _extract_level(cls, row: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = row.get(key)
+            if value in (None, "", "—"):
+                continue
+            if isinstance(value, (int, float)):
+                return cls._format_price(float(value))
+            text = str(value).strip()
+            if text:
+                return text
+        return "—"
+
+    @staticmethod
+    def _combine_targets(*targets: Any) -> str:
+        values = [str(target).strip() for target in targets if target not in (None, "", "—") and str(target).strip()]
+        if not values:
+            return ""
+        return " / ".join(values)
 
     @staticmethod
     def _extract_symbol(row: dict[str, Any]) -> str:
