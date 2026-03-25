@@ -312,6 +312,7 @@ class TradeIdeaService:
                 idea["updated_at"] = datetime.now(timezone.utc).isoformat()
                 idea["version"] = int(idea.get("version", 1)) + 1
                 idea["change_summary"] = signal.get("reason_ru") or "Сценарий потерял подтверждение и переведён в invalidated."
+                idea["close_explanation"] = self._build_close_explanation("invalidated", signal=signal, idea=idea)
                 changed = True
         if changed:
             self.idea_store.write({"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": ideas})
@@ -386,6 +387,7 @@ class TradeIdeaService:
             analysis=analysis_payload,
             trade_plan=trade_plan_payload,
         )
+        close_explanation = self._build_close_explanation(status, signal=signal, idea=existing)
 
         return {
             "idea_id": idea_id,
@@ -422,6 +424,7 @@ class TradeIdeaService:
             "detail_brief": detail_brief,
             "supported_sections": detail_brief.get("supported_sections", []),
             "chart_image": None,
+            "close_explanation": close_explanation,
         }
 
     def _append_snapshot(self, idea: dict[str, Any], previous: dict[str, Any] | None) -> None:
@@ -441,12 +444,76 @@ class TradeIdeaService:
 
     @staticmethod
     def _status_from_signal(signal: dict, existing: dict[str, Any] | None = None) -> str:
+        raw_status = str(signal.get("status") or "").strip().lower()
+        close_reason = str(signal.get("close_reason") or "").strip().lower()
+        reason_text = str(signal.get("reason_ru") or signal.get("description_ru") or "").strip().lower()
+        merged = " ".join(part for part in (raw_status, close_reason, reason_text) if part)
+
+        if any(token in merged for token in ("tp_hit", "take_profit", "take profit", "закрыт по tp", "достиг tp")):
+            return "tp_hit"
+        if any(token in merged for token in ("sl_hit", "stop_loss", "stop loss", "закрыт по sl", "стоп", "stop")):
+            return "sl_hit"
+        if any(token in merged for token in ("invalidated", "invalidation", "инвалид", "невалид", "слом структуры")):
+            return "invalidated"
+
         action = signal.get("action", "NO_TRADE")
         if action == "NO_TRADE":
             return "invalidated" if existing else "watching"
         if existing is None:
             return "active"
         return "updated"
+
+    @classmethod
+    def _build_close_explanation(cls, status: str, *, signal: dict[str, Any], idea: dict[str, Any] | None = None) -> str | None:
+        if status not in CLOSED_STATUSES:
+            return None
+        if status == "archived":
+            if idea and idea.get("close_explanation"):
+                return str(idea.get("close_explanation"))
+            status = cls._status_from_signal(signal=signal, existing=idea)
+            if status == "archived":
+                status = "invalidated"
+
+        level_source = idea or signal
+        symbol = str(level_source.get("symbol") or signal.get("symbol") or "Инструмент").upper()
+        entry = cls._format_price(level_source.get("entry") or signal.get("entry"))
+        stop_loss = cls._format_price(
+            level_source.get("stop_loss") or level_source.get("stopLoss") or signal.get("stop_loss") or signal.get("stopLoss")
+        )
+        take_profit = cls._format_price(
+            level_source.get("take_profit") or level_source.get("takeProfit") or signal.get("take_profit") or signal.get("takeProfit")
+        )
+        invalidation_level = cls._extract_first_level(signal.get("invalidation_ru") or level_source.get("invalidation"))
+
+        if status == "tp_hit":
+            return (
+                f"Идея по {symbol} закрыта по take profit. После реакции от рабочей зоны {entry} "
+                f"(order block / imbalance) продавцы или покупатели не смогли удержать встречное движение, "
+                f"и рынок дал импульс в сторону сценария. Подтверждением стали смещение CumDelta и слабый объём против хода, "
+                f"что показало контроль доминирующей стороны. Цена сняла ликвидность у промежуточных экстремумов и пришла в целевой уровень {take_profit}."
+            )
+        if status == "sl_hit":
+            return (
+                f"Идея по {symbol} закрыта по stop loss. После входа от {entry} цена пробила защитный уровень {stop_loss} "
+                f"и закрепилась за ним, что означает потерю исходной структуры. По динамике видно смену контроля в пользу противоположной стороны: "
+                f"импульс и объёмы прошли против сценария. Логика входа больше не работает, поэтому сценарий признан невалидным."
+            )
+
+        broken_level = invalidation_level if invalidation_level != "—" else stop_loss
+        return (
+            f"Идея по {symbol} закрыта как invalidation. Ключевой уровень {broken_level} был нарушен, "
+            f"и структура, на которой строился вход от {entry}, больше не подтверждается. "
+            f"Рынок сместил контроль в пользу противоположной стороны, поэтому ожидание движения к {take_profit} утратило основание."
+        )
+
+    @staticmethod
+    def _extract_first_level(text: str | None) -> str:
+        if not text:
+            return "—"
+        match = re.search(r"\d+(?:[.,]\d+)?", str(text))
+        if not match:
+            return "—"
+        return match.group(0).replace(",", ".")
 
     @staticmethod
     def _setup_type(signal: dict) -> str:
