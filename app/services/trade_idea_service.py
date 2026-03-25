@@ -19,6 +19,7 @@ from backend.signal_engine import SignalEngine
 DEFAULT_IDEA_TIMEFRAMES = ["M15", "H1", "H4"]
 ACTIVE_STATUSES = {"watching", "active", "updated", "triggered"}
 CLOSED_STATUSES = {"tp_hit", "sl_hit", "invalidated", "archived"}
+TERMINAL_STATUSES = {"tp_hit", "sl_hit", "invalidated"}
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_SYSTEM_PROMPT = "Ты профессиональный трейдинг-аналитик (Forex, SMC, liquidity).\n\nОтвечай ТОЛЬКО JSON массивом без текста."
 OPENROUTER_IDEA_SPECS = [
@@ -169,9 +170,12 @@ class TradeIdeaService:
                 "ideas": [],
             }
             self.idea_store.write(payload)
+        active_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES]
+        archived_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") == "archived"]
         legacy = {
             "updated_at_utc": payload.get("updated_at_utc"),
-            "ideas": [self._to_legacy_card(idea) for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES],
+            "ideas": [self._to_legacy_card(idea) for idea in active_ideas],
+            "archive": archived_ideas,
         }
         self.legacy_store.write(legacy)
         return legacy
@@ -257,7 +261,6 @@ class TradeIdeaService:
         timeframe = str(signal.get("timeframe", "H1")).upper()
         setup_type = self._setup_type(signal)
         now = datetime.now(timezone.utc)
-        status = self._status_from_signal(signal)
         active_index = next(
             (
                 index
@@ -280,9 +283,6 @@ class TradeIdeaService:
             ideas.append(updated)
             self._append_snapshot(updated, previous=None)
 
-        if status in CLOSED_STATUSES and active_index is None:
-            updated["status"] = "archived"
-
         store = {"updated_at_utc": now.isoformat(), "ideas": ideas}
         self.idea_store.write(store)
         return updated
@@ -300,6 +300,7 @@ class TradeIdeaService:
         store = self.idea_store.read()
         ideas = store.get("ideas", [])
         changed = False
+        now_iso = datetime.now(timezone.utc).isoformat()
         target_setup_type = self._setup_type(signal) if signal.get("action") != "NO_TRADE" else None
         for idea in ideas:
             if (
@@ -308,10 +309,30 @@ class TradeIdeaService:
                 and (target_setup_type is None or idea.get("setup_type") == target_setup_type)
                 and idea.get("status") in ACTIVE_STATUSES
             ):
-                idea["status"] = "invalidated"
-                idea["updated_at"] = datetime.now(timezone.utc).isoformat()
+                close_note = signal.get("reason_ru") or "Сценарий потерял подтверждение и переведён в архив."
+                idea["status"] = "archived"
+                idea["final_status"] = "invalidated"
+                idea["updated_at"] = now_iso
+                idea["closed_at"] = now_iso
+                idea["close_reason"] = "Scenario invalidated"
+                idea["close_explanation"] = (
+                    f"Сценарий по {idea.get('symbol')} отменён: {close_note} Карточка переведена в архив и больше не обновляется."
+                )
                 idea["version"] = int(idea.get("version", 1)) + 1
-                idea["change_summary"] = signal.get("reason_ru") or "Сценарий потерял подтверждение и переведён в invalidated."
+                idea["change_summary"] = close_note
+                idea["update_summary"] = close_note
+                idea["history"] = self._append_history_event(
+                    idea.get("history"),
+                    event_type="invalidated",
+                    note=close_note,
+                    at=now_iso,
+                )
+                idea["history"] = self._append_history_event(
+                    idea.get("history"),
+                    event_type="archived",
+                    note="Карточка зафиксирована в архиве и больше не обновляется.",
+                    at=now_iso,
+                )
                 changed = True
         if changed:
             self.idea_store.write({"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": ideas})
@@ -330,6 +351,7 @@ class TradeIdeaService:
         take_profit = signal.get("take_profit")
         idea_id = existing.get("idea_id") if existing else self._idea_id(symbol, timeframe, setup_type, created_at)
         status = self._status_from_signal(signal, existing=existing)
+        latest_close = self._extract_latest_close(signal)
         rationale = signal.get("reason_ru") or signal.get("description_ru") or "Структурное подтверждение сценария ограничено."
         summary_text = signal.get("description_ru") or f"{symbol} {timeframe}: торговая идея обновлена."
         idea_context = signal.get("idea_context_ru") or signal.get("market_context", {}).get("summaryRu") or rationale
@@ -386,6 +408,23 @@ class TradeIdeaService:
             analysis=analysis_payload,
             trade_plan=trade_plan_payload,
         )
+        is_terminal = status in TERMINAL_STATUSES
+        closed_at = now.isoformat() if is_terminal else None
+        final_status = status if is_terminal else existing.get("final_status") if existing else None
+        close_reason = self._close_reason(status) if is_terminal else existing.get("close_reason") if existing else None
+        close_explanation = (
+            self._close_explanation(
+                status=status,
+                symbol=symbol,
+                direction=bias,
+                target=self._format_price(take_profit),
+                invalidation=invalidation,
+            )
+            if is_terminal
+            else existing.get("close_explanation") if existing else None
+        )
+        history = self._build_history(existing=existing, status=status, now=now.isoformat(), rationale=rationale, close_explanation=close_explanation)
+        persisted_status = "archived" if is_terminal else status
 
         return {
             "idea_id": idea_id,
@@ -393,19 +432,30 @@ class TradeIdeaService:
             "instrument": symbol,
             "timeframe": timeframe,
             "setup_type": setup_type,
-            "status": status,
+            "scenario_key": setup_type,
+            "setup_family": setup_type,
+            "status": persisted_status,
+            "final_status": final_status,
             "bias": bias,
+            "direction": bias,
             "confidence": int(signal.get("confidence_percent") or signal.get("probability_percent") or 0),
             "entry": entry_value,
             "entry_zone": self._format_zone(entry_value),
             "stop_loss": stop_loss,
             "take_profit": take_profit,
+            "stopLoss": self._format_price(stop_loss),
+            "takeProfit": self._format_price(take_profit),
+            "latest_close": latest_close,
             "sentiment": signal_sentiment,
             "rationale": rationale,
             "created_at": created_at,
             "updated_at": now.isoformat(),
+            "closed_at": closed_at,
+            "close_reason": close_reason,
+            "close_explanation": close_explanation,
             "version": version,
             "change_summary": self._change_summary(signal, existing),
+            "update_summary": self._build_update_summary(signal=signal, existing=existing, bias=bias),
             "title": f"{symbol} {timeframe}: {action} idea",
             "label": "BUY IDEA" if action == "BUY" else "SELL IDEA" if action == "SELL" else "WATCH",
             "summary_ru": short_scenario,
@@ -416,12 +466,14 @@ class TradeIdeaService:
             "invalidation": invalidation,
             "target": target,
             "chart_data": signal.get("chart_data") or signal.get("chartData"),
+            "chartData": signal.get("chart_data") or signal.get("chartData"),
             "news_title": "AI trade idea",
             "analysis": analysis_payload,
             "trade_plan": trade_plan_payload,
             "detail_brief": detail_brief,
             "supported_sections": detail_brief.get("supported_sections", []),
             "chart_image": None,
+            "history": history,
         }
 
     def _append_snapshot(self, idea: dict[str, Any], previous: dict[str, Any] | None) -> None:
@@ -444,9 +496,114 @@ class TradeIdeaService:
         action = signal.get("action", "NO_TRADE")
         if action == "NO_TRADE":
             return "invalidated" if existing else "watching"
+        latest_close = TradeIdeaService._extract_latest_close(signal)
+        entry = TradeIdeaService._extract_numeric(signal.get("entry"))
+        stop_loss = TradeIdeaService._extract_numeric(signal.get("stop_loss"))
+        take_profit = TradeIdeaService._extract_numeric(signal.get("take_profit"))
+        if latest_close is not None and existing is not None:
+            direction = str(existing.get("direction") or existing.get("bias") or "").lower()
+            if direction == "bullish":
+                if take_profit is not None and latest_close >= take_profit:
+                    return "tp_hit"
+                if stop_loss is not None and latest_close <= stop_loss:
+                    return "sl_hit"
+                if entry is not None and latest_close >= entry:
+                    return "triggered"
+            elif direction == "bearish":
+                if take_profit is not None and latest_close <= take_profit:
+                    return "tp_hit"
+                if stop_loss is not None and latest_close >= stop_loss:
+                    return "sl_hit"
+                if entry is not None and latest_close <= entry:
+                    return "triggered"
         if existing is None:
             return "active"
         return "updated"
+
+    @staticmethod
+    def _extract_numeric(value: Any) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _extract_latest_close(signal: dict[str, Any]) -> float | None:
+        direct = TradeIdeaService._extract_numeric(signal.get("latest_close"))
+        if direct is not None:
+            return direct
+        market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        context_price = TradeIdeaService._extract_numeric(market_context.get("current_price"))
+        if context_price is not None:
+            return context_price
+        chart_data = signal.get("chart_data") or signal.get("chartData")
+        if isinstance(chart_data, dict):
+            candles = chart_data.get("candles") if isinstance(chart_data.get("candles"), list) else []
+            if candles:
+                return TradeIdeaService._extract_numeric(candles[-1].get("close"))
+        return None
+
+    @staticmethod
+    def _close_reason(status: str) -> str | None:
+        return {
+            "tp_hit": "TP reached",
+            "sl_hit": "SL reached",
+            "invalidated": "Scenario invalidated",
+        }.get(status)
+
+    @staticmethod
+    def _close_explanation(*, status: str, symbol: str, direction: str, target: str, invalidation: str) -> str:
+        if status == "tp_hit":
+            return (
+                f"Идея по {symbol} отработала по take profit. Цена подтвердила {direction} сценарий и дошла до целевой ликвидности {target}. "
+                "Сценарий завершён и переведён в архив."
+            )
+        if status == "sl_hit":
+            return (
+                f"Идея по {symbol} закрыта по stop loss. После теста зоны рынок не подтвердил сценарий и нарушил структуру. "
+                "Идея переведена в архив."
+            )
+        return f"Сценарий по {symbol} отменён. {invalidation} Карточка переведена в архив."
+
+    @staticmethod
+    def _append_history_event(history: Any, *, event_type: str, note: str, at: str) -> list[dict[str, str]]:
+        items = list(history) if isinstance(history, list) else []
+        items.append({"type": event_type, "at": at, "note": note})
+        return items
+
+    def _build_history(
+        self,
+        *,
+        existing: dict[str, Any] | None,
+        status: str,
+        now: str,
+        rationale: str,
+        close_explanation: str | None,
+    ) -> list[dict[str, str]]:
+        if existing is None:
+            return self._append_history_event([], event_type="created", note=f"Создан сценарий: {rationale}", at=now)
+
+        history = existing.get("history")
+        event_map = {
+            "updated": "updated",
+            "triggered": "triggered",
+            "tp_hit": "tp_hit",
+            "sl_hit": "sl_hit",
+            "invalidated": "invalidated",
+        }
+        event_type = event_map.get(status, "updated")
+        note = close_explanation if status in TERMINAL_STATUSES and close_explanation else rationale
+        updated_history = self._append_history_event(history, event_type=event_type, note=note, at=now)
+        if status in TERMINAL_STATUSES:
+            updated_history = self._append_history_event(
+                updated_history,
+                event_type="archived",
+                note="Карточка зафиксирована в архиве и больше не обновляется.",
+                at=now,
+            )
+        return updated_history
 
     @staticmethod
     def _setup_type(signal: dict) -> str:
@@ -474,6 +631,20 @@ class TradeIdeaService:
         if not parts:
             return "Контекст идеи обновлён без смены её идентичности."
         return " ".join(parts)
+
+    @staticmethod
+    def _build_update_summary(signal: dict[str, Any], existing: dict[str, Any] | None, bias: str) -> str:
+        if existing is None:
+            return "Идея создана: стартовый сценарий добавлен в активные."
+        context = signal.get("reason_ru") or signal.get("description_ru") or "Рынок обновил структуру внутри того же сценария."
+        confidence_prev = TradeIdeaService._extract_numeric(existing.get("confidence"))
+        confidence_new = TradeIdeaService._extract_numeric(signal.get("confidence_percent") or signal.get("probability_percent"))
+        if confidence_prev is not None and confidence_new is not None:
+            if confidence_new > confidence_prev:
+                return f"Сценарий усилен: {context} Уверенность выросла с {int(confidence_prev)}% до {int(confidence_new)}%."
+            if confidence_new < confidence_prev:
+                return f"Сценарий ослаблен: {context} Уверенность снижена с {int(confidence_prev)}% до {int(confidence_new)}%."
+        return f"Сценарий обновлён: {context} Базовый {bias} контекст сохранён в той же карточке."
 
     @staticmethod
     def _format_price(value: float | None) -> str:

@@ -190,6 +190,31 @@ function normalizeWhitespace(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function formatDateTime(value) {
+  const text = normalizeWhitespace(value);
+  if (!text) return "—";
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(date) + " UTC";
+}
+
+function statusRu(value) {
+  const key = String(value || "").toLowerCase();
+  return {
+    active: "Активна",
+    updated: "Обновлена",
+    triggered: "Триггер получен",
+    archived: "В архиве",
+    tp_hit: "TP достигнут",
+    sl_hit: "SL достигнут",
+    invalidated: "Инвалидирована",
+  }[key] || "Без статуса";
+}
+
 function truncateText(value, limit = 92) {
   const text = normalizeWhitespace(value);
   if (!text || text.length <= limit) return text;
@@ -345,6 +370,14 @@ function normalizeIdea(idea) {
     target: idea?.target ?? idea?.target_ru ?? idea?.trade_plan?.target_1 ?? (idea?.takeProfit || idea?.take_profit ? `Ближайшая цель: ${idea?.takeProfit || idea?.take_profit}.` : "Цель будет уточняться после появления подтверждения."),
     tags: Array.isArray(idea?.tags) ? idea.tags : [symbol, timeframe, getDirectionRu(direction)],
     is_fallback: Boolean(idea?.is_fallback),
+    status: idea?.status || "active",
+    final_status: idea?.final_status || null,
+    update_summary: idea?.update_summary || idea?.change_summary || "",
+    updated_at: idea?.updated_at || null,
+    closed_at: idea?.closed_at || null,
+    close_explanation: idea?.close_explanation || "",
+    close_reason: idea?.close_reason || "",
+    history: Array.isArray(idea?.history) ? idea.history : [],
   };
 }
 
@@ -391,6 +424,9 @@ function renderIdeas(ideas, notice = "") {
     const timeframe = idea.timeframe || "";
     const confidence = idea.confidence ?? "-";
     const summary = buildShortText(idea);
+    const updateSummary = normalizeWhitespace(idea.update_summary);
+    const statusLabel = idea.status === "archived" ? statusRu(idea.final_status || idea.status) : statusRu(idea.status);
+    const updatedLabel = formatDateTime(idea.updated_at);
 
     return `
       <div class="card" data-index="${idx}">
@@ -398,9 +434,11 @@ function renderIdeas(ideas, notice = "") {
           <div>
             <div class="symbol">${escapeHtml(symbol)}</div>
             <div class="meta">${escapeHtml(direction)} · ${escapeHtml(timeframe)} · ${escapeHtml(String(confidence))}%</div>
+            <div class="symbol">Статус: ${escapeHtml(statusLabel)} · Обновлено: ${escapeHtml(updatedLabel)}</div>
           </div>
         </div>
         <p class="summary">${escapeHtml(summary)}</p>
+        ${updateSummary ? `<p class="summary">Обновление: ${escapeHtml(updateSummary)}</p>` : ""}
         <div class="tags">
           ${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
         </div>
@@ -514,6 +552,15 @@ function renderDetailText(idea) {
   setTextContent(scenarioInvalidation, detailBrief?.scenarios?.invalidation, "Инвалидация не передана.");
   renderTradingPlan(detailBrief);
   renderAnalysisSections(detailBrief);
+  if (idea.status === "archived") {
+    const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
+    updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
+    return;
+  }
+  const updateText = normalizeWhitespace(idea.update_summary);
+  if (updateText) {
+    updateDetailStatus(`Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`);
+  }
 }
 
 function ensureChart() {
@@ -831,7 +878,17 @@ async function openIdea(idea) {
 
     candleSeries.setData(payload.candles);
     chart.timeScale().fitContent();
-    updateDetailStatus("Detail-view заполнен: narrative, сценарии, trading plan и график доступны.");
+    if (idea.status === "archived") {
+      const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
+      updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
+    } else {
+      const updateText = normalizeWhitespace(idea.update_summary);
+      updateDetailStatus(
+        updateText
+          ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`
+          : "Detail-view заполнен: narrative, сценарии, trading plan и график доступны."
+      );
+    }
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => drawOverlay());
@@ -840,7 +897,17 @@ async function openIdea(idea) {
   }
 
   showChartPlaceholder("Chart unavailable");
-  updateDetailStatus("График недоступен, но detail-view завершил загрузку: narrative, сценарии и trading plan показаны без чарта.");
+  if (idea.status === "archived") {
+    const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
+    updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
+  } else {
+    const updateText = normalizeWhitespace(idea.update_summary);
+    updateDetailStatus(
+      updateText
+        ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`
+        : "График недоступен, но detail-view завершил загрузку: narrative, сценарии и trading plan показаны без чарта."
+    );
+  }
 }
 
 function closeModal() {
