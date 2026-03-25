@@ -68,3 +68,37 @@ def test_trade_idea_new_lifecycle_creates_new_record(tmp_path: Path) -> None:
 
     assert first["idea_id"] != second["idea_id"]
     assert len(service.idea_store.read()["ideas"]) == 2
+
+
+def test_trade_idea_archives_on_tp_and_keeps_history(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    base_signal = {
+        "symbol": "EURUSD",
+        "timeframe": "H1",
+        "action": "BUY",
+        "entry": 1.0820,
+        "stop_loss": 1.0790,
+        "take_profit": 1.0880,
+        "latest_close": 1.0823,
+        "confidence_percent": 74,
+        "description_ru": "Первичный long-сценарий.",
+        "reason_ru": "Структура подтверждает long.",
+        "invalidation_ru": "Слом bullish-структуры.",
+        "market_context": {"patternBias": "bullish", "patternSummaryRu": "Бычий паттерн."},
+        "sentiment": {"contrarian_bias": "bullish", "confidence": 0.4, "data_status": "mock"},
+    }
+
+    created = service.upsert_trade_idea(base_signal)
+    updated = service.upsert_trade_idea({**base_signal, "entry": 1.0830, "confidence_percent": 79, "reason_ru": "Зона входа уточнена."})
+    archived = service.upsert_trade_idea({**base_signal, "latest_close": 1.0890, "confidence_percent": 80})
+    payload = service.refresh_market_ideas()
+
+    assert created["idea_id"] == updated["idea_id"] == archived["idea_id"]
+    assert archived["status"] == "archived"
+    assert archived["final_status"] == "tp_hit"
+    assert archived["close_reason"] == "TP reached"
+    assert archived["closed_at"] is not None
+    assert len(payload["ideas"]) == 0
+    assert len(payload["archive"]) == 1
+    history_types = [item["type"] for item in archived["history"]]
+    assert history_types == ["created", "updated", "tp_hit", "archived"]
