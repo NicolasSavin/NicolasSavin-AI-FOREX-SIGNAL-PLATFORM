@@ -413,7 +413,7 @@ class TradeIdeaService:
         final_status = status if is_terminal else existing.get("final_status") if existing else None
         close_reason = self._close_reason(status) if is_terminal else existing.get("close_reason") if existing else None
         close_explanation = (
-            self._close_explanation(
+            self._build_close_explanation(
                 status=status,
                 symbol=symbol,
                 direction=bias,
@@ -554,7 +554,7 @@ class TradeIdeaService:
         }.get(status)
 
     @staticmethod
-    def _close_explanation(*, status: str, symbol: str, direction: str, target: str, invalidation: str) -> str:
+    def _build_close_explanation(*, status: str, symbol: str, direction: str, target: str, invalidation: str) -> str:
         if status == "tp_hit":
             return (
                 f"Идея по {symbol} отработала по take profit. Цена подтвердила {direction} сценарий и дошла до целевой ликвидности {target}. "
