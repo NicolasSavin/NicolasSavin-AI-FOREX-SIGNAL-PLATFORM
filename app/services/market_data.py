@@ -8,9 +8,11 @@ from app.schemas.contracts import MarketSnapshotResponse, ProxyMetric
 class MarketDataService:
     async def get_market_snapshot(self, symbol: str) -> MarketSnapshotResponse:
         normalized_symbol = symbol.upper().strip()
+        source_symbol = f"{normalized_symbol}=X"
+        now_utc = datetime.now(timezone.utc)
 
         try:
-            ticker = yf.Ticker(f"{normalized_symbol}=X")
+            ticker = yf.Ticker(source_symbol)
             history = ticker.history(period="2d", interval="1d")
 
             if history.empty:
@@ -26,11 +28,15 @@ class MarketDataService:
 
             return MarketSnapshotResponse(
                 symbol=normalized_symbol,
-                timestamp_utc=datetime.now(timezone.utc),
+                timeframe="D1",
+                timestamp_utc=now_utc,
                 data_status="real",
                 real_price=round(latest, 6),
                 day_change_percent=round(day_change_percent, 4),
                 source="Yahoo Finance",
+                source_symbol=source_symbol,
+                last_updated_utc=now_utc,
+                is_live_market_data=True,
                 message="Получены реальные рыночные данные.",
                 proxy_metrics=[],
             )
@@ -41,13 +47,18 @@ class MarketDataService:
             )
 
     def _unavailable_snapshot(self, symbol: str, message: str) -> MarketSnapshotResponse:
+        now_utc = datetime.now(timezone.utc)
         return MarketSnapshotResponse(
             symbol=symbol,
-            timestamp_utc=datetime.now(timezone.utc),
+            timeframe="D1",
+            timestamp_utc=now_utc,
             data_status="unavailable",
             real_price=None,
             day_change_percent=None,
-            source=None,
+            source="Yahoo Finance",
+            source_symbol=f"{symbol}=X",
+            last_updated_utc=now_utc,
+            is_live_market_data=False,
             message=message,
             proxy_metrics=[
                 ProxyMetric(name="momentum_proxy", value=0.0, label="proxy"),

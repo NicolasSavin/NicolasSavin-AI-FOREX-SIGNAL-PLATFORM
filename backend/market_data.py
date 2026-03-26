@@ -6,7 +6,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-class MarketDataService:
+class ScenarioMarketDataService:
+    """Синтетические свечи только для scenario/demo визуализаций (не market feed)."""
+
     def get_candles(self, *, symbol: str, timeframe: str, count: int = 120) -> list[dict[str, Any]]:
         seed = self._seed_for(symbol=symbol, timeframe=timeframe)
         rnd = random.Random(seed)
@@ -129,3 +131,7 @@ class MarketDataService:
         if direction_hint == "DOWN":
             return -volatility * (0.18 + 0.12 * phase)
         return volatility * (0.10 if phase < 0.4 else -0.08 if phase < 0.75 else 0.04)
+
+
+class MarketDataService(ScenarioMarketDataService):
+    """Backward-compatible alias. Не использовать для user-facing рыночных endpoint'ов."""
