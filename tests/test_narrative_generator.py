@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
+
 from app.services.narrative_generator import generate_signal_preview_text, generate_signal_text
 
 
-def test_generate_signal_text_contains_causal_chain_and_trade_levels() -> None:
+def test_generate_signal_text_contains_institutional_causal_logic() -> None:
     text = generate_signal_text(
         {
             "symbol": "EURUSD",
@@ -28,11 +30,16 @@ def test_generate_signal_text_contains_causal_chain_and_trade_levels() -> None:
 
     assert "EURUSD" in text
     assert "smart money" in text.lower()
-    assert "Торговый план" in text
-    assert "Инвалидация" in text
+    assert "ликвидност" in text.lower()
+    assert "структур" in text.lower()
     assert "1.0842" in text
     assert "1.0828" in text
-    assert "1.0876" in text
+    assert "equal highs 1.0875-1.0880" in text
+    assert "ATR" not in text
+    assert "pattern module" not in text.lower()
+
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+(?=[А-ЯA-Z])", text) if s.strip()]
+    assert 5 <= len(sentences) <= 7
 
 
 def test_generate_signal_preview_text_is_short_but_meaningful() -> None:
