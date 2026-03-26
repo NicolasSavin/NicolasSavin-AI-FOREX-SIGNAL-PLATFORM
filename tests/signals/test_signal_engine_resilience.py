@@ -109,3 +109,88 @@ def test_signal_engine_builds_trade_with_delayed_candles_without_live_quote(monk
     assert signal["data_status"] == "delayed"
     assert signal["market_context"]["current_price"] == 1.1131
     assert signal["market_context"]["is_live_market_data"] is False
+
+
+def test_signal_engine_returns_developing_idea_when_confluence_is_weak(monkeypatch) -> None:
+    engine = SignalEngine()
+    monkeypatch.setattr(
+        engine.risk_engine,
+        "validate",
+        lambda **_: {"allowed": False, "reason_ru": "Фильтр риска временно не пройден."},
+    )
+
+    base = {
+        "timeframe": "H1",
+        "data_status": "delayed",
+        "source": "yahoo_finance",
+        "source_symbol": "EURUSD=X",
+        "last_updated_utc": "2026-03-26T12:00:00+00:00",
+        "is_live_market_data": False,
+        "message": "delayed candles",
+        "close": 1.1123,
+        "candles": _candles(),
+    }
+    signal = engine._build_signal(
+        "EURUSD",
+        "M15",
+        base,
+        {**base, "timeframe": "M15"},
+        {**base, "timeframe": "M15"},
+        {"status": "ready", "trend": "up", "bos": False, "liquidity_sweep": False, "order_block": None, "pattern": "none", "atr_percent": 0.3, "pattern_summary": {"patternSummaryRu": "Без явных паттернов."}, "chart_patterns": []},
+        {"status": "ready", "trend": "down", "bos": False, "liquidity_sweep": False, "order_block": None, "pattern": "none", "atr_percent": 0.3, "pattern_summary": {"patternSummaryRu": "Без явных паттернов."}, "chart_patterns": []},
+        {"status": "ready", "trend": "down", "bos": False, "liquidity_sweep": False, "order_block": None, "pattern": "none", "atr_percent": 0.3, "pattern_summary": {"patternSummaryRu": "Без явных паттернов."}, "chart_patterns": []},
+        {"data_status": "unavailable", "confidence": 0.0},
+    )
+
+    assert signal["action"] in {"BUY", "SELL"}
+    assert signal["lifecycle_state"] == "developing"
+    assert signal["status"] == "неподтверждён"
+    assert signal["confidence_percent"] >= 30
+    assert signal["market_context"]["setup_quality"] == "developing"
+    assert signal["market_context"]["weak_reasons"]
+
+
+def test_signal_engine_keeps_idea_when_snapshot_status_unavailable_but_candles_exist(monkeypatch) -> None:
+    engine = SignalEngine()
+    monkeypatch.setattr(
+        engine.risk_engine,
+        "validate",
+        lambda **_: {"allowed": True, "reason_ru": "ok"},
+    )
+    snapshot = {
+        "timeframe": "H1",
+        "data_status": "unavailable",
+        "source": "yahoo_finance",
+        "source_symbol": "EURUSD=X",
+        "last_updated_utc": "2026-03-26T12:00:00+00:00",
+        "is_live_market_data": False,
+        "message": "snapshot unavailable, candles cached",
+        "close": 1.1135,
+        "candles": _candles(),
+    }
+    features = {
+        "status": "ready",
+        "trend": "up",
+        "bos": True,
+        "liquidity_sweep": True,
+        "order_block": "bullish",
+        "pattern": "inside_bar",
+        "atr_percent": 0.4,
+        "pattern_summary": {"patternSummaryRu": "Структура вверх."},
+        "chart_patterns": [],
+    }
+    signal = engine._build_signal(
+        "EURUSD",
+        "M15",
+        snapshot,
+        {**snapshot, "timeframe": "M15"},
+        {**snapshot, "timeframe": "M15"},
+        features,
+        features,
+        features,
+        {"data_status": "unavailable", "confidence": 0.0},
+    )
+
+    assert signal["action"] in {"BUY", "SELL"}
+    assert signal["data_status"] == "unavailable"
+    assert signal["market_context"]["current_price"] is None
