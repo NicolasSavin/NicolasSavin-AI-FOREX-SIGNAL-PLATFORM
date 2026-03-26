@@ -70,6 +70,39 @@ def _static_response(filename: str) -> FileResponse:
     return FileResponse(STATIC_DIR / filename)
 
 
+def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
+    if not ideas:
+        return ideas
+    symbols = sorted({str(item.get("symbol") or item.get("instrument") or "").upper().strip() for item in ideas if item})
+    contracts = {
+        symbol: canonical_market_service.get_price_contract(symbol)
+        for symbol in symbols
+        if symbol
+    }
+    enriched: list[dict] = []
+    for row in ideas:
+        symbol = str(row.get("symbol") or row.get("instrument") or "").upper().strip()
+        contract = contracts.get(symbol, {})
+        status = contract.get("data_status", "unavailable")
+        current_price = contract.get("price") if status in {"real", "delayed"} else None
+        payload = dict(row)
+        payload["current_price"] = current_price
+        payload["data_status"] = status
+        payload["source"] = contract.get("source")
+        payload["source_symbol"] = contract.get("source_symbol")
+        payload["last_updated_utc"] = contract.get("last_updated_utc")
+        payload["is_live_market_data"] = bool(contract.get("is_live_market_data", False))
+        payload["timeframe"] = str(row.get("timeframe") or "H1").upper()
+        if isinstance(payload.get("detail_brief"), dict):
+            header = dict(payload["detail_brief"].get("header") or {})
+            header["market_price"] = f"{float(current_price):.5f}".rstrip("0").rstrip(".") if current_price is not None else ""
+            if current_price is None:
+                header["market_context"] = "Нет актуальных рыночных данных."
+            payload["detail_brief"] = {**payload["detail_brief"], "header": header}
+        enriched.append(payload)
+    return enriched
+
+
 @app.get("/", include_in_schema=False)
 async def home_page() -> FileResponse:
     return _static_response("index.html")
@@ -159,6 +192,8 @@ async def api_signal_news(signal_id: str) -> list[NewsItemResponse]:
 async def market_ideas():
     await trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
     payload = trade_idea_service.refresh_market_ideas()
+    payload["ideas"] = _attach_live_market_contracts(payload.get("ideas") or [])
+    payload["archive"] = _attach_live_market_contracts(payload.get("archive") or [])
     payload["market"] = [canonical_market_service.get_market_contract(symbol) for symbol in DEFAULT_PAIRS]
     return payload
 
@@ -166,13 +201,13 @@ async def market_ideas():
 @app.get("/api/ideas")
 async def api_ideas():
     try:
-        ideas = trade_idea_service.list_api_ideas()
+        ideas = _attach_live_market_contracts(trade_idea_service.list_api_ideas())
         symbols = sorted({str(item.get("symbol", "")).upper().strip() for item in ideas if item.get("symbol")})
         market = [canonical_market_service.get_market_contract(symbol) for symbol in symbols]
         return {"ideas": ideas, "market": market}
     except Exception as exc:
         logger.warning("ideas_openrouter_failed: %s", exc)
-        ideas = trade_idea_service.fallback_ideas(reason="route_exception")
+        ideas = _attach_live_market_contracts(trade_idea_service.fallback_ideas(reason="route_exception"))
         symbols = sorted({str(item.get("symbol", "")).upper().strip() for item in ideas if item.get("symbol")})
         market = [canonical_market_service.get_market_contract(symbol) for symbol in symbols]
         return {"ideas": ideas, "market": market}

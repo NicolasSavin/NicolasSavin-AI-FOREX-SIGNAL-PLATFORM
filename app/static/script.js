@@ -132,8 +132,10 @@ function buildProbabilityBlock(signal) {
 function buildProgressBlock(signal) {
   const progressTp = signal.progressToTP ?? signal.progress?.progress_percent ?? 0;
   const progressSl = signal.progressToSL ?? signal.progress?.to_stop_loss_percent ?? 0;
-  const currentPrice = signal.progress?.current_price ?? signal.entry;
+  const hasMarketPrice = ['real', 'delayed'].includes(String(signal.data_status || '')) && signal.progress?.current_price != null;
+  const currentPrice = hasMarketPrice ? signal.progress?.current_price : null;
   const fallbackLabel = signal.progress?.is_fallback ? ' • используется fallback цены' : '';
+  const priceLabel = currentPrice == null ? 'Нет актуальных рыночных данных' : getSignalValue(currentPrice);
   return `
     <section class="metric-card">
       <div class="metric-card__header">
@@ -151,7 +153,7 @@ function buildProgressBlock(signal) {
         </div>
       </div>
       <div class="progress-legend">
-        <span>Текущая цена: <strong class="live-price-value" data-symbol="${escapeHtml(signal.symbol)}">${getSignalValue(currentPrice)}</strong></span>
+        <span>Текущая цена: <strong class="live-price-value" data-symbol="${escapeHtml(signal.symbol)}">${priceLabel}</strong></span>
         <span>${escapeHtml(signal.progress?.zone || 'waiting')}</span>
       </div>
     </section>
@@ -183,7 +185,10 @@ async function refreshLivePrices() {
     nodes.forEach((node) => {
       const symbol = String(node.dataset.symbol || '').toUpperCase();
       const row = bySymbol.get(symbol);
-      if (!row || row.price == null) return;
+      if (!row || row.price == null || !['real', 'delayed'].includes(String(row.data_status || ''))) {
+        node.textContent = 'Нет актуальных рыночных данных';
+        return;
+      }
       node.textContent = getSignalValue(row.price);
     });
 

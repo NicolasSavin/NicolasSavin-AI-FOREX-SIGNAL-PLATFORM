@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.main import app, trade_idea_service
+from app.main import app, canonical_market_service, trade_idea_service
 from app.services.storage.json_storage import JsonStorage
 from app.services.trade_idea_service import TradeIdeaService
 from backend.signal_engine import SignalEngine
@@ -217,6 +217,83 @@ def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path
     assert len(payload) >= 6
     assert all(item["is_fallback"] for item in payload)
     assert all(item["source"] == "openrouter_fallback" for item in payload)
+
+
+def test_api_ideas_attaches_real_market_contract_fields(monkeypatch) -> None:
+    monkeypatch.setattr(
+        trade_idea_service,
+        "list_api_ideas",
+        lambda: [
+            {"id": "idea-1", "symbol": "EURUSD", "timeframe": "M15", "entry": "1.1000", "detail_brief": {"header": {}}},
+        ],
+    )
+    monkeypatch.setattr(
+        canonical_market_service,
+        "get_price_contract",
+        lambda symbol: {
+            "symbol": symbol,
+            "data_status": "real",
+            "source": "twelvedata",
+            "source_symbol": "EUR/USD",
+            "last_updated_utc": "2026-03-26T12:00:00+00:00",
+            "is_live_market_data": True,
+            "price": 1.1607,
+        },
+    )
+    monkeypatch.setattr(
+        canonical_market_service,
+        "get_market_contract",
+        lambda symbol: {"symbol": symbol, "data_status": "real", "price": 1.1607},
+    )
+
+    client = TestClient(app)
+    response = client.get("/api/ideas")
+    assert response.status_code == 200
+    payload = response.json()
+    row = payload["ideas"][0]
+    assert row["current_price"] == 1.1607
+    assert row["data_status"] == "real"
+    assert row["source"] == "twelvedata"
+    assert row["source_symbol"] == "EUR/USD"
+    assert row["timeframe"] == "M15"
+    assert row["last_updated_utc"] == "2026-03-26T12:00:00+00:00"
+    assert row["is_live_market_data"] is True
+
+
+def test_api_ideas_sets_null_current_price_when_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        trade_idea_service,
+        "list_api_ideas",
+        lambda: [
+            {"id": "idea-2", "symbol": "EURUSD", "timeframe": "H1", "detail_brief": {"header": {"market_price": "1.0849"}}},
+        ],
+    )
+    monkeypatch.setattr(
+        canonical_market_service,
+        "get_price_contract",
+        lambda symbol: {
+            "symbol": symbol,
+            "data_status": "unavailable",
+            "source": "twelvedata",
+            "source_symbol": "EUR/USD",
+            "last_updated_utc": "2026-03-26T12:00:00+00:00",
+            "is_live_market_data": False,
+            "price": None,
+        },
+    )
+    monkeypatch.setattr(
+        canonical_market_service,
+        "get_market_contract",
+        lambda symbol: {"symbol": symbol, "data_status": "unavailable", "price": None},
+    )
+
+    client = TestClient(app)
+    response = client.get("/api/ideas")
+    assert response.status_code == 200
+    row = response.json()["ideas"][0]
+    assert row["current_price"] is None
+    assert row["data_status"] == "unavailable"
+    assert row["detail_brief"]["header"]["market_price"] == ""
 
 
 def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_are_disconnected(monkeypatch, tmp_path: Path) -> None:
