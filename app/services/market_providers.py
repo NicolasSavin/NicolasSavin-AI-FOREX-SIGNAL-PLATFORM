@@ -9,6 +9,7 @@ from typing import Any
 
 import requests
 import yfinance as yf
+import pandas as pd
 
 from app.core.env import get_twelvedata_api_key
 from app.services.real_market_data_provider import RealMarketDataProvider
@@ -151,11 +152,12 @@ class YahooProvider(RealMarketDataProvider):
     """Только исторический fallback. Не использовать как live источник пользовательской цены."""
 
     def __init__(self) -> None:
-        self._cache_ttl_seconds = 180.0
+        self._cache_ttl_seconds = 300.0
         self._failure_ttl_seconds = 120.0
         self._rate_limit_cooldown_seconds = 600.0
         self._lock = Lock()
         self._candles_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._history_cache: dict[str, tuple[float, Any]] = {}
         self._cooldown_until: dict[str, float] = {}
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
@@ -180,10 +182,25 @@ class YahooProvider(RealMarketDataProvider):
             self._cache_set(cache_key, payload, ttl_seconds=self._failure_ttl_seconds)
             return payload
 
+        if normalized_tf == "H4":
+            derived = self._derive_h4_from_h1(normalized, limit=max(1, min(limit, 500)))
+            self._cache_set(
+                cache_key,
+                derived,
+                ttl_seconds=self._cache_ttl_seconds if (derived.get("candles") or []) else self._failure_ttl_seconds,
+            )
+            return derived
+
         cfg = _TIMEFRAME_TO_YF.get(normalized_tf, _TIMEFRAME_TO_YF["H1"])
         source_symbol = f"{normalized}=X"
+        history_cache_key = f"{source_symbol}::{cfg['period']}::{cfg['interval']}"
         try:
-            history = yf.Ticker(source_symbol).history(period=cfg["period"], interval=cfg["interval"])
+            history = self._get_history_cached(
+                source_symbol=source_symbol,
+                period=cfg["period"],
+                interval=cfg["interval"],
+                cache_key=history_cache_key,
+            )
             if history.empty:
                 payload = {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "empty_history"}
                 self._cache_set(cache_key, payload, ttl_seconds=self._failure_ttl_seconds)
@@ -271,6 +288,54 @@ class YahooProvider(RealMarketDataProvider):
     def _set_rate_limited(self, symbol: str) -> None:
         with self._lock:
             self._cooldown_until[symbol] = monotonic() + self._rate_limit_cooldown_seconds
+
+    def _get_history_cached(self, *, source_symbol: str, period: str, interval: str, cache_key: str):
+        with self._lock:
+            cached = self._history_cache.get(cache_key)
+            if cached and monotonic() - cached[0] <= self._cache_ttl_seconds:
+                return cached[1]
+        history = yf.Ticker(source_symbol).history(period=period, interval=interval)
+        with self._lock:
+            self._history_cache[cache_key] = (monotonic(), history)
+        return history
+
+    def _derive_h4_from_h1(self, symbol: str, *, limit: int) -> dict[str, Any]:
+        source = self.get_candles(symbol, "H1", max(limit * 4, 120))
+        candles = source.get("candles") or []
+        if len(candles) < 4:
+            return {
+                "symbol": symbol,
+                "timeframe": "H4",
+                "source_symbol": source.get("source_symbol"),
+                "last_updated_utc": source.get("last_updated_utc"),
+                "candles": [],
+                "error": source.get("error") or "insufficient_h1_candles",
+            }
+        frame = pd.DataFrame(candles)
+        frame["dt"] = pd.to_datetime(frame["time"], unit="s", utc=True)
+        frame = frame.set_index("dt").sort_index()
+        ohlc = frame[["open", "high", "low", "close"]].resample("4h", label="right", closed="right").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last"}
+        )
+        ohlc = ohlc.dropna().tail(limit)
+        derived_candles = [
+            {
+                "time": int(ts.timestamp()),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+            }
+            for ts, row in ohlc.iterrows()
+        ]
+        return {
+            "symbol": symbol,
+            "timeframe": "H4",
+            "source_symbol": source.get("source_symbol"),
+            "last_updated_utc": source.get("last_updated_utc"),
+            "candles": derived_candles,
+            "error": None if derived_candles else "empty_derived_h4",
+        }
 
 
 def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:

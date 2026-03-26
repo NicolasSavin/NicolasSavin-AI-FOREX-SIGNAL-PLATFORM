@@ -42,6 +42,7 @@ class CanonicalMarketService:
                 last_updated_utc=quote.get("last_updated_utc"),
                 is_live_market_data=False,
                 payload={
+                    "timeframe": None,
                     "price": None,
                     "day_change_percent": None,
                     "warning_ru": "Источник live-цены недоступен. Синтетические цены отключены.",
@@ -58,6 +59,7 @@ class CanonicalMarketService:
             last_updated_utc=quote.get("last_updated_utc"),
             is_live_market_data=True,
             payload={
+                "timeframe": None,
                 "price": quote.get("price"),
                 "day_change_percent": quote.get("day_change_percent"),
                 "warning_ru": None,

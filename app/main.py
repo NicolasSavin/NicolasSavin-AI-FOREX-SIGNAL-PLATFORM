@@ -4,7 +4,7 @@ from pathlib import Path
 
 import asyncio
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -58,6 +58,15 @@ chat_service = ForexChatService()
 calendar_store = JsonStorage("signals_data/calendar.json", {"updated_at_utc": None, "events": []})
 heatmap_store = JsonStorage("signals_data/heatmap.json", {"updated_at_utc": None, "rows": []})
 logger = logging.getLogger(__name__)
+
+
+@app.middleware("http")
+async def head_to_get_healthcheck_middleware(request: Request, call_next):
+    if request.method == "HEAD":
+        get_scope = dict(request.scope)
+        get_scope["method"] = "GET"
+        request = Request(get_scope, request.receive)
+    return await call_next(request)
 
 
 class SnapshotResponse(BaseModel):
@@ -202,7 +211,7 @@ async def api_signal_news(signal_id: str) -> list[NewsItemResponse]:
 
 @app.get("/ideas/market")
 async def market_ideas():
-    await trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
+    trade_idea_service.schedule_refresh(DEFAULT_PAIRS)
     payload = trade_idea_service.refresh_market_ideas()
     payload["ideas"] = _attach_live_market_contracts(payload.get("ideas") or [])
     payload["archive"] = _attach_live_market_contracts(payload.get("archive") or [])

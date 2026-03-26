@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import re
+import asyncio
+from threading import Lock
 from typing import Any
 
 import requests
@@ -50,6 +52,8 @@ class TradeIdeaService:
         self.idea_store = JsonStorage("signals_data/trade_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
         self.legacy_store = JsonStorage("signals_data/market_ideas.json", {"updated_at_utc": None, "ideas": []})
+        self._refresh_lock = Lock()
+        self._refresh_in_progress = False
 
     async def generate_or_refresh(self, pairs: list[str] | None = None) -> dict[str, Any]:
         pairs = pairs or ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "XAUUSD"]
@@ -59,6 +63,36 @@ class TradeIdeaService:
             return self.refresh_market_ideas()
         generated = await self.signal_engine.generate_live_signals(pairs, timeframes=DEFAULT_IDEA_TIMEFRAMES)
         return self._apply_updates(generated)
+
+    def schedule_refresh(self, pairs: list[str] | None = None) -> bool:
+        existing = self.idea_store.read()
+        if self._is_recent_refresh(existing.get("updated_at_utc")):
+            return False
+        with self._refresh_lock:
+            if self._refresh_in_progress:
+                return False
+            self._refresh_in_progress = True
+        asyncio.create_task(self._refresh_task(pairs=pairs))
+        return True
+
+    async def _refresh_task(self, pairs: list[str] | None = None) -> None:
+        try:
+            scoped_pairs = self._scoped_refresh_pairs(pairs)
+            await self.generate_or_refresh(scoped_pairs)
+        except Exception:
+            logger.exception("ideas_background_refresh_failed")
+        finally:
+            with self._refresh_lock:
+                self._refresh_in_progress = False
+
+    def _scoped_refresh_pairs(self, pairs: list[str] | None) -> list[str]:
+        incoming = [str(item).upper().strip() for item in (pairs or []) if str(item).strip()]
+        if incoming:
+            base = incoming
+        else:
+            base = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "XAUUSD"]
+        limit = max(1, int(os.getenv("IDEAS_REFRESH_PAIR_LIMIT", "3")))
+        return base[:limit]
 
     def _is_recent_refresh(self, updated_at_utc: Any) -> bool:
         if self.refresh_interval_seconds <= 0:
