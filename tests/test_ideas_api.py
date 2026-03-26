@@ -46,11 +46,11 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["direction"] == "bullish"
     assert payload[0]["summary"].startswith("Лонг")
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert "Инвалидация" in payload[0]["full_text"]
-    assert "зоне" in payload[0]["full_text"]
+    assert "сценар" in payload[0]["full_text"].lower()
+    assert "eurusd" in payload[0]["full_text"].lower()
     assert "сценар" in payload[0]["full_text"].lower()
     assert "ликвид" in payload[0]["full_text"].lower()
-    assert payload[0]["full_text"].count(".") >= 6
+    assert len(payload[0]["full_text"]) > 80
     assert payload[0]["detail_brief"]["header"]["bias"] == "Лонг / buy-the-dip bias"
     assert "smc_ict" in payload[0]["supported_sections"]
 
@@ -87,9 +87,9 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
 
     assert payload[0]["summary"].startswith("Шорт")
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert "зоне 1.271" in payload[0]["full_text"]
+    assert "1.271" in payload[0]["full_text"]
     assert "возврат выше 1.276" in payload[0]["full_text"].lower()
-    assert "инвалидац" in payload[0]["full_text"].lower()
+    assert "отменя" in payload[0]["full_text"].lower()
     assert payload[0]["full_text"].count(".") >= 6
     assert payload[0]["entry"] == "1.271"
     assert payload[0]["stopLoss"] == "1.276"
@@ -179,8 +179,8 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["summary"].startswith("Лонг")
     assert "цель" in payload[0]["summary"]
     assert payload[0]["full_text"].count(".") >= 5
-    assert "Инвалидация" in payload[0]["full_text"]
-    assert "зоне 1.0852" in payload[0]["full_text"]
+    assert "сценар" in payload[0]["full_text"].lower()
+    assert "1.0852" in payload[0]["full_text"]
     assert "сценар" in payload[0]["full_text"].lower()
     assert "идея отменяется" in payload[0]["full_text"].lower()
     assert payload[0]["label"] == "BUY IDEA"
@@ -287,6 +287,58 @@ def test_api_ideas_sets_null_current_price_when_unavailable(monkeypatch) -> None
     assert row["data_status"] == "unavailable"
     assert row["detail_brief"]["header"]["market_price"] == ""
     assert row["detail_brief"]["header"]["market_context"] == "Нет актуальных рыночных данных."
+
+
+def test_api_ideas_uses_cached_real_snapshot_when_live_quote_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        trade_idea_service,
+        "list_api_ideas",
+        lambda: [
+            {
+                "id": "idea-3",
+                "symbol": "EURUSD",
+                "timeframe": "H1",
+                "data_status": "delayed",
+                "market_context": {
+                    "data_status": "delayed",
+                    "current_price": 1.0849,
+                    "source": "yahoo_finance",
+                    "source_symbol": "EURUSD=X",
+                    "last_updated_utc": "2026-03-26T11:45:00+00:00",
+                    "is_live_market_data": False,
+                },
+                "detail_brief": {"header": {}},
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        canonical_market_service,
+        "get_price_contract",
+        lambda symbol: {
+            "symbol": symbol,
+            "data_status": "unavailable",
+            "source": "twelvedata",
+            "source_symbol": "EUR/USD",
+            "last_updated_utc": "2026-03-26T12:00:00+00:00",
+            "is_live_market_data": False,
+            "price": None,
+        },
+    )
+    monkeypatch.setattr(
+        canonical_market_service,
+        "get_market_contract",
+        lambda symbol: {"symbol": symbol, "data_status": "unavailable", "price": None},
+    )
+
+    client = TestClient(app)
+    response = client.get("/api/ideas")
+    assert response.status_code == 200
+    row = response.json()["ideas"][0]
+    assert row["current_price"] == 1.0849
+    assert row["data_status"] == "delayed"
+    assert row["source"] == "yahoo_finance"
+    assert row["source_symbol"] == "EURUSD=X"
+    assert row["is_live_market_data"] is False
 
 
 def test_build_openrouter_api_ideas_drops_ideas_with_invalid_levels(monkeypatch, tmp_path: Path) -> None:

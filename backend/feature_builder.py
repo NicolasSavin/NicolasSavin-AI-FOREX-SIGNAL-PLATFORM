@@ -12,7 +12,7 @@ class FeatureBuilder:
     def build(self, snapshot: dict) -> dict:
         candles = snapshot.get("candles", [])
         pattern_analysis = self.pattern_detector.detect(candles)
-        if snapshot["data_status"] != "real" or len(candles) < 20:
+        if snapshot.get("data_status") not in {"real", "delayed"} or len(candles) < 20:
             return {
                 "status": "insufficient",
                 "trend": "unknown",
