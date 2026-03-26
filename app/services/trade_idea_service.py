@@ -795,9 +795,18 @@ class TradeIdeaService:
     def _build_structured_analysis(*, signal: dict[str, Any], bias: str, rationale: str) -> dict[str, Any]:
         market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
         proxy_label = "proxy" if signal.get("data_status") in {"unavailable", "delayed"} else "real"
+        smc_payload = market_context.get("smc_ict") if isinstance(market_context.get("smc_ict"), dict) else {}
+        structure = smc_payload.get("structure_state", "unknown")
+        sweep = smc_payload.get("liquidity_sweep", "none")
+        location = (smc_payload.get("dealing_range") or {}).get("location", "mid")
+        target_liquidity = smc_payload.get("target_liquidity")
         return {
-            "smc": str(signal.get("smc_ru") or market_context.get("smcRu") or rationale),
-            "ict": str(signal.get("ict_ru") or market_context.get("ictRu") or "ICT-контекст подтверждает приоритет работы от ликвидностной зоны."),
+            "smc": str(signal.get("smc_ru") or market_context.get("smcRu") or f"SMC структура: {structure}, sweep: {sweep}, location: {location}."),
+            "ict": str(
+                signal.get("ict_ru")
+                or market_context.get("ictRu")
+                or f"ICT контекст: PD-array {smc_payload.get('pd_array', 'none')}, entry-model {smc_payload.get('entry_model', 'none')}"
+            ),
             "pattern": str(market_context.get("patternSummaryRu") or signal.get("pattern_ru") or "Паттерн встраивается в структуру и уточняет тайминг входа."),
             "harmonic_pattern": str(signal.get("harmonic_ru") or market_context.get("harmonicRu") or "Гармонический паттерн не является главным драйвером в текущем сценарии."),
             "volume": str(signal.get("volume_ru") or "Объём подтверждает импульс только после реакции от рабочей зоны."),
@@ -806,7 +815,7 @@ class TradeIdeaService:
             "fundamental": str(signal.get("fundamental_ru") or f"Фундаментальный фон поддерживает {bias} смещение без прямого триггера входа."),
             "data_label": proxy_label,
             "fundamental_ru": str(signal.get("fundamental_ru") or f"Фундаментал поддерживает {bias} bias, но исполнение идёт только после реакции цены."),
-            "smc_ict_ru": str(signal.get("description_ru") or rationale),
+            "smc_ict_ru": str(signal.get("description_ru") or f"SMC/ICT: структура {structure}, целевая ликвидность {target_liquidity}."),
             "pattern_ru": str(market_context.get("patternSummaryRu") or signal.get("pattern_ru") or ""),
             "waves_ru": str(signal.get("waves_ru") or ""),
             "volume_ru": str(signal.get("volume_ru") or "Объём подтверждает импульс после касания зоны."),
@@ -856,11 +865,16 @@ class TradeIdeaService:
         stop_loss: str,
         take_profit: str,
     ) -> tuple[str, str, str]:
+        market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        smc_payload = market_context.get("smc_ict") if isinstance(market_context.get("smc_ict"), dict) else {}
         liquidity = analysis.get("liquidity_ru") or "ликвидностного узла структуры"
         trigger = signal.get("trigger_ru") or "реакции цены и подтверждения импульса"
-        entry_text = f"Entry {entry}: вход расположен у зоны, где ожидается захват ликвидности и {trigger}."
-        stop_text = f"SL {stop_loss}: защитный уровень вынесен за структурный экстремум, чтобы сценарий отменялся только при реальном сломе."
-        target_text = f"TP {take_profit}: цель стоит у следующего пула ликвидности; ожидаем, что импульс дотянется до этой зоны ({liquidity})."
+        entry_model = smc_payload.get("entry_model", "none")
+        invalidation_rule = (smc_payload.get("invalidation_logic") or {}).get("rule") or "структурный экстремум"
+        target_liquidity = smc_payload.get("target_liquidity") or {}
+        entry_text = f"Entry {entry}: вход основан на модели {entry_model}; ожидается захват ликвидности и {trigger}."
+        stop_text = f"SL {stop_loss}: стоп поставлен по правилу инвалидации — {invalidation_rule}"
+        target_text = f"TP {take_profit}: цель привязана к liquidity-pool {target_liquidity} ({liquidity})."
         return entry_text, stop_text, target_text
 
     @staticmethod
@@ -1064,6 +1078,7 @@ class TradeIdeaService:
         existing: dict[str, Any] | None,
     ) -> dict[str, Any]:
         market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        smc_payload = market_context.get("smc_ict") if isinstance(market_context.get("smc_ict"), dict) else {}
         return {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -1080,6 +1095,10 @@ class TradeIdeaService:
             ),
             "market_price": cls._extract_latest_close(signal),
             "smc_ict_facts": signal.get("smc_ru") or signal.get("ict_ru") or rationale,
+            "smc_ict_payload": smc_payload,
+            "structure_state": market_context.get("structure_state") or smc_payload.get("structure_state") or "unknown",
+            "liquidity_sweep": market_context.get("liquidity_sweep") or smc_payload.get("liquidity_sweep") or "none",
+            "premium_discount": market_context.get("premium_discount") or (smc_payload.get("dealing_range") or {}).get("location") or "mid",
             "pattern_facts": signal.get("pattern_ru") or market_context.get("patternSummaryRu"),
             "harmonic_pattern_facts": signal.get("harmonic_ru"),
             "volume_facts": signal.get("volume_ru"),

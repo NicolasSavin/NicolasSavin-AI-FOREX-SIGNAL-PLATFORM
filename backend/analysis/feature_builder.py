@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from app.services.smc_ict_engine import SmcIctEngine
 from backend.pattern_detector import PatternDetector
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,7 @@ class FeatureBuilder:
 
     def __init__(self) -> None:
         self.pattern_detector = PatternDetector()
+        self.smc_ict_engine = SmcIctEngine()
 
     def build(self, snapshot: dict) -> dict:
         candles = snapshot.get("candles", [])
@@ -165,22 +167,31 @@ class FeatureBuilder:
         liquidity_window_lows = lows[-4:-1] if candle_count > 3 else lows[:-1]
         prev_delta = closes[-2] - closes[-3] if candle_count > 2 else delta
 
+        smc_ict = self.smc_ict_engine.analyze(
+            candles=candles,
+            symbol=str(snapshot.get("symbol") or "UNKNOWN"),
+            timeframe=str(snapshot.get("timeframe") or "H1"),
+        )
+        smc_bias = smc_ict.get("bias")
+        trend = "up" if smc_bias == "bullish" else "down" if smc_bias == "bearish" else trend
+        active_ob = next((zone for zone in smc_ict.get("order_blocks", []) if zone.get("is_active")), None)
+
         return {
             "status": "ready",
             "trend": trend,
-            "bos": (
+            "bos": smc_ict.get("structure_state") == "bos" or (
                 bool(bos_window_highs)
                 and bool(bos_window_lows)
                 and (closes[-1] > max(bos_window_highs) or closes[-1] < min(bos_window_lows))
             ),
-            "choch": abs(delta) / max(closes[-2], 1e-9) < 0.0005,
-            "liquidity_sweep": (
+            "choch": smc_ict.get("structure_state") == "choch" or abs(delta) / max(closes[-2], 1e-9) < 0.0005,
+            "liquidity_sweep": smc_ict.get("liquidity_sweep") != "none" or (
                 bool(liquidity_window_highs)
                 and bool(liquidity_window_lows)
                 and (highs[-1] > max(liquidity_window_highs) or lows[-1] < min(liquidity_window_lows))
             ),
-            "order_block": "bullish" if trend == "up" else "bearish",
-            "fvg": abs(closes[-1] - closes[-2]) > abs(prev_delta),
+            "order_block": (active_ob or {}).get("type") or ("bullish" if trend == "up" else "bearish"),
+            "fvg": bool(smc_ict.get("fvg")) or abs(closes[-1] - closes[-2]) > abs(prev_delta),
             "divergence": "none",
             "pattern": "engulfing" if (closes[-1] - closes[-2]) * prev_delta < 0 else "inside_bar",
             "wave_context": "импульс вверх" if trend == "up" else "коррекция",
@@ -195,4 +206,9 @@ class FeatureBuilder:
             "dominant_pattern_type": dominant_pattern,
             "conflicting_pattern_detected": bullish_patterns > 0 and bearish_patterns > 0,
             "feature_completeness": feature_completeness,
+            "smc_ict": smc_ict,
+            "structure_state": smc_ict.get("structure_state", "unknown"),
+            "liquidity_sweep_side": smc_ict.get("liquidity_sweep", "none"),
+            "entry_model": smc_ict.get("entry_model", "none"),
+            "target_liquidity": smc_ict.get("target_liquidity", {}),
         }

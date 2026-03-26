@@ -23,6 +23,7 @@
 - Идеи переведены в stateful lifecycle-модель: `CREATED → WAITING → TRIGGERED → ACTIVE → TP_HIT / SL_HIT → ARCHIVED`, а обновления теперь пишутся в `updates[]` с timestamp/event/explanation и не создают новые карточки, если совпадает `symbol + timeframe`.
 - Добавлен structured analysis engine (`smc`, `ict`, `pattern`, `harmonic_pattern`, `volume`, `cum_delta`, `divergence`, `fundamental`) и weighted scoring decision model с полем `decision.weighted_score` и причинно-следственным `current_reasoning`.
 - Основной путь narrative для trade ideas переведён на LLM-first сервис `app/services/idea_narrative_llm.py`: backend отправляет в OpenRouter только факты анализа (symbol/timeframe/direction/status/entry/SL/TP/RR + SMC/ICT/pattern/volume/delta/divergence/fundamental + delta изменений), валидирует строгий JSON-ответ, делает один retry при невалидном формате и включает детерминированный fallback только как аварийный режим (`narrative_source: llm|fallback`).
+- Добавлен детерминированный SMC/ICT core `app/services/smc_ict_engine.py`: выделяются swing highs/lows, BOS/CHoCH, equal highs/lows, liquidity sweep, premium/discount dealing range, order blocks и FVG; эти факты теперь прокидываются в `FeatureBuilder`, `SignalEngine`, payload narrative и level-explanations как первичный источник причинно-следственного обоснования (а volume/delta/divergence/patterns/fundamentals остаются подтверждающими слоями).
 
 ## Что обновлено в версии 3.7
 - Добавлен отдельный модуль графических паттернов: `backend/pattern_detector.py` и `backend/pattern_visualization.py`.

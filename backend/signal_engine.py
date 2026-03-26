@@ -159,6 +159,7 @@ class SignalEngine:
     ) -> dict:
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
+        smc_payload = mtf_features.get("smc_ict") if isinstance(mtf_features.get("smc_ict"), dict) else {}
         if mtf_features["status"] != "ready":
             logger.debug("ideas_pipeline_weak_default symbol=%s timeframe=%s reason=insufficient_mtf_structure", symbol, timeframe)
             return self._weak_default_signal(
@@ -274,8 +275,20 @@ class SignalEngine:
         status = "актуален" if validation_state in {"confirmed", "high_conviction"} else "неподтверждён"
         reason_prefix = "Идея опубликована с пониженной уверенностью: " if weak_reasons else "Есть структурная база сценария. "
         weak_reason_text = "; ".join(weak_reasons)
-        invalidation_reasoning = (
-            "Сценарий теряет актуальность при сломе ключевой зоны и отмене рыночной структуры текущего таймфрейма."
+        invalidation_reasoning = str(
+            (smc_payload.get("invalidation_logic") or {}).get("rule")
+            or "Сценарий теряет актуальность при сломе ключевой зоны и отмене рыночной структуры текущего таймфрейма."
+        )
+        logger.info(
+            "signal_structure_summary symbol=%s timeframe=%s structure_state=%s liquidity_sweep=%s location=%s active_ob=%s active_fvg=%s target_liquidity=%s",
+            symbol,
+            timeframe,
+            smc_payload.get("structure_state", "unknown"),
+            smc_payload.get("liquidity_sweep", "none"),
+            (smc_payload.get("dealing_range") or {}).get("location", "mid"),
+            next((zone for zone in smc_payload.get("order_blocks", []) if zone.get("is_active")), None),
+            next((zone for zone in smc_payload.get("fvg", []) if zone.get("filled_pct", 100) < 100), None),
+            smc_payload.get("target_liquidity"),
         )
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
@@ -300,7 +313,7 @@ class SignalEngine:
             "reason_ru": (
                 f"{reason_prefix}"
                 f"{weak_reason_text + '. ' if weak_reason_text else ''}"
-                f"Паттерн-модуль: {pattern_impact.get('patternAlignmentLabelRu', 'нейтрально')}."
+                f"Паттерн-модуль: {pattern_impact.get('patternAlignmentLabelRu', 'нейтрально')}. SMC: {smc_payload.get('structure_state', 'unknown')} / sweep {smc_payload.get('liquidity_sweep', 'none')}."
             ),
             "invalidation_ru": default_invalidation_text(),
             "progress": progress,
@@ -342,10 +355,18 @@ class SignalEngine:
                 "weak_reasons": weak_reasons,
                 "scenario_type": scenario_type,
                 "validation_state": validation_state,
-                "structure_state": structure_state,
+                "structure_state": smc_payload.get("structure_state", structure_state),
+                "smc_ict": smc_payload,
+                "liquidity_sweep": smc_payload.get("liquidity_sweep", "none"),
+                "premium_discount": (smc_payload.get("dealing_range") or {}).get("location", "mid"),
+                "entry_model": smc_payload.get("entry_model", "none"),
+                "target_liquidity": smc_payload.get("target_liquidity", {}),
                 "confluence_flags": confluence_flags,
                 "missing_confirmations": missing_confirmations,
                 "invalidation_reasoning": invalidation_reasoning,
+                "entry_reason": f"Вход по модели {smc_payload.get('entry_model', 'none')} с опорой на {smc_payload.get('pd_array', 'none')}.",
+                "stop_reason": invalidation_reasoning,
+                "target_reason": f"Цель — {smc_payload.get('target_liquidity')}",
             },
             "pipeline_debug": {
                 "candles_count": len(mtf.get("candles", [])),

@@ -157,3 +157,31 @@ def test_archive_explanation_generation_on_tp_sl(tmp_path: Path) -> None:
     sl = service.upsert_trade_idea({**base, "latest_close": 1.256})
     assert sl["final_status"] == "sl_hit"
     assert "sl_hit" in (sl.get("close_explanation") or "")
+
+
+def test_narrative_facts_include_smc_payload() -> None:
+    facts = TradeIdeaService._build_narrative_facts(
+        signal={
+            "entry": 1.1,
+            "stop_loss": 1.095,
+            "take_profit": 1.11,
+            "market_context": {
+                "smc_ict": {
+                    "structure_state": "bos",
+                    "liquidity_sweep": "sell_side",
+                    "dealing_range": {"location": "discount"},
+                }
+            },
+        },
+        symbol="EURUSD",
+        timeframe="H1",
+        direction="bullish",
+        status="created",
+        rationale="test",
+        existing=None,
+    )
+
+    assert facts["structure_state"] == "bos"
+    assert facts["liquidity_sweep"] == "sell_side"
+    assert facts["premium_discount"] == "discount"
+    assert isinstance(facts["smc_ict_payload"], dict)
