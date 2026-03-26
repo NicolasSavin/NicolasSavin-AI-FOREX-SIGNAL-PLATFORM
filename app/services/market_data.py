@@ -1,56 +1,32 @@
 from datetime import datetime, timezone
 
-import yfinance as yf
-
-from app.schemas.contracts import MarketSnapshotResponse, ProxyMetric
+from app.schemas.contracts import MarketSnapshotResponse
+from app.services.canonical_market_service import CanonicalMarketService
 
 
 class MarketDataService:
+    def __init__(self, canonical_market_service: CanonicalMarketService | None = None) -> None:
+        self.canonical_market_service = canonical_market_service or CanonicalMarketService()
+
     async def get_market_snapshot(self, symbol: str) -> MarketSnapshotResponse:
         normalized_symbol = symbol.upper().strip()
+        contract = self.canonical_market_service.get_price_contract(normalized_symbol)
+        price = contract.get("price")
+        day_change_percent = contract.get("day_change_percent")
+        status = contract.get("data_status") or "unavailable"
+        warning = contract.get("warning_ru")
 
-        try:
-            ticker = yf.Ticker(f"{normalized_symbol}=X")
-            history = ticker.history(period="2d", interval="1d")
-
-            if history.empty:
-                return self._unavailable_snapshot(normalized_symbol, "Нет доступных рыночных данных.")
-
-            close_series = history["Close"].dropna()
-            if close_series.empty:
-                return self._unavailable_snapshot(normalized_symbol, "Рыночные данные пришли пустыми.")
-
-            latest = float(close_series.iloc[-1])
-            previous = float(close_series.iloc[-2]) if len(close_series) > 1 else latest
-            day_change_percent = ((latest - previous) / previous * 100) if previous else 0.0
-
-            return MarketSnapshotResponse(
-                symbol=normalized_symbol,
-                timestamp_utc=datetime.now(timezone.utc),
-                data_status="real",
-                real_price=round(latest, 6),
-                day_change_percent=round(day_change_percent, 4),
-                source="Yahoo Finance",
-                message="Получены реальные рыночные данные.",
-                proxy_metrics=[],
-            )
-        except Exception:
-            return self._unavailable_snapshot(
-                normalized_symbol,
-                "Источник рыночных данных временно недоступен, прокси-данные даны только для UI-контекста.",
-            )
-
-    def _unavailable_snapshot(self, symbol: str, message: str) -> MarketSnapshotResponse:
         return MarketSnapshotResponse(
-            symbol=symbol,
+            symbol=normalized_symbol,
+            timeframe="H1",
             timestamp_utc=datetime.now(timezone.utc),
-            data_status="unavailable",
-            real_price=None,
-            day_change_percent=None,
-            source=None,
-            message=message,
-            proxy_metrics=[
-                ProxyMetric(name="momentum_proxy", value=0.0, label="proxy"),
-                ProxyMetric(name="volatility_proxy", value=0.0, label="proxy"),
-            ],
+            data_status=status,
+            real_price=round(float(price), 6) if price is not None else None,
+            day_change_percent=round(float(day_change_percent), 4) if day_change_percent is not None else None,
+            source=contract.get("source"),
+            source_symbol=contract.get("source_symbol"),
+            last_updated_utc=datetime.fromisoformat(contract["last_updated_utc"].replace("Z", "+00:00")),
+            is_live_market_data=bool(contract.get("is_live_market_data", False)),
+            message=warning or "Получены рыночные данные.",
+            proxy_metrics=[],
         )

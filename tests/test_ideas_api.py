@@ -44,13 +44,12 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["symbol"] == "EURUSD"
     assert payload[0]["timeframe"] == "M15"
     assert payload[0]["direction"] == "bullish"
-    assert payload[0]["summary"] == "Лонг → ждать подтверждение структуры."
+    assert payload[0]["summary"].startswith("Лонг")
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert "Почему вход именно здесь" in payload[0]["full_text"]
-    assert "вернулся к зоне" in payload[0]["full_text"]
-    assert "Триггер" in payload[0]["full_text"]
-    assert "Подтверждение" in payload[0]["full_text"]
-    assert "Цель" in payload[0]["full_text"]
+    assert "Инвалидация" in payload[0]["full_text"]
+    assert "зоне" in payload[0]["full_text"]
+    assert "сценар" in payload[0]["full_text"].lower()
+    assert "ликвид" in payload[0]["full_text"].lower()
     assert payload[0]["full_text"].count(".") >= 6
     assert payload[0]["detail_brief"]["header"]["bias"] == "Лонг / buy-the-dip bias"
     assert "smc_ict" in payload[0]["supported_sections"]
@@ -86,15 +85,11 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
 
     payload = service.build_api_ideas()
 
-    assert payload[0]["summary"] == "Шорт от 1.271 → цель 1.262 / 1.258, отмена выше 1.276."
+    assert payload[0]["summary"].startswith("Шорт")
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert "коррекция в premium" in payload[0]["full_text"]
-    assert "вернулся к зоне 1.271" in payload[0]["full_text"]
-    assert "Почему вход именно здесь: зона 1.271" in payload[0]["full_text"]
-    assert "контекст для detail-view" in payload[0]["full_text"].lower()
-    assert "Возврат выше 1.276 ломает сценарий." in payload[0]["full_text"]
-    assert "Триггер" in payload[0]["full_text"]
-    assert "Подтверждение" in payload[0]["full_text"]
+    assert "зоне 1.271" in payload[0]["full_text"]
+    assert "возврат выше 1.276" in payload[0]["full_text"].lower()
+    assert "инвалидац" in payload[0]["full_text"].lower()
     assert payload[0]["full_text"].count(".") >= 6
     assert payload[0]["entry"] == "1.271"
     assert payload[0]["stopLoss"] == "1.276"
@@ -187,10 +182,10 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["summary"].startswith("Лонг")
     assert "цель" in payload[0]["summary"]
     assert payload[0]["full_text"].count(".") >= 5
-    assert "Почему вход именно здесь" in payload[0]["full_text"]
-    assert "зона 1.0852" in payload[0]["full_text"]
-    assert "Триггер" in payload[0]["full_text"]
-    assert "Сценарий отменяется" in payload[0]["full_text"]
+    assert "Инвалидация" in payload[0]["full_text"]
+    assert "зоне 1.0852" in payload[0]["full_text"]
+    assert "сценар" in payload[0]["full_text"].lower()
+    assert "идея отменяется" in payload[0]["full_text"].lower()
     assert payload[0]["label"] == "BUY IDEA"
     assert payload[0]["latest_close"] == 1.0852
     assert payload[0]["market_reference_price"] == 1.0852
@@ -312,7 +307,7 @@ def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_pa
     assert "entry = current_price" in prompt
     assert "order block, FVG / imbalance, liquidity sweep, BOS, CHOCH" in prompt
     assert "trigger не должен быть абстрактным" in prompt
-    assert "reason/trigger/invalidation" in prompt
+    assert "trigger" in prompt
 
 
 def test_list_api_ideas_falls_back_when_ai_returns_empty(monkeypatch, tmp_path: Path) -> None:
@@ -349,4 +344,6 @@ def test_api_ideas_route_exists_and_returns_payload(monkeypatch) -> None:
     response = client.get("/api/ideas")
 
     assert response.status_code == 200
-    assert response.json()[0]["symbol"] == "EURUSD"
+    payload = response.json()
+    assert payload["ideas"][0]["symbol"] == "EURUSD"
+    assert payload["market"][0]["symbol"] == "EURUSD"

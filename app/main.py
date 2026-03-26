@@ -25,6 +25,7 @@ from app.schemas.contracts import (
     SignalsLiveResponse,
 )
 from app.services.analytics.service import SignalAnalyticsService
+from app.services.canonical_market_service import CanonicalMarketService
 from app.services.market_data import MarketDataService
 from app.services.mt4_bridge import Mt4BridgeService
 from app.services.chart_data_service import ChartDataService
@@ -51,6 +52,7 @@ signal_service = SignalService(market_data_service=market_data_service)
 signal_analytics_service = SignalAnalyticsService(signal_engine=signal_engine)
 mt4_bridge_service = Mt4BridgeService()
 chart_data_service = ChartDataService()
+canonical_market_service = CanonicalMarketService()
 trade_idea_service = TradeIdeaService(signal_engine=signal_engine, chart_data_service=chart_data_service)
 chat_service = ForexChatService()
 calendar_store = JsonStorage("signals_data/calendar.json", {"updated_at_utc": None, "events": []})
@@ -156,16 +158,24 @@ async def api_signal_news(signal_id: str) -> list[NewsItemResponse]:
 @app.get("/ideas/market")
 async def market_ideas():
     await trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
-    return trade_idea_service.refresh_market_ideas()
+    payload = trade_idea_service.refresh_market_ideas()
+    payload["market"] = [canonical_market_service.get_market_contract(symbol) for symbol in DEFAULT_PAIRS]
+    return payload
 
 
 @app.get("/api/ideas")
 async def api_ideas():
     try:
-        return trade_idea_service.list_api_ideas()
+        ideas = trade_idea_service.list_api_ideas()
+        symbols = sorted({str(item.get("symbol", "")).upper().strip() for item in ideas if item.get("symbol")})
+        market = [canonical_market_service.get_market_contract(symbol) for symbol in symbols]
+        return {"ideas": ideas, "market": market}
     except Exception as exc:
         logger.warning("ideas_openrouter_failed: %s", exc)
-        return trade_idea_service.fallback_ideas(reason="route_exception")
+        ideas = trade_idea_service.fallback_ideas(reason="route_exception")
+        symbols = sorted({str(item.get("symbol", "")).upper().strip() for item in ideas if item.get("symbol")})
+        market = [canonical_market_service.get_market_contract(symbol) for symbol in symbols]
+        return {"ideas": ideas, "market": market}
 
 
 @app.get("/news/market", response_model=NewsListResponse)
@@ -238,11 +248,37 @@ async def analytics_signal(symbol: str) -> AnalyticsSignalResponse:
 async def api_chart(symbol: str, tf: str | None = None):
     chart_tf = (tf or "H1").upper()
     try:
-        payload = await asyncio.to_thread(chart_data_service.get_chart, symbol, chart_tf)
+        payload = await asyncio.to_thread(canonical_market_service.get_chart_contract, symbol, chart_tf, 120)
         return payload.get("candles", []) if isinstance(payload, dict) else []
     except Exception:
         logger.exception("chart_route_failed symbol=%s tf=%s", symbol, chart_tf)
         return []
+
+
+@app.get("/chart/{symbol}")
+@app.get("/chart/{symbol}/{tf}")
+@app.get("/api/canonical/chart/{symbol}")
+@app.get("/api/canonical/chart/{symbol}/{tf}")
+async def canonical_chart(symbol: str, tf: str | None = None):
+    chart_tf = (tf or "H1").upper()
+    return await asyncio.to_thread(canonical_market_service.get_chart_contract, symbol, chart_tf, 120)
+
+
+@app.get("/price/{symbol}")
+@app.get("/api/price/{symbol}")
+async def canonical_price(symbol: str):
+    return await asyncio.to_thread(canonical_market_service.get_price_contract, symbol)
+
+
+@app.get("/market")
+@app.get("/api/market")
+async def canonical_market(symbols: str | None = None):
+    requested = [item.strip().upper() for item in (symbols or ",".join(DEFAULT_PAIRS)).split(",") if item.strip()]
+    unique = []
+    for symbol in requested:
+        if symbol not in unique:
+            unique.append(symbol)
+    return {"market": [canonical_market_service.get_market_contract(symbol) for symbol in unique]}
 
 
 @app.post("/api/chat", response_model=ChatResponse)

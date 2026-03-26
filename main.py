@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.main import DEFAULT_PAIRS, app, signal_engine
+from app.main import canonical_market_service
 from backend.signal_engine import SUPPORTED_TIMEFRAMES
 
 
@@ -11,6 +12,7 @@ async def legacy_signals_feed():
     return {
         'status': 'ok',
         'signals': signals,
+        'market': [canonical_market_service.get_market_contract(symbol) for symbol in DEFAULT_PAIRS],
         'message': 'legacy feed mapped to /signals/live',
     }
 

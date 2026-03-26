@@ -13,6 +13,7 @@ const newsBannerCount = document.getElementById('newsBannerCount');
 const newsBannerUpdatedAt = document.getElementById('newsBannerUpdatedAt');
 const pageName = document.body?.dataset.page || 'unknown';
 const refreshIntervalMs = pageName === 'news' ? 300000 : 60000;
+const livePriceRefreshMs = 15000;
 const NEWS_PAGE_LIMIT = 12;
 
 let knownSignalIds = new Set();
@@ -150,11 +151,65 @@ function buildProgressBlock(signal) {
         </div>
       </div>
       <div class="progress-legend">
-        <span>Текущая цена: ${getSignalValue(currentPrice)}</span>
+        <span>Текущая цена: <strong class="live-price-value" data-symbol="${escapeHtml(signal.symbol)}">${getSignalValue(currentPrice)}</strong></span>
         <span>${escapeHtml(signal.progress?.zone || 'waiting')}</span>
       </div>
     </section>
   `;
+}
+
+function ensureMarketWarningHost() {
+  if (!signalsGrid) return null;
+  let panel = document.getElementById('marketDataWarning');
+  if (panel) return panel;
+  panel = document.createElement('article');
+  panel.id = 'marketDataWarning';
+  panel.className = 'empty-state';
+  panel.hidden = true;
+  signalsGrid.before(panel);
+  return panel;
+}
+
+async function refreshLivePrices() {
+  const nodes = Array.from(document.querySelectorAll('.live-price-value[data-symbol]'));
+  if (!nodes.length) return;
+  const symbols = [...new Set(nodes.map((node) => String(node.dataset.symbol || '').toUpperCase()).filter(Boolean))];
+  if (!symbols.length) return;
+
+  try {
+    const payload = await getJson(`/api/market?symbols=${encodeURIComponent(symbols.join(','))}`);
+    const rows = Array.isArray(payload?.market) ? payload.market : [];
+    const bySymbol = new Map(rows.map((row) => [String(row.symbol || '').toUpperCase(), row]));
+    nodes.forEach((node) => {
+      const symbol = String(node.dataset.symbol || '').toUpperCase();
+      const row = bySymbol.get(symbol);
+      if (!row || row.price == null) return;
+      node.textContent = getSignalValue(row.price);
+    });
+
+    const unavailable = rows.filter((row) => row.data_status !== 'real');
+    const warningPanel = ensureMarketWarningHost();
+    if (!warningPanel) return;
+    if (!unavailable.length) {
+      warningPanel.hidden = true;
+      warningPanel.innerHTML = '';
+      return;
+    }
+    warningPanel.hidden = false;
+    warningPanel.innerHTML = `
+      <h3>⚠️ Предупреждение по market data</h3>
+      <p>Live-данные частично недоступны. Synthetic fallback отключён.</p>
+      <p>${escapeHtml(unavailable.map((row) => `${row.symbol}: ${row.data_status}`).join(' • '))}</p>
+    `;
+  } catch {
+    const warningPanel = ensureMarketWarningHost();
+    if (!warningPanel) return;
+    warningPanel.hidden = false;
+    warningPanel.innerHTML = `
+      <h3>⚠️ Предупреждение по market data</h3>
+      <p>Не удалось обновить live-цены через /api/market.</p>
+    `;
+  }
 }
 
 function buildChartSvg(signal) {
@@ -503,6 +558,7 @@ async function loadSignalsSection() {
     }
     notifyAboutNewSignals(signalsPayload.signals || []);
     renderSignals(signalsPayload.signals || [], signalsPayload.updated_at_utc);
+    await refreshLivePrices();
   } catch {
     if (ticker) ticker.textContent = 'Ошибка загрузки тикера';
     signalsGrid.innerHTML = `
@@ -645,9 +701,11 @@ function refreshCurrentPage() {
   loadCalendarSection();
   loadHeatmapSection();
   loadNewsSection();
+  refreshLivePrices();
 }
 
 window.addEventListener('load', () => {
   refreshCurrentPage();
   window.setInterval(refreshCurrentPage, refreshIntervalMs);
+  window.setInterval(refreshLivePrices, livePriceRefreshMs);
 });
