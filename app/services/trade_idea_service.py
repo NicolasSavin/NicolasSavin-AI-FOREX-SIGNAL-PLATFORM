@@ -13,6 +13,7 @@ import requests
 
 from app.core.env import get_openrouter_api_key, get_openrouter_model
 from app.services.chart_data_service import ChartDataService
+from app.services.idea_narrative_llm import IdeaNarrativeLLMService
 from app.services.narrative_generator import generate_signal_preview_text, generate_signal_text
 from app.services.storage.json_storage import JsonStorage
 from app.services.trade_idea_stats_service import TradeIdeaStatsService
@@ -67,6 +68,7 @@ class TradeIdeaService:
         self.idea_store = JsonStorage("signals_data/trade_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
         self.legacy_store = JsonStorage("signals_data/market_ideas.json", {"updated_at_utc": None, "ideas": []})
+        self.narrative_llm = IdeaNarrativeLLMService()
         self._refresh_lock = Lock()
         self._refresh_in_progress = False
 
@@ -459,7 +461,24 @@ class TradeIdeaService:
         trigger = signal.get("trigger_ru") or f"Триггер — подтверждение входа в зоне {self._format_zone(entry_value)} по текущей структуре."
         invalidation = signal.get("invalidation_ru") or "Идея отменяется при сломе исходной структуры."
         target = signal.get("target_ru") or f"Ближайшая цель: {self._format_price(take_profit)}."
-        full_text = self._build_full_text(
+        previous_summary = str((existing or {}).get("summary_ru") or (existing or {}).get("summary") or "")
+        delta_payload = self._build_signal_delta(existing=existing, signal=signal, status=status)
+        llm_facts = self._build_narrative_facts(
+            signal=signal,
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=bias,
+            status=status,
+            rationale=rationale,
+            existing=existing,
+        )
+        llm_result = self.narrative_llm.generate(
+            event_type=self._event_type_from_status(status=status, existing=existing),
+            facts=llm_facts,
+            previous_summary=previous_summary,
+            delta=delta_payload,
+        )
+        full_text = llm_result.data.get("full_text") or self._build_full_text(
             signal,
             summary=summary_text,
             idea_context=idea_context,
@@ -467,7 +486,7 @@ class TradeIdeaService:
             invalidation=invalidation,
             target=target,
         )
-        short_scenario = self._build_trade_scenario_line(
+        short_scenario = llm_result.data.get("short_text") or self._build_trade_scenario_line(
             direction=bias,
             entry=self._format_zone(entry_value),
             stop_loss=self._format_price(stop_loss),
@@ -528,11 +547,13 @@ class TradeIdeaService:
             if is_terminal
             else existing.get("close_explanation") if existing else None
         )
+        if is_terminal and llm_result.data.get("full_text"):
+            close_explanation = llm_result.data.get("full_text")
         history = self._build_history(
             existing=existing,
             status=status,
             now=now.isoformat(),
-            rationale=rationale,
+            rationale=llm_result.data.get("update_explanation") or rationale,
             close_explanation=close_explanation,
             signal=signal,
         )
@@ -568,12 +589,17 @@ class TradeIdeaService:
             "close_explanation": close_explanation,
             "version": version,
             "change_summary": self._change_summary(signal, existing),
-            "update_summary": self._build_update_summary(signal=signal, existing=existing, bias=bias),
+            "update_summary": llm_result.data.get("update_explanation") or self._build_update_summary(signal=signal, existing=existing, bias=bias),
             "title": f"{symbol} {timeframe}: {action} idea",
             "label": "BUY IDEA" if action == "BUY" else "SELL IDEA" if action == "SELL" else "WATCH",
+            "headline": llm_result.data.get("headline") or f"{symbol} {timeframe}",
+            "summary": llm_result.data.get("summary") or short_scenario,
             "summary_ru": short_scenario,
             "short_scenario_ru": short_scenario,
+            "short_text": short_scenario,
             "full_text": full_text,
+            "update_explanation": llm_result.data.get("update_explanation") or rationale,
+            "narrative_source": llm_result.source,
             "idea_context": idea_context,
             "trigger": trigger,
             "invalidation": invalidation,
@@ -981,6 +1007,87 @@ class TradeIdeaService:
         if not parts:
             return "Контекст идеи обновлён без смены её идентичности."
         return " ".join(parts)
+
+    @staticmethod
+    def _event_type_from_status(*, status: str, existing: dict[str, Any] | None) -> str:
+        if existing is None:
+            return "idea_created"
+        return {
+            IDEA_STATUS_TRIGGERED: "entered_zone",
+            IDEA_STATUS_ACTIVE: "confirmation_received",
+            IDEA_STATUS_TP_HIT: "tp_hit",
+            IDEA_STATUS_SL_HIT: "sl_hit",
+            IDEA_STATUS_ARCHIVED: "moved_to_archive",
+        }.get(status, "idea_updated")
+
+    @classmethod
+    def _build_signal_delta(
+        cls,
+        *,
+        existing: dict[str, Any] | None,
+        signal: dict[str, Any],
+        status: str,
+    ) -> dict[str, Any]:
+        if existing is None:
+            return {"created": True, "status": status}
+        before = {
+            "entry": cls._extract_numeric(existing.get("entry")),
+            "sl": cls._extract_numeric(existing.get("stop_loss") or existing.get("stopLoss")),
+            "tp": cls._extract_numeric(existing.get("take_profit") or existing.get("takeProfit")),
+            "confidence": cls._extract_numeric(existing.get("confidence")),
+            "status": existing.get("status"),
+        }
+        after = {
+            "entry": cls._extract_numeric(signal.get("entry")),
+            "sl": cls._extract_numeric(signal.get("stop_loss")),
+            "tp": cls._extract_numeric(signal.get("take_profit")),
+            "confidence": cls._extract_numeric(signal.get("confidence_percent") or signal.get("probability_percent")),
+            "status": status,
+        }
+        delta: dict[str, Any] = {}
+        for key, old_value in before.items():
+            new_value = after.get(key)
+            if old_value != new_value:
+                delta[key] = {"from": old_value, "to": new_value}
+        return delta
+
+    @classmethod
+    def _build_narrative_facts(
+        cls,
+        *,
+        signal: dict[str, Any],
+        symbol: str,
+        timeframe: str,
+        direction: str,
+        status: str,
+        rationale: str,
+        existing: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "direction": direction,
+            "status": status,
+            "entry": cls._extract_numeric(signal.get("entry")),
+            "sl": cls._extract_numeric(signal.get("stop_loss")),
+            "tp": cls._extract_numeric(signal.get("take_profit")),
+            "rr": cls._calculate_rr(
+                direction=direction,
+                entry=cls._extract_numeric(signal.get("entry")),
+                stop_loss=cls._extract_numeric(signal.get("stop_loss")),
+                take_profit=cls._extract_numeric(signal.get("take_profit")),
+            ),
+            "market_price": cls._extract_latest_close(signal),
+            "smc_ict_facts": signal.get("smc_ru") or signal.get("ict_ru") or rationale,
+            "pattern_facts": signal.get("pattern_ru") or market_context.get("patternSummaryRu"),
+            "harmonic_pattern_facts": signal.get("harmonic_ru"),
+            "volume_facts": signal.get("volume_ru"),
+            "cumulative_delta_facts": signal.get("cumdelta_ru") or signal.get("cumulative_delta_ru"),
+            "divergence_facts": signal.get("divergence_ru"),
+            "fundamental_facts": signal.get("fundamental_ru"),
+            "existing_idea_id": existing.get("idea_id") if existing else None,
+        }
 
     @staticmethod
     def _build_update_summary(signal: dict[str, Any], existing: dict[str, Any] | None, bias: str) -> str:
@@ -1866,10 +1973,13 @@ class TradeIdeaService:
                         "bias": direction,
                         "confidence": int(confidence),
                         "summary": short_text,
+                        "headline": row.get("headline") or f"{symbol} {timeframe}: {direction}",
                         "summary_ru": short_text,
                         "short_text": short_text,
                         "short_scenario_ru": short_text,
                         "full_text": full_text,
+                        "update_explanation": row.get("update_explanation") or row.get("update_summary") or "",
+                        "narrative_source": row.get("narrative_source") or ("fallback" if row.get("is_fallback") else "llm"),
                         "status": str(row.get("status") or IDEA_STATUS_WAITING),
                         "updates": row.get("updates") if isinstance(row.get("updates"), list) else self._history_to_updates(row.get("history")),
                         "current_reasoning": str(
