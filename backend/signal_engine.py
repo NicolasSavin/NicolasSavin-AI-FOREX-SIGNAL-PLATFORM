@@ -45,7 +45,7 @@ class SignalEngine:
                 mtf = await self._snapshot_for(symbol, stack["mtf"], snapshots_cache)
                 ltf = await self._snapshot_for(symbol, stack["ltf"], snapshots_cache)
                 logger.debug(
-                    "ideas_pipeline_candles symbol=%s timeframe=%s htf=%s mtf=%s ltf=%s",
+                    "ideas_pipeline_candle_loading symbol=%s timeframe=%s candles_count_htf=%s candles_count_mtf=%s candles_count_ltf=%s",
                     symbol,
                     timeframe,
                     len(htf.get("candles", [])),
@@ -57,25 +57,37 @@ class SignalEngine:
                 mtf_features = self.feature_builder.build(mtf)
                 ltf_features = self.feature_builder.build(ltf)
                 logger.debug(
-                    "ideas_pipeline_features symbol=%s timeframe=%s htf=%s mtf=%s ltf=%s",
+                    "ideas_pipeline_feature_build symbol=%s timeframe=%s features_built_htf=%s features_built_mtf=%s features_built_ltf=%s reason_if_skipped_htf=%s reason_if_skipped_mtf=%s reason_if_skipped_ltf=%s",
                     symbol,
                     timeframe,
-                    htf_features.get("status"),
-                    mtf_features.get("status"),
-                    ltf_features.get("status"),
+                    htf_features.get("status") == "ready",
+                    mtf_features.get("status") == "ready",
+                    ltf_features.get("status") == "ready",
+                    None if htf_features.get("status") == "ready" else htf_features.get("status"),
+                    None if mtf_features.get("status") == "ready" else mtf_features.get("status"),
+                    None if ltf_features.get("status") == "ready" else ltf_features.get("status"),
                 )
-                output.append(
-                    self._build_signal(
-                        symbol,
-                        timeframe,
-                        htf,
-                        mtf,
-                        ltf,
-                        htf_features,
-                        mtf_features,
-                        ltf_features,
-                        sentiment.model_dump(mode="json"),
-                    )
+                signal = self._build_signal(
+                    symbol,
+                    timeframe,
+                    htf,
+                    mtf,
+                    ltf,
+                    htf_features,
+                    mtf_features,
+                    ltf_features,
+                    sentiment.model_dump(mode="json"),
+                )
+                output.append(signal)
+                debug = signal.get("pipeline_debug", {})
+                logger.debug(
+                    "ideas_pipeline_signal_generation symbol=%s timeframe=%s candles_count=%s features_built=%s signal_created=%s reason_if_skipped=%s",
+                    symbol,
+                    timeframe,
+                    debug.get("candles_count", len(mtf.get("candles", []))),
+                    debug.get("features_built", mtf_features.get("status") == "ready"),
+                    debug.get("signal_created", True),
+                    debug.get("reason_if_skipped"),
                 )
         return output
 
@@ -109,18 +121,17 @@ class SignalEngine:
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
         if mtf_features["status"] != "ready":
-            logger.debug(
-                "ideas_pipeline_skipped symbol=%s timeframe=%s reason=insufficient_mtf_structure",
-                symbol,
-                timeframe,
-            )
-            return self._no_trade(
-                symbol,
-                timeframe,
-                mtf,
-                "Недостаточно реальных свечных данных для анализа структуры MTF.",
-                mtf_patterns,
-                mtf_pattern_summary,
+            logger.debug("ideas_pipeline_weak_default symbol=%s timeframe=%s reason=insufficient_mtf_structure", symbol, timeframe)
+            return self._weak_default_signal(
+                symbol=symbol,
+                timeframe=timeframe,
+                snapshot=mtf,
+                htf_features=htf_features,
+                mtf_features=mtf_features,
+                ltf_features=ltf_features,
+                chart_patterns=mtf_patterns,
+                pattern_summary=mtf_pattern_summary,
+                reason="Недостаточно данных для полного confluence, опубликован слабый/нейтральный сценарий.",
             )
 
         htf_ready = htf_features.get("status") == "ready"
@@ -297,6 +308,90 @@ class SignalEngine:
                 "missing_confirmations": missing_confirmations,
                 "invalidation_reasoning": invalidation_reasoning,
             },
+            "pipeline_debug": {
+                "candles_count": len(mtf.get("candles", [])),
+                "features_built": mtf_features.get("status") == "ready",
+                "signal_created": True,
+                "reason_if_skipped": None,
+            },
+        }
+
+    def _weak_default_signal(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        snapshot: dict,
+        htf_features: dict,
+        mtf_features: dict,
+        ltf_features: dict,
+        chart_patterns: list[dict] | None,
+        pattern_summary: dict | None,
+        reason: str,
+    ) -> dict:
+        base_price = snapshot.get("close")
+        if base_price in (None, ""):
+            return self._no_trade(symbol, timeframe, snapshot, reason, chart_patterns, pattern_summary)
+        price = float(base_price)
+        trend_hint = htf_features.get("trend") if htf_features.get("status") == "ready" else mtf_features.get("trend")
+        action = "SELL" if trend_hint == "down" else "BUY"
+        level_plan = build_trade_levels(action=action, price=price, atr_percent=max(mtf_features.get("atr_percent", 0.15), 0.15))
+        pattern_impact = self.pattern_detector.signal_impact(action=action, summary=pattern_summary or {})
+        confidence = 34
+        signal_time = datetime.now(timezone.utc).isoformat()
+        return {
+            "signal_id": f"sig-{uuid4().hex[:10]}",
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "action": action,
+            "entry": round(price, 6),
+            "stop_loss": round(level_plan["stop"], 6),
+            "take_profit": round(level_plan["take"], 6),
+            "signal_time_utc": signal_time,
+            "risk_reward": round(level_plan["risk_reward"], 2),
+            "distance_to_target_percent": round(abs((level_plan["take"] - price) / max(price, 1e-9)) * 100, 3),
+            "probability_percent": confidence,
+            "confidence_percent": confidence,
+            "status": "неподтверждён",
+            "lifecycle_state": "developing",
+            "description_ru": f"{symbol}: слабый сценарий {action} в рамках развивающейся структуры.",
+            "reason_ru": reason,
+            "invalidation_ru": default_invalidation_text(),
+            "progress": self._build_progress(action, price, price, level_plan["stop"], level_plan["take"]),
+            "data_status": snapshot.get("data_status", "unavailable"),
+            "created_at_utc": signal_time,
+            "idea_id": self._idea_id(symbol, timeframe, action, pattern_summary or {}),
+            "sentiment": snapshot.get("sentiment") or {},
+            "chart_patterns": chart_patterns or [],
+            "pattern_summary": pattern_summary or {},
+            "pattern_signal_impact": pattern_impact,
+            "source_candle_count": len(snapshot.get("candles", [])),
+            "scenario_type": "neutral_structure",
+            "validation_state": "weak",
+            "structure_state": "developing",
+            "confluence_flags": {
+                "bos": False,
+                "liquidity_sweep": False,
+                "order_block": bool(mtf_features.get("order_block")),
+                "ltf_pattern_confirmation": bool(ltf_features.get("pattern")) and ltf_features.get("pattern") != "none",
+                "htf_alignment": htf_features.get("status") == "ready",
+                "risk_filter_passed": True,
+                "live_snapshot_available": snapshot.get("data_status") in {"real", "delayed"},
+            },
+            "missing_confirmations": ["confluence_threshold", "htf_or_ltf_confirmation"],
+            "invalidation_reasoning": "Сценарий слабый и требует подтверждения структуры.",
+            "market_context": {
+                "source": snapshot.get("source"),
+                "message": snapshot.get("message"),
+                "current_price": round(price, 6) if snapshot.get("data_status") in {"real", "delayed"} else None,
+                "signal_origin": "backend.signal_engine",
+            },
+            "pipeline_debug": {
+                "candles_count": len(snapshot.get("candles", [])),
+                "features_built": False,
+                "signal_created": True,
+                "reason_if_skipped": "insufficient_mtf_structure_replaced_with_weak_default",
+            },
         }
 
     def _no_trade(
@@ -358,6 +453,12 @@ class SignalEngine:
                 "proxy_metrics": snapshot.get("proxy_metrics", []),
                 "signal_origin": "backend.signal_engine",
                 "patternSummaryRu": summary.get("patternSummaryRu", "Явные графические паттерны не обнаружены"),
+            },
+            "pipeline_debug": {
+                "candles_count": len(snapshot.get("candles", [])),
+                "features_built": False,
+                "signal_created": False,
+                "reason_if_skipped": "no_close_price_for_default_signal",
             },
         }
 

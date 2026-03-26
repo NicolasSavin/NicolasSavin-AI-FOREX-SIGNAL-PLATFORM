@@ -122,13 +122,16 @@ class TradeIdeaService:
 
     def build_api_ideas(self) -> list[dict[str, Any]]:
         primary = self._normalize_for_api(self.refresh_market_ideas().get("ideas", []), source="trade_ideas")
+        self._log_api_pipeline(primary, stage="primary")
         if primary:
             return primary
 
         legacy = self._normalize_for_api(self.legacy_store.read().get("ideas", []), source="legacy_store")
+        self._log_api_pipeline(legacy, stage="legacy")
         if legacy:
             return legacy
 
+        logger.debug("ideas_pipeline_api_response stage=empty candles_count=0 features_built=False signal_created=False reason_if_skipped=no_active_ideas")
         return []
 
     def fallback_ideas(self, *, reason: str = "unspecified") -> list[dict[str, Any]]:
@@ -225,12 +228,54 @@ class TradeIdeaService:
         return updated
 
     def _apply_updates(self, generated: list[dict]) -> dict[str, Any]:
+        symbols_with_candles: set[tuple[str, str]] = set()
+        symbols_with_idea: set[tuple[str, str]] = set()
         for signal in generated:
+            symbol = str(signal.get("symbol", "")).upper()
+            timeframe = str(signal.get("timeframe", "H1")).upper()
+            if int(signal.get("source_candle_count") or 0) > 0:
+                symbols_with_candles.add((symbol, timeframe))
             action = signal.get("action", "NO_TRADE")
             if action == "NO_TRADE":
-                self._invalidate_matching(signal)
-                continue
+                logger.debug(
+                    "ideas_pipeline_signal_generation symbol=%s timeframe=%s candles_count=%s features_built=%s signal_created=%s reason_if_skipped=%s",
+                    symbol,
+                    timeframe,
+                    signal.get("pipeline_debug", {}).get("candles_count", signal.get("source_candle_count", 0)),
+                    signal.get("pipeline_debug", {}).get("features_built", False),
+                    False,
+                    signal.get("pipeline_debug", {}).get("reason_if_skipped", "no_trade_signal"),
+                )
+            else:
+                symbols_with_idea.add((symbol, timeframe))
             self.upsert_trade_idea(signal)
+            symbols_with_idea.add((symbol, timeframe))
+        for symbol_tf in symbols_with_candles:
+            if symbol_tf in symbols_with_idea:
+                continue
+            symbol, timeframe = symbol_tf
+            fallback_signal = {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "action": "BUY",
+                "entry": None,
+                "stop_loss": None,
+                "take_profit": None,
+                "confidence_percent": 25,
+                "probability_percent": 25,
+                "status": "watching",
+                "reason_ru": "Сгенерирован fallback-сценарий: свечи есть, но подтверждение ещё формируется.",
+                "description_ru": f"{symbol} {timeframe}: нейтральная структура диапазона, ожидается подтверждение.",
+                "source_candle_count": 1,
+                "market_context": {"summaryRu": "Нейтральный сценарий диапазона до появления подтверждений."},
+                "pipeline_debug": {
+                    "candles_count": 1,
+                    "features_built": False,
+                    "signal_created": True,
+                    "reason_if_skipped": "fallback_range_scenario",
+                },
+            }
+            self.upsert_trade_idea(fallback_signal)
         return self.refresh_market_ideas()
 
     def _invalidate_matching(self, signal: dict) -> None:
@@ -411,6 +456,12 @@ class TradeIdeaService:
             "supported_sections": detail_brief.get("supported_sections", []),
             "chart_image": None,
             "history": history,
+            "source_candle_count": signal.get("source_candle_count"),
+            "pipeline_debug": signal.get("pipeline_debug") if isinstance(signal.get("pipeline_debug"), dict) else {},
+            "meta": {
+                "pipeline_debug": signal.get("pipeline_debug") if isinstance(signal.get("pipeline_debug"), dict) else {},
+                "source_candle_count": signal.get("source_candle_count"),
+            },
         }
         return self._attach_trade_result_metrics(payload)
 
@@ -545,7 +596,7 @@ class TradeIdeaService:
     def _status_from_signal(signal: dict, existing: dict[str, Any] | None = None) -> str:
         action = signal.get("action", "NO_TRADE")
         if action == "NO_TRADE":
-            return "invalidated" if existing else "watching"
+            return "watching" if existing is None else "updated"
         latest_close = TradeIdeaService._extract_latest_close(signal)
         entry = TradeIdeaService._extract_numeric(signal.get("entry"))
         stop_loss = TradeIdeaService._extract_numeric(signal.get("stop_loss"))
@@ -1609,6 +1660,34 @@ class TradeIdeaService:
                 )
             )
         return normalized
+
+    def _log_api_pipeline(self, ideas: list[dict[str, Any]], *, stage: str) -> None:
+        if not ideas:
+            logger.debug(
+                "ideas_pipeline_api_response stage=%s candles_count=0 features_built=False signal_created=False reason_if_skipped=empty_stage",
+                stage,
+            )
+            return
+        for idea in ideas:
+            meta = idea.get("meta") if isinstance(idea.get("meta"), dict) else {}
+            market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else {}
+            pipeline_debug = meta.get("pipeline_debug") if isinstance(meta.get("pipeline_debug"), dict) else {}
+            candles_count = (
+                pipeline_debug.get("candles_count")
+                or market_context.get("mtf_candle_count")
+                or idea.get("source_candle_count")
+                or 0
+            )
+            logger.debug(
+                "ideas_pipeline_api_response stage=%s symbol=%s timeframe=%s candles_count=%s features_built=%s signal_created=%s reason_if_skipped=%s",
+                stage,
+                idea.get("symbol"),
+                idea.get("timeframe"),
+                candles_count,
+                pipeline_debug.get("features_built", True),
+                True,
+                pipeline_debug.get("reason_if_skipped"),
+            )
 
     def _build_market_references(self) -> dict[tuple[str, str], dict[str, Any]]:
         references: dict[tuple[str, str], dict[str, Any]] = {}
