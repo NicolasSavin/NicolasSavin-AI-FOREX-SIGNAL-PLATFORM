@@ -36,3 +36,30 @@ def test_chat_endpoint_contract() -> None:
     payload = response.json()
     assert set(payload.keys()) == {"reply", "source", "dataStatus", "warnings"}
     assert payload["source"] == "openrouter"
+
+
+def test_trade_idea_explanation_mode_detected_by_context() -> None:
+    context = {
+        "direction": "bullish",
+        "entry": 1.0852,
+        "status": "waiting",
+        "stopLoss": 1.0832,
+        "takeProfit": 1.0892,
+        "confidence": 71,
+    }
+
+    assert ForexChatService._is_trade_idea_explanation_request(
+        message="Объясни идею по EURUSD",
+        context=context,
+    )
+
+
+def test_trade_idea_explanation_prompt_contains_json_contract() -> None:
+    prompt = ForexChatService._build_trade_idea_explanation_prompt(
+        message="Объясни идею",
+        context={"direction": "bearish", "entry": 1.27, "status": "active"},
+    )
+
+    assert "\"response_format\"" in prompt
+    assert "\"headline\"" in prompt
+    assert "\"target_logic\"" in prompt

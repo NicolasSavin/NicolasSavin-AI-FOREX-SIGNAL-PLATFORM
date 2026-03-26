@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -20,6 +21,36 @@ CHAT_SYSTEM_PROMPT = """
 - предпочитай риск-менеджмент, сценарный анализ и осторожные формулировки;
 - отвечай на русском языке.
 """.strip()
+
+IDEA_EXPLANATION_SYSTEM_PROMPT = """
+Ты — аналитик торговых идей для forex/derivatives платформы.
+Твоя задача — НЕ придумывать сигнал, а ОБЪЯСНЯТЬ уже рассчитанную backend-логикой идею.
+
+Критически важно:
+1) Не меняй direction, entry, stop loss, take profit, status, confidence.
+2) Не выдумывай факты, которых нет во входных данных.
+3) Если подтверждения слабые или данных мало — скажи это прямо.
+4) Пиши по-русски короткими плотными абзацами, без маркетинга и шаблонной воды.
+5) Приоритет объяснения: SMC/ICT -> объёмы и cum delta -> дивергенции -> паттерны -> фундамент.
+6) Строй логику: причина -> подтверждение -> следствие -> риск.
+7) Если данные по блоку отсутствуют, прямо фиксируй отсутствие данных.
+8) Если объём/дельта противоречат идее, обязательно отмечай это как ослабление.
+9) Если status=WAITING, объясни почему не активирована; ACTIVE — что подтвердилось; TP_HIT/SL_HIT — почему исход реализовался; ARCHIVED — почему идея в архиве.
+10) Верни СТРОГО JSON-объект без markdown и без текста вне JSON.
+""".strip()
+
+IDEA_EXPLANATION_RESPONSE_SHAPE = {
+    "headline": "краткий заголовок идеи",
+    "summary": "2-4 предложения, внятное резюме",
+    "cause": "ключевая причина через SMC/ICT",
+    "confirmation": "что подтверждает или ослабляет идею",
+    "risk": "главный риск идеи",
+    "invalidation": "что отменяет сценарий",
+    "target_logic": "почему TP расположен именно там",
+    "update_explanation": "что изменилось с прошлого обновления; если обновления нет, пустая строка",
+    "short_text": "очень краткая версия для карточки",
+    "full_text": "полное связное объяснение",
+}
 
 
 class ChatRequest(BaseModel):
@@ -68,14 +99,20 @@ class ForexChatService:
 
         try:
             context_text = self._context_to_text(payload.context)
-            prompt = message if not context_text else f"{message}\n\nКонтекст платформы:\n{context_text}"
+            explanation_mode = self._is_trade_idea_explanation_request(message=message, context=payload.context)
+            prompt = (
+                self._build_trade_idea_explanation_prompt(message=message, context=payload.context)
+                if explanation_mode
+                else message if not context_text else f"{message}\n\nКонтекст платформы:\n{context_text}"
+            )
+            system_prompt = IDEA_EXPLANATION_SYSTEM_PROMPT if explanation_mode else CHAT_SYSTEM_PROMPT
             response = await self.client.responses.create(
                 model=self.model,
                 input=[
-                    {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.2,
+                temperature=0.1 if explanation_mode else 0.2,
             )
             text = (response.output_text or "").strip()
             if not text:
@@ -123,6 +160,33 @@ class ForexChatService:
         for key, value in context.items():
             lines.append(f"- {key}: {value}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _is_trade_idea_explanation_request(*, message: str, context: dict[str, Any]) -> bool:
+        if not isinstance(context, dict) or not context:
+            return False
+        required = {"direction", "entry", "status"}
+        has_required_context = required.issubset(set(context.keys()))
+        if has_required_context:
+            return True
+        lowered = message.lower()
+        return "объясн" in lowered and "иде" in lowered and "signal" in lowered
+
+    @staticmethod
+    def _build_trade_idea_explanation_prompt(*, message: str, context: dict[str, Any]) -> str:
+        safe_context = context if isinstance(context, dict) else {}
+        payload = {
+            "task": "explain_precalculated_trade_idea",
+            "user_message": message,
+            "input_idea": safe_context,
+            "response_format": IDEA_EXPLANATION_RESPONSE_SHAPE,
+            "hard_rules": [
+                "Не менять числовые значения direction/entry/stop loss/take profit/status/confidence.",
+                "Не придумывать отсутствующие факты.",
+                "При нехватке данных явно указывать ограниченность подтверждений.",
+            ],
+        }
+        return json.dumps(payload, ensure_ascii=False)
 
     @staticmethod
     def _fallback(message: str, *, warnings: list[str]) -> ChatResponse:
