@@ -8,6 +8,7 @@ from backend.data_provider import DataProvider
 from backend.feature_builder import FeatureBuilder
 from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
+from backend.signal_text_generator import generate_signal_text
 from backend.sentiment_provider import build_sentiment_provider
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
@@ -163,6 +164,35 @@ class SignalEngine:
         progress = self._build_progress(action, price, price, stop, take)
         signal_time = datetime.now(timezone.utc).isoformat()
         pattern_summary_ru = mtf_pattern_summary.get("patternSummaryRu") or "Явные графические паттерны не обнаружены"
+        signal_text = generate_signal_text(
+            {
+                "symbol": symbol,
+                "direction": action,
+                "trend": mtf_features.get("trend"),
+                "entry": round(price, 6),
+                "stop_loss": round(stop, 6),
+                "take_profit": round(take, 6),
+                "key_levels": [round(price, 6), round(stop, 6), round(take, 6)],
+                "pattern_type": mtf_pattern_summary.get("dominantPattern"),
+                "smc_signals": {
+                    "bos": mtf_features.get("bos"),
+                    "choch": mtf_features.get("choch"),
+                    "liquidity": "liquidity grab подтверждён" if mtf_features.get("liquidity_sweep") else None,
+                    "order_block": mtf_features.get("order_block"),
+                    "fvg": mtf_features.get("fvg"),
+                },
+                "wave_context": mtf_features.get("wave_context"),
+                "volume_data": {
+                    "summary": (
+                        f"дельта {round(mtf_features.get('delta_percent', 0.0), 3)}% поддерживает направленное движение"
+                        if mtf_features.get("delta_percent")
+                        else None
+                    )
+                },
+                "options_data": None,
+                "timeframe": timeframe,
+            }
+        )
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -178,16 +208,9 @@ class SignalEngine:
             "confidence_percent": confidence,
             "status": "актуален",
             "lifecycle_state": "active",
-            "description_ru": (
-                f"{symbol}: {action} по структуре HTF {htf['timeframe']} → MTF {mtf['timeframe']} → LTF {ltf['timeframe']}, "
-                f"ATR {round(mtf_features.get('atr_percent', 0.0), 2)}% и подтверждённому импульсу {ltf_features['pattern']}. "
-                f"Паттерны: {pattern_summary_ru}"
-            ),
-            "reason_ru": (
-                "Есть структурное подтверждение, риск-фильтр пройден. "
-                f"Паттерн-модуль: {pattern_impact.get('patternAlignmentLabelRu', 'нейтрально')}."
-            ),
-            "invalidation_ru": "Сценарий отменяется при пробое уровня Stop Loss и сломе структуры.",
+            "description_ru": signal_text,
+            "reason_ru": "Сделка основана на структурном confluence и подтверждённом risk/reward.",
+            "invalidation_ru": f"Сценарий отменяется при закреплении цены за уровнем {round(stop, 6)}.",
             "progress": progress,
             "data_status": mtf["data_status"],
             "created_at_utc": signal_time,
