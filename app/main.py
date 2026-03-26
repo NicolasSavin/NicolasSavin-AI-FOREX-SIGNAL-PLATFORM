@@ -155,9 +155,24 @@ async def twelvedata_health_debug() -> dict:
     symbol_mapping = {symbol: _td_symbol(symbol) for symbol in symbol_examples}
     timeframe_mapping = {tf: _TIMEFRAME_TO_TD.get(tf) for tf in timeframe_examples}
 
-    probe = await asyncio.to_thread(provider.get_candles, "EURUSD", "M15", 30)
-    probe_error = probe.get("error")
-    probe_candles = probe.get("candles") or []
+    probe_pairs = [("EURUSD", "M15"), ("GBPUSD", "H1")]
+    probe_results: list[dict] = []
+    for symbol, timeframe in probe_pairs:
+        probe = await asyncio.to_thread(provider.get_candles, symbol, timeframe, 30)
+        probe_error = probe.get("error")
+        probe_candles = probe.get("candles") or []
+        probe_results.append(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "provider_symbol": _td_symbol(symbol),
+                "provider_interval": _TIMEFRAME_TO_TD.get(timeframe),
+                "candles_count": len(probe_candles),
+                "request_succeeded": probe_error is None and len(probe_candles) > 0,
+                "error": probe_error,
+                "source_symbol": probe.get("source_symbol"),
+            }
+        )
 
     return {
         "provider": "twelvedata",
@@ -166,16 +181,7 @@ async def twelvedata_health_debug() -> dict:
         "api_key_length": len(api_key) if api_key else 0,
         "symbol_mapping": symbol_mapping,
         "timeframe_mapping": timeframe_mapping,
-        "probe": {
-            "symbol": "EURUSD",
-            "timeframe": "M15",
-            "provider_symbol": _td_symbol("EURUSD"),
-            "provider_interval": _TIMEFRAME_TO_TD.get("M15"),
-            "candles_count": len(probe_candles),
-            "request_succeeded": probe_error is None and len(probe_candles) > 0,
-            "error": probe_error,
-            "source_symbol": probe.get("source_symbol"),
-        },
+        "probes": probe_results,
     }
 
 

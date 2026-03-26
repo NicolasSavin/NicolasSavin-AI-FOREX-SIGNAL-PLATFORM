@@ -103,10 +103,24 @@ class TwelveDataProvider(RealMarketDataProvider):
                 "format": "JSON",
             },
         )
-        if payload.get("status") == "error":
-            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": payload.get("message") or "api_error"}
+        td_error = _extract_td_error(payload)
+        if td_error is not None:
+            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": td_error}
 
         candles = _normalize_td_candles(payload.get("values"))
+        if not candles and isinstance(payload, dict):
+            logger.warning(
+                "twelvedata_empty_values normalized_symbol=%s normalized_timeframe=%s provider_symbol=%s provider_interval=%s meta=%s",
+                normalized,
+                normalized_tf,
+                provider_symbol,
+                interval,
+                {
+                    "status": payload.get("status"),
+                    "code": payload.get("code"),
+                    "meta": payload.get("meta"),
+                },
+            )
         return {
             "symbol": normalized,
             "timeframe": normalized_tf,
@@ -152,6 +166,13 @@ class TwelveDataProvider(RealMarketDataProvider):
 
     def _request(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
         query = {**params, "apikey": self.api_key}
+        safe_query = {**params, "apikey_present": bool(self.api_key), "apikey_length": len(self.api_key) if self.api_key else 0}
+        logger.info(
+            "twelvedata_http_request endpoint=%s api_key_present=%s query=%s",
+            endpoint,
+            bool(self.api_key),
+            safe_query,
+        )
         try:
             resp = requests.get(f"{_TWELVEDATA_BASE}/{endpoint}", params=query, timeout=self.timeout)
             http_status = resp.status_code
@@ -161,11 +182,12 @@ class TwelveDataProvider(RealMarketDataProvider):
                 payload = {}
             top_level_error = payload.get("message") if isinstance(payload, dict) else None
             logger.info(
-                "twelvedata_http_response endpoint=%s status_code=%s top_level_error=%s td_status=%s",
+                "twelvedata_http_response endpoint=%s status_code=%s td_status=%s top_level_error=%s top_level_body=%s",
                 endpoint,
                 http_status,
-                top_level_error,
                 payload.get("status") if isinstance(payload, dict) else None,
+                top_level_error,
+                payload if isinstance(payload, dict) else str(payload)[:500],
             )
 
             if http_status >= 400:
@@ -314,20 +336,23 @@ def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:
     if not isinstance(values, list):
         return []
     output: list[dict[str, Any]] = []
-    for item in reversed(values):
+    for item in values:
         if not isinstance(item, dict):
             continue
         ts = _parse_ts(item.get("datetime"))
         candle = {
             "time": ts,
+            "datetime": item.get("datetime"),
             "open": _to_float(item.get("open")),
             "high": _to_float(item.get("high")),
             "low": _to_float(item.get("low")),
             "close": _to_float(item.get("close")),
+            "volume": _to_float(item.get("volume")),
         }
         if ts is None or None in {candle["open"], candle["high"], candle["low"], candle["close"]}:
             continue
         output.append(candle)
+    output.sort(key=lambda candle: int(candle["time"]))
     return output
 
 
@@ -368,9 +393,40 @@ def _normalize_symbol(symbol: str) -> str:
 
 
 def _td_symbol(symbol: str) -> str:
+    symbol_map = {
+        "EURUSD": "EUR/USD",
+        "GBPUSD": "GBP/USD",
+        "USDJPY": "USD/JPY",
+        "AUDUSD": "AUD/USD",
+        "USDCAD": "USD/CAD",
+        "USDCHF": "USD/CHF",
+        "NZDUSD": "NZD/USD",
+        "XAUUSD": "XAU/USD",
+    }
+    if symbol in symbol_map:
+        return symbol_map[symbol]
     if len(symbol) == 6 and symbol.isalpha():
         return f"{symbol[:3]}/{symbol[3:]}"
     return symbol
+
+
+def _extract_td_error(payload: dict[str, Any]) -> str | None:
+    if not isinstance(payload, dict):
+        return "invalid_payload"
+    status = str(payload.get("status") or "").lower()
+    code = payload.get("code")
+    message = str(payload.get("message") or "").strip()
+    errors = payload.get("errors")
+    if status == "error":
+        return message or "api_error"
+    if code not in (None, "", 200):
+        if message:
+            return f"code_{code}:{message}"
+        return f"code_{code}"
+    if isinstance(errors, dict) and errors:
+        flattened = "; ".join(f"{key}={value}" for key, value in errors.items())
+        return flattened[:400]
+    return None
 
 
 def _unavailable(symbol: str, source: str, message: str) -> dict[str, Any]:
