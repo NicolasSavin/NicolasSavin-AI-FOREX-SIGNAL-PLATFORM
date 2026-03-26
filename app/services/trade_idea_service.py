@@ -36,117 +36,8 @@ LEVEL_ENTRY_MAX_DEVIATION_PCT = 0.5
 LEVEL_STOP_LOSS_OFFSET = 0.0020
 LEVEL_TAKE_PROFIT_OFFSET = 0.0040
 CANDLE_CONTEXT_COUNT = 40
-DEMO_FALLBACK_IDEAS = [
-    {
-        "id": "eurusd-m15-bullish",
-        "symbol": "EURUSD",
-        "timeframe": "M15",
-        "direction": "bullish",
-        "confidence": 72,
-        "summary": "EURUSD на M15 держит рост и сейчас торгуется у зоны 1.0849. После снятия ликвидности снизу приоритет остаётся за движением к 1.0876. Вход смотрим от 1.0849 только после реакции покупателей и импульса вверх. Сценарий отменяется при пробое 1.0832 и закреплении ниже.",
-        "full_text": "EURUSD на M15 держит рост и сейчас торгуется у зоны 1.0849. После снятия ликвидности снизу приоритет остаётся за движением к 1.0876. Вход смотрим от 1.0849 только после реакции покупателей и импульса вверх. Сценарий отменяется при пробое 1.0832 и закреплении ниже.",
-        "entry": 1.0849,
-        "stopLoss": 1.0832,
-        "takeProfit": 1.0876,
-        "context": "Восходящая структура",
-        "trigger": "Реакция от зоны",
-        "invalidation": "Пробой HL",
-        "target": "Ликвидность сверху",
-        "tags": ["SMC", "Liquidity", "M15", "EURUSD"],
-        "is_fallback": True,
-    },
-    {
-        "id": "gbpusd-h1-bearish",
-        "symbol": "GBPUSD",
-        "timeframe": "H1",
-        "direction": "bearish",
-        "confidence": 68,
-        "summary": "GBPUSD на H1 остаётся под давлением и сейчас тестирует зону 1.2715. Ликвидность сверху уже снята, поэтому базовый сценарий — движение к 1.2668. Шорт рассматриваем от 1.2715 после слабой реакции покупателей и отбоя вниз. Сценарий отменяется при закреплении выше 1.2741.",
-        "full_text": "GBPUSD на H1 остаётся под давлением и сейчас тестирует зону 1.2715. Ликвидность сверху уже снята, поэтому базовый сценарий — движение к 1.2668. Шорт рассматриваем от 1.2715 после слабой реакции покупателей и отбоя вниз. Сценарий отменяется при закреплении выше 1.2741.",
-        "entry": 1.2715,
-        "stopLoss": 1.2741,
-        "takeProfit": 1.2668,
-        "context": "Слабая реакция от premium-зоны",
-        "trigger": "Отбой после ретеста imbalance",
-        "invalidation": "Закрепление выше локального swing high",
-        "target": "Возврат к sell-side liquidity",
-        "tags": ["SMC", "Pullback", "H1", "GBPUSD"],
-        "is_fallback": True,
-    },
-    {
-        "id": "usdjpy-h4-neutral",
-        "symbol": "USDJPY",
-        "timeframe": "H4",
-        "direction": "neutral",
-        "confidence": 64,
-        "summary": "USDJPY на H4 стоит в диапазоне и цена держится у 149.82. Ликвидность лежит над 150.96, но без выхода из диапазона вход не нужен. Сценарий на лонг появится только после пробоя и ретеста 149.82 с импульсом вверх. Идея отменяется при возврате под 149.21.",
-        "full_text": "USDJPY на H4 стоит в диапазоне и цена держится у 149.82. Ликвидность лежит над 150.96, но без выхода из диапазона вход не нужен. Сценарий на лонг появится только после пробоя и ретеста 149.82 с импульсом вверх. Идея отменяется при возврате под 149.21.",
-        "entry": 149.82,
-        "stopLoss": 149.21,
-        "takeProfit": 150.96,
-        "context": "Диапазон перед импульсом",
-        "trigger": "Подтверждённый breakout и retest",
-        "invalidation": "Возврат внутрь диапазона",
-        "target": "Ликвидность над максимумами диапазона",
-        "tags": ["Liquidity", "Range", "H4", "USDJPY"],
-        "is_fallback": True,
-    },
-    {
-        "id": "usdcad-m15-bearish",
-        "symbol": "USDCAD",
-        "timeframe": "M15",
-        "direction": "bearish",
-        "confidence": 71,
-        "summary": "USDCAD на M15 держит нисходящую структуру и сейчас откатывает к 1.3484. Пока цена ниже 1.3502, приоритет за ходом к 1.3451 и снятию ликвидности снизу. Шорт смотрим от 1.3484 после слабого ретеста и импульса продавца. Сценарий ломается при уходе выше 1.3502.",
-        "full_text": "USDCAD на M15 держит нисходящую структуру и сейчас откатывает к 1.3484. Пока цена ниже 1.3502, приоритет за ходом к 1.3451 и снятию ликвидности снизу. Шорт смотрим от 1.3484 после слабого ретеста и импульса продавца. Сценарий ломается при уходе выше 1.3502.",
-        "entry": 1.3484,
-        "stopLoss": 1.3502,
-        "takeProfit": 1.3451,
-        "context": "Нисходящая структура с давлением из premium-зоны.",
-        "trigger": "Слабая реакция покупателей на ретесте supply.",
-        "invalidation": "Возврат выше локального lower high.",
-        "target": "Ближайшая sell-side liquidity под intraday-минимумом.",
-        "tags": ["SMC", "Liquidity", "M15", "USDCAD"],
-        "is_fallback": True,
-    },
-    {
-        "id": "eurgbp-h1-bullish",
-        "symbol": "EURGBP",
-        "timeframe": "H1",
-        "direction": "bullish",
-        "confidence": 66,
-        "summary": "EURGBP на H1 держит рост и сейчас работает от зоны 0.8526. После снятия ликвидности снизу рынок может продолжить ход к 0.8563. Лонг рассматриваем от 0.8526 после реакции от зоны и нового импульса вверх. Сценарий отменяется при уходе ниже 0.8508.",
-        "full_text": "EURGBP на H1 держит рост и сейчас работает от зоны 0.8526. После снятия ликвидности снизу рынок может продолжить ход к 0.8563. Лонг рассматриваем от 0.8526 после реакции от зоны и нового импульса вверх. Сценарий отменяется при уходе ниже 0.8508.",
-        "entry": 0.8526,
-        "stopLoss": 0.8508,
-        "takeProfit": 0.8563,
-        "context": "Цена удерживает higher low после снятия sell-side liquidity.",
-        "trigger": "Подтверждённый импульс выше локального intraday range.",
-        "invalidation": "Потеря спроса и возврат ниже demand-зоны.",
-        "target": "Тест ближайшего buy-side liquidity над локальным максимумом.",
-        "tags": ["SMC", "Continuation", "H1", "EURGBP"],
-        "is_fallback": True,
-    },
-    {
-        "id": "eurchf-h4-bearish",
-        "symbol": "EURCHF",
-        "timeframe": "H4",
-        "direction": "bearish",
-        "confidence": 63,
-        "summary": "EURCHF на H4 остаётся в нисходящей структуре и сейчас пришёл в зону 0.9587. Пока 0.9621 держит цену сверху, базовый сценарий — снижение к 0.9528. Шорт смотрим от 0.9587 после слабой реакции покупателей и импульса вниз. Сценарий отменяется при закреплении выше 0.9621.",
-        "full_text": "EURCHF на H4 остаётся в нисходящей структуре и сейчас пришёл в зону 0.9587. Пока 0.9621 держит цену сверху, базовый сценарий — снижение к 0.9528. Шорт смотрим от 0.9587 после слабой реакции покупателей и импульса вниз. Сценарий отменяется при закреплении выше 0.9621.",
-        "entry": 0.9587,
-        "stopLoss": 0.9621,
-        "takeProfit": 0.9528,
-        "context": "Рынок сохраняет lower highs после отката в premium.",
-        "trigger": "Подтверждение слабости покупателей после ретеста imbalance.",
-        "invalidation": "Закрепление выше последнего swing high.",
-        "target": "Возврат к sell-side liquidity и предыдущему минимуму диапазона.",
-        "tags": ["SMC", "Swing", "H4", "EURCHF"],
-        "is_fallback": True,
-    },
-]
 logger = logging.getLogger(__name__)
+
 
 
 class TradeIdeaService:
@@ -198,11 +89,11 @@ class TradeIdeaService:
         if legacy:
             return legacy
 
-        return [self._decorate_api_idea(idea, source="demo_fallback") for idea in DEMO_FALLBACK_IDEAS]
+        return []
 
     def fallback_ideas(self, *, reason: str = "unspecified") -> list[dict[str, Any]]:
-        logger.warning("fallback activated reason=%s", reason)
-        return self._normalize_for_api(DEMO_FALLBACK_IDEAS, source="openrouter_fallback")
+        logger.warning("market_ideas_unavailable reason=%s", reason)
+        return []
 
     def build_openrouter_api_ideas(self) -> list[dict[str, Any]]:
         api_key = get_openrouter_api_key()
@@ -210,12 +101,12 @@ class TradeIdeaService:
 
         if not api_key:
             logger.warning("openrouter_missing_api_key")
-            return self.fallback_ideas(reason="missing_api_key")
+            return []
 
         market_references = self._build_market_references()
         if len(market_references) != len(OPENROUTER_IDEA_SPECS):
             logger.warning("openrouter_market_data_incomplete")
-            return self._build_market_aligned_fallbacks(market_references, reason="market_data_unavailable")
+            return []
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -238,30 +129,27 @@ class TradeIdeaService:
             logger.info("AI response received status=%s", getattr(response, "status_code", "unknown"))
         except requests.RequestException as exc:
             logger.exception("openrouter_api_error")
-            return self.fallback_ideas(reason="request_failed")
+            return []
 
         try:
             content = response.json()["choices"][0]["message"]["content"]
             parsed = json.loads(content)
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             logger.exception("parse failed")
-            return self.fallback_ideas(reason="parse_failed")
+            return []
 
         if not isinstance(parsed, list) or not parsed:
             logger.warning("openrouter_empty_payload")
-            return self._build_market_aligned_fallbacks(market_references, reason="empty_ai_payload")
+            return []
 
         normalized = self._normalize_openrouter_payload(parsed, market_references)
         if not normalized:
             logger.warning("openrouter_normalization_failed")
-            return self._build_market_aligned_fallbacks(market_references, reason="normalization_failed")
+            return []
         return normalized
 
     def list_api_ideas(self) -> list[dict[str, Any]]:
-        ideas = self.build_openrouter_api_ideas()
-        if isinstance(ideas, list) and ideas:
-            return ideas
-        return self.fallback_ideas(reason="empty_route_payload")
+        return self.build_api_ideas()
 
     def upsert_trade_idea(self, signal: dict) -> dict[str, Any]:
         store = self.idea_store.read()
@@ -1783,13 +1671,10 @@ class TradeIdeaService:
                 logger.warning("idea_reference_missing symbol=%s timeframe=%s", symbol, timeframe)
                 continue
             validated_row = self._validate_ai_levels(row, reference)
+            if validated_row.get("_invalid_levels"):
+                continue
             prepared.append(validated_row)
             seen.add((symbol, timeframe))
-
-        for symbol, timeframe in OPENROUTER_IDEA_SPECS:
-            key = (symbol, timeframe)
-            if key not in seen and key in market_references:
-                prepared.append(self._build_market_aligned_fallback_idea(market_references[key], reason="missing_ai_idea"))
 
         normalized = self._normalize_for_api(prepared, source="openrouter_ai")
         return normalized
@@ -1835,18 +1720,12 @@ class TradeIdeaService:
                 validation_errors.append("levels_not_rebased_to_current_price")
 
         if validation_errors:
-            fallback = self._build_market_aligned_fallback_idea(reference, raw_row=row, reason=";".join(validation_errors))
-            fallback["levels_validated"] = False
-            fallback["levels_source"] = "fallback"
-            fallback["validation_errors"] = validation_errors
-            fallback["entry_deviation_pct"] = round(deviation_pct, 4)
-            fallback["meta"] = {
-                "latest_close": fallback["latest_close"],
-                "entry_deviation_pct": fallback["entry_deviation_pct"],
-                "levels_validated": False,
-                "levels_source": "fallback",
+            return {
+                "_invalid_levels": True,
+                "symbol": row.get("symbol"),
+                "timeframe": row.get("timeframe"),
+                "validation_errors": validation_errors,
             }
-            return fallback
 
         payload = dict(row)
         payload["entry"] = round(expected_entry, precision)
@@ -1874,14 +1753,8 @@ class TradeIdeaService:
         *,
         reason: str,
     ) -> list[dict[str, Any]]:
-        if not market_references:
-            return self.fallback_ideas(reason=reason)
-        prepared = [
-            self._build_market_aligned_fallback_idea(market_references[(symbol, timeframe)], reason=reason)
-            for symbol, timeframe in OPENROUTER_IDEA_SPECS
-            if (symbol, timeframe) in market_references
-        ]
-        return self._normalize_for_api(prepared, source="openrouter_fallback")
+        logger.warning("market_aligned_fallback_disabled reason=%s refs=%s", reason, len(market_references))
+        return []
 
     def _build_market_aligned_fallback_idea(
         self,
