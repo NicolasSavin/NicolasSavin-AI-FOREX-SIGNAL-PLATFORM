@@ -18,9 +18,9 @@ class _Resp:
 
 def _ok_content() -> str:
     return (
-        '{"headline":"EURUSD H1 long","summary":"Кратко","cause":"Причина","confirmation":"Подтверждение",'
+        '{"headline":"EURUSD H1 long","summary":"Кратко","cause":"После снятия ликвидности причина ясна","confirmation":"Подтверждение",'
         '"risk":"Риск","invalidation":"Инвалидация","target_logic":"Логика цели",'
-        '"update_explanation":"Что изменилось","short_text":"Коротко","full_text":"Полный текст"}'
+        '"update_explanation":"Что изменилось","short_text":"Коротко","full_text":"После sweep ликвидности сформирован BOS и вход от order block."}'
     )
 
 
@@ -70,3 +70,26 @@ def test_fallback_after_invalid_retry(monkeypatch) -> None:
 
     assert result.source == "fallback"
     assert "EURUSD" in result.data["full_text"]
+
+
+def test_rejects_banned_phrase_and_retries(monkeypatch) -> None:
+    service = IdeaNarrativeLLMService()
+    service.api_key = "test"
+    calls = {"n": 0}
+
+    invalid = (
+        '{"headline":"EURUSD H1 long","summary":"Кратко","cause":"Причина","confirmation":"Подтверждение",'
+        '"risk":"Риск","invalidation":"Инвалидация","target_logic":"Логика цели",'
+        '"update_explanation":"Что изменилось","short_text":"Коротко","full_text":"Сценарий строится вокруг зоны входа."}'
+    )
+
+    def _post(*args, **kwargs):
+        calls["n"] += 1
+        content = invalid if calls["n"] == 1 else _ok_content()
+        return _Resp({"choices": [{"message": {"content": content}}]})
+
+    monkeypatch.setattr("requests.post", _post)
+    result = service.generate(event_type="idea_updated", facts={"symbol": "EURUSD"})
+
+    assert calls["n"] == 2
+    assert result.source == "llm"

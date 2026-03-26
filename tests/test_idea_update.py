@@ -157,3 +157,31 @@ def test_archive_explanation_generation_on_tp_sl(tmp_path: Path) -> None:
     sl = service.upsert_trade_idea({**base, "latest_close": 1.256})
     assert sl["final_status"] == "sl_hit"
     assert "sl_hit" in (sl.get("close_explanation") or "")
+
+
+def test_build_narrative_facts_contains_smc_contract() -> None:
+    facts = TradeIdeaService._build_narrative_facts(
+        signal={
+            "entry": 1.1,
+            "stop_loss": 1.09,
+            "take_profit": 1.12,
+            "smc_ru": "Цена вернулась в order block после sweep sell-side ликвидности.",
+            "structure_state": "bos",
+            "liquidity_sweep": True,
+            "invalidation_reasoning": "Пробой локального HL отменяет BOS.",
+            "market_context": {"summaryRu": "Discount внутри dealing range."},
+        },
+        symbol="EURUSD",
+        timeframe="M15",
+        direction="bullish",
+        status="active",
+        rationale="SMC",
+        existing=None,
+    )
+
+    assert facts["liquidity_sweep"] == "sell_side"
+    assert facts["structure_state"] == "BOS"
+    assert facts["key_zone"] == "OB"
+    assert facts["location"] == "discount"
+    assert facts["target_liquidity"] == "1.12"
+    assert "HL" in facts["invalidation_logic"]
