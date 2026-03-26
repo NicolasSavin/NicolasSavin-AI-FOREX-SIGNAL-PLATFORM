@@ -454,7 +454,26 @@ def test_api_ideas_route_exists_and_returns_payload(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["ideas"][0]["symbol"] == "EURUSD"
-    assert payload["market"][0]["symbol"] == "EURUSD"
+    assert "EURUSD" in payload["market"]["symbols"]
+    assert "M15" in payload["market"]["timeframes"]
+
+
+def test_generate_or_refresh_does_not_throttle_empty_recent_store(monkeypatch, tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.idea_store.write({"updated_at_utc": "2026-03-26T12:00:00+00:00", "ideas": []})
+
+    called = {"value": False}
+
+    async def _fake_generate_live_signals(pairs, timeframes=None):  # type: ignore[no-untyped-def]
+        called["value"] = True
+        return []
+
+    monkeypatch.setattr(service.signal_engine, "generate_live_signals", _fake_generate_live_signals)
+
+    import asyncio
+
+    asyncio.run(service.generate_or_refresh(["EURUSD"]))
+    assert called["value"] is True
 
 
 def test_api_ideas_contract_keeps_market_price_null_when_unavailable(monkeypatch) -> None:
