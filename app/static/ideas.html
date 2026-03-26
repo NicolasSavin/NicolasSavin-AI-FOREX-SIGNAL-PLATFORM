@@ -88,6 +88,34 @@
       gap: 14px;
     }
 
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin: 0 0 16px;
+    }
+
+    .stat-card {
+      background: linear-gradient(180deg, #0c1a33 0%, #0a1529 100%);
+      border: 1px solid #1d2c47;
+      border-radius: 14px;
+      padding: 10px 12px;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+
+    .stat-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #eef4ff;
+    }
+
     .card {
       background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
       border: 1px solid var(--border);
@@ -468,6 +496,8 @@
         <option value="ALL">Все ТФ</option>
       </select>
     </div>
+
+    <div id="stats-grid" class="stats-grid"></div>
 
     <div id="ideas" class="grid"></div>
   </div>

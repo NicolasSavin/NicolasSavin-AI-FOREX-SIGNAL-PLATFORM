@@ -12,6 +12,7 @@ import requests
 from app.core.env import get_openrouter_api_key, get_openrouter_model
 from app.services.chart_data_service import ChartDataService
 from app.services.storage.json_storage import JsonStorage
+from app.services.trade_idea_stats_service import TradeIdeaStatsService
 from backend.data_provider import DataProvider
 from backend.signal_engine import SignalEngine
 
@@ -164,18 +165,25 @@ class TradeIdeaService:
     def refresh_market_ideas(self) -> dict[str, Any]:
         payload = self.idea_store.read()
         ideas = payload.get("ideas", [])
+        ideas, changed = self._ensure_statistics(ideas)
         if not ideas:
             payload = {
                 "updated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "ideas": [],
             }
             self.idea_store.write(payload)
+        elif changed:
+            payload = {"updated_at_utc": payload.get("updated_at_utc"), "ideas": ideas}
+            self.idea_store.write(payload)
+        else:
+            payload = {"updated_at_utc": payload.get("updated_at_utc"), "ideas": ideas}
         active_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES]
         archived_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") == "archived"]
         legacy = {
             "updated_at_utc": payload.get("updated_at_utc"),
             "ideas": [self._to_legacy_card(idea) for idea in active_ideas],
             "archive": archived_ideas,
+            "statistics": TradeIdeaStatsService.aggregate(archived_ideas),
         }
         self.legacy_store.write(legacy)
         return legacy
@@ -426,7 +434,7 @@ class TradeIdeaService:
         history = self._build_history(existing=existing, status=status, now=now.isoformat(), rationale=rationale, close_explanation=close_explanation)
         persisted_status = "archived" if is_terminal else status
 
-        return {
+        payload = {
             "idea_id": idea_id,
             "symbol": symbol,
             "instrument": symbol,
@@ -475,6 +483,7 @@ class TradeIdeaService:
             "chart_image": None,
             "history": history,
         }
+        return self._attach_trade_result_metrics(payload)
 
     def _append_snapshot(self, idea: dict[str, Any], previous: dict[str, Any] | None) -> None:
         snapshots = self.snapshot_store.read().get("snapshots", [])
@@ -490,6 +499,118 @@ class TradeIdeaService:
             }
         )
         self.snapshot_store.write({"snapshots": snapshots})
+
+    def _ensure_statistics(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+        changed = False
+        updated_ideas: list[dict[str, Any]] = []
+        for idea in ideas:
+            next_idea = self._attach_trade_result_metrics(dict(idea))
+            if next_idea != idea:
+                changed = True
+            updated_ideas.append(next_idea)
+        return updated_ideas, changed
+
+    def _attach_trade_result_metrics(self, idea: dict[str, Any]) -> dict[str, Any]:
+        final_status = str(idea.get("final_status") or idea.get("status") or "").lower()
+        if final_status not in TERMINAL_STATUSES:
+            return idea
+
+        entry_price = self._extract_numeric(idea.get("entry"))
+        stop_loss = self._extract_numeric(idea.get("stop_loss") or idea.get("stopLoss"))
+        take_profit = self._extract_numeric(idea.get("take_profit") or idea.get("takeProfit"))
+        latest_close = self._extract_numeric(idea.get("latest_close"))
+        direction = str(idea.get("direction") or idea.get("bias") or "").lower()
+        closed_at = idea.get("closed_at")
+        created_at = idea.get("created_at")
+
+        if final_status == "tp_hit":
+            exit_price = take_profit
+            result = "win"
+        elif final_status == "sl_hit":
+            exit_price = stop_loss
+            result = "loss"
+        else:
+            exit_price = latest_close
+            result = "breakeven"
+
+        pnl_percent = self._calculate_pnl_percent(direction=direction, entry=entry_price, exit_price=exit_price)
+        if final_status == "invalidated":
+            if pnl_percent is not None and pnl_percent < 0:
+                result = "loss"
+            else:
+                result = "breakeven"
+
+        rr = self._calculate_rr(
+            direction=direction,
+            entry=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
+        duration, duration_seconds = self._calculate_duration(created_at, closed_at)
+
+        idea["result"] = result
+        idea["entry_price"] = entry_price
+        idea["exit_price"] = exit_price
+        idea["pnl_percent"] = pnl_percent
+        idea["rr"] = rr
+        idea["duration"] = duration
+        idea["duration_seconds"] = duration_seconds
+        return idea
+
+    @classmethod
+    def _calculate_pnl_percent(cls, *, direction: str, entry: float | None, exit_price: float | None) -> float | None:
+        if entry in (None, 0) or exit_price is None:
+            return None
+        if direction == "bearish":
+            value = ((entry - exit_price) / entry) * 100
+        else:
+            value = ((exit_price - entry) / entry) * 100
+        return round(value, 4)
+
+    @classmethod
+    def _calculate_rr(
+        cls,
+        *,
+        direction: str,
+        entry: float | None,
+        stop_loss: float | None,
+        take_profit: float | None,
+    ) -> float | None:
+        if entry is None or stop_loss is None or take_profit is None:
+            return None
+        if direction == "bearish":
+            risk = stop_loss - entry
+            reward = entry - take_profit
+        else:
+            risk = entry - stop_loss
+            reward = take_profit - entry
+        if risk <= 0:
+            return None
+        return round(reward / risk, 4)
+
+    @classmethod
+    def _calculate_duration(cls, created_at: Any, closed_at: Any) -> tuple[str | None, int | None]:
+        if not created_at or not closed_at:
+            return None, None
+        try:
+            created = datetime.fromisoformat(str(created_at))
+            closed = datetime.fromisoformat(str(closed_at))
+            total_seconds = int((closed - created).total_seconds())
+            if total_seconds < 0:
+                return None, None
+            days, rem = divmod(total_seconds, 86400)
+            hours, rem = divmod(rem, 3600)
+            minutes, _ = divmod(rem, 60)
+            parts: list[str] = []
+            if days:
+                parts.append(f"{days}д")
+            if hours:
+                parts.append(f"{hours}ч")
+            if minutes or not parts:
+                parts.append(f"{minutes}м")
+            return " ".join(parts), total_seconds
+        except ValueError:
+            return None, None
 
     @staticmethod
     def _status_from_signal(signal: dict, existing: dict[str, Any] | None = None) -> str:

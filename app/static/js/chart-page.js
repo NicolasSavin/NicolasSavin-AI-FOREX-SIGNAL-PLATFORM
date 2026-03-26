@@ -1,4 +1,5 @@
 const ideasRoot = document.getElementById("ideas");
+const statsGrid = document.getElementById("stats-grid");
 const symbolFilter = document.getElementById("symbol-filter");
 const timeframeFilter = document.getElementById("timeframe-filter");
 
@@ -202,6 +203,14 @@ function formatDateTime(value) {
   }).format(date) + " UTC";
 }
 
+function formatSignedPercent(value) {
+  if (value == null || value === "") return "—";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "—";
+  const sign = num > 0 ? "+" : "";
+  return `${sign}${num.toFixed(2)}%`;
+}
+
 function statusRu(value) {
   const key = String(value || "").toLowerCase();
   return {
@@ -383,8 +392,49 @@ function normalizeIdea(idea) {
 
 function normalizeIdeas(data) {
   if (Array.isArray(data)) return data.filter(Boolean).map(normalizeIdea);
-  if (Array.isArray(data?.ideas)) return data.ideas.filter(Boolean).map(normalizeIdea);
+  if (Array.isArray(data?.ideas) || Array.isArray(data?.archive)) {
+    const active = Array.isArray(data?.ideas) ? data.ideas : [];
+    const archived = Array.isArray(data?.archive) ? data.archive : [];
+    return [...active, ...archived].filter(Boolean).map(normalizeIdea);
+  }
   return [];
+}
+
+function computeAggregateStats(ideas) {
+  const archived = ideas.filter((idea) => idea.status === "archived");
+  const pnlValues = archived.map((idea) => Number(idea.pnl_percent)).filter((value) => Number.isFinite(value));
+  const rrValues = archived.map((idea) => Number(idea.rr)).filter((value) => Number.isFinite(value));
+  const wins = archived.filter((idea) => idea.result === "win").length;
+  const total = archived.length;
+
+  return {
+    winrate: total ? (wins / total) * 100 : 0,
+    trades: total,
+    avgRr: rrValues.length ? rrValues.reduce((sum, value) => sum + value, 0) / rrValues.length : 0,
+    avgPnl: pnlValues.length ? pnlValues.reduce((sum, value) => sum + value, 0) / pnlValues.length : 0,
+  };
+}
+
+function renderStats(ideas, payloadStats) {
+  if (!statsGrid) return;
+  const fallback = computeAggregateStats(ideas);
+  const stats = payloadStats || {};
+  const cards = [
+    ["Winrate", `${Number(stats.winrate ?? fallback.winrate).toFixed(2)}%`],
+    ["Trades", String(stats.total_trades ?? fallback.trades)],
+    ["Avg RR", Number(stats.avg_rr ?? fallback.avgRr).toFixed(2)],
+    ["Avg PnL", formatSignedPercent(stats.avg_pnl ?? fallback.avgPnl)],
+  ];
+  statsGrid.innerHTML = cards
+    .map(
+      ([label, value]) => `
+      <div class="stat-card">
+        <div class="stat-label">${escapeHtml(label)}</div>
+        <div class="stat-value">${escapeHtml(value)}</div>
+      </div>
+    `
+    )
+    .join("");
 }
 
 function populateFilters(ideas) {
@@ -427,6 +477,9 @@ function renderIdeas(ideas, notice = "") {
     const updateSummary = normalizeWhitespace(idea.update_summary);
     const statusLabel = idea.status === "archived" ? statusRu(idea.final_status || idea.status) : statusRu(idea.status);
     const updatedLabel = formatDateTime(idea.updated_at);
+    const archivedStats = idea.status === "archived"
+      ? `<div class="symbol">Результат: ${escapeHtml(String(idea.result || "—").toUpperCase())} · PnL: ${escapeHtml(formatSignedPercent(idea.pnl_percent))} · RR: ${escapeHtml(idea.rr != null ? Number(idea.rr).toFixed(2) : "—")} · Длительность: ${escapeHtml(idea.duration || "—")}</div>`
+      : "";
 
     return `
       <div class="card" data-index="${idx}">
@@ -435,6 +488,7 @@ function renderIdeas(ideas, notice = "") {
             <div class="symbol">${escapeHtml(symbol)}</div>
             <div class="meta">${escapeHtml(direction)} · ${escapeHtml(timeframe)} · ${escapeHtml(String(confidence))}%</div>
             <div class="symbol">Статус: ${escapeHtml(statusLabel)} · Обновлено: ${escapeHtml(updatedLabel)}</div>
+            ${archivedStats}
           </div>
         </div>
         <p class="summary">${escapeHtml(summary)}</p>
@@ -919,7 +973,7 @@ function closeModal() {
 
 async function load() {
   try {
-    const res = await fetch("/api/ideas", { cache: "no-store" });
+    const res = await fetch("/ideas/market", { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     allIdeas = normalizeIdeas(data);
@@ -929,11 +983,13 @@ async function load() {
     }
     populateFilters(allIdeas);
     applyFilters();
+    renderStats(allIdeas, data?.statistics);
   } catch (error) {
-    console.warn("Не удалось загрузить /api/ideas, включаем fallback.", error);
+    console.warn("Не удалось загрузить /ideas/market, включаем fallback.", error);
     allIdeas = normalizeIdeas(fallbackIdeas);
     populateFilters(allIdeas);
     renderIdeas(allIdeas, "Источник идей временно недоступен — показан резервный demo-набор.");
+    renderStats(allIdeas, null);
   }
 }
 

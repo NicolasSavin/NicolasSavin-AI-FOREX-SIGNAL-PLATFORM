@@ -100,5 +100,14 @@ def test_trade_idea_archives_on_tp_and_keeps_history(tmp_path: Path) -> None:
     assert archived["closed_at"] is not None
     assert len(payload["ideas"]) == 0
     assert len(payload["archive"]) == 1
+    assert archived["result"] == "win"
+    assert archived["entry_price"] == 1.082
+    assert archived["exit_price"] == 1.088
+    assert archived["pnl_percent"] > 0
+    assert archived["rr"] == 2.0
+    assert archived["duration"] is not None
+    assert payload["statistics"]["total_trades"] == 1
+    assert payload["statistics"]["wins"] == 1
+    assert payload["statistics"]["winrate"] == 100.0
     history_types = [item["type"] for item in archived["history"]]
     assert history_types == ["created", "updated", "tp_hit", "archived"]
