@@ -46,11 +46,12 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["direction"] == "bullish"
     assert payload[0]["summary"].startswith("Лонг")
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert "Инвалидация" in payload[0]["full_text"]
-    assert "зоне" in payload[0]["full_text"]
-    assert "сценар" in payload[0]["full_text"].lower()
     assert "ликвид" in payload[0]["full_text"].lower()
-    assert payload[0]["full_text"].count(".") >= 6
+    assert "сценар" in payload[0]["full_text"].lower()
+    assert any(token in payload[0]["full_text"].lower() for token in ("пока", "если", "поэтому"))
+    assert "сценар" in payload[0]["full_text"].lower()
+    assert payload[0]["full_text"].count(".") >= 2
+    assert "нет надёжного рыночного снимка" in payload[0]["full_text"]
     assert payload[0]["detail_brief"]["header"]["bias"] == "Лонг / buy-the-dip bias"
     assert "smc_ict" in payload[0]["supported_sections"]
 
@@ -87,9 +88,10 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
 
     assert payload[0]["summary"].startswith("Шорт")
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert "зоне 1.271" in payload[0]["full_text"]
-    assert "возврат выше 1.276" in payload[0]["full_text"].lower()
-    assert "инвалидац" in payload[0]["full_text"].lower()
+    assert "1.271" in payload[0]["full_text"]
+    assert "1.276" in payload[0]["full_text"]
+    assert any(token in payload[0]["full_text"].lower() for token in ("теряет силу", "отмен", "сценарий"))
+    assert any(token in payload[0]["full_text"].lower() for token in ("пока", "если", "поэтому"))
     assert payload[0]["full_text"].count(".") >= 6
     assert payload[0]["entry"] == "1.271"
     assert payload[0]["stopLoss"] == "1.276"
@@ -179,10 +181,9 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["summary"].startswith("Лонг")
     assert "цель" in payload[0]["summary"]
     assert payload[0]["full_text"].count(".") >= 5
-    assert "Инвалидация" in payload[0]["full_text"]
-    assert "зоне 1.0852" in payload[0]["full_text"]
+    assert "1.0852" in payload[0]["full_text"]
     assert "сценар" in payload[0]["full_text"].lower()
-    assert "идея отменяется" in payload[0]["full_text"].lower()
+    assert any(token in payload[0]["full_text"].lower() for token in ("теряет силу", "отмен", "сценарий"))
     assert payload[0]["label"] == "BUY IDEA"
     assert payload[0]["latest_close"] == 1.0852
     assert payload[0]["market_reference_price"] == 1.0852

@@ -42,6 +42,26 @@ def test_generate_signal_text_contains_structured_causal_chain() -> None:
     assert "bias" in text.lower()
     assert "TP 1.0876" in text
     assert "1.0828" in text
+    assert any(token in text.lower() for token in ("пока", "если", "поэтому"))
+    assert "atr" not in text.lower()
+    assert "pattern module" not in text.lower()
+    assert "no pattern detected" not in text.lower()
+
+
+def test_generate_signal_text_is_deterministic_for_same_payload() -> None:
+    payload = {
+        "symbol": "EURUSD",
+        "timeframe": "M15",
+        "direction": "bullish",
+        "current_price": 1.0849,
+        "entry": 1.0842,
+        "stop_loss": 1.0828,
+        "take_profit": 1.0876,
+        "data_status": "live",
+    }
+    first = generate_signal_text(payload)
+    second = generate_signal_text(payload)
+    assert first == second
 
 
 def test_generate_signal_text_returns_neutral_when_market_data_unavailable() -> None:
