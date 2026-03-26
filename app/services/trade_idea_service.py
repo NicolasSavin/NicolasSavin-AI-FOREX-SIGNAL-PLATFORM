@@ -818,42 +818,13 @@ class TradeIdeaService:
     def _is_professional_narrative(cls, text: str) -> bool:
         if not text:
             return False
+        if any(marker in text for marker in ("\n#", "\n-", "\n*")):
+            return False
         sentence_count = cls._sentence_count(text)
         lowered = text.casefold()
-        has_event = any(
-            token in lowered
-            for token in (
-                "order block",
-                "ob ",
-                "imbalance",
-                "fvg",
-                "liquidity sweep",
-                "sweep",
-                "ликвид",
-                "bos",
-                "choch",
-                "клин",
-                "канал",
-                "треуг",
-                "пробой",
-                "retest",
-                "ретест",
-                "импульс",
-                "displacement",
-            )
-        )
-        has_trigger = "триггер" in lowered
-        has_invalidation = "отмен" in lowered or "invalid" in lowered or "слом" in lowered
-        has_target = "цел" in lowered or "ликвид" in lowered or "liquidity" in lowered or "take profit" in lowered or "tp" in lowered
-        has_confirmation = (
-            "подтверж" in lowered
-            or "объ" in lowered
-            or "cumdelta" in lowered
-            or "delta" in lowered
-            or "диверген" in lowered
-        )
-        has_levels = bool(re.search(r"\d", text))
-        return 5 <= sentence_count <= 8 and has_event and has_trigger and has_invalidation and has_target and has_confirmation and has_levels
+        has_plan = ("stop" in lowered or "sl" in lowered or "отмен" in lowered) and ("take" in lowered or "цел" in lowered or "tp" in lowered)
+        has_structure = any(token in lowered for token in ("bos", "choch", "структур", "liquidity", "ликвид"))
+        return 3 <= sentence_count <= 6 and has_plan and has_structure and bool(re.search(r"\d", text))
 
     @classmethod
     def _compose_professional_narrative(
@@ -867,74 +838,102 @@ class TradeIdeaService:
         target: str,
         direct_text: str,
     ) -> str:
-        symbol = cls._extract_symbol(row)
-        timeframe = cls._extract_timeframe(row)
-        direction = cls._extract_direction(row)
-        market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
-        entry = cls._extract_level(row, "entry", "entry_zone")
-        stop_loss = cls._extract_level(row, "stopLoss", "stop_loss")
-        take_profit = cls._extract_level(row, "takeProfit", "take_profit")
-        trade_plan = row.get("trade_plan") if isinstance(row.get("trade_plan"), dict) else {}
-        analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
-        current_price = cls._extract_level(market_context, "current_price")
-        structure_text = {"bullish": "восходящую", "bearish": "нисходящую", "neutral": "боковую"}.get(direction, "рабочую")
-        zone_text = entry if entry != "—" else current_price
-        target_text = take_profit if take_profit != "—" else cls._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2")) or target.rstrip(".")
-        context_hint = re.sub(r"\s+", " ", str(idea_context or summary or direct_text or "")).strip()
-        context_hint = re.sub(r"\bHTF\b|\bMTF\b|\bLTF\b|bias|continuation|desk-level|mitigation|displacement|dealing range", "", context_hint, flags=re.IGNORECASE)
-        context_hint = cls._strip_analysis_labels(re.sub(r"\s+", " ", context_hint).strip(" .,-"))
-        event_sentence = cls._build_event_sentence(
+        signal_data = cls._build_signal_data_payload(
             row,
-            direction=direction,
-            symbol=symbol,
-            timeframe=timeframe,
-            zone_text=zone_text,
-            stop_loss=stop_loss,
+            summary=summary,
+            idea_context=idea_context,
+            trigger=trigger,
+            invalidation=invalidation,
+            target=target,
+            direct_text=direct_text,
         )
-        rationale_sentence = cls._build_rationale_sentence(
-            direction=direction,
-            context_hint=context_hint,
-            zone_text=zone_text,
-            target_text=target_text,
-        )
-        trigger_text = cls._build_trigger_sentence(trigger, direction=direction, zone_text=zone_text, target_text=target_text)
-        confirmation_text = cls._build_confirmation_sentence(
-            direction=direction,
-            analysis=analysis,
-            market_context=market_context,
-            context_hint=context_hint,
-            zone_text=zone_text,
-        )
+        return cls.generate_signal_text(signal_data)
 
-        invalidation_core = re.sub(r"\s+", " ", str(invalidation or trade_plan.get("invalidation") or "Сценарий отменяется при сломе структуры.")).strip().rstrip(".")
-        if stop_loss != "—" and stop_loss not in invalidation_core:
-            invalidation_text = f"Сценарий отменяется при пробое {stop_loss} и закреплении за уровнем."
-        else:
-            invalidation_text = f"{invalidation_core}."
+    @classmethod
+    def _build_signal_data_payload(
+        cls,
+        row: dict[str, Any],
+        *,
+        summary: str,
+        idea_context: str,
+        trigger: str,
+        invalidation: str,
+        target: str,
+        direct_text: str,
+    ) -> dict[str, Any]:
+        analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+        market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
+        trade_plan = row.get("trade_plan") if isinstance(row.get("trade_plan"), dict) else {}
+        pattern_summary = row.get("pattern_summary") if isinstance(row.get("pattern_summary"), dict) else {}
+        return {
+            "symbol": cls._extract_symbol(row),
+            "timeframe": cls._extract_timeframe(row),
+            "direction": cls._extract_direction(row),
+            "trend": market_context.get("mtf_trend") or market_context.get("htf_trend"),
+            "market_structure": cls._first_text(
+                market_context.get("summaryRu"),
+                analysis.get("smc_ict_ru"),
+                summary,
+            ),
+            "bos": row.get("bos") or market_context.get("bos"),
+            "choch": row.get("choch") or market_context.get("choch"),
+            "liquidity_context": cls._first_text(analysis.get("liquidity_ru"), row.get("reason_ru")),
+            "order_blocks": row.get("order_blocks") or market_context.get("order_blocks"),
+            "fvg": row.get("fvg") or market_context.get("fvg"),
+            "imbalance": row.get("imbalance") or market_context.get("imbalance"),
+            "premium_discount_state": row.get("premium_discount_state") or market_context.get("premium_discount_state"),
+            "chart_patterns": row.get("chart_patterns") or pattern_summary.get("patterns") or [],
+            "harmonic_patterns": row.get("harmonic_patterns") or analysis.get("harmonic_patterns") or [],
+            "wave_context": analysis.get("waves_ru") or row.get("wave_context"),
+            "volume_profile": analysis.get("volume_ru") or row.get("volume_profile"),
+            "delta_data": analysis.get("divergence_ru") or row.get("delta_data"),
+            "cumulative_delta": analysis.get("cumdelta_ru") or analysis.get("cumulative_delta_ru") or row.get("cumulative_delta"),
+            "options_context": row.get("options_context"),
+            "fundamental_context": analysis.get("fundamental_ru") or row.get("fundamental_context"),
+            "entry": cls._extract_level(row, "entry", "entry_zone"),
+            "entry_type": row.get("entry_type") or trade_plan.get("entry_trigger"),
+            "stop_loss": cls._extract_level(row, "stopLoss", "stop_loss"),
+            "take_profit": cls._extract_level(row, "takeProfit", "take_profit"),
+            "invalidation_level": cls._extract_level(row, "invalidation_level"),
+            "key_levels": row.get("key_levels"),
+            "confidence_drivers": row.get("confidence_drivers"),
+            "trigger": trigger,
+            "invalidation": invalidation,
+            "target": target,
+            "idea_context": cls._first_text(idea_context, direct_text),
+            "current_price": cls._extract_level(market_context, "current_price"),
+            "pattern_summary": cls._first_text(pattern_summary.get("patternSummaryRu"), analysis.get("pattern_ru")),
+        }
 
-        sentences: list[str] = []
-        first_sentence = f"{symbol} на {timeframe} держит {structure_text} структуру"
+    @classmethod
+    def generate_signal_text(cls, signal_data: dict[str, Any]) -> str:
+        symbol = str(signal_data.get("symbol") or "Инструмент")
+        timeframe = str(signal_data.get("timeframe") or "рабочем ТФ")
+        direction = str(signal_data.get("direction") or "neutral")
+        direction_label = {"bullish": "лонговый", "bearish": "шортовый", "neutral": "нейтральный"}.get(direction, "рабочий")
+        entry = str(signal_data.get("entry") or "—")
+        stop_loss = str(signal_data.get("stop_loss") or "—")
+        take_profit = str(signal_data.get("take_profit") or signal_data.get("target") or "—")
+        current_price = str(signal_data.get("current_price") or "—")
+
+        structure_parts = cls._collect_structure_fragments(signal_data)
+        context_sentence = f"{symbol} на {timeframe} сохраняет {direction_label} сценарий"
+        if structure_parts:
+            context_sentence += f": {', '.join(structure_parts)}"
         if current_price != "—":
-            first_sentence += f", цена сейчас около {current_price}"
-        first_sentence += f", поэтому рынок читается как {cls._market_phase_phrase(direction)}."
-        sentences.append(first_sentence)
-        sentences.append(event_sentence)
-        sentences.append(rationale_sentence)
-        scenario_sentence = f"Основной сценарий — {'лонг' if direction == 'bullish' else 'шорт' if direction == 'bearish' else 'сделка по направлению выхода'}"
-        if zone_text != "—":
-            scenario_sentence += f" от {zone_text}"
-        if target_text:
-            scenario_sentence += f" с движением к {target_text}"
-        sentences.append(f"{scenario_sentence}.")
-        sentences.append(trigger_text)
-        sentences.append(confirmation_text)
-        sentences.append(invalidation_text)
-        sentences.append(f"Цель — снять ликвидность у {target_text} и держать сценарий только пока структура ведёт цену именно туда.")
+            context_sentence += f", текущая цена около {current_price}"
+        context_sentence += "."
 
-        narrative = " ".join(cls._clean_sentence(sentence) for sentence in sentences if str(sentence or "").strip())
-        narrative = re.sub(r"\s+", " ", narrative).strip()
-        if narrative and narrative[-1] not in ".!?":
-            narrative = f"{narrative}."
+        confluence_parts = cls._collect_confluence_fragments(signal_data)
+        plan_sentence = cls._build_plan_sentence(signal_data, entry=entry, stop_loss=stop_loss, take_profit=take_profit)
+        expected_move = cls._build_expectation_sentence(signal_data, take_profit=take_profit, direction=direction)
+
+        sentences = [context_sentence]
+        if confluence_parts:
+            sentences.append(f"Confluence формируется через {', '.join(confluence_parts)}, поэтому вход рассматривается только внутри рабочей зоны, а не на случайном импульсе.")
+        sentences.append(plan_sentence)
+        sentences.append(expected_move)
+        narrative = " ".join(cls._clean_sentence(s) for s in sentences if s).strip()
         return narrative or "Идея подготовлена без расширенного narrative-описания."
 
     @staticmethod
@@ -948,6 +947,128 @@ class TradeIdeaService:
             flags=re.IGNORECASE,
         )
         return re.sub(r"\s+", " ", clean).strip(" .,-")
+
+    @classmethod
+    def _first_text(cls, *values: Any) -> str:
+        for value in values:
+            text = re.sub(r"\s+", " ", str(value or "")).strip()
+            if cls._is_meaningful_text(text):
+                return text
+        return ""
+
+    @staticmethod
+    def _is_meaningful_text(text: str) -> bool:
+        if not text:
+            return False
+        lowered = text.casefold()
+        blocked = (
+            "не обнаруж",
+            "недоступ",
+            "вспомогатель",
+            "не гарант",
+            "автоматическ",
+            "без расширенного",
+            "не дали отдельного подтверждения",
+        )
+        return not any(token in lowered for token in blocked)
+
+    @classmethod
+    def _pattern_names(cls, patterns: Any) -> list[str]:
+        names: list[str] = []
+        if isinstance(patterns, list):
+            for item in patterns:
+                if isinstance(item, dict):
+                    for key in ("name", "pattern", "type", "label", "title"):
+                        value = item.get(key)
+                        if isinstance(value, str) and value.strip():
+                            names.append(value.strip())
+                            break
+                elif isinstance(item, str) and item.strip():
+                    names.append(item.strip())
+        elif isinstance(patterns, str) and patterns.strip():
+            names.append(patterns.strip())
+        uniq: list[str] = []
+        for name in names:
+            if name not in uniq:
+                uniq.append(name)
+        return uniq[:3]
+
+    @classmethod
+    def _collect_structure_fragments(cls, signal_data: dict[str, Any]) -> list[str]:
+        fragments: list[str] = []
+        market_structure = cls._first_text(signal_data.get("market_structure"))
+        if market_structure:
+            fragments.append(market_structure)
+        for key, label in (("bos", "BOS подтверждён"), ("choch", "CHOCH подтверждён")):
+            value = signal_data.get(key)
+            if value is True:
+                fragments.append(label)
+            elif isinstance(value, str) and cls._is_meaningful_text(value):
+                fragments.append(value)
+        for key in ("liquidity_context", "premium_discount_state"):
+            value = cls._first_text(signal_data.get(key))
+            if value:
+                fragments.append(value)
+        for key, prefix in (("order_blocks", "order block"), ("fvg", "FVG"), ("imbalance", "imbalance")):
+            value = signal_data.get(key)
+            if isinstance(value, str) and cls._is_meaningful_text(value):
+                fragments.append(f"{prefix}: {value}")
+        return fragments[:4]
+
+    @classmethod
+    def _collect_confluence_fragments(cls, signal_data: dict[str, Any]) -> list[str]:
+        parts: list[str] = []
+        chart_patterns = cls._pattern_names(signal_data.get("chart_patterns"))
+        if chart_patterns:
+            parts.append(f"графический паттерн {', '.join(chart_patterns)}")
+        harmonic_patterns = cls._pattern_names(signal_data.get("harmonic_patterns"))
+        if harmonic_patterns:
+            parts.append(f"гармонический паттерн {', '.join(harmonic_patterns)}")
+        pattern_summary = cls._first_text(signal_data.get("pattern_summary"))
+        if pattern_summary and "паттерн" not in pattern_summary.casefold():
+            parts.append(pattern_summary)
+        for key, label in (
+            ("wave_context", "волновую структуру"),
+            ("volume_profile", "объёмный контекст"),
+            ("delta_data", "дельту"),
+            ("cumulative_delta", "кумулятивную дельту"),
+            ("options_context", "опционный фон"),
+            ("fundamental_context", "фундаментальный фон"),
+        ):
+            value = cls._first_text(signal_data.get(key))
+            if value:
+                parts.append(f"{label}: {value}")
+        return parts[:5]
+
+    @classmethod
+    def _build_plan_sentence(cls, signal_data: dict[str, Any], *, entry: str, stop_loss: str, take_profit: str) -> str:
+        trigger = cls._first_text(signal_data.get("trigger"), signal_data.get("entry_type"))
+        reason = cls._first_text(signal_data.get("idea_context"))
+        sentence = f"Торговый план: вход {entry}, стоп {stop_loss}, цель {take_profit}"
+        if reason:
+            sentence += f"; зона входа выбрана, потому что {reason[0].lower() + reason[1:] if len(reason) > 1 else reason}"
+        if trigger:
+            sentence += f", триггер — {trigger[0].lower() + trigger[1:] if len(trigger) > 1 else trigger}"
+        if stop_loss != "—":
+            sentence += f", стоп размещён за уровнем, где ломается структура и теряется сценарий"
+        if take_profit != "—":
+            sentence += f", цель стоит у ближайшего внешнего пула ликвидности/ключевой зоны"
+        return sentence + "."
+
+    @classmethod
+    def _build_expectation_sentence(cls, signal_data: dict[str, Any], *, take_profit: str, direction: str) -> str:
+        direction_move = {"bullish": "вверх", "bearish": "вниз", "neutral": "к границе диапазона"}.get(direction, "по рабочему вектору")
+        invalidation = cls._first_text(signal_data.get("invalidation"))
+        if not invalidation:
+            invalidation_level = str(signal_data.get("invalidation_level") or signal_data.get("stop_loss") or "—")
+            if invalidation_level != "—":
+                invalidation = f"сценарий отменяется при закреплении за {invalidation_level}"
+            else:
+                invalidation = "сценарий отменяется при сломе локальной структуры"
+        return (
+            f"После входа ожидается направленное движение {direction_move} к {take_profit}; "
+            f"{invalidation[0].lower() + invalidation[1:] if len(invalidation) > 1 else invalidation}."
+        )
 
     @staticmethod
     def _market_phase_phrase(direction: str) -> str:
@@ -1671,15 +1792,16 @@ class TradeIdeaService:
             "Требования к full_text:\n"
             "- верни ОДИН цельный текст в поле full_text\n"
             "- без заголовков, списков и разделения на блоки\n"
-            "- 5-8 коротких предложений\n"
-            "- стиль: живой комментарий трейдера, без AI-воды и без сложных слов\n"
-            "- сначала дай контекст: структура рынка, где сейчас цена и какая рабочая зона\n"
-            "- затем свяжи SMC / ICT, паттерн, объёмы, дивергенцию, CumDelta, фундаментал, волны, Wyckoff и сентимент в один сценарий, а не в список отдельных блоков\n"
+            "- 3-6 предложений в одном абзаце\n"
+            "- стиль: сухой и профессиональный аналитический комментарий, без AI-tone и маркетинговых формулировок\n"
+            "- сначала дай контекст: структура рынка (trend/range/transition), BOS/CHOCH/displacement, где сейчас цена и какая рабочая зона\n"
+            "- затем свяжи SMC / ICT, ликвидность, графические паттерны и гармонические паттерны в один сценарий confluence, а не в список отдельных блоков\n"
             "- не пиши форматом 'SMC: ...', 'Volumes: ...', 'Divergence: ...'\n"
-            "- SMC / ICT должны давать зону и структуру, паттерн — тайминг входа, объёмы / CumDelta / дивергенция — подтверждение или слабость, фундаментал — общий bias, Wyckoff и волны — фазу движения, сентимент — фильтр толпы против smart money\n"
+            "- SMC / ICT должны давать зону и структуру, графический/гармонический паттерн — тайминг входа, объёмы / CumDelta / дивергенция — подтверждение или слабость, опционный и фундаментальный контекст — фильтр направления\n"
             "- потом дай главный сценарий: откуда вход, куда цель и почему рынок должен пройти именно туда\n"
             "- обязательно прямо объясни ПОЧЕМУ вход именно от entry: какое событие произошло, где именно оно произошло и почему это даёт точку входа\n"
             "- обязательно назови хотя бы ОДНО конкретное событие из price action / SMC: order block, FVG / imbalance, liquidity sweep, BOS, CHOCH, пробой клина, пробой канала, пробой диапазона, пробой треугольника, displacement\n"
+            "- обязательно учитывай chart_patterns и harmonic_patterns; упоминай их только если они реально присутствуют в данных и усиливают идею\n"
             "- если называешь событие, обязательно привяжи его к уровню или зоне в тексте: например order block 1.1550-1.1570, FVG 1.1545-1.1560, liquidity sweep ниже 1.1530\n"
             "- обязательно отдельно и ясно пропиши trigger: какое конкретно действие цены должно произойти для входа\n"
             "- trigger не должен быть абстрактным; пиши, что именно ждём: реакцию, импульс, BOS/CHOCH, пробой паттерна, возврат под/выше уровень\n"
@@ -1690,7 +1812,7 @@ class TradeIdeaService:
             "- текст должен читаться как execution-ready setup, а не как обзор рынка\n"
             "- не пиши абстракции вроде 'при подтверждении' без объяснения, что именно является подтверждением\n"
             "- обязательно включи основной сценарий, trigger, подтверждение, invalidation, цель и логику движения цены\n"
-            "- итог должен звучать как реальный trading setup трейдера: 5-8 предложений, без воды, с чётким reason/trigger/invalidation\n"
+            "- итог должен звучать как реальный trading setup трейдера: 3-6 предложений, без воды, с чётким reason/trigger/invalidation\n"
             "- если каких-то данных нет, не выдумывай их; опирайся только на цену и переданный контекст\n\n"
             "ЖЁСТКИЕ ПРАВИЛА ПО УРОВНЯМ:\n"
             "- Use current_price (equal to latest_close) as the ONLY valid market reference.\n"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 
 from fastapi.testclient import TestClient
 
@@ -46,12 +47,10 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["direction"] == "bullish"
     assert payload[0]["summary"] == "Лонг → ждать подтверждение структуры."
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert "Почему вход именно здесь" in payload[0]["full_text"]
-    assert "вернулся к зоне" in payload[0]["full_text"]
-    assert "Триггер" in payload[0]["full_text"]
-    assert "Подтверждение" in payload[0]["full_text"]
-    assert "Цель" in payload[0]["full_text"]
-    assert payload[0]["full_text"].count(".") >= 6
+    assert "Торговый план" in payload[0]["full_text"]
+    assert "После входа ожидается" in payload[0]["full_text"]
+    sentence_count = len([part for part in re.split(r"(?<=[.!?])\s+", payload[0]["full_text"]) if part.strip()])
+    assert 3 <= sentence_count <= 6
     assert payload[0]["detail_brief"]["header"]["bias"] == "Лонг / buy-the-dip bias"
     assert "smc_ict" in payload[0]["supported_sections"]
 
@@ -88,14 +87,11 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
 
     assert payload[0]["summary"] == "Шорт от 1.271 → цель 1.262 / 1.258, отмена выше 1.276."
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert "коррекция в premium" in payload[0]["full_text"]
-    assert "вернулся к зоне 1.271" in payload[0]["full_text"]
-    assert "Почему вход именно здесь: зона 1.271" in payload[0]["full_text"]
+    assert "Торговый план: вход 1.271, стоп 1.276, цель 1.262" in payload[0]["full_text"]
     assert "контекст для detail-view" in payload[0]["full_text"].lower()
-    assert "Возврат выше 1.276 ломает сценарий." in payload[0]["full_text"]
-    assert "Триггер" in payload[0]["full_text"]
-    assert "Подтверждение" in payload[0]["full_text"]
-    assert payload[0]["full_text"].count(".") >= 6
+    assert "возврат выше 1.276 ломает сценарий" in payload[0]["full_text"].lower()
+    sentence_count = len([part for part in re.split(r"(?<=[.!?])\s+", payload[0]["full_text"]) if part.strip()])
+    assert 3 <= sentence_count <= 6
     assert payload[0]["entry"] == "1.271"
     assert payload[0]["stopLoss"] == "1.276"
     assert payload[0]["takeProfit"] == "1.262"
@@ -186,10 +182,9 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["short_text"] == payload[0]["summary"]
     assert payload[0]["summary"].startswith("Лонг")
     assert "цель" in payload[0]["summary"]
-    assert payload[0]["full_text"].count(".") >= 5
-    assert "Почему вход именно здесь" in payload[0]["full_text"]
-    assert "зона 1.0852" in payload[0]["full_text"]
-    assert "Триггер" in payload[0]["full_text"]
+    assert payload[0]["full_text"].count(".") >= 4
+    assert "Сценарий отменяется" in payload[0]["full_text"]
+    assert "1.0837" in payload[0]["full_text"]
     assert "Сценарий отменяется" in payload[0]["full_text"]
     assert payload[0]["label"] == "BUY IDEA"
     assert payload[0]["latest_close"] == 1.0852
@@ -313,6 +308,35 @@ def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_pa
     assert "order block, FVG / imbalance, liquidity sweep, BOS, CHOCH" in prompt
     assert "trigger не должен быть абстрактным" in prompt
     assert "reason/trigger/invalidation" in prompt
+    assert "chart_patterns и harmonic_patterns" in prompt
+    assert "3-6 предложений" in prompt
+
+
+def test_generate_signal_text_includes_chart_and_harmonic_confluence_when_present(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    text = service.generate_signal_text(
+        {
+            "symbol": "EURUSD",
+            "timeframe": "H1",
+            "direction": "bearish",
+            "market_structure": "переход из range в нисходящий тренд после BOS вниз",
+            "liquidity_context": "снят buy-side liquidity над equal highs",
+            "order_blocks": "bearish OB 1.0900-1.0912",
+            "chart_patterns": [{"name": "descending triangle"}],
+            "harmonic_patterns": [{"name": "Bearish Gartley"}],
+            "wave_context": "коррекционный откат в волну (2) завершён",
+            "entry": "1.0900",
+            "stop_loss": "1.0950",
+            "take_profit": "1.0820",
+            "trigger": "отказ от закрепления выше 1.0912 и CHOCH вниз на M15",
+            "invalidation": "Сценарий отменяется при закреплении выше 1.0950.",
+        }
+    )
+    assert "descending triangle" in text
+    assert "Bearish Gartley" in text
+    assert "Торговый план: вход 1.0900, стоп 1.0950, цель 1.0820" in text
+    sentence_count = len([part for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()])
+    assert 3 <= sentence_count <= 6
 
 
 def test_list_api_ideas_falls_back_when_ai_returns_empty(monkeypatch, tmp_path: Path) -> None:
