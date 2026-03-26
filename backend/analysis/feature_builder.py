@@ -27,7 +27,7 @@ class FeatureBuilder:
             snapshot.get("symbol"),
         )
 
-        if candle_count < 3:
+        if candle_count < 1:
             logger.debug("feature_builder_insufficient reason=missing_candles candles=%s", candle_count)
             return {
                 "status": "insufficient",
@@ -51,6 +51,35 @@ class FeatureBuilder:
                 "dominant_pattern_type": None,
                 "conflicting_pattern_detected": False,
                 "feature_completeness": "none",
+            }
+
+        if candle_count < 3:
+            last_close = float(candles[-1]["close"])
+            prev_close = float(candles[-2]["close"]) if candle_count > 1 else last_close
+            direction = "up" if last_close >= prev_close else "down"
+            summary = pattern_analysis["summary"]
+            return {
+                "status": "ready",
+                "trend": direction,
+                "bos": False,
+                "choch": True,
+                "liquidity_sweep": False,
+                "order_block": "bullish" if direction == "up" else "bearish",
+                "fvg": False,
+                "divergence": "none",
+                "pattern": "inside_bar",
+                "wave_context": "нейтральная структура",
+                "delta_percent": abs(last_close - prev_close) / max(prev_close, 1e-9) * 100 if candle_count > 1 else 0.0,
+                "atr_percent": abs(float(candles[-1]["high"]) - float(candles[-1]["low"])) / max(last_close, 1e-9) * 100,
+                "chart_patterns": pattern_analysis["patterns"],
+                "pattern_summary": summary,
+                "has_bullish_pattern": False,
+                "has_bearish_pattern": False,
+                "pattern_confidence": 0.0,
+                "pattern_score": 0.0,
+                "dominant_pattern_type": None,
+                "conflicting_pattern_detected": False,
+                "feature_completeness": "minimal",
             }
 
         closes = [c["close"] for c in candles]

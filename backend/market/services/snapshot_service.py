@@ -23,6 +23,15 @@ class MarketSnapshotService:
         chart = self.market_service.get_chart_contract(ticker_symbol, timeframe, 200)
         price = self.market_service.get_price_contract(ticker_symbol)
         candles = chart.get("candles") or []
+        logger.debug(
+            "ideas_pipeline_candle_loading symbol=%s timeframe=%s candles_count=%s features_built=%s signal_created=%s reason_if_skipped=%s",
+            ticker_symbol,
+            timeframe,
+            len(candles),
+            False,
+            False,
+            None if candles else "no_candles_from_provider",
+        )
         if not candles:
             return self._unavailable(
                 symbol=ticker_symbol,
