@@ -10,6 +10,7 @@
 - Генерация текста trade idea переработана в execution-ready narrative: SMC/ICT, паттерны, объёмы, дивергенции, CumDelta, фундаментал, волны, Wyckoff и sentiment теперь сшиваются в один торговый сценарий с явным trigger, confirmation, invalidation и target без изменения UI и маршрутов `/ideas`.
 - Endpoint `/ideas/market` остаётся обратносуместимым для текущего UI: старые поля сохранены, но дополнительно всегда возвращаются `idea_id`, `symbol`, `timeframe`, `status`, `sentiment`, `version`, `change_summary`.
 - Страница `/ideas` теперь сохраняет прежний layout, но разделяет short scenario в списке и desk-style full card в modal detail-view: краткая карточка остаётся компактной, а полная показывает `detail_brief`, сценарии, аналитические секции и итоговый trading plan.
+- Добавлена статистика по закрытым торговым идеям: для каждой archived-идеи автоматически считаются `result`, `entry_price`, `exit_price`, `pnl_percent`, `rr`, `duration`, а в `GET /ideas/market` возвращается агрегированный блок `statistics` (`total_trades`, `wins`, `losses`, `winrate`, `avg_rr`, `avg_pnl`, `max_win`, `max_loss`).
 
 ## Что обновлено в версии 3.7
 - Добавлен отдельный модуль графических паттернов: `backend/pattern_detector.py` и `backend/pattern_visualization.py`.
@@ -158,6 +159,13 @@
 - `detail_brief.scenarios` — primary / swing / invalidation
 - `detail_brief.sections[]` — секции (`smc_ict`, `chart_patterns`, `harmonic`, `waves`, `fundamental`, `wyckoff`, `volume_profile`, `divergences`, `cumdelta`, `sentiment`, `liquidity`) только при реально доступных данных
 - `detail_brief.trade_plan` — entry / stop / take profits / R:R / primary / alternative scenario
+- Для закрытых идей дополнительно:
+  - `result` (`win` / `loss` / `breakeven`)
+  - `entry_price`
+  - `exit_price`
+  - `pnl_percent`
+  - `rr`
+  - `duration`
 
 Важно:
 - идея **обновляется**, а не пересоздаётся, если совпадают `symbol`, `timeframe`, `setup_type` и lifecycle ещё активен;
