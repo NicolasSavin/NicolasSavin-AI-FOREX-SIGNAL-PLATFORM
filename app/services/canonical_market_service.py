@@ -42,7 +42,9 @@ class CanonicalMarketService:
                 last_updated_utc=quote.get("last_updated_utc"),
                 is_live_market_data=False,
                 payload={
+                    "timeframe": None,
                     "price": None,
+                    "current_price": None,
                     "day_change_percent": None,
                     "warning_ru": "Источник live-цены недоступен. Синтетические цены отключены.",
                 },
@@ -58,7 +60,9 @@ class CanonicalMarketService:
             last_updated_utc=quote.get("last_updated_utc"),
             is_live_market_data=True,
             payload={
+                "timeframe": None,
                 "price": quote.get("price"),
+                "current_price": quote.get("price"),
                 "day_change_percent": quote.get("day_change_percent"),
                 "warning_ru": None,
             },
@@ -67,12 +71,19 @@ class CanonicalMarketService:
         return contract
 
     def get_chart_contract(self, symbol: str, timeframe: str, limit: int = 120) -> dict[str, Any]:
-        cache_key = f"{self._normalize_symbol(symbol)}::{str(timeframe or 'H1').upper().strip()}::{max(1, int(limit or 1))}"
+        normalized_tf = str(timeframe or "H1").upper().strip()
+        cache_key = f"{self._normalize_symbol(symbol)}::{normalized_tf}::{max(1, int(limit or 1))}"
         cached = self._cache_get(self._chart_cache, cache_key, self._chart_ttl_seconds)
         if cached is not None:
             return cached
 
-        primary = self.live_provider.get_candles(symbol, timeframe, limit)
+        if normalized_tf == "H4":
+            derived = self._derive_h4_contract(symbol, limit)
+            if derived is not None:
+                self._cache_set(self._chart_cache, cache_key, derived)
+                return derived
+
+        primary = self.live_provider.get_candles(symbol, normalized_tf, limit)
         primary_candles = primary.get("candles") or []
         if primary_candles:
             contract = self._contract(
@@ -82,12 +93,17 @@ class CanonicalMarketService:
                 source_symbol=primary.get("source_symbol") or symbol,
                 last_updated_utc=primary.get("last_updated_utc"),
                 is_live_market_data=True,
-                payload={"timeframe": timeframe, "candles": primary_candles, "warning_ru": None},
+                payload={
+                    "timeframe": normalized_tf,
+                    "candles": primary_candles,
+                    "current_price": primary_candles[-1].get("close"),
+                    "warning_ru": None,
+                },
             )
             self._cache_set(self._chart_cache, cache_key, contract)
             return contract
 
-        fallback = self.historical_fallback.get_candles(symbol, timeframe, limit)
+        fallback = self.historical_fallback.get_candles(symbol, normalized_tf, limit)
         fallback_candles = fallback.get("candles") or []
         if fallback_candles:
             contract = self._contract(
@@ -98,8 +114,9 @@ class CanonicalMarketService:
                 last_updated_utc=fallback.get("last_updated_utc"),
                 is_live_market_data=False,
                 payload={
-                    "timeframe": timeframe,
+                    "timeframe": normalized_tf,
                     "candles": fallback_candles,
+                    "current_price": fallback_candles[-1].get("close"),
                     "warning_ru": "Live candles недоступны, показаны только исторические delayed-данные.",
                 },
             )
@@ -114,8 +131,9 @@ class CanonicalMarketService:
             last_updated_utc=datetime.now(timezone.utc).isoformat(),
             is_live_market_data=False,
             payload={
-                "timeframe": timeframe,
+                "timeframe": normalized_tf,
                 "candles": [],
+                "current_price": None,
                 "warning_ru": "Свечные данные недоступны. Синтетический fallback удалён.",
             },
         )
@@ -135,6 +153,66 @@ class CanonicalMarketService:
             "session": status.get("session") or "unknown",
         }
         return merged
+
+    def _derive_h4_contract(self, symbol: str, limit: int) -> dict[str, Any] | None:
+        h1_limit = max(8, int(limit or 1) * 4)
+        h1_contract = self.get_chart_contract(symbol, "H1", h1_limit)
+        h1_candles = h1_contract.get("candles") or []
+        if not h1_candles:
+            return None
+        h4_candles = self._aggregate_h1_to_h4(h1_candles, limit)
+        if not h4_candles:
+            return None
+        data_status = h1_contract.get("data_status", "unavailable")
+        current_price = h4_candles[-1].get("close") if data_status in {"real", "delayed"} else None
+        return self._contract(
+            symbol=symbol,
+            data_status=data_status,
+            source=f"{h1_contract.get('source') or 'unknown'}_derived_h4",
+            source_symbol=h1_contract.get("source_symbol") or self._normalize_symbol(symbol),
+            last_updated_utc=h1_contract.get("last_updated_utc"),
+            is_live_market_data=bool(h1_contract.get("is_live_market_data", False)),
+            payload={
+                "timeframe": "H4",
+                "candles": h4_candles,
+                "current_price": current_price,
+                "warning_ru": h1_contract.get("warning_ru"),
+            },
+        )
+
+    @staticmethod
+    def _aggregate_h1_to_h4(candles: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+        buckets: dict[int, list[dict[str, Any]]] = {}
+        for candle in candles:
+            ts = candle.get("time")
+            if ts is None:
+                continue
+            bucket_start = (int(ts) // 14400) * 14400
+            buckets.setdefault(bucket_start, []).append(candle)
+
+        output: list[dict[str, Any]] = []
+        for bucket_start in sorted(buckets.keys()):
+            group = sorted(buckets[bucket_start], key=lambda item: int(item.get("time", 0)))
+            if not group:
+                continue
+            opens = group[0].get("open")
+            closes = group[-1].get("close")
+            highs = [item.get("high") for item in group if item.get("high") is not None]
+            lows = [item.get("low") for item in group if item.get("low") is not None]
+            if opens is None or closes is None or not highs or not lows:
+                continue
+            output.append(
+                {
+                    "time": bucket_start,
+                    "open": float(opens),
+                    "high": float(max(highs)),
+                    "low": float(min(lows)),
+                    "close": float(closes),
+                }
+            )
+        if limit > 0:
+            return output[-limit:]
+        return output
 
     @staticmethod
     def _contract(

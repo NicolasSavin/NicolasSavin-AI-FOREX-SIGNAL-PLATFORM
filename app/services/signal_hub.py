@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from hashlib import sha1
+import os
+from threading import Lock
+from time import monotonic
 from uuid import uuid4
 
 from app.schemas.contracts import (
@@ -56,6 +59,9 @@ class SignalHubService:
         self.manual_store = JsonStorage("signals_data/manual_signals.json", {"signals": []})
         self.mt4_export_store = JsonStorage("signals_data/mt4_exports.json", {"exports": []})
         self.pattern_visualizer = PatternVisualizationBuilder()
+        self._live_cache_ttl_seconds = float(os.getenv("SIGNALS_CACHE_TTL_SECONDS", "30"))
+        self._live_cache_lock = Lock()
+        self._live_cache: dict[str, tuple[float, SignalRecordResponse]] = {}
 
     async def get_live_response(self, pairs: list[str] | None = None) -> SignalsLiveResponse:
         signals = await self.list_signals(pairs=pairs)
@@ -64,19 +70,41 @@ class SignalHubService:
 
     async def list_signals(self, pairs: list[str] | None = None) -> SignalRecordResponse:
         pairs = pairs or DEFAULT_PAIRS
+        cache_key = ",".join(sorted(pairs))
+        cached = self._get_cached_live(cache_key)
+        if cached is not None:
+            return cached
+
         generated = await self.signal_engine.generate_live_signals(pairs)
         news_feed = self.news_service.list_relevant_news(active_signals=generated)
         normalized = [self._normalize_generated_signal(item, news_feed.news) for item in generated]
         normalized.extend(self._load_manual_signals())
         normalized.sort(key=lambda item: item.updated_at_utc, reverse=True)
         active_signals, archive_signals = group_signals(normalized)
-        return SignalRecordResponse(
+        payload = SignalRecordResponse(
             updated_at_utc=datetime.now(timezone.utc),
             stats=compute_signal_stats(normalized),
             activeSignals=active_signals,
             archiveSignals=archive_signals,
             signals=normalized,
         )
+        self._set_cached_live(cache_key, payload)
+        return payload
+
+    def _get_cached_live(self, cache_key: str) -> SignalRecordResponse | None:
+        with self._live_cache_lock:
+            cached = self._live_cache.get(cache_key)
+            if not cached:
+                return None
+            saved_at, payload = cached
+            if monotonic() - saved_at > max(0.0, self._live_cache_ttl_seconds):
+                self._live_cache.pop(cache_key, None)
+                return None
+            return payload.model_copy(deep=True)
+
+    def _set_cached_live(self, cache_key: str, payload: SignalRecordResponse) -> None:
+        with self._live_cache_lock:
+            self._live_cache[cache_key] = (monotonic(), payload.model_copy(deep=True))
 
     async def get_signal(self, signal_id_or_symbol: str) -> SignalCard | None:
         feed = await self.list_signals()

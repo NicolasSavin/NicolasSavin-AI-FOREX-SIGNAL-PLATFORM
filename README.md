@@ -8,6 +8,8 @@
 - Введён строгий контракт market-data ответа: `data_status` (`real | unavailable | delayed`), `source`, `source_symbol`, `last_updated_utc`, `is_live_market_data`.
 - Удалены тихие synthetic fallback цены для production-endpoint; при ошибках источника API возвращает `unavailable` и frontend показывает warning по live-ценам.
 - Добавлен polling-апдейтер текущих цен в карточках сигналов через `/api/market` (без выдуманных значений).
+- Production hardening: `GET/HEAD /` и `GET/HEAD /health` стабилизированы для Render health-check, `/ideas/market` больше не запускает fanout на весь `DEFAULT_PAIRS`, а live-сигналы и market-candles получили TTL-кэш/деградацию без synthetic чисел.
+- Для снижения rate-limit в historical fallback реализовано H4-агрегирование из кэшированных H1 свечей (без отдельного внешнего запроса H4), а market-контракт дополнен `current_price` и унифицированным `timeframe`.
 - Добавлен backend-only AI forex assistant: новый модуль `backend/chat_service.py` и endpoint `POST /api/chat` с безопасным forex-only prompt, без API-ключей на frontend.
 - Добавлен sentiment layer: `backend/sentiment_provider.py`, модель `SentimentSnapshot`, safe mock/external provider схема и интеграция sentiment в analytics response и signal engine как подтверждающий фактор.
 - Добавлена persistent trade idea система: идеи теперь имеют `idea_id`, хранятся в JSON storage, не исчезают между обновлениями и обновляются по тем же `symbol + timeframe + setup_type`, пока жизненный цикл активен.
