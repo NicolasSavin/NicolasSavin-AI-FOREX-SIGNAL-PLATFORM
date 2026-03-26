@@ -178,13 +178,12 @@ function buildDetailBrief(idea) {
   registerSection("cumdelta", "CumDelta / order flow", idea?.analysis?.cumdelta_ru || idea?.analysis?.cumulative_delta_ru, true);
   registerSection("liquidity", "Ликвидность", idea?.analysis?.liquidity_ru || idea?.target);
 
+  const marketUnavailable = idea?.current_price == null || String(idea?.data_status || "").toLowerCase() === "unavailable";
   return {
     header: {
-      market_price: idea?.current_price != null && ["real", "delayed"].includes(String(idea?.data_status || ""))
-        ? formatLevel(idea.current_price)
-        : "",
+      market_price: marketUnavailable ? "" : formatLevel(idea.current_price),
       daily_change: "",
-      market_context: normalizeWhitespace(idea?.ideaContext || idea?.context),
+      market_context: marketUnavailable ? "Нет актуальных рыночных данных" : normalizeWhitespace(idea?.ideaContext || idea?.context),
       bias: getDirectionRu(idea?.direction || idea?.bias),
       confidence: Number(idea?.confidence ?? 0),
       confluence_rating: Number(idea?.confidence ?? 0),
@@ -483,6 +482,11 @@ function renderDetailText(idea) {
   setTextContent(scenarioInvalidation, detailBrief?.scenarios?.invalidation, "Инвалидация не передана.");
   renderTradingPlan(detailBrief);
   renderAnalysisSections(detailBrief);
+  if (idea.current_price == null || String(idea.data_status || "").toLowerCase() === "unavailable") {
+    setTextContent(scenarioPrimary, "Нет актуальных рыночных данных", "Нет актуальных рыночных данных");
+    setTextContent(scenarioSwing, "Нет актуальных рыночных данных", "Нет актуальных рыночных данных");
+    setTextContent(scenarioInvalidation, detailBrief?.scenarios?.invalidation, "Инвалидация не передана.");
+  }
   if (idea.status === "archived") {
     const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
     updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);

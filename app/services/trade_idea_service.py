@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from threading import Lock
 from typing import Any
 
 import requests
@@ -19,7 +20,7 @@ from backend.data_provider import DataProvider
 from backend.signal_engine import SignalEngine
 
 
-DEFAULT_IDEA_TIMEFRAMES = ["M15", "H1", "H4"]
+DEFAULT_IDEA_TIMEFRAMES = [tf.strip().upper() for tf in os.getenv("IDEAS_SIGNAL_TIMEFRAMES", "M15,H1").split(",") if tf.strip()]
 ACTIVE_STATUSES = {"watching", "active", "updated", "triggered"}
 CLOSED_STATUSES = {"tp_hit", "sl_hit", "invalidated", "archived"}
 TERMINAL_STATUSES = {"tp_hit", "sl_hit", "invalidated"}
@@ -50,6 +51,8 @@ class TradeIdeaService:
         self.idea_store = JsonStorage("signals_data/trade_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
         self.legacy_store = JsonStorage("signals_data/market_ideas.json", {"updated_at_utc": None, "ideas": []})
+        self._refresh_lock = Lock()
+        self._refresh_in_progress = False
 
     async def generate_or_refresh(self, pairs: list[str] | None = None) -> dict[str, Any]:
         pairs = pairs or ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "XAUUSD"]
@@ -59,6 +62,23 @@ class TradeIdeaService:
             return self.refresh_market_ideas()
         generated = await self.signal_engine.generate_live_signals(pairs, timeframes=DEFAULT_IDEA_TIMEFRAMES)
         return self._apply_updates(generated)
+
+    def needs_refresh(self) -> bool:
+        payload = self.idea_store.read()
+        if not payload.get("ideas"):
+            return True
+        return not self._is_recent_refresh(payload.get("updated_at_utc"))
+
+    def try_acquire_refresh(self) -> bool:
+        with self._refresh_lock:
+            if self._refresh_in_progress:
+                return False
+            self._refresh_in_progress = True
+            return True
+
+    def release_refresh(self) -> None:
+        with self._refresh_lock:
+            self._refresh_in_progress = False
 
     def _is_recent_refresh(self, updated_at_utc: Any) -> bool:
         if self.refresh_interval_seconds <= 0:

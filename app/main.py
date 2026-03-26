@@ -4,7 +4,7 @@ from pathlib import Path
 
 import asyncio
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -25,7 +25,7 @@ from app.schemas.contracts import (
     SignalsLiveResponse,
 )
 from app.services.analytics.service import SignalAnalyticsService
-from app.services.canonical_market_service import CanonicalMarketService
+from app.services.market_service_registry import get_canonical_market_service
 from app.services.market_data import MarketDataService
 from app.services.mt4_bridge import Mt4BridgeService
 from app.services.chart_data_service import ChartDataService
@@ -52,12 +52,13 @@ signal_service = SignalService(market_data_service=market_data_service)
 signal_analytics_service = SignalAnalyticsService(signal_engine=signal_engine)
 mt4_bridge_service = Mt4BridgeService()
 chart_data_service = ChartDataService()
-canonical_market_service = CanonicalMarketService()
+canonical_market_service = get_canonical_market_service()
 trade_idea_service = TradeIdeaService(signal_engine=signal_engine, chart_data_service=chart_data_service)
 chat_service = ForexChatService()
 calendar_store = JsonStorage("signals_data/calendar.json", {"updated_at_utc": None, "events": []})
 heatmap_store = JsonStorage("signals_data/heatmap.json", {"updated_at_utc": None, "rows": []})
 logger = logging.getLogger(__name__)
+_ideas_refresh_task: asyncio.Task | None = None
 
 
 class SnapshotResponse(BaseModel):
@@ -68,6 +69,26 @@ class SnapshotResponse(BaseModel):
 
 def _static_response(filename: str) -> FileResponse:
     return FileResponse(STATIC_DIR / filename)
+
+
+def _queue_ideas_refresh() -> None:
+    global _ideas_refresh_task
+    if _ideas_refresh_task is not None and not _ideas_refresh_task.done():
+        return
+    if not trade_idea_service.needs_refresh():
+        return
+    if not trade_idea_service.try_acquire_refresh():
+        return
+
+    async def _runner() -> None:
+        try:
+            await trade_idea_service.generate_or_refresh()
+        except Exception:
+            logger.exception("ideas_background_refresh_failed")
+        finally:
+            trade_idea_service.release_refresh()
+
+    _ideas_refresh_task = asyncio.create_task(_runner())
 
 
 def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
@@ -115,13 +136,11 @@ def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
     return enriched
 
 
-@app.get("/", include_in_schema=False)
-async def home_page() -> FileResponse:
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+async def home_page(request: Request):
+    if request.method == "HEAD":
+        return Response(status_code=200)
     return _static_response("index.html")
-
-@app.head("/", include_in_schema=False)
-async def home_page_head() -> Response:
-    return Response(status_code=200)
 
 
 @app.get("/ideas", include_in_schema=False)
@@ -206,7 +225,7 @@ async def api_signal_news(signal_id: str) -> list[NewsItemResponse]:
 
 @app.get("/ideas/market")
 async def market_ideas():
-    await trade_idea_service.generate_or_refresh()
+    _queue_ideas_refresh()
     payload = trade_idea_service.refresh_market_ideas()
     payload["ideas"] = _attach_live_market_contracts(payload.get("ideas") or [])
     payload["archive"] = _attach_live_market_contracts(payload.get("archive") or [])
@@ -217,6 +236,7 @@ async def market_ideas():
 @app.get("/api/ideas")
 async def api_ideas():
     try:
+        _queue_ideas_refresh()
         ideas = _attach_live_market_contracts(trade_idea_service.list_api_ideas())
         symbols = sorted({str(item.get("symbol", "")).upper().strip() for item in ideas if item.get("symbol")})
         market = [canonical_market_service.get_market_contract(symbol) for symbol in symbols]

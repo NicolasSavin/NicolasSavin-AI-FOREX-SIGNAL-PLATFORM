@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.services.canonical_market_service import CanonicalMarketService
+from app.services.market_service_registry import get_canonical_market_service
 
 
 class DataProvider:
     """Collects and normalizes OHLC snapshots via canonical market service."""
 
     def __init__(self) -> None:
-        self.market_service = CanonicalMarketService()
+        self.market_service = get_canonical_market_service()
 
     async def snapshot(self, symbol: str, timeframe: str = "H1") -> dict:
         return self.snapshot_sync(symbol, timeframe=timeframe)
