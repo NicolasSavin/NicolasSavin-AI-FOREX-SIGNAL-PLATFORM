@@ -74,11 +74,23 @@ def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
     if not ideas:
         return ideas
     symbols = sorted({str(item.get("symbol") or item.get("instrument") or "").upper().strip() for item in ideas if item})
-    contracts = {
-        symbol: canonical_market_service.get_price_contract(symbol)
-        for symbol in symbols
-        if symbol
-    }
+    contracts: dict[str, dict] = {}
+    for symbol in symbols:
+        if not symbol:
+            continue
+        try:
+            contracts[symbol] = canonical_market_service.get_price_contract(symbol)
+        except Exception:
+            logger.exception("price_contract_failed symbol=%s", symbol)
+            contracts[symbol] = {
+                "symbol": symbol,
+                "data_status": "unavailable",
+                "source": "twelvedata",
+                "source_symbol": symbol,
+                "last_updated_utc": None,
+                "is_live_market_data": False,
+                "price": None,
+            }
     enriched: list[dict] = []
     for row in ideas:
         symbol = str(row.get("symbol") or row.get("instrument") or "").upper().strip()
@@ -103,7 +115,7 @@ def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
     return enriched
 
 
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def home_page() -> FileResponse:
     return _static_response("index.html")
 
@@ -128,8 +140,8 @@ async def heatmap_page() -> FileResponse:
     return _static_response("heatmap.html")
 
 
-@app.get("/health", response_model=HealthResponse)
-@app.get("/api/health", response_model=HealthResponse)
+@app.api_route("/health", methods=["GET", "HEAD"], response_model=HealthResponse)
+@app.api_route("/api/health", methods=["GET", "HEAD"], response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(status="ok", version=app.version)
 

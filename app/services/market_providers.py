@@ -3,6 +3,8 @@ from __future__ import annotations
 from calendar import timegm
 from datetime import datetime, timezone
 import logging
+from threading import Lock
+from time import monotonic
 from typing import Any
 
 import requests
@@ -148,6 +150,14 @@ class TwelveDataProvider(RealMarketDataProvider):
 class YahooProvider(RealMarketDataProvider):
     """Только исторический fallback. Не использовать как live источник пользовательской цены."""
 
+    def __init__(self) -> None:
+        self._cache_ttl_seconds = 180.0
+        self._failure_ttl_seconds = 120.0
+        self._rate_limit_cooldown_seconds = 600.0
+        self._lock = Lock()
+        self._candles_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._cooldown_until: dict[str, float] = {}
+
     def get_quote(self, symbol: str) -> dict[str, Any]:
         normalized = _normalize_symbol(symbol)
         return _unavailable(normalized, "yahoo_finance", "YahooProvider запрещён для live quote endpoint.")
@@ -155,12 +165,29 @@ class YahooProvider(RealMarketDataProvider):
     def get_candles(self, symbol: str, timeframe: str, limit: int) -> dict[str, Any]:
         normalized = _normalize_symbol(symbol)
         normalized_tf = timeframe.upper().strip()
+        cache_key = f"{normalized}::{normalized_tf}::{max(1, min(limit, 500))}"
+        cached = self._cache_get(cache_key, ttl_seconds=self._cache_ttl_seconds)
+        if cached is not None:
+            return cached
+
+        if self._is_rate_limited(normalized):
+            payload = {
+                "symbol": normalized,
+                "timeframe": normalized_tf,
+                "candles": [],
+                "error": "rate_limited",
+            }
+            self._cache_set(cache_key, payload, ttl_seconds=self._failure_ttl_seconds)
+            return payload
+
         cfg = _TIMEFRAME_TO_YF.get(normalized_tf, _TIMEFRAME_TO_YF["H1"])
         source_symbol = f"{normalized}=X"
         try:
             history = yf.Ticker(source_symbol).history(period=cfg["period"], interval=cfg["interval"])
             if history.empty:
-                return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "empty_history"}
+                payload = {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "empty_history"}
+                self._cache_set(cache_key, payload, ttl_seconds=self._failure_ttl_seconds)
+                return payload
             rows = history.tail(max(1, min(limit, 500))).iterrows()
             candles: list[dict[str, Any]] = []
             for idx, row in rows:
@@ -174,7 +201,7 @@ class YahooProvider(RealMarketDataProvider):
                         "close": float(row["Close"]),
                     }
                 )
-            return {
+            payload = {
                 "symbol": normalized,
                 "timeframe": normalized_tf,
                 "source_symbol": source_symbol,
@@ -182,9 +209,17 @@ class YahooProvider(RealMarketDataProvider):
                 "candles": candles,
                 "error": None if candles else "empty_candles",
             }
+            self._cache_set(cache_key, payload, ttl_seconds=self._cache_ttl_seconds if candles else self._failure_ttl_seconds)
+            return payload
         except Exception as exc:
             logger.warning("yahoo_candles_failed symbol=%s tf=%s error=%s", normalized, normalized_tf, exc)
-            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "request_failed"}
+            raw_error = str(exc).lower()
+            error_code = "rate_limited" if "too many requests" in raw_error or "429" in raw_error else "request_failed"
+            if error_code == "rate_limited":
+                self._set_rate_limited(normalized)
+            payload = {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": error_code}
+            self._cache_set(cache_key, payload, ttl_seconds=self._failure_ttl_seconds)
+            return payload
 
     def get_latest_close(self, symbol: str, timeframe: str) -> dict[str, Any]:
         data = self.get_candles(symbol, timeframe, 2)
@@ -205,6 +240,37 @@ class YahooProvider(RealMarketDataProvider):
             "session": "historical_only",
             "error": "historical_only",
         }
+
+    def _cache_get(self, key: str, ttl_seconds: float) -> dict[str, Any] | None:
+        with self._lock:
+            cached = self._candles_cache.get(key)
+            if not cached:
+                return None
+            saved_at, payload = cached
+            if monotonic() - saved_at > max(0.0, ttl_seconds):
+                self._candles_cache.pop(key, None)
+                return None
+            return dict(payload)
+
+    def _cache_set(self, key: str, payload: dict[str, Any], ttl_seconds: float) -> None:
+        if ttl_seconds <= 0:
+            return
+        with self._lock:
+            self._candles_cache[key] = (monotonic(), dict(payload))
+
+    def _is_rate_limited(self, symbol: str) -> bool:
+        with self._lock:
+            until = self._cooldown_until.get(symbol)
+            if until is None:
+                return False
+            if monotonic() >= until:
+                self._cooldown_until.pop(symbol, None)
+                return False
+            return True
+
+    def _set_rate_limited(self, symbol: str) -> None:
+        with self._lock:
+            self._cooldown_until[symbol] = monotonic() + self._rate_limit_cooldown_seconds
 
 
 def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:

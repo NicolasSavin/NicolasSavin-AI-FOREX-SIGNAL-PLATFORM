@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from hashlib import sha1
 import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -45,14 +46,33 @@ class TradeIdeaService:
         self.signal_engine = signal_engine
         self.data_provider = DataProvider()
         self.chart_data_service = chart_data_service or ChartDataService()
+        self.refresh_interval_seconds = int(os.getenv("IDEAS_REFRESH_INTERVAL_SECONDS", "180"))
         self.idea_store = JsonStorage("signals_data/trade_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
         self.legacy_store = JsonStorage("signals_data/market_ideas.json", {"updated_at_utc": None, "ideas": []})
 
     async def generate_or_refresh(self, pairs: list[str] | None = None) -> dict[str, Any]:
         pairs = pairs or ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "XAUUSD"]
+        existing = self.idea_store.read()
+        if self._is_recent_refresh(existing.get("updated_at_utc")):
+            logger.info("ideas_refresh_skipped reason=throttled interval_seconds=%s", self.refresh_interval_seconds)
+            return self.refresh_market_ideas()
         generated = await self.signal_engine.generate_live_signals(pairs, timeframes=DEFAULT_IDEA_TIMEFRAMES)
         return self._apply_updates(generated)
+
+    def _is_recent_refresh(self, updated_at_utc: Any) -> bool:
+        if self.refresh_interval_seconds <= 0:
+            return False
+        if not updated_at_utc:
+            return False
+        try:
+            parsed = datetime.fromisoformat(str(updated_at_utc).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+        return age_seconds < self.refresh_interval_seconds
 
     def refresh_market_ideas(self) -> dict[str, Any]:
         payload = self.idea_store.read()
