@@ -3,6 +3,9 @@
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
 ## Что обновлено в версии 3.8
+- Устранено смешивание рыночных и synthetic данных: user-facing свечи для `/api/chart/{symbol}` и market snapshot для `/api/ideas` теперь берутся только из реального источника (`Twelve Data` / `Yahoo Finance`) либо явно маркируются как `data_status=unavailable` / `data_status=proxy`.
+- Добавлен единый контракт достоверности market данных в API-ответах: `data_status`, `source`, `source_symbol`, `timeframe`, `last_updated_utc`, `is_live_market_data`.
+- Для `H4` в `backend/data_provider.py` исправлен mapping: данные берутся как `1h` и корректно агрегируются в 4-часовые свечи на backend (OHLCV resample), без изменения маршрутов `M15/M30/H1/D1/W1`.
 - Добавлен backend-only AI forex assistant: новый модуль `backend/chat_service.py` и endpoint `POST /api/chat` с безопасным forex-only prompt, без API-ключей на frontend.
 - Добавлен sentiment layer: `backend/sentiment_provider.py`, модель `SentimentSnapshot`, safe mock/external provider схема и интеграция sentiment в analytics response и signal engine как подтверждающий фактор.
 - Добавлена persistent trade idea система: идеи теперь имеют `idea_id`, хранятся в JSON storage, не исчезают между обновлениями и обновляются по тем же `symbol + timeframe + setup_type`, пока жизненный цикл активен.
@@ -217,6 +220,12 @@
 - не выдумывает рыночные котировки;
 - честно отмечает `data_status=unavailable`;
 - использует безопасные fallback/mock структуры только для UI-представления графика, projected candles и прогресса.
+
+### Real vs Proxy (обязательная маркировка)
+- **Real market data**: только ответы провайдеров рынка (`Yahoo Finance`, `Twelve Data`) с `is_live_market_data=true`.
+- **Proxy visualization**: только сценарные/аналитические слои (например визуализация логики сигнала), всегда с `data_status=proxy` и `is_live_market_data=false`.
+- `/api/chart/{symbol}` возвращает объект с метаданными источника и свечами; если источник недоступен, `candles=[]` и статус `unavailable` без подмены synthetic market feed.
+- `/api/ideas` использует свежий market snapshot (latest close + candles) для расчётов уровней и deviation; при отсутствии свежих свечей не подставляется fake market price.
 
 ## Покрытие live-сигналов
 - По умолчанию live-лента строится для таймфреймов `M15`, `M30`, `H1`, `H4`, `D1`, `W1`.

@@ -673,6 +673,17 @@ function hideChartPlaceholder() {
   chartPlaceholderText.textContent = "График для этой идеи сейчас недоступен.";
 }
 
+function marketDataBadge(payload) {
+  const status = payload?.data_status || "unavailable";
+  if (status === "real") {
+    const source = payload?.source || "неизвестный источник";
+    const ts = payload?.last_updated_utc ? formatDateTime(payload.last_updated_utc) : "—";
+    return `Реальные свечи · ${source} · ${ts}`;
+  }
+  if (status === "proxy") return "Proxy Chart / Signal Logic View";
+  return "Нет актуальных рыночных данных";
+}
+
 function updateDetailStatus(message) {
   detailStatus.textContent = message;
 }
@@ -934,13 +945,13 @@ async function openIdea(idea) {
     chart.timeScale().fitContent();
     if (idea.status === "archived") {
       const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
-      updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
+      updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · ${marketDataBadge(payload)} · Закрыто: ${formatDateTime(idea.closed_at)}`);
     } else {
       const updateText = normalizeWhitespace(idea.update_summary);
       updateDetailStatus(
         updateText
-          ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`
-          : "Detail-view заполнен: narrative, сценарии, trading plan и график доступны."
+          ? `Статус: ${statusRu(idea.status)} · ${marketDataBadge(payload)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`
+          : `Detail-view заполнен: narrative, сценарии, trading plan и график доступны. ${marketDataBadge(payload)}.`
       );
     }
 
@@ -950,7 +961,7 @@ async function openIdea(idea) {
     return;
   }
 
-  showChartPlaceholder("Chart unavailable");
+  showChartPlaceholder("Нет актуальных рыночных данных для свечного графика.");
   if (idea.status === "archived") {
     const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
     updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);

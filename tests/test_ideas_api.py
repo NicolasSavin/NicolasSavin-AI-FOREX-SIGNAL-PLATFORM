@@ -123,7 +123,11 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
 
     market_chart = {
         "status": "ok",
-        "source": "twelvedata",
+        "source": "Twelve Data",
+        "source_symbol": "EUR/USD",
+        "data_status": "real",
+        "last_updated_utc": "2026-03-26T00:00:00+00:00",
+        "is_live_market_data": True,
         "message_ru": None,
         "candles": [
             {"open": 1.0840, "high": 1.0848, "low": 1.0836, "close": 1.0845},
@@ -199,6 +203,9 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["levels_source"] == "current_price_formula"
     assert payload[0]["meta"]["latest_close"] == 1.0852
     assert payload[0]["meta"]["levels_source"] == "current_price_formula"
+    assert payload[0]["data_status"] == "real"
+    assert "last_updated_utc" in payload[0]
+    assert "is_live_market_data" in payload[0]
 
 
 def test_build_openrouter_api_ideas_falls_back_with_blank_key(monkeypatch, tmp_path: Path) -> None:
@@ -210,6 +217,8 @@ def test_build_openrouter_api_ideas_falls_back_with_blank_key(monkeypatch, tmp_p
     assert payload
     assert len(payload) >= 6
     assert all(item["source"] == "openrouter_fallback" for item in payload)
+    assert all(item["data_status"] == "proxy" for item in payload)
+    assert all(item["is_live_market_data"] is False for item in payload)
 
 
 def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path: Path) -> None:
@@ -222,6 +231,7 @@ def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path
     assert len(payload) >= 6
     assert all(item["is_fallback"] for item in payload)
     assert all(item["source"] == "openrouter_fallback" for item in payload)
+    assert all(item["data_status"] == "proxy" for item in payload)
 
 
 def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_are_disconnected(monkeypatch, tmp_path: Path) -> None:

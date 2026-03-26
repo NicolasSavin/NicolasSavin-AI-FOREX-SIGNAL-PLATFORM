@@ -1604,6 +1604,10 @@ class TradeIdeaService:
                         "is_fallback": bool(row.get("is_fallback", False)),
                         "latest_close": row.get("latest_close"),
                         "market_reference_price": row.get("market_reference_price"),
+                        "data_status": row.get("data_status"),
+                        "source_symbol": row.get("source_symbol"),
+                        "last_updated_utc": row.get("last_updated_utc"),
+                        "is_live_market_data": row.get("is_live_market_data"),
                         "entry_deviation_pct": row.get("entry_deviation_pct"),
                         "levels_validated": row.get("levels_validated"),
                         "levels_source": row.get("levels_source"),
@@ -1641,6 +1645,11 @@ class TradeIdeaService:
                 "latest_close": float(latest_close),
                 "current_price": float(latest_close),
                 "recent_candles": candles[-CANDLE_CONTEXT_COUNT:],
+                "data_status": chart_payload.get("data_status", "unavailable"),
+                "source": chart_payload.get("source"),
+                "source_symbol": chart_payload.get("source_symbol"),
+                "last_updated_utc": chart_payload.get("last_updated_utc"),
+                "is_live_market_data": bool(chart_payload.get("is_live_market_data", False)),
                 "market_context": {
                     "source": chart_payload.get("source"),
                     "message": chart_payload.get("message_ru"),
@@ -1660,6 +1669,11 @@ class TradeIdeaService:
                 "latest_close": ref["latest_close"],
                 "current_price": ref.get("current_price", ref["latest_close"]),
                 "recent_candles": ref["recent_candles"],
+                "data_status": ref.get("data_status"),
+                "source": ref.get("source"),
+                "source_symbol": ref.get("source_symbol"),
+                "last_updated_utc": ref.get("last_updated_utc"),
+                "is_live_market_data": ref.get("is_live_market_data", False),
                 "market_context": ref["market_context"],
             }
             for _, ref in sorted(market_references.items())
@@ -1798,6 +1812,11 @@ class TradeIdeaService:
         payload["levels_validated"] = True
         payload["levels_source"] = "current_price_formula"
         payload["validation_errors"] = []
+        payload["data_status"] = reference.get("data_status", "unavailable")
+        payload["source"] = reference.get("source")
+        payload["source_symbol"] = reference.get("source_symbol")
+        payload["last_updated_utc"] = reference.get("last_updated_utc")
+        payload["is_live_market_data"] = bool(reference.get("is_live_market_data", False))
         payload["meta"] = {
             "latest_close": latest_close,
             "current_price": current_price,
@@ -1868,6 +1887,11 @@ class TradeIdeaService:
             "levels_source": "fallback",
             "validation_errors": [reason],
             "is_fallback": True,
+            "data_status": reference.get("data_status", "unavailable"),
+            "source": reference.get("source"),
+            "source_symbol": reference.get("source_symbol"),
+            "last_updated_utc": reference.get("last_updated_utc"),
+            "is_live_market_data": bool(reference.get("is_live_market_data", False)),
             "meta": {
                 "latest_close": latest_close,
                 "current_price": current_price,
@@ -1935,6 +1959,11 @@ class TradeIdeaService:
     def _decorate_api_idea(idea: dict[str, Any], *, source: str) -> dict[str, Any]:
         payload = dict(idea)
         payload["source"] = source
+        payload["data_status"] = payload.get("data_status") or "proxy"
+        payload["source_symbol"] = payload.get("source_symbol")
+        payload["timeframe"] = payload.get("timeframe") or "H1"
+        payload["last_updated_utc"] = payload.get("last_updated_utc") or datetime.now(timezone.utc).isoformat()
+        payload["is_live_market_data"] = bool(payload.get("is_live_market_data", payload.get("data_status") == "real"))
         return payload
 
     @classmethod

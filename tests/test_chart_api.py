@@ -62,7 +62,11 @@ def test_chart_route_returns_candles_array(monkeypatch) -> None:
         lambda symbol, timeframe: {
             'symbol': symbol,
             'timeframe': timeframe,
-            'source': 'twelvedata',
+            'source': 'Twelve Data',
+            'source_symbol': 'EUR/USD',
+            'data_status': 'real',
+            'last_updated_utc': '2026-03-26T00:00:00+00:00',
+            'is_live_market_data': True,
             'status': 'ok',
             'message_ru': None,
             'candles': [
@@ -76,7 +80,10 @@ def test_chart_route_returns_candles_array(monkeypatch) -> None:
     response = client.get('/api/chart/EURUSD?tf=M15')
 
     assert response.status_code == 200
-    assert response.json() == [
+    assert response.json()['data_status'] == 'real'
+    assert response.json()['is_live_market_data'] is True
+    assert response.json()['source'] == 'Twelve Data'
+    assert response.json()['candles'] == [
         {'time': 1710929700, 'open': 1.086, 'high': 1.087, 'low': 1.085, 'close': 1.0865}
     ]
 
@@ -91,4 +98,6 @@ def test_chart_route_returns_fallback_on_service_exception(monkeypatch) -> None:
     response = client.get('/api/chart/EURUSD?tf=M15')
 
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()['data_status'] == 'unavailable'
+    assert response.json()['is_live_market_data'] is False
+    assert response.json()['candles'] == []

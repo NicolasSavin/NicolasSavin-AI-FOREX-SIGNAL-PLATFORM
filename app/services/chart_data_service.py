@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from calendar import timegm
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import os
 from typing import Any
@@ -119,7 +119,11 @@ class ChartDataService:
         return {
             "symbol": normalized_symbol,
             "timeframe": normalized_tf,
-            "source": "twelvedata",
+            "source": "Twelve Data",
+            "source_symbol": provider_symbol,
+            "data_status": "real",
+            "last_updated_utc": datetime.now(timezone.utc).isoformat(),
+            "is_live_market_data": True,
             "status": "ok",
             "message_ru": None,
             "candles": candles,
@@ -198,10 +202,15 @@ class ChartDataService:
 
     @classmethod
     def build_unavailable_payload(cls, *, symbol: str, timeframe: str, message_ru: str) -> dict[str, Any]:
+        provider_symbol = cls._format_twelvedata_symbol(symbol)
         return {
             "symbol": symbol,
             "timeframe": timeframe,
-            "source": "twelvedata",
+            "source": "Twelve Data",
+            "source_symbol": provider_symbol,
+            "data_status": "unavailable",
+            "last_updated_utc": datetime.now(timezone.utc).isoformat(),
+            "is_live_market_data": False,
             "status": "unavailable",
             "message_ru": message_ru,
             "candles": [],

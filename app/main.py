@@ -239,10 +239,18 @@ async def api_chart(symbol: str, tf: str | None = None):
     chart_tf = (tf or "H1").upper()
     try:
         payload = await asyncio.to_thread(chart_data_service.get_chart, symbol, chart_tf)
-        return payload.get("candles", []) if isinstance(payload, dict) else []
+        return payload if isinstance(payload, dict) else ChartDataService.build_unavailable_payload(
+            symbol=symbol.upper(),
+            timeframe=chart_tf,
+            message_ru="Некорректный ответ сервиса свечей.",
+        )
     except Exception:
         logger.exception("chart_route_failed symbol=%s tf=%s", symbol, chart_tf)
-        return []
+        return ChartDataService.build_unavailable_payload(
+            symbol=symbol.upper(),
+            timeframe=chart_tf,
+            message_ru="Не удалось получить рыночные свечи.",
+        )
 
 
 @app.post("/api/chat", response_model=ChatResponse)
