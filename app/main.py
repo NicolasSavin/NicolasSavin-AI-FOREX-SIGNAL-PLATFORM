@@ -181,6 +181,7 @@ async def twelvedata_health_debug() -> dict:
         "api_key_length": len(api_key) if api_key else 0,
         "symbol_mapping": symbol_mapping,
         "timeframe_mapping": timeframe_mapping,
+        "probe": probe_results[0] if probe_results else None,
         "probes": probe_results,
     }
 

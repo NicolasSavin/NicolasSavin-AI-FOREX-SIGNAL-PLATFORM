@@ -3,6 +3,7 @@ from __future__ import annotations
 from calendar import timegm
 from datetime import datetime, timezone
 import logging
+import os
 from threading import Lock
 from time import monotonic
 from typing import Any
@@ -41,6 +42,17 @@ class TwelveDataProvider(RealMarketDataProvider):
     def __init__(self) -> None:
         self.api_key = get_twelvedata_api_key() or ""
         self.timeout = 4.0
+        self._cache_ttl_seconds = max(60.0, min(float(os.getenv("TWELVEDATA_CANDLES_CACHE_TTL_SECONDS", "90")), 120.0))
+        self._failure_ttl_seconds = max(30.0, min(float(os.getenv("TWELVEDATA_FAILURE_CACHE_TTL_SECONDS", "60")), 120.0))
+        self._rate_limit_cooldown_seconds = max(30.0, float(os.getenv("TWELVEDATA_RATE_LIMIT_COOLDOWN_SECONDS", "300")))
+        self._lock = Lock()
+        self._candles_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._rate_limited_until = 0.0
+        self._cycle_id = 0
+        self._cycle_cache: dict[tuple[str, str, int], dict[str, Any]] = {}
+        self._cycle_api_calls = 0
+        self._cycle_cache_hits = 0
+        self._cycle_cache_misses = 0
         logger.info(
             "twelvedata_init api_key_present=%s api_key_length=%s",
             bool(self.api_key),
@@ -79,33 +91,84 @@ class TwelveDataProvider(RealMarketDataProvider):
     def get_candles(self, symbol: str, timeframe: str, limit: int) -> dict[str, Any]:
         normalized = _normalize_symbol(symbol)
         normalized_tf = timeframe.upper().strip()
+        normalized_limit = max(1, min(int(limit or 1), 5000))
         interval = _TIMEFRAME_TO_TD.get(normalized_tf)
         provider_symbol = _td_symbol(normalized)
+        cycle_key = (normalized, normalized_tf, normalized_limit)
+        cache_key = f"{normalized}::{normalized_tf}"
         logger.info(
             "twelvedata_candles_request normalized_symbol=%s normalized_timeframe=%s provider_symbol=%s provider_interval=%s limit=%s",
             normalized,
             normalized_tf,
             provider_symbol,
             interval,
-            limit,
+            normalized_limit,
         )
         if not interval:
             return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "unsupported_timeframe"}
         if not self.api_key:
             return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "missing_api_key"}
 
+        cached_in_cycle = self._cycle_cache_get(cycle_key)
+        if cached_in_cycle is not None:
+            self._mark_cycle_hit(source="cycle", symbol=normalized, timeframe=normalized_tf, limit=normalized_limit)
+            return cached_in_cycle
+
+        cached = self._cache_get(cache_key, limit=normalized_limit, ttl_seconds=self._cache_ttl_seconds)
+        if cached is not None:
+            self._mark_cycle_hit(source="ttl", symbol=normalized, timeframe=normalized_tf, limit=normalized_limit)
+            self._cycle_cache_set(cycle_key, cached)
+            return cached
+
+        self._mark_cycle_miss(symbol=normalized, timeframe=normalized_tf, limit=normalized_limit)
+        if self._is_rate_limited():
+            fallback = self._cache_get(cache_key, limit=normalized_limit, ttl_seconds=86400.0)
+            if fallback is not None:
+                payload = {**fallback, "error": "rate_limited", "rate_limited": True, "used_cached_fallback": True}
+                self._cycle_cache_set(cycle_key, payload)
+                return payload
+            payload = {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "rate_limited", "rate_limited": True}
+            self._cycle_cache_set(cycle_key, payload)
+            return payload
+
+        self._increment_cycle_api_calls()
         payload = self._request(
             "time_series",
             {
                 "symbol": provider_symbol,
                 "interval": interval,
-                "outputsize": max(1, min(limit, 5000)),
+                "outputsize": normalized_limit,
                 "format": "JSON",
             },
         )
         td_error = _extract_td_error(payload)
         if td_error is not None:
-            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": td_error}
+            if _is_rate_limit_error(td_error):
+                self._set_rate_limited()
+                fallback = self._cache_get(cache_key, limit=normalized_limit, ttl_seconds=86400.0)
+                if fallback is not None:
+                    rate_limited_payload = {
+                        **fallback,
+                        "error": "rate_limited",
+                        "rate_limited": True,
+                        "used_cached_fallback": True,
+                    }
+                    self._cycle_cache_set(cycle_key, rate_limited_payload)
+                    return rate_limited_payload
+                rate_limited_payload = {
+                    "symbol": normalized,
+                    "timeframe": normalized_tf,
+                    "candles": [],
+                    "error": "rate_limited",
+                    "rate_limited": True,
+                }
+                self._cache_set(cache_key, rate_limited_payload, ttl_seconds=self._failure_ttl_seconds)
+                self._cycle_cache_set(cycle_key, rate_limited_payload)
+                return rate_limited_payload
+            error_payload = {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": td_error}
+            self._cache_set(cache_key, error_payload, ttl_seconds=self._failure_ttl_seconds)
+            self._cycle_cache_set(cycle_key, error_payload)
+            return error_payload
 
         candles = _normalize_td_candles(payload.get("values"))
         if not candles and isinstance(payload, dict):
@@ -121,7 +184,7 @@ class TwelveDataProvider(RealMarketDataProvider):
                     "meta": payload.get("meta"),
                 },
             )
-        return {
+        result = {
             "symbol": normalized,
             "timeframe": normalized_tf,
             "source_symbol": provider_symbol,
@@ -129,6 +192,13 @@ class TwelveDataProvider(RealMarketDataProvider):
             "candles": candles,
             "error": None if candles else "empty_candles",
         }
+        self._cache_set(
+            cache_key,
+            result,
+            ttl_seconds=self._cache_ttl_seconds if candles else self._failure_ttl_seconds,
+        )
+        self._cycle_cache_set(cycle_key, result)
+        return result
 
     def get_latest_close(self, symbol: str, timeframe: str) -> dict[str, Any]:
         candles = self.get_candles(symbol, timeframe, 2)
@@ -204,6 +274,81 @@ class TwelveDataProvider(RealMarketDataProvider):
         except requests.RequestException as exc:
             logger.warning("twelvedata_request_failed endpoint=%s error=%s", endpoint, exc)
             return {"status": "error", "message": str(exc)}
+
+    def begin_request_cycle(self) -> int:
+        with self._lock:
+            self._cycle_id += 1
+            self._cycle_cache = {}
+            self._cycle_api_calls = 0
+            self._cycle_cache_hits = 0
+            self._cycle_cache_misses = 0
+            return self._cycle_id
+
+    def end_request_cycle(self, cycle_id: int) -> dict[str, int] | None:
+        with self._lock:
+            if cycle_id != self._cycle_id:
+                return None
+            stats = {
+                "api_calls": self._cycle_api_calls,
+                "cache_hits": self._cycle_cache_hits,
+                "cache_misses": self._cycle_cache_misses,
+            }
+            self._cycle_cache = {}
+            return stats
+
+    def _cache_get(self, key: str, *, limit: int, ttl_seconds: float) -> dict[str, Any] | None:
+        with self._lock:
+            cached = self._candles_cache.get(key)
+            if not cached:
+                return None
+            saved_at, payload = cached
+            if monotonic() - saved_at > max(0.0, ttl_seconds):
+                self._candles_cache.pop(key, None)
+                return None
+            candles = payload.get("candles") or []
+            return {**payload, "candles": candles[-limit:]}
+
+    def _cache_set(self, key: str, payload: dict[str, Any], ttl_seconds: float) -> None:
+        if ttl_seconds <= 0:
+            return
+        with self._lock:
+            self._candles_cache[key] = (monotonic(), dict(payload))
+
+    def _is_rate_limited(self) -> bool:
+        with self._lock:
+            return monotonic() < self._rate_limited_until
+
+    def _set_rate_limited(self) -> None:
+        with self._lock:
+            self._rate_limited_until = monotonic() + self._rate_limit_cooldown_seconds
+
+    def _cycle_cache_get(self, key: tuple[str, str, int]) -> dict[str, Any] | None:
+        with self._lock:
+            payload = self._cycle_cache.get(key)
+            return dict(payload) if payload else None
+
+    def _cycle_cache_set(self, key: tuple[str, str, int], payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._cycle_cache[key] = dict(payload)
+
+    def _mark_cycle_hit(self, *, source: str, symbol: str, timeframe: str, limit: int) -> None:
+        with self._lock:
+            self._cycle_cache_hits += 1
+        logger.info("twelvedata_cache_hit source=%s symbol=%s timeframe=%s limit=%s", source, symbol, timeframe, limit)
+
+    def _mark_cycle_miss(self, *, symbol: str, timeframe: str, limit: int) -> None:
+        with self._lock:
+            self._cycle_cache_misses += 1
+        logger.info("twelvedata_cache_miss symbol=%s timeframe=%s limit=%s", symbol, timeframe, limit)
+
+    def _increment_cycle_api_calls(self) -> None:
+        with self._lock:
+            self._cycle_api_calls += 1
+
+
+def _is_rate_limit_error(error: str) -> bool:
+    normalized = str(error or "").lower()
+    return "429" in normalized or "limit" in normalized or "quota" in normalized or "too many" in normalized
 
 
 class YahooProvider(RealMarketDataProvider):
