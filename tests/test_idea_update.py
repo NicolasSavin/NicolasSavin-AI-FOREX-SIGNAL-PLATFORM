@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.services.idea_narrative_llm import NarrativeResult
 from app.services.trade_idea_service import TradeIdeaService
 from app.services.storage.json_storage import JsonStorage
 from backend.signal_engine import SignalEngine
@@ -46,6 +47,7 @@ def test_trade_idea_updates_without_duplication(tmp_path: Path) -> None:
     assert payload["ideas"][0]["timeframe"] == "H1"
     assert payload["ideas"][0]["status"] in {"waiting", "triggered", "active", "created"}
     assert isinstance(payload["ideas"][0]["updates"], list)
+    assert payload["ideas"][0]["narrative_source"] in {"llm", "fallback"}
 
 
 def test_trade_idea_new_lifecycle_creates_new_record(tmp_path: Path) -> None:
@@ -115,3 +117,43 @@ def test_trade_idea_archives_on_tp_and_keeps_history(tmp_path: Path) -> None:
     assert "tp_hit" in history_types
     assert "archived" in history_types
     assert any(item["event_type"] == "archived" for item in archived["updates"])
+
+
+def test_archive_explanation_generation_on_tp_sl(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    def _mock_generate(**kwargs):
+        event_type = kwargs["event_type"]
+        return NarrativeResult(
+            source="llm",
+            data={
+                "headline": "Заголовок",
+                "summary": "Сводка",
+                "cause": "Причина",
+                "confirmation": "Подтверждение",
+                "risk": "Риск",
+                "invalidation": "Инвалидация",
+                "target_logic": "Логика цели",
+                "update_explanation": f"Обновление: {event_type}",
+                "short_text": "Короткий текст",
+                "full_text": f"Полное объяснение: {event_type}",
+            },
+        )
+
+    service.narrative_llm.generate = _mock_generate  # type: ignore[assignment]
+
+    base = {
+        "symbol": "GBPUSD",
+        "timeframe": "H1",
+        "action": "SELL",
+        "entry": 1.25,
+        "stop_loss": 1.255,
+        "take_profit": 1.24,
+        "confidence_percent": 70,
+        "description_ru": "Сценарий",
+        "reason_ru": "Причина",
+    }
+    service.upsert_trade_idea({**base, "latest_close": 1.249})
+    sl = service.upsert_trade_idea({**base, "latest_close": 1.256})
+    assert sl["final_status"] == "sl_hit"
+    assert "sl_hit" in (sl.get("close_explanation") or "")

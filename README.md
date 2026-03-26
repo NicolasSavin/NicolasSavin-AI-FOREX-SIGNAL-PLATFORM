@@ -22,6 +22,7 @@
 - Усилен pipeline `/api/ideas`: при наличии исторических свечей теперь всегда публикуется минимум один сценарий на symbol/timeframe (включая fallback `range/developing`), убраны жёсткие блокировки по live snapshot/current_price, а debug-логирование дополнено этапами `candles_count / features_built / signal_created / reason_if_skipped`.
 - Идеи переведены в stateful lifecycle-модель: `CREATED → WAITING → TRIGGERED → ACTIVE → TP_HIT / SL_HIT → ARCHIVED`, а обновления теперь пишутся в `updates[]` с timestamp/event/explanation и не создают новые карточки, если совпадает `symbol + timeframe`.
 - Добавлен structured analysis engine (`smc`, `ict`, `pattern`, `harmonic_pattern`, `volume`, `cum_delta`, `divergence`, `fundamental`) и weighted scoring decision model с полем `decision.weighted_score` и причинно-следственным `current_reasoning`.
+- Основной путь narrative для trade ideas переведён на LLM-first сервис `app/services/idea_narrative_llm.py`: backend отправляет в OpenRouter только факты анализа (symbol/timeframe/direction/status/entry/SL/TP/RR + SMC/ICT/pattern/volume/delta/divergence/fundamental + delta изменений), валидирует строгий JSON-ответ, делает один retry при невалидном формате и включает детерминированный fallback только как аварийный режим (`narrative_source: llm|fallback`).
 
 ## Что обновлено в версии 3.7
 - Добавлен отдельный модуль графических паттернов: `backend/pattern_detector.py` и `backend/pattern_visualization.py`.
@@ -170,6 +171,7 @@
 - `decision` (weighted scoring + факторы confluence)
 - `entry_explanation_ru` / `stop_explanation_ru` / `target_explanation_ru`
 - `short_scenario_ru` / `short_text` — сверхкраткий сценарий для карточки списка
+- `headline` / `summary` / `full_text` / `update_explanation` / `narrative_source` — структурированный narrative-слой от LLM с сохранением обратной совместимости API
 - `detail_brief.header` — market price / daily change / bias / confidence / confluence
 - `detail_brief.scenarios` — primary / swing / invalidation
 - `detail_brief.sections[]` — секции (`smc_ict`, `chart_patterns`, `harmonic`, `waves`, `fundamental`, `wyckoff`, `volume_profile`, `divergences`, `cumdelta`, `sentiment`, `liquidity`) только при реально доступных данных
