@@ -108,9 +108,9 @@ class SignalEngine:
     ) -> dict:
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
-        if mtf_features["status"] != "ready" or htf_features["status"] != "ready" or ltf_features["status"] != "ready":
+        if mtf_features["status"] != "ready":
             logger.debug(
-                "ideas_pipeline_skipped symbol=%s timeframe=%s reason=insufficient_features",
+                "ideas_pipeline_skipped symbol=%s timeframe=%s reason=insufficient_mtf_structure",
                 symbol,
                 timeframe,
             )
@@ -118,18 +118,29 @@ class SignalEngine:
                 symbol,
                 timeframe,
                 mtf,
-                "Недостаточно реальных свечных данных для построения структуры и сетапа.",
+                "Недостаточно реальных свечных данных для анализа структуры MTF.",
                 mtf_patterns,
                 mtf_pattern_summary,
             )
 
-        trend_conflict = htf_features["trend"] != mtf_features["trend"]
+        htf_ready = htf_features.get("status") == "ready"
+        ltf_ready = ltf_features.get("status") == "ready"
+        trend_conflict = htf_ready and htf_features.get("trend") != mtf_features.get("trend")
         has_confluence = has_minimum_confluence(
-            bos=mtf_features["bos"],
-            liquidity_sweep=mtf_features["liquidity_sweep"],
+            bos=mtf_features.get("bos", False),
+            liquidity_sweep=mtf_features.get("liquidity_sweep", False),
             order_block=bool(mtf_features["order_block"]),
-            ltf_pattern=bool(ltf_features["pattern"]),
+            ltf_pattern=ltf_ready and bool(ltf_features.get("pattern")) and ltf_features.get("pattern") != "none",
         )
+        confluence_flags = {
+            "bos": bool(mtf_features.get("bos")),
+            "liquidity_sweep": bool(mtf_features.get("liquidity_sweep")),
+            "order_block": bool(mtf_features.get("order_block")),
+            "ltf_pattern_confirmation": ltf_ready and ltf_features.get("pattern") not in {None, "none"},
+            "htf_alignment": htf_ready and not trend_conflict,
+            "risk_filter_passed": None,
+            "live_snapshot_available": mtf.get("data_status") in {"real", "delayed"},
+        }
 
         action = infer_action(mtf_features["trend"])
         pattern_impact = self.pattern_detector.signal_impact(action=action, summary=mtf_pattern_summary)
@@ -140,15 +151,19 @@ class SignalEngine:
         take = level_plan["take"]
         rr = level_plan["risk_reward"]
 
-        confidence = 65
-        if not trend_conflict:
+        confidence = 62
+        if confluence_flags["htf_alignment"]:
             confidence += 7
-        if ltf_features["pattern"] == "engulfing":
+        if confluence_flags["ltf_pattern_confirmation"] and ltf_features.get("pattern") == "engulfing":
             confidence += 4
         if not has_confluence:
-            confidence -= 18
+            confidence -= 12
+        if not htf_ready:
+            confidence -= 5
+        if not ltf_ready:
+            confidence -= 5
         confidence += int(pattern_impact.get("confidenceDelta", 0) or 0)
-        confidence = max(35, min(confidence, 92))
+        confidence = max(25, min(confidence, 92))
 
         risk = self.risk_engine.validate(
             rr=rr,
@@ -156,36 +171,62 @@ class SignalEngine:
             htf_conflict=trend_conflict,
             volatility_percent=mtf_features.get("atr_percent", 0.0),
         )
+        confluence_flags["risk_filter_passed"] = bool(risk.get("allowed"))
         weak_reasons: list[str] = []
         if not has_confluence:
             weak_reasons.append("структура ещё развивается: confluence ниже базового порога")
         if trend_conflict:
             weak_reasons.append("HTF и MTF временно расходятся")
+        if not htf_ready:
+            weak_reasons.append("HTF подтверждение недоступно")
+        if not ltf_ready:
+            weak_reasons.append("LTF подтверждение недоступно")
         if not risk["allowed"]:
             weak_reasons.append(risk["reason_ru"])
-        logger.debug(
-            "ideas_pipeline_quality symbol=%s timeframe=%s has_confluence=%s risk_allowed=%s weak_reasons=%s",
-            symbol,
-            timeframe,
-            has_confluence,
-            risk.get("allowed"),
-            weak_reasons,
-        )
 
         sentiment_alignment = self._sentiment_alignment(action, sentiment)
         sentiment_delta = self._sentiment_delta(sentiment_alignment, sentiment)
         confidence += sentiment_delta
-        confidence = max(30, min(confidence, 92))
+        confidence = max(20, min(confidence, 92))
+
+        scenario_type = self._resolve_scenario_type(mtf_features)
+        missing_confirmations = self._resolve_missing_confirmations(
+            htf_ready=htf_ready,
+            ltf_ready=ltf_ready,
+            has_confluence=has_confluence,
+            risk_allowed=bool(risk.get("allowed")),
+            live_snapshot_available=bool(confluence_flags["live_snapshot_available"]),
+            sentiment=sentiment,
+        )
+        validation_state = self._resolve_validation_state(
+            confidence=confidence,
+            scenario_type=scenario_type,
+            missing_confirmations=missing_confirmations,
+            risk_allowed=bool(risk.get("allowed")),
+        )
+        structure_state = "analyzable" if mtf_features.get("status") == "ready" else "insufficient"
+        logger.debug(
+            "ideas_pipeline_scenario symbol=%s timeframe=%s scenario_type=%s validation_state=%s confidence=%s missing=%s",
+            symbol,
+            timeframe,
+            scenario_type,
+            validation_state,
+            confidence,
+            missing_confirmations,
+        )
 
         live_data_available = mtf.get("data_status") in {"real", "delayed"}
         current_price = round(price, 6) if live_data_available else None
         progress = self._build_progress(action, price, price, stop, take)
         signal_time = datetime.now(timezone.utc).isoformat()
         pattern_summary_ru = mtf_pattern_summary.get("patternSummaryRu") or "Явные графические паттерны не обнаружены"
-        lifecycle_state = "developing" if weak_reasons else "active"
-        status = "неподтверждён" if weak_reasons else "актуален"
-        reason_prefix = "Идея опубликована с пониженной уверенностью: " if weak_reasons else "Есть структурное подтверждение, риск-фильтр пройден. "
+        lifecycle_state = "active" if validation_state in {"confirmed", "high_conviction"} else "developing"
+        status = "актуален" if validation_state in {"confirmed", "high_conviction"} else "неподтверждён"
+        reason_prefix = "Идея опубликована с пониженной уверенностью: " if weak_reasons else "Есть структурная база сценария. "
         weak_reason_text = "; ".join(weak_reasons)
+        invalidation_reasoning = (
+            "Сценарий теряет актуальность при сломе ключевой зоны и отмене рыночной структуры текущего таймфрейма."
+        )
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -221,6 +262,12 @@ class SignalEngine:
             "pattern_summary": mtf_pattern_summary,
             "pattern_signal_impact": pattern_impact,
             "source_candle_count": len(mtf.get("candles", [])),
+            "scenario_type": scenario_type,
+            "validation_state": validation_state,
+            "structure_state": structure_state,
+            "confluence_flags": confluence_flags,
+            "missing_confirmations": missing_confirmations,
+            "invalidation_reasoning": invalidation_reasoning,
             "market_context": {
                 "htf_trend": htf_features["trend"],
                 "mtf_trend": mtf_features["trend"],
@@ -241,8 +288,14 @@ class SignalEngine:
                 "patternAlignment": pattern_impact.get("patternAlignmentWithSignal", "neutral"),
                 "sentimentAlignment": sentiment_alignment,
                 "sentimentImpact": round(sentiment_delta / 100, 4),
-                "setup_quality": "developing" if weak_reasons else "confirmed",
+                "setup_quality": validation_state,
                 "weak_reasons": weak_reasons,
+                "scenario_type": scenario_type,
+                "validation_state": validation_state,
+                "structure_state": structure_state,
+                "confluence_flags": confluence_flags,
+                "missing_confirmations": missing_confirmations,
+                "invalidation_reasoning": invalidation_reasoning,
             },
         }
 
@@ -293,6 +346,12 @@ class SignalEngine:
             "pattern_summary": summary,
             "pattern_signal_impact": impact,
             "source_candle_count": len(snapshot.get("candles", [])),
+            "scenario_type": "none",
+            "validation_state": "none",
+            "structure_state": "insufficient",
+            "confluence_flags": {},
+            "missing_confirmations": ["insufficient_candle_history"],
+            "invalidation_reasoning": "Сценарий не построен: недостаточно данных структуры.",
             "market_context": {
                 "source": snapshot.get("source"),
                 "message": snapshot.get("message"),
@@ -301,6 +360,64 @@ class SignalEngine:
                 "patternSummaryRu": summary.get("patternSummaryRu", "Явные графические паттерны не обнаружены"),
             },
         }
+
+    def _resolve_scenario_type(self, mtf_features: dict) -> str:
+        if mtf_features.get("bos") and mtf_features.get("fvg"):
+            return "continuation"
+        if mtf_features.get("liquidity_sweep") and mtf_features.get("order_block"):
+            return "pullback"
+        if mtf_features.get("choch") or mtf_features.get("divergence") not in {None, "none"}:
+            return "reversal"
+        if (mtf_features.get("atr_percent", 0.0) < 0.15) or (
+            not mtf_features.get("bos") and mtf_features.get("pattern") in {"none", "inside_bar"}
+        ):
+            return "range_breakout_setup"
+        return "continuation"
+
+    def _resolve_missing_confirmations(
+        self,
+        *,
+        htf_ready: bool,
+        ltf_ready: bool,
+        has_confluence: bool,
+        risk_allowed: bool,
+        live_snapshot_available: bool,
+        sentiment: dict,
+    ) -> list[str]:
+        missing: list[str] = []
+        if not htf_ready:
+            missing.append("htf_structure")
+        if not ltf_ready:
+            missing.append("ltf_trigger_pattern")
+        if not has_confluence:
+            missing.append("confluence_threshold")
+        if not risk_allowed:
+            missing.append("risk_filter")
+        if not live_snapshot_available:
+            missing.append("live_snapshot")
+        if sentiment.get("data_status") == "unavailable":
+            missing.append("sentiment_context")
+        return missing
+
+    def _resolve_validation_state(
+        self,
+        *,
+        confidence: int,
+        scenario_type: str,
+        missing_confirmations: list[str],
+        risk_allowed: bool,
+    ) -> str:
+        if scenario_type == "range_breakout_setup":
+            return "range_bias"
+        if confidence >= 82 and not missing_confirmations and risk_allowed:
+            return "high_conviction"
+        if confidence >= 68 and risk_allowed and len(missing_confirmations) <= 1:
+            return "confirmed"
+        if confidence >= 52:
+            return "developing"
+        if confidence >= 38:
+            return "early"
+        return "weak"
 
     def _sentiment_alignment(self, action: str, sentiment: dict) -> str:
         bias = sentiment.get("contrarian_bias", "neutral")
