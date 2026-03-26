@@ -85,6 +85,7 @@ class CanonicalMarketService:
 
         primary = self.live_provider.get_candles(symbol, normalized_tf, limit)
         primary_candles = primary.get("candles") or []
+        primary_error = primary.get("error")
         if primary_candles:
             contract = self._contract(
                 symbol=symbol,
@@ -98,6 +99,7 @@ class CanonicalMarketService:
                     "candles": primary_candles,
                     "current_price": primary_candles[-1].get("close"),
                     "warning_ru": None,
+                    "diagnostics": {"provider_error": None},
                 },
             )
             self._cache_set(self._chart_cache, cache_key, contract)
@@ -118,6 +120,7 @@ class CanonicalMarketService:
                     "candles": fallback_candles,
                     "current_price": fallback_candles[-1].get("close"),
                     "warning_ru": "Live candles недоступны, показаны только исторические delayed-данные.",
+                    "diagnostics": {"provider_error": primary_error},
                 },
             )
             self._cache_set(self._chart_cache, cache_key, contract)
@@ -134,7 +137,8 @@ class CanonicalMarketService:
                 "timeframe": normalized_tf,
                 "candles": [],
                 "current_price": None,
-                "warning_ru": "Свечные данные недоступны. Синтетический fallback удалён.",
+                "warning_ru": f"Свечные данные недоступны: {primary_error or 'unknown_error'}. Синтетический fallback удалён.",
+                "diagnostics": {"provider_error": primary_error},
             },
         )
         self._cache_set(self._chart_cache, cache_key, contract)

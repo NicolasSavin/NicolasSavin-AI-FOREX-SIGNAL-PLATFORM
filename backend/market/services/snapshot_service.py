@@ -36,8 +36,9 @@ class MarketSnapshotService:
             return self._unavailable(
                 symbol=ticker_symbol,
                 timeframe=timeframe,
-                message="Нет рыночных данных от провайдера.",
+                message=chart.get("warning_ru") or "Нет рыночных данных от провайдера.",
                 source=chart.get("source"),
+                diagnostics=chart.get("diagnostics"),
             )
 
         closes = [float(c["close"]) for c in candles]
@@ -129,7 +130,14 @@ class MarketSnapshotService:
             enriched.append(payload)
         return enriched
 
-    def _unavailable(self, symbol: str, timeframe: str, message: str, source: str | None) -> dict:
+    def _unavailable(
+        self,
+        symbol: str,
+        timeframe: str,
+        message: str,
+        source: str | None,
+        diagnostics: dict | None = None,
+    ) -> dict:
         return {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -144,4 +152,5 @@ class MarketSnapshotService:
             "prev_close": None,
             "candles": [],
             "proxy_metrics": [],
+            "diagnostics": diagnostics or {},
         }
