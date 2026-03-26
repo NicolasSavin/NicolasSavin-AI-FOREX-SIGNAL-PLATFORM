@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.main import app, chart_data_service
+from app.main import app, canonical_market_service
 from app.services.chart_data_service import ChartDataService
 
 
@@ -57,18 +57,19 @@ def test_chart_data_service_returns_unavailable_without_key(monkeypatch) -> None
 
 def test_chart_route_returns_candles_array(monkeypatch) -> None:
     monkeypatch.setattr(
-        chart_data_service,
-        'get_chart',
-        lambda symbol, timeframe: {
+        canonical_market_service,
+        'get_chart_contract',
+        lambda symbol, timeframe, limit=120: {
             'symbol': symbol,
             'timeframe': timeframe,
             'source': 'twelvedata',
-            'status': 'ok',
-            'message_ru': None,
+            'data_status': 'real',
+            'source_symbol': 'EUR/USD',
+            'last_updated_utc': '2026-03-20T10:30:00+00:00',
+            'is_live_market_data': True,
             'candles': [
                 {'time': 1710929700, 'open': 1.086, 'high': 1.087, 'low': 1.085, 'close': 1.0865}
             ],
-            'meta': {'provider': 'Twelve Data', 'interval': '15min', 'outputsize': 1},
         },
     )
 
@@ -82,13 +83,27 @@ def test_chart_route_returns_candles_array(monkeypatch) -> None:
 
 
 def test_chart_route_returns_fallback_on_service_exception(monkeypatch) -> None:
-    def _boom(symbol, timeframe):
+    def _boom(symbol, timeframe, limit=120):
         raise RuntimeError('boom')
 
-    monkeypatch.setattr(chart_data_service, 'get_chart', _boom)
+    monkeypatch.setattr(canonical_market_service, 'get_chart_contract', _boom)
 
     client = TestClient(app)
     response = client.get('/api/chart/EURUSD?tf=M15')
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_market_endpoint_never_returns_synthetic_contract_fields() -> None:
+    client = TestClient(app)
+    response = client.get('/api/market?symbols=EURUSD')
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload.get('market'), list)
+    row = payload['market'][0]
+    assert row['data_status'] in {'real', 'unavailable', 'delayed'}
+    assert row['source'] in {'twelvedata', 'yahoo_finance'}
+    assert isinstance(row['source_symbol'], str)
+    assert isinstance(row['last_updated_utc'], str)
+    assert isinstance(row['is_live_market_data'], bool)

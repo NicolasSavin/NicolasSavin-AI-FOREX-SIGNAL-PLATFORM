@@ -21,10 +21,13 @@ class MarketSnapshotResponse(BaseModel):
     symbol: str
     timeframe: str
     timestamp_utc: datetime
-    data_status: Literal["real", "unavailable"]
+    data_status: Literal["real", "unavailable", "delayed"]
     real_price: Optional[float] = None
     day_change_percent: Optional[float] = None
     source: Optional[str] = None
+    source_symbol: Optional[str] = None
+    last_updated_utc: Optional[datetime] = None
+    is_live_market_data: bool = False
     message: str
     proxy_metrics: list[ProxyMetric] = Field(default_factory=list)
 
@@ -254,5 +257,5 @@ class SignalResponse(BaseModel):
     signal: Literal["BUY", "SELL", "HOLD", "NO_TRADE"]
     confidence: float
     reason_ru: str
-    data_status: Literal["real", "unavailable"]
+    data_status: Literal["real", "unavailable", "delayed"]
     market: MarketSnapshotResponse

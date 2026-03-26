@@ -2,83 +2,65 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import yfinance as yf
-
-TIMEFRAME_CONFIG = {
-    "M15": {"interval": "15m", "period": "5d"},
-    "M30": {"interval": "30m", "period": "1mo"},
-    "H1": {"interval": "1h", "period": "1mo"},
-    "H4": {"interval": "1h", "period": "3mo"},
-    "D1": {"interval": "1d", "period": "6mo"},
-    "W1": {"interval": "1wk", "period": "2y"},
-}
+from app.services.canonical_market_service import CanonicalMarketService
 
 
 class DataProvider:
-    """Collects and normalizes OHLCV market snapshots from yfinance."""
+    """Collects and normalizes OHLC snapshots via canonical market service."""
+
+    def __init__(self) -> None:
+        self.market_service = CanonicalMarketService()
 
     async def snapshot(self, symbol: str, timeframe: str = "H1") -> dict:
         return self.snapshot_sync(symbol, timeframe=timeframe)
 
     def snapshot_sync(self, symbol: str, timeframe: str = "H1") -> dict:
         ticker_symbol = symbol.upper().replace("/", "")
-        source_symbol = f"{ticker_symbol}=X"
-        tf = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["H1"])
 
-        try:
-            history = yf.Ticker(source_symbol).history(period=tf["period"], interval=tf["interval"])
-            if history.empty:
-                return self._unavailable(symbol=ticker_symbol, timeframe=timeframe, message="Нет рыночных данных от провайдера.")
-
-            candles = [
-                {
-                    "open": float(row["Open"]),
-                    "high": float(row["High"]),
-                    "low": float(row["Low"]),
-                    "close": float(row["Close"]),
-                    "volume": float(row["Volume"]),
-                }
-                for _, row in history.tail(200).iterrows()
-            ]
-            if not candles:
-                return self._unavailable(symbol=ticker_symbol, timeframe=timeframe, message="Пустой набор свечей после нормализации.")
-
-            closes = [c["close"] for c in candles]
-            last_price = closes[-1]
-            prev_price = closes[-2] if len(closes) > 1 else closes[-1]
-
-            return {
-                "symbol": ticker_symbol,
-                "timeframe": timeframe,
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                "data_status": "real",
-                "source": "Yahoo Finance",
-                "message": "Реальные данные получены.",
-                "close": last_price,
-                "prev_close": prev_price,
-                "candles": candles,
-                "proxy_metrics": [],
-            }
-        except Exception:
+        chart = self.market_service.get_chart_contract(ticker_symbol, timeframe, 200)
+        price = self.market_service.get_price_contract(ticker_symbol)
+        candles = chart.get("candles") or []
+        if not candles:
             return self._unavailable(
                 symbol=ticker_symbol,
                 timeframe=timeframe,
-                message="Источник данных недоступен, публикация только в NO_TRADE/прокси-режиме.",
+                message="Нет рыночных данных от провайдера.",
+                source=chart.get("source"),
             )
 
-    def _unavailable(self, symbol: str, timeframe: str, message: str) -> dict:
+        closes = [float(c["close"]) for c in candles]
+        close = float(price.get("price")) if price.get("price") is not None else closes[-1]
+        prev_price = closes[-2] if len(closes) > 1 else closes[-1]
+
+        return {
+            "symbol": ticker_symbol,
+            "timeframe": timeframe,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "data_status": chart.get("data_status", "unavailable"),
+            "source": chart.get("source"),
+            "source_symbol": chart.get("source_symbol"),
+            "last_updated_utc": chart.get("last_updated_utc"),
+            "is_live_market_data": bool(chart.get("is_live_market_data", False) and price.get("is_live_market_data", False)),
+            "message": chart.get("warning_ru") or "Реальные данные получены.",
+            "close": close,
+            "prev_close": prev_price,
+            "candles": candles,
+            "proxy_metrics": [],
+        }
+
+    def _unavailable(self, symbol: str, timeframe: str, message: str, source: str | None) -> dict:
         return {
             "symbol": symbol,
             "timeframe": timeframe,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "data_status": "unavailable",
-            "source": None,
+            "source": source,
+            "source_symbol": symbol,
+            "last_updated_utc": datetime.now(timezone.utc).isoformat(),
+            "is_live_market_data": False,
             "message": message,
             "close": None,
             "prev_close": None,
             "candles": [],
-            "proxy_metrics": [
-                {"name": "momentum_proxy", "value": 0.0, "label": "proxy"},
-                {"name": "volatility_proxy", "value": 0.0, "label": "proxy"},
-            ],
+            "proxy_metrics": [],
         }
