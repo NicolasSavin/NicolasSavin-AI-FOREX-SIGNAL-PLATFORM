@@ -134,13 +134,12 @@ function buildProgressBlock(signal) {
   const progressSl = signal.progressToSL ?? signal.progress?.to_stop_loss_percent ?? 0;
   const hasMarketPrice = ['real', 'delayed'].includes(String(signal.data_status || '')) && signal.progress?.current_price != null;
   const currentPrice = hasMarketPrice ? signal.progress?.current_price : null;
-  const fallbackLabel = signal.progress?.is_fallback ? ' • используется fallback цены' : '';
   const priceLabel = currentPrice == null ? 'Нет актуальных рыночных данных' : getSignalValue(currentPrice);
   return `
     <section class="metric-card">
       <div class="metric-card__header">
         <strong>Прогресс цены</strong>
-        <span>${escapeHtml(signal.progress?.label_ru || 'Прогресс недоступен')}${fallbackLabel}</span>
+        <span>${escapeHtml(signal.progress?.label_ru || 'Прогресс недоступен')}</span>
       </div>
       <div class="dual-progress">
         <div>

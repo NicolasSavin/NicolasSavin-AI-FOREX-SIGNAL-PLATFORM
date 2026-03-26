@@ -4,7 +4,7 @@ from pathlib import Path
 
 import asyncio
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -115,9 +115,13 @@ def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
     return enriched
 
 
-@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+@app.get("/", include_in_schema=False)
 async def home_page() -> FileResponse:
     return _static_response("index.html")
+
+@app.head("/", include_in_schema=False)
+async def home_page_head() -> Response:
+    return Response(status_code=200)
 
 
 @app.get("/ideas", include_in_schema=False)
@@ -202,7 +206,7 @@ async def api_signal_news(signal_id: str) -> list[NewsItemResponse]:
 
 @app.get("/ideas/market")
 async def market_ideas():
-    await trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
+    await trade_idea_service.generate_or_refresh()
     payload = trade_idea_service.refresh_market_ideas()
     payload["ideas"] = _attach_live_market_contracts(payload.get("ideas") or [])
     payload["archive"] = _attach_live_market_contracts(payload.get("archive") or [])
