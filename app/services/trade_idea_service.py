@@ -243,18 +243,30 @@ class TradeIdeaService:
         for signal in generated:
             symbol = str(signal.get("symbol", "")).upper()
             timeframe = str(signal.get("timeframe", "H1")).upper()
-            if int(signal.get("source_candle_count") or 0) > 0:
+            candles_count = int(signal.get("source_candle_count") or 0)
+            if candles_count > 0:
                 symbols_with_candles.add((symbol, timeframe))
             action = signal.get("action", "NO_TRADE")
+            pipeline_debug = signal.get("pipeline_debug", {}) if isinstance(signal.get("pipeline_debug"), dict) else {}
+            logger.debug(
+                "ideas_pipeline_apply symbol=%s timeframe=%s candles_loaded=%s structure_built=%s signal_created=%s reason_if_skipped=%s action=%s",
+                symbol,
+                timeframe,
+                candles_count,
+                pipeline_debug.get("features_built", False),
+                pipeline_debug.get("signal_created", False),
+                pipeline_debug.get("reason_if_skipped"),
+                action,
+            )
             if action == "NO_TRADE":
                 logger.debug(
                     "ideas_pipeline_signal_generation symbol=%s timeframe=%s candles_count=%s features_built=%s signal_created=%s reason_if_skipped=%s",
                     symbol,
                     timeframe,
-                    signal.get("pipeline_debug", {}).get("candles_count", signal.get("source_candle_count", 0)),
-                    signal.get("pipeline_debug", {}).get("features_built", False),
+                    pipeline_debug.get("candles_count", candles_count),
+                    pipeline_debug.get("features_built", False),
                     False,
-                    signal.get("pipeline_debug", {}).get("reason_if_skipped", "no_trade_signal"),
+                    pipeline_debug.get("reason_if_skipped", "no_trade_signal"),
                 )
             else:
                 symbols_with_idea.add((symbol, timeframe))
@@ -285,6 +297,16 @@ class TradeIdeaService:
                     "reason_if_skipped": "fallback_range_scenario",
                 },
             }
+            logger.debug(
+                "ideas_pipeline_apply symbol=%s timeframe=%s candles_loaded=%s structure_built=%s signal_created=%s reason_if_skipped=%s action=%s",
+                symbol,
+                timeframe,
+                1,
+                False,
+                True,
+                "fallback_range_scenario",
+                fallback_signal["action"],
+            )
             self.upsert_trade_idea(fallback_signal)
         return self.refresh_market_ideas()
 

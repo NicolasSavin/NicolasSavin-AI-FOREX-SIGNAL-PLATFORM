@@ -450,6 +450,8 @@ class SignalEngine:
         impact = self.pattern_detector.signal_impact(action="NO_TRADE", summary=summary)
         candles_count = len(snapshot.get("candles", []))
         data_status = snapshot.get("data_status") or scenario["data_status"]
+        live_data_available = data_status in {"real", "delayed"}
+        fallback_price = snapshot.get("close") if live_data_available else None
         fallback_reason = reason or scenario["reason"]
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
@@ -470,7 +472,7 @@ class SignalEngine:
             "reason_ru": fallback_reason,
             "invalidation_ru": "Сценарий пересматривается после появления новой структуры.",
             "progress": {
-                "current_price": snapshot.get("close"),
+                "current_price": fallback_price,
                 "to_take_profit_percent": None,
                 "to_stop_loss_percent": None,
                 "progress_percent": None,
@@ -496,14 +498,18 @@ class SignalEngine:
             "market_context": {
                 "source": snapshot.get("source"),
                 "message": snapshot.get("message"),
-                "current_price": snapshot.get("close"),
+                "current_price": fallback_price,
+                "data_status": data_status,
+                "source_symbol": snapshot.get("source_symbol"),
+                "last_updated_utc": snapshot.get("last_updated_utc"),
+                "is_live_market_data": bool(snapshot.get("is_live_market_data", False)),
                 "signal_origin": "backend.signal_engine",
             },
             "pipeline_debug": {
                 "candles_count": candles_count,
                 "features_built": bool(features),
                 "signal_created": bool(candles_count),
-                "reason_if_skipped": "fallback_range_scenario",
+                "reason_if_skipped": "fallback_range_scenario" if candles_count > 0 else "no_candles_no_signal",
             },
         }
 

@@ -30,6 +30,10 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
     async def market_ideas():
         services.queue_ideas_refresh()
         payload = services.trade_idea_service.refresh_market_ideas()
+        if not payload.get("ideas"):
+            logger.info("ideas_market_empty_after_refresh force_generate=true")
+            await services.trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
+            payload = services.trade_idea_service.refresh_market_ideas()
         payload["ideas"] = services.attach_live_market_contracts(payload.get("ideas") or [])
         payload["archive"] = services.attach_live_market_contracts(payload.get("archive") or [])
         payload["market"] = [services.canonical_market_service.get_market_contract(symbol) for symbol in DEFAULT_PAIRS]
