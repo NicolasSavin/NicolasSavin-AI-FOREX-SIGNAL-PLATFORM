@@ -41,6 +41,11 @@ class TwelveDataProvider(RealMarketDataProvider):
     def __init__(self) -> None:
         self.api_key = get_twelvedata_api_key() or ""
         self.timeout = 4.0
+        logger.info(
+            "twelvedata_init api_key_present=%s api_key_length=%s",
+            bool(self.api_key),
+            len(self.api_key) if self.api_key else 0,
+        )
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
         normalized = _normalize_symbol(symbol)
@@ -75,6 +80,15 @@ class TwelveDataProvider(RealMarketDataProvider):
         normalized = _normalize_symbol(symbol)
         normalized_tf = timeframe.upper().strip()
         interval = _TIMEFRAME_TO_TD.get(normalized_tf)
+        provider_symbol = _td_symbol(normalized)
+        logger.info(
+            "twelvedata_candles_request normalized_symbol=%s normalized_timeframe=%s provider_symbol=%s provider_interval=%s limit=%s",
+            normalized,
+            normalized_tf,
+            provider_symbol,
+            interval,
+            limit,
+        )
         if not interval:
             return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "unsupported_timeframe"}
         if not self.api_key:
@@ -83,7 +97,7 @@ class TwelveDataProvider(RealMarketDataProvider):
         payload = self._request(
             "time_series",
             {
-                "symbol": _td_symbol(normalized),
+                "symbol": provider_symbol,
                 "interval": interval,
                 "outputsize": max(1, min(limit, 5000)),
                 "format": "JSON",
@@ -96,7 +110,7 @@ class TwelveDataProvider(RealMarketDataProvider):
         return {
             "symbol": normalized,
             "timeframe": normalized_tf,
-            "source_symbol": _td_symbol(normalized),
+            "source_symbol": provider_symbol,
             "last_updated_utc": datetime.now(timezone.utc).isoformat(),
             "candles": candles,
             "error": None if candles else "empty_candles",
@@ -140,9 +154,32 @@ class TwelveDataProvider(RealMarketDataProvider):
         query = {**params, "apikey": self.api_key}
         try:
             resp = requests.get(f"{_TWELVEDATA_BASE}/{endpoint}", params=query, timeout=self.timeout)
-            resp.raise_for_status()
-            return resp.json()
-        except (requests.RequestException, ValueError) as exc:
+            http_status = resp.status_code
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = {}
+            top_level_error = payload.get("message") if isinstance(payload, dict) else None
+            logger.info(
+                "twelvedata_http_response endpoint=%s status_code=%s top_level_error=%s td_status=%s",
+                endpoint,
+                http_status,
+                top_level_error,
+                payload.get("status") if isinstance(payload, dict) else None,
+            )
+
+            if http_status >= 400:
+                if isinstance(payload, dict):
+                    return {
+                        **payload,
+                        "status": "error",
+                        "message": payload.get("message") or f"http_{http_status}",
+                    }
+                return {"status": "error", "message": f"http_{http_status}"}
+            if isinstance(payload, dict):
+                return payload
+            return {"status": "error", "message": "invalid_json_payload"}
+        except requests.RequestException as exc:
             logger.warning("twelvedata_request_failed endpoint=%s error=%s", endpoint, exc)
             return {"status": "error", "message": str(exc)}
 

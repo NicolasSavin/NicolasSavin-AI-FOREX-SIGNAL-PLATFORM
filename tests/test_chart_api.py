@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app, canonical_market_service
 from app.services.chart_data_service import ChartDataService
+from app.services.market_providers import _TIMEFRAME_TO_TD, _td_symbol
 
 
 def test_chart_data_service_normalizes_twelvedata_payload(monkeypatch) -> None:
@@ -107,3 +108,44 @@ def test_market_endpoint_never_returns_synthetic_contract_fields() -> None:
     assert isinstance(row['source_symbol'], str)
     assert isinstance(row['last_updated_utc'], str)
     assert isinstance(row['is_live_market_data'], bool)
+
+
+def test_twelvedata_symbol_and_timeframe_mapping_contract() -> None:
+    assert _td_symbol('EURUSD') == 'EUR/USD'
+    assert _td_symbol('GBPUSD') == 'GBP/USD'
+    assert _td_symbol('USDJPY') == 'USD/JPY'
+    assert _td_symbol('XAUUSD') == 'XAU/USD'
+
+    assert _TIMEFRAME_TO_TD['M15'] == '15min'
+    assert _TIMEFRAME_TO_TD['H1'] == '1h'
+    assert _TIMEFRAME_TO_TD['H4'] == '4h'
+
+
+def test_twelvedata_debug_health_endpoint(monkeypatch) -> None:
+    provider = canonical_market_service.live_provider
+    monkeypatch.setattr(provider, 'api_key', 'debug-key')
+    monkeypatch.setattr(
+        provider,
+        'get_candles',
+        lambda symbol, timeframe, limit: {
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'source_symbol': 'EUR/USD',
+            'candles': [{'time': 1710929700, 'open': 1.086, 'high': 1.087, 'low': 1.085, 'close': 1.0865}],
+            'error': None,
+        },
+    )
+
+    client = TestClient(app)
+    response = client.get('/api/debug/twelvedata-health')
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload['provider'] == 'twelvedata'
+    assert payload['api_key_present'] is True
+    assert payload['symbol_mapping']['EURUSD'] == 'EUR/USD'
+    assert payload['timeframe_mapping']['M15'] == '15min'
+    assert payload['probe']['provider_symbol'] == 'EUR/USD'
+    assert payload['probe']['provider_interval'] == '15min'
+    assert payload['probe']['candles_count'] == 1
+    assert payload['probe']['request_succeeded'] is True

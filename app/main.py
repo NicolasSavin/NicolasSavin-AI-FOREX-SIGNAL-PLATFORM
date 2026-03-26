@@ -27,6 +27,7 @@ from app.schemas.contracts import (
 from app.services.analytics.service import SignalAnalyticsService
 from app.services.market_service_registry import get_canonical_market_service
 from app.services.market_data import MarketDataService
+from app.services.market_providers import _TIMEFRAME_TO_TD, _td_symbol
 from app.services.mt4_bridge import Mt4BridgeService
 from app.services.chart_data_service import ChartDataService
 from app.services.news_service import NewsService
@@ -142,6 +143,40 @@ async def heatmap_page() -> FileResponse:
 @app.api_route("/api/health", methods=["GET", "HEAD"], response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(status="ok", version=app.version)
+
+
+@app.get("/api/debug/twelvedata-health")
+async def twelvedata_health_debug() -> dict:
+    provider = canonical_market_service.live_provider
+    api_key = getattr(provider, "api_key", "") or ""
+
+    symbol_examples = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+    timeframe_examples = ["M15", "H1", "H4"]
+    symbol_mapping = {symbol: _td_symbol(symbol) for symbol in symbol_examples}
+    timeframe_mapping = {tf: _TIMEFRAME_TO_TD.get(tf) for tf in timeframe_examples}
+
+    probe = await asyncio.to_thread(provider.get_candles, "EURUSD", "M15", 30)
+    probe_error = probe.get("error")
+    probe_candles = probe.get("candles") or []
+
+    return {
+        "provider": "twelvedata",
+        "configured": provider.__class__.__name__ == "TwelveDataProvider",
+        "api_key_present": bool(api_key),
+        "api_key_length": len(api_key) if api_key else 0,
+        "symbol_mapping": symbol_mapping,
+        "timeframe_mapping": timeframe_mapping,
+        "probe": {
+            "symbol": "EURUSD",
+            "timeframe": "M15",
+            "provider_symbol": _td_symbol("EURUSD"),
+            "provider_interval": _TIMEFRAME_TO_TD.get("M15"),
+            "candles_count": len(probe_candles),
+            "request_succeeded": probe_error is None and len(probe_candles) > 0,
+            "error": probe_error,
+            "source_symbol": probe.get("source_symbol"),
+        },
+    }
 
 
 @app.get("/signals/live", response_model=SignalsLiveResponse)
