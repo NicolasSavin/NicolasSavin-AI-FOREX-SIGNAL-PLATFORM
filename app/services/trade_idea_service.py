@@ -30,9 +30,16 @@ DEFAULT_IDEA_TIMEFRAMES = [
     for tf in os.getenv("IDEAS_SIGNAL_TIMEFRAMES", "M15,H1,H4").split(",")
     if tf.strip()
 ]
-ACTIVE_STATUSES = {"watching", "active", "updated", "triggered"}
-CLOSED_STATUSES = {"tp_hit", "sl_hit", "invalidated", "archived"}
-TERMINAL_STATUSES = {"tp_hit", "sl_hit", "invalidated"}
+IDEA_STATUS_CREATED = "created"
+IDEA_STATUS_WAITING = "waiting"
+IDEA_STATUS_TRIGGERED = "triggered"
+IDEA_STATUS_ACTIVE = "active"
+IDEA_STATUS_TP_HIT = "tp_hit"
+IDEA_STATUS_SL_HIT = "sl_hit"
+IDEA_STATUS_ARCHIVED = "archived"
+ACTIVE_STATUSES = {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING, IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE}
+CLOSED_STATUSES = {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT, IDEA_STATUS_ARCHIVED}
+TERMINAL_STATUSES = {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT}
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_SYSTEM_PROMPT = "Ты профессиональный трейдинг-аналитик (Forex, SMC, liquidity).\n\nОтвечай ТОЛЬКО JSON массивом без текста."
 OPENROUTER_IDEA_SPECS = [
@@ -190,6 +197,15 @@ class TradeIdeaService:
                         "entry": None,
                         "stopLoss": None,
                         "takeProfit": None,
+                        "status": IDEA_STATUS_WAITING,
+                        "updates": [
+                            {
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "event_type": "created",
+                                "explanation": "Идея создана в режиме ожидания до восстановления рыночных данных.",
+                            }
+                        ],
+                        "current_reasoning": "Данные недоступны → причинно-следственный сценарий не может быть подтверждён.",
                         "source": "fallback",
                         "is_fallback": True,
                         "meta": {"fallback_reason": reason},
@@ -273,7 +289,6 @@ class TradeIdeaService:
                 for index, idea in enumerate(ideas)
                 if idea.get("symbol") == symbol
                 and idea.get("timeframe") == timeframe
-                and idea.get("setup_type") == setup_type
                 and idea.get("status") in ACTIVE_STATUSES
             ),
             None,
@@ -346,7 +361,7 @@ class TradeIdeaService:
                 "take_profit": None,
                 "confidence_percent": 25,
                 "probability_percent": 25,
-                "status": "watching",
+                "status": IDEA_STATUS_WAITING,
                 "reason_ru": "Сгенерирован fallback-сценарий: свечи есть, но подтверждение ещё формируется.",
                 "description_ru": f"{symbol} {timeframe}: нейтральная структура диапазона, ожидается подтверждение.",
                 "source_candle_count": 1,
@@ -395,11 +410,11 @@ class TradeIdeaService:
                 and idea.get("status") in ACTIVE_STATUSES
             ):
                 close_note = signal.get("reason_ru") or "Сценарий потерял подтверждение и переведён в архив."
-                idea["status"] = "archived"
-                idea["final_status"] = "invalidated"
+                idea["status"] = IDEA_STATUS_ARCHIVED
+                idea["final_status"] = IDEA_STATUS_ARCHIVED
                 idea["updated_at"] = now_iso
                 idea["closed_at"] = now_iso
-                idea["close_reason"] = "Scenario invalidated"
+                idea["close_reason"] = "Scenario archived after invalidation"
                 idea["close_explanation"] = (
                     f"Сценарий по {idea.get('symbol')} отменён: {close_note} Карточка переведена в архив и больше не обновляется."
                 )
@@ -408,7 +423,7 @@ class TradeIdeaService:
                 idea["update_summary"] = close_note
                 idea["history"] = self._append_history_event(
                     idea.get("history"),
-                    event_type="invalidated",
+                    event_type="structure_breaks",
                     note=close_note,
                     at=now_iso,
                 )
@@ -418,6 +433,7 @@ class TradeIdeaService:
                     note="Карточка зафиксирована в архиве и больше не обновляется.",
                     at=now_iso,
                 )
+                idea["updates"] = self._history_to_updates(idea["history"])
                 changed = True
         if changed:
             self.idea_store.write({"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": ideas})
@@ -459,14 +475,15 @@ class TradeIdeaService:
             target_2=self._format_price(take_profit),
             trigger=trigger,
         )
-        analysis_payload = {
-            "fundamental_ru": "Идея не гарантирует результат и должна использоваться только вместе с управлением риском.",
-            "smc_ict_ru": signal.get("description_ru") or "SMC/ICT контекст обновлён автоматически.",
-            "pattern_ru": signal.get("market_context", {}).get("patternSummaryRu") or "Паттерны не дали отдельного подтверждения.",
-            "waves_ru": "Волновая интерпретация носит вспомогательный характер и используется только как структурный сценарий.",
-            "volume_ru": "Объёмные выводы основаны только на доступных proxy/подтверждающих слоях.",
-            "liquidity_ru": signal.get("reason_ru") or "Ликвидность оценивается как дополнительный контекст сценария.",
-        }
+        analysis_payload = self._build_structured_analysis(signal=signal, bias=bias, rationale=rationale)
+        decision_payload = self._build_weighted_decision(signal=signal, analysis=analysis_payload, bias=bias)
+        entry_explanation, stop_explanation, target_explanation = self._build_level_explanations(
+            signal=signal,
+            analysis=analysis_payload,
+            entry=self._format_zone(entry_value),
+            stop_loss=self._format_price(stop_loss),
+            take_profit=self._format_price(take_profit),
+        )
         trade_plan_payload = {
             "bias": bias,
             "entry_zone": self._format_zone(entry_value),
@@ -477,6 +494,9 @@ class TradeIdeaService:
             "target_2": self._format_price(take_profit),
             "alternative_scenario_ru": "Если подтверждение исчезнет, идею следует пропустить или дождаться новой переоценки структуры.",
             "primary_scenario_ru": full_text,
+            "entry_explanation_ru": entry_explanation,
+            "stop_explanation_ru": stop_explanation,
+            "target_explanation_ru": target_explanation,
         }
         detail_brief = self._build_detail_brief(
             signal,
@@ -508,8 +528,16 @@ class TradeIdeaService:
             if is_terminal
             else existing.get("close_explanation") if existing else None
         )
-        history = self._build_history(existing=existing, status=status, now=now.isoformat(), rationale=rationale, close_explanation=close_explanation)
-        persisted_status = "archived" if is_terminal else status
+        history = self._build_history(
+            existing=existing,
+            status=status,
+            now=now.isoformat(),
+            rationale=rationale,
+            close_explanation=close_explanation,
+            signal=signal,
+        )
+        updates = self._history_to_updates(history)
+        persisted_status = IDEA_STATUS_ARCHIVED if is_terminal else status
 
         payload = {
             "idea_id": idea_id,
@@ -559,6 +587,12 @@ class TradeIdeaService:
             "supported_sections": detail_brief.get("supported_sections", []),
             "chart_image": None,
             "history": history,
+            "updates": updates,
+            "current_reasoning": decision_payload.get("explanation_ru"),
+            "decision": decision_payload,
+            "entry_explanation_ru": entry_explanation,
+            "stop_explanation_ru": stop_explanation,
+            "target_explanation_ru": target_explanation,
             "source_candle_count": signal.get("source_candle_count"),
             "pipeline_debug": signal.get("pipeline_debug") if isinstance(signal.get("pipeline_debug"), dict) else {},
             "meta": {
@@ -606,10 +640,10 @@ class TradeIdeaService:
         closed_at = idea.get("closed_at")
         created_at = idea.get("created_at")
 
-        if final_status == "tp_hit":
+        if final_status == IDEA_STATUS_TP_HIT:
             exit_price = take_profit
             result = "win"
-        elif final_status == "sl_hit":
+        elif final_status == IDEA_STATUS_SL_HIT:
             exit_price = stop_loss
             result = "loss"
         else:
@@ -617,12 +651,6 @@ class TradeIdeaService:
             result = "breakeven"
 
         pnl_percent = self._calculate_pnl_percent(direction=direction, entry=entry_price, exit_price=exit_price)
-        if final_status == "invalidated":
-            if pnl_percent is not None and pnl_percent < 0:
-                result = "loss"
-            else:
-                result = "breakeven"
-
         rr = self._calculate_rr(
             direction=direction,
             entry=entry_price,
@@ -699,7 +727,11 @@ class TradeIdeaService:
     def _status_from_signal(signal: dict, existing: dict[str, Any] | None = None) -> str:
         action = signal.get("action", "NO_TRADE")
         if action == "NO_TRADE":
-            return "watching" if existing is None else "updated"
+            if existing is None:
+                return IDEA_STATUS_CREATED
+            if str(existing.get("status")).lower() in {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING}:
+                return IDEA_STATUS_WAITING
+            return str(existing.get("status") or IDEA_STATUS_WAITING).lower()
         latest_close = TradeIdeaService._extract_latest_close(signal)
         entry = TradeIdeaService._extract_numeric(signal.get("entry"))
         stop_loss = TradeIdeaService._extract_numeric(signal.get("stop_loss"))
@@ -708,21 +740,102 @@ class TradeIdeaService:
             direction = str(existing.get("direction") or existing.get("bias") or "").lower()
             if direction == "bullish":
                 if take_profit is not None and latest_close >= take_profit:
-                    return "tp_hit"
+                    return IDEA_STATUS_TP_HIT
                 if stop_loss is not None and latest_close <= stop_loss:
-                    return "sl_hit"
+                    return IDEA_STATUS_SL_HIT
                 if entry is not None and latest_close >= entry:
-                    return "triggered"
+                    if str(existing.get("status") or "").lower() == IDEA_STATUS_TRIGGERED:
+                        return IDEA_STATUS_ACTIVE
+                    return IDEA_STATUS_TRIGGERED
             elif direction == "bearish":
                 if take_profit is not None and latest_close <= take_profit:
-                    return "tp_hit"
+                    return IDEA_STATUS_TP_HIT
                 if stop_loss is not None and latest_close >= stop_loss:
-                    return "sl_hit"
+                    return IDEA_STATUS_SL_HIT
                 if entry is not None and latest_close <= entry:
-                    return "triggered"
+                    if str(existing.get("status") or "").lower() == IDEA_STATUS_TRIGGERED:
+                        return IDEA_STATUS_ACTIVE
+                    return IDEA_STATUS_TRIGGERED
         if existing is None:
-            return "active"
-        return "updated"
+            return IDEA_STATUS_CREATED
+        current = str(existing.get("status") or "").lower()
+        if current in {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING}:
+            return IDEA_STATUS_WAITING
+        if current in {IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE}:
+            return IDEA_STATUS_ACTIVE
+        return IDEA_STATUS_WAITING
+
+    @staticmethod
+    def _build_structured_analysis(*, signal: dict[str, Any], bias: str, rationale: str) -> dict[str, Any]:
+        market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        proxy_label = "proxy" if signal.get("data_status") in {"unavailable", "delayed"} else "real"
+        return {
+            "smc": str(signal.get("smc_ru") or market_context.get("smcRu") or rationale),
+            "ict": str(signal.get("ict_ru") or market_context.get("ictRu") or "ICT-контекст подтверждает приоритет работы от ликвидностной зоны."),
+            "pattern": str(market_context.get("patternSummaryRu") or signal.get("pattern_ru") or "Паттерн встраивается в структуру и уточняет тайминг входа."),
+            "harmonic_pattern": str(signal.get("harmonic_ru") or market_context.get("harmonicRu") or "Гармонический паттерн не является главным драйвером в текущем сценарии."),
+            "volume": str(signal.get("volume_ru") or "Объём подтверждает импульс только после реакции от рабочей зоны."),
+            "cum_delta": str(signal.get("cumdelta_ru") or signal.get("cumulative_delta_ru") or "CumDelta используется как подтверждение агрессии в сторону сценария."),
+            "divergence": str(signal.get("divergence_ru") or "Дивергенция служит фильтром ложного импульса и не используется изолированно."),
+            "fundamental": str(signal.get("fundamental_ru") or f"Фундаментальный фон поддерживает {bias} смещение без прямого триггера входа."),
+            "data_label": proxy_label,
+            "fundamental_ru": str(signal.get("fundamental_ru") or f"Фундаментал поддерживает {bias} bias, но исполнение идёт только после реакции цены."),
+            "smc_ict_ru": str(signal.get("description_ru") or rationale),
+            "pattern_ru": str(market_context.get("patternSummaryRu") or signal.get("pattern_ru") or ""),
+            "waves_ru": str(signal.get("waves_ru") or ""),
+            "volume_ru": str(signal.get("volume_ru") or "Объём подтверждает импульс после касания зоны."),
+            "liquidity_ru": str(signal.get("liquidity_ru") or rationale),
+            "wyckoff_ru": str(signal.get("wyckoff_ru") or ""),
+            "divergence_ru": str(signal.get("divergence_ru") or ""),
+            "cumdelta_ru": str(signal.get("cumdelta_ru") or signal.get("cumulative_delta_ru") or ""),
+            "harmonic_ru": str(signal.get("harmonic_ru") or ""),
+        }
+
+    def _build_weighted_decision(self, *, signal: dict[str, Any], analysis: dict[str, Any], bias: str) -> dict[str, Any]:
+        scoring_weights = {
+            "smc": 0.22,
+            "ict": 0.15,
+            "pattern": 0.15,
+            "harmonic_pattern": 0.08,
+            "volume": 0.12,
+            "cum_delta": 0.1,
+            "divergence": 0.08,
+            "fundamental": 0.1,
+        }
+        default_score = float(signal.get("confidence_percent") or signal.get("probability_percent") or 55) / 100.0
+        factors = {}
+        total = 0.0
+        for key, weight in scoring_weights.items():
+            raw = signal.get(f"{key}_score")
+            try:
+                factor_score = max(0.0, min(1.0, float(raw)))
+            except (TypeError, ValueError):
+                factor_score = default_score
+            factors[key] = {"score": round(factor_score, 3), "weight": weight}
+            total += factor_score * weight
+        weighted_score = round(total * 100, 1)
+        regime = "high_conviction" if weighted_score >= 70 else "balanced" if weighted_score >= 55 else "low_conviction"
+        explanation = (
+            f"Причина → следствие: структура и ликвидность дают {bias} bias, "
+            f"а объём/дельта подтверждают продолжение. Итоговый взвешенный score {weighted_score}% ({regime})."
+        )
+        return {"weighted_score": weighted_score, "regime": regime, "factors": factors, "explanation_ru": explanation}
+
+    @staticmethod
+    def _build_level_explanations(
+        *,
+        signal: dict[str, Any],
+        analysis: dict[str, Any],
+        entry: str,
+        stop_loss: str,
+        take_profit: str,
+    ) -> tuple[str, str, str]:
+        liquidity = analysis.get("liquidity_ru") or "ликвидностного узла структуры"
+        trigger = signal.get("trigger_ru") or "реакции цены и подтверждения импульса"
+        entry_text = f"Entry {entry}: вход расположен у зоны, где ожидается захват ликвидности и {trigger}."
+        stop_text = f"SL {stop_loss}: защитный уровень вынесен за структурный экстремум, чтобы сценарий отменялся только при реальном сломе."
+        target_text = f"TP {take_profit}: цель стоит у следующего пула ликвидности; ожидаем, что импульс дотянется до этой зоны ({liquidity})."
+        return entry_text, stop_text, target_text
 
     @staticmethod
     def _extract_numeric(value: Any) -> float | None:
@@ -752,19 +865,18 @@ class TradeIdeaService:
     @staticmethod
     def _close_reason(status: str) -> str | None:
         return {
-            "tp_hit": "TP reached",
-            "sl_hit": "SL reached",
-            "invalidated": "Scenario invalidated",
+            IDEA_STATUS_TP_HIT: "TP reached",
+            IDEA_STATUS_SL_HIT: "SL reached",
         }.get(status)
 
     @staticmethod
     def _build_close_explanation(*, status: str, symbol: str, direction: str, target: str, invalidation: str) -> str:
-        if status == "tp_hit":
+        if status == IDEA_STATUS_TP_HIT:
             return (
                 f"Идея по {symbol} отработала по take profit. Цена подтвердила {direction} сценарий и дошла до целевой ликвидности {target}. "
                 "Сценарий завершён и переведён в архив."
             )
-        if status == "sl_hit":
+        if status == IDEA_STATUS_SL_HIT:
             return (
                 f"Идея по {symbol} закрыта по stop loss. После теста зоны рынок не подтвердил сценарий и нарушил структуру. "
                 "Идея переведена в архив."
@@ -785,17 +897,19 @@ class TradeIdeaService:
         now: str,
         rationale: str,
         close_explanation: str | None,
+        signal: dict[str, Any],
     ) -> list[dict[str, str]]:
         if existing is None:
             return self._append_history_event([], event_type="created", note=f"Создан сценарий: {rationale}", at=now)
 
         history = existing.get("history")
         event_map = {
-            "updated": "updated",
-            "triggered": "triggered",
-            "tp_hit": "tp_hit",
-            "sl_hit": "sl_hit",
-            "invalidated": "invalidated",
+            IDEA_STATUS_CREATED: "created",
+            IDEA_STATUS_WAITING: "waiting",
+            IDEA_STATUS_TRIGGERED: "price_enters_zone",
+            IDEA_STATUS_ACTIVE: "active",
+            IDEA_STATUS_TP_HIT: "tp_hit",
+            IDEA_STATUS_SL_HIT: "sl_hit",
         }
         event_type = event_map.get(status, "updated")
         note = close_explanation if status in TERMINAL_STATUSES and close_explanation else rationale
@@ -807,7 +921,39 @@ class TradeIdeaService:
                 note="Карточка зафиксирована в архиве и больше не обновляется.",
                 at=now,
             )
+        for event_type, note in self._detect_dynamic_events(signal, status):
+            if updated_history and updated_history[-1].get("type") == event_type:
+                continue
+            updated_history = self._append_history_event(updated_history, event_type=event_type, note=note, at=now)
         return updated_history
+
+    @staticmethod
+    def _detect_dynamic_events(signal: dict[str, Any], status: str) -> list[tuple[str, str]]:
+        events: list[tuple[str, str]] = []
+        if status == IDEA_STATUS_TRIGGERED:
+            events.append(("price_enters_zone", "Цена вошла в рабочую зону и активировала наблюдение за подтверждением."))
+        if bool(signal.get("structure_break")):
+            events.append(("structure_breaks", "Структура сломана: рынок перешёл в другую фазу, сценарий требует переоценки."))
+        if bool(signal.get("volume_spike")):
+            events.append(("volume_spike", "Обнаружен всплеск объёма: импульс усилил вероятность продолжения сценария."))
+        if bool(signal.get("divergence_appeared")):
+            events.append(("divergence_appears", "Появилась дивергенция: риск замедления импульса вырос, вход требует подтверждения."))
+        if status == IDEA_STATUS_TP_HIT:
+            events.append(("tp_hit", "Цель достигнута: ликвидность на target снята, идея завершена."))
+        if status == IDEA_STATUS_SL_HIT:
+            events.append(("sl_hit", "Стоп сработал: структура нарушена, сценарий завершён с ошибкой направления."))
+        return events
+
+    def _history_to_updates(self, history: Any) -> list[dict[str, str]]:
+        items = list(history) if isinstance(history, list) else []
+        return [
+            {
+                "timestamp": str(item.get("at") or ""),
+                "event_type": str(item.get("type") or "updated"),
+                "explanation": str(item.get("note") or "Контекст идеи обновлён."),
+            }
+            for item in items
+        ]
 
     @staticmethod
     def _setup_type(signal: dict) -> str:
@@ -1724,6 +1870,16 @@ class TradeIdeaService:
                         "short_text": short_text,
                         "short_scenario_ru": short_text,
                         "full_text": full_text,
+                        "status": str(row.get("status") or IDEA_STATUS_WAITING),
+                        "updates": row.get("updates") if isinstance(row.get("updates"), list) else self._history_to_updates(row.get("history")),
+                        "current_reasoning": str(
+                            row.get("current_reasoning")
+                            or (row.get("decision") or {}).get("explanation_ru")
+                            or row.get("reason_ru")
+                            or row.get("rationale")
+                            or summary
+                        ),
+                        "decision": row.get("decision") if isinstance(row.get("decision"), dict) else {},
                         "entry": entry,
                         "stopLoss": stop_loss,
                         "takeProfit": take_profit,
@@ -1739,6 +1895,9 @@ class TradeIdeaService:
                         "news_title": "OpenRouter AI",
                         "analysis": normalized_analysis,
                         "trade_plan": normalized_trade_plan,
+                        "entry_explanation_ru": row.get("entry_explanation_ru") or trade_plan.get("entry_explanation_ru"),
+                        "stop_explanation_ru": row.get("stop_explanation_ru") or trade_plan.get("stop_explanation_ru"),
+                        "target_explanation_ru": row.get("target_explanation_ru") or trade_plan.get("target_explanation_ru"),
                         "detail_brief": detail_brief,
                         "supported_sections": detail_brief.get("supported_sections", []),
                         "entry_value": entry_value,

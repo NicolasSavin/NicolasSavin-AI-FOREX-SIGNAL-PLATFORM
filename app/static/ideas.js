@@ -36,6 +36,8 @@ function labelClass(label) {
 function renderIdeaCard(idea) {
   const analysis = idea.analysis || {};
   const tradePlan = idea.trade_plan || {};
+  const updates = Array.isArray(idea.updates) ? idea.updates.slice(-5).reverse() : [];
+  const reasoning = idea.current_reasoning || idea.full_text || "";
 
   return `
     <article class="idea-card">
@@ -44,6 +46,7 @@ function renderIdeaCard(idea) {
           <div class="idea-instrument">${escapeHtml(idea.instrument || "MARKET")}</div>
           <h3 class="idea-title">${escapeHtml(idea.title || "AI-идея")}</h3>
           <div class="idea-news-line">Основание: ${escapeHtml(idea.news_title || "Рыночная новость")}</div>
+          <div class="idea-news-line">Статус: <strong>${escapeHtml((idea.status || "waiting").toUpperCase())}</strong></div>
         </div>
         <div class="idea-label ${labelClass(idea.label)}">${escapeHtml(idea.label || "WATCH")}</div>
       </div>
@@ -77,6 +80,27 @@ function renderIdeaCard(idea) {
           <li><strong>Цель 2:</strong> ${escapeHtml(tradePlan.target_2 || "")}</li>
           <li><strong>Альтернатива:</strong> ${escapeHtml(tradePlan.alternative_scenario_ru || "")}</li>
         </ul>
+      </section>
+
+      <section class="idea-section idea-section-plan">
+        <h4>Текущее обоснование</h4>
+        <p>${escapeHtml(reasoning)}</p>
+      </section>
+
+      <section class="idea-section idea-section-plan">
+        <h4>Лента обновлений</h4>
+        ${
+          updates.length
+            ? `<ul class="trade-plan-list">${updates
+                .map(
+                  (item) =>
+                    `<li><strong>${escapeHtml(item.event_type || "updated")}:</strong> ${escapeHtml(item.explanation || "")} <em>(${escapeHtml(
+                      formatUpdatedAt(item.timestamp),
+                    )})</em></li>`,
+                )
+                .join("")}</ul>`
+            : "<p>Пока нет событий в lifecycle.</p>"
+        }
       </section>
     </article>
   `;
