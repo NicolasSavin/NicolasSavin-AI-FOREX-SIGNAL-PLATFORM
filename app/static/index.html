@@ -456,24 +456,7 @@
     }
 
     function fallbackCandles(direction) {
-      const bullish = String(direction || "").toLowerCase() !== "bearish";
-      const base = bullish
-        ? [1.2690,1.2694,1.2692,1.2698,1.2704,1.2701,1.2707,1.2712,1.2709,1.2715,1.2719,1.2716,1.2722,1.2728,1.2724,1.2730,1.2736,1.2731,1.2738,1.2742]
-        : [1.2690,1.2686,1.2689,1.2682,1.2678,1.2681,1.2674,1.2669,1.2672,1.2666,1.2661,1.2664,1.2659,1.2653,1.2657,1.2651,1.2646,1.2649,1.2643,1.2638];
-
-      return base.map((close, i) => {
-        const prev = i === 0 ? close : base[i - 1];
-        const open = prev;
-        const high = Math.max(open, close) + 0.0005;
-        const low = Math.min(open, close) - 0.0005;
-        return {
-          time: Math.floor(Date.now() / 1000) - (base.length - i) * 3600,
-          open: Number(open.toFixed(5)),
-          high: Number(high.toFixed(5)),
-          low: Number(low.toFixed(5)),
-          close: Number(close.toFixed(5)),
-        };
-      });
+      return [];
     }
 
     function normalizeCandles(idea) {
@@ -487,10 +470,7 @@
           close: Number(c.close),
         }));
       }
-      return fallbackCandles(idea.direction || idea.bias).map(c => ({
-        ...c,
-        time: typeof c.time === "number" ? c.time * 1000 : Date.now()
-      }));
+      return [];
     }
 
     function normalizeZones(idea) {

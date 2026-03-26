@@ -35,134 +35,6 @@ let candleSeries = null;
 let currentChartPayload = null;
 let detailRequestId = 0;
 const CHART_REQUEST_TIMEOUT_MS = 5000;
-const fallbackIdeas = [
-  {
-    id: "eurusd-m15-bullish-demo",
-    symbol: "EURUSD",
-    pair: "EURUSD",
-    timeframe: "M15",
-    tf: "M15",
-    direction: "bullish",
-    bias: "bullish",
-    confidence: 72,
-    summary: "EURUSD на M15 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
-    summary_ru: "EURUSD на M15 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
-    entry: 1.0849,
-    stopLoss: 1.0832,
-    takeProfit: 1.0876,
-    context: "Восходящая структура.",
-    trigger: "Подтверждение реакции от зоны.",
-    invalidation: "Пробой локального HL.",
-    target: "Предыдущий максимум / buy-side liquidity.",
-    tags: ["Fallback", "SMC", "Liquidity", "M15", "EURUSD"],
-    is_fallback: true,
-  },
-  {
-    id: "gbpusd-h1-bearish-demo",
-    symbol: "GBPUSD",
-    pair: "GBPUSD",
-    timeframe: "H1",
-    tf: "H1",
-    direction: "bearish",
-    bias: "bearish",
-    confidence: 69,
-    summary: "GBPUSD на H1 остаётся под давлением после снятия buy-side liquidity. Базовый сценарий — sell on pullback.",
-    summary_ru: "GBPUSD на H1 остаётся под давлением после снятия buy-side liquidity. Базовый сценарий — sell on pullback.",
-    entry: 1.2715,
-    stopLoss: 1.2741,
-    takeProfit: 1.2668,
-    context: "Слабая реакция от premium-зоны.",
-    trigger: "Отбой после ретеста imbalance.",
-    invalidation: "Закрепление выше локального swing high.",
-    target: "Возврат к sell-side liquidity.",
-    tags: ["Fallback", "SMC", "Pullback", "H1", "GBPUSD"],
-    is_fallback: true,
-  },
-  {
-    id: "usdjpy-h4-neutral-demo",
-    symbol: "USDJPY",
-    pair: "USDJPY",
-    timeframe: "H4",
-    tf: "H4",
-    direction: "neutral",
-    bias: "neutral",
-    confidence: 64,
-    summary: "USDJPY консолидируется в диапазоне. Приоритет — ждать подтверждение выхода.",
-    summary_ru: "USDJPY консолидируется в диапазоне. Приоритет — ждать подтверждение выхода.",
-    entry: 149.82,
-    stopLoss: 149.21,
-    takeProfit: 150.96,
-    context: "Диапазон перед импульсом.",
-    trigger: "Подтверждённый breakout и retest.",
-    invalidation: "Возврат внутрь диапазона.",
-    target: "Ликвидность над максимумами диапазона.",
-    tags: ["Fallback", "Liquidity", "Range", "H4", "USDJPY"],
-    is_fallback: true,
-  },
-  {
-    id: "usdcad-m15-bearish-demo",
-    symbol: "USDCAD",
-    pair: "USDCAD",
-    timeframe: "M15",
-    tf: "M15",
-    direction: "bearish",
-    bias: "bearish",
-    confidence: 71,
-    summary: "USDCAD удерживает медвежий intraday-уклон. Базовый сценарий — sell continuation после отката.",
-    summary_ru: "USDCAD удерживает медвежий intraday-уклон. Базовый сценарий — sell continuation после отката.",
-    entry: 1.3484,
-    stopLoss: 1.3502,
-    takeProfit: 1.3451,
-    context: "Нисходящая структура с давлением из premium-зоны.",
-    trigger: "Слабая реакция покупателей на ретесте supply.",
-    invalidation: "Возврат выше локального lower high.",
-    target: "Ближайшая sell-side liquidity под intraday-минимумом.",
-    tags: ["Fallback", "SMC", "Liquidity", "M15", "USDCAD"],
-    is_fallback: true,
-  },
-  {
-    id: "eurgbp-h1-bullish-demo",
-    symbol: "EURGBP",
-    pair: "EURGBP",
-    timeframe: "H1",
-    tf: "H1",
-    direction: "bullish",
-    bias: "bullish",
-    confidence: 66,
-    summary: "EURGBP формирует бычье восстановление от discount-зоны. Приоритет — continuation после подтверждения.",
-    summary_ru: "EURGBP формирует бычье восстановление от discount-зоны. Приоритет — continuation после подтверждения.",
-    entry: 0.8526,
-    stopLoss: 0.8508,
-    takeProfit: 0.8563,
-    context: "Цена удерживает higher low после снятия sell-side liquidity.",
-    trigger: "Подтверждённый импульс выше локального range.",
-    invalidation: "Потеря спроса и возврат ниже demand-зоны.",
-    target: "Тест ближайшего buy-side liquidity.",
-    tags: ["Fallback", "SMC", "Continuation", "H1", "EURGBP"],
-    is_fallback: true,
-  },
-  {
-    id: "eurchf-h4-bearish-demo",
-    symbol: "EURCHF",
-    pair: "EURCHF",
-    timeframe: "H4",
-    tf: "H4",
-    direction: "bearish",
-    bias: "bearish",
-    confidence: 63,
-    summary: "EURCHF торгуется под давлением внутри медвежьего swing-сценария. Приоритет — sell on rally.",
-    summary_ru: "EURCHF торгуется под давлением внутри медвежьего swing-сценария. Приоритет — sell on rally.",
-    entry: 0.9587,
-    stopLoss: 0.9621,
-    takeProfit: 0.9528,
-    context: "Рынок сохраняет lower highs после отката в premium.",
-    trigger: "Подтверждение слабости покупателей после ретеста imbalance.",
-    invalidation: "Закрепление выше последнего swing high.",
-    target: "Возврат к sell-side liquidity и предыдущему минимуму диапазона.",
-    tags: ["Fallback", "SMC", "Swing", "H4", "EURCHF"],
-    is_fallback: true,
-  },
-];
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -308,7 +180,9 @@ function buildDetailBrief(idea) {
 
   return {
     header: {
-      market_price: entry !== "—" ? entry : "",
+      market_price: idea?.current_price != null && ["real", "delayed"].includes(String(idea?.data_status || ""))
+        ? formatLevel(idea.current_price)
+        : "",
       daily_change: "",
       market_context: normalizeWhitespace(idea?.ideaContext || idea?.context),
       bias: getDirectionRu(idea?.direction || idea?.bias),
@@ -988,10 +862,10 @@ async function load() {
     applyFilters();
     renderStats(allIdeas, data?.statistics);
   } catch (error) {
-    console.warn("Не удалось загрузить /ideas/market, включаем fallback.", error);
-    allIdeas = normalizeIdeas(fallbackIdeas);
+    console.warn("Не удалось загрузить /ideas/market, synthetic fallback отключён.", error);
+    allIdeas = [];
     populateFilters(allIdeas);
-    renderIdeas(allIdeas, "Источник идей временно недоступен — показан резервный demo-набор.");
+    renderIdeas(allIdeas, "Источник идей временно недоступен. Нет актуальных рыночных данных.");
     renderStats(allIdeas, null);
   }
 }
