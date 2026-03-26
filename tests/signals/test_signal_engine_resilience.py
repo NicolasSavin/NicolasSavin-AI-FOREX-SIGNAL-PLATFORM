@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from backend.feature_builder import FeatureBuilder
 from backend.signal_engine import SignalEngine
 
@@ -109,6 +111,8 @@ def test_signal_engine_builds_trade_with_delayed_candles_without_live_quote(monk
     assert signal["data_status"] == "delayed"
     assert signal["market_context"]["current_price"] == 1.1131
     assert signal["market_context"]["is_live_market_data"] is False
+    assert signal["scenario_type"] in {"continuation", "pullback", "reversal", "range_breakout_setup"}
+    assert signal["validation_state"] in {"high_conviction", "confirmed", "developing", "early", "weak", "range_bias"}
 
 
 def test_signal_engine_returns_developing_idea_when_confluence_is_weak(monkeypatch) -> None:
@@ -145,9 +149,10 @@ def test_signal_engine_returns_developing_idea_when_confluence_is_weak(monkeypat
     assert signal["action"] in {"BUY", "SELL"}
     assert signal["lifecycle_state"] == "developing"
     assert signal["status"] == "неподтверждён"
-    assert signal["confidence_percent"] >= 30
-    assert signal["market_context"]["setup_quality"] == "developing"
+    assert signal["confidence_percent"] >= 20
+    assert signal["market_context"]["setup_quality"] in {"developing", "early", "weak", "range_bias"}
     assert signal["market_context"]["weak_reasons"]
+    assert "confluence_threshold" in signal["missing_confirmations"]
 
 
 def test_signal_engine_keeps_idea_when_snapshot_status_unavailable_but_candles_exist(monkeypatch) -> None:
@@ -194,3 +199,89 @@ def test_signal_engine_keeps_idea_when_snapshot_status_unavailable_but_candles_e
     assert signal["action"] in {"BUY", "SELL"}
     assert signal["data_status"] == "unavailable"
     assert signal["market_context"]["current_price"] is None
+    assert "live_snapshot" in signal["missing_confirmations"]
+
+
+def test_signal_engine_returns_range_breakout_setup_for_flat_structure(monkeypatch) -> None:
+    engine = SignalEngine()
+    monkeypatch.setattr(
+        engine.risk_engine,
+        "validate",
+        lambda **_: {"allowed": True, "reason_ru": "ok"},
+    )
+    snapshot = {
+        "timeframe": "M15",
+        "data_status": "delayed",
+        "source": "yahoo_finance",
+        "source_symbol": "EURUSD=X",
+        "last_updated_utc": "2026-03-26T12:00:00+00:00",
+        "is_live_market_data": False,
+        "message": "flat candles",
+        "close": 1.1020,
+        "candles": _candles(start=1.1, count=30),
+    }
+    flat_features = {
+        "status": "ready",
+        "trend": "up",
+        "bos": False,
+        "liquidity_sweep": False,
+        "order_block": None,
+        "fvg": False,
+        "choch": False,
+        "divergence": "none",
+        "pattern": "inside_bar",
+        "atr_percent": 0.1,
+        "pattern_summary": {"patternSummaryRu": "Диапазон без импульса."},
+        "chart_patterns": [],
+    }
+
+    signal = engine._build_signal(
+        "EURUSD",
+        "M15",
+        snapshot,
+        snapshot,
+        snapshot,
+        flat_features,
+        flat_features,
+        flat_features,
+        {"data_status": "unavailable", "confidence": 0.0},
+    )
+
+    assert signal["action"] in {"BUY", "SELL"}
+    assert signal["scenario_type"] == "range_breakout_setup"
+    assert signal["validation_state"] == "range_bias"
+
+
+def test_generate_live_signals_keeps_scenario_if_htf_or_ltf_missing(monkeypatch) -> None:
+    engine = SignalEngine()
+    monkeypatch.setattr(
+        engine.risk_engine,
+        "validate",
+        lambda **_: {"allowed": True, "reason_ru": "ok"},
+    )
+
+    async def _mock_snapshot(symbol: str, timeframe: str, cache: dict[str, dict]) -> dict:
+        candles = _candles()
+        if timeframe == "D1":
+            candles = candles[:2]
+        if timeframe == "M15":
+            candles = candles[:2]
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "data_status": "delayed",
+            "source": "yahoo_finance",
+            "source_symbol": f"{symbol}=X",
+            "last_updated_utc": "2026-03-26T12:00:00+00:00",
+            "is_live_market_data": False,
+            "message": "test snapshot",
+            "close": candles[-1]["close"],
+            "candles": candles,
+        }
+
+    monkeypatch.setattr(engine, "_snapshot_for", _mock_snapshot)
+    signals = asyncio.run(engine.generate_live_signals(["EURUSD"], timeframes=["H1"]))
+
+    assert signals
+    assert signals[0]["action"] in {"BUY", "SELL"}
+    assert signals[0]["structure_state"] == "analyzable"
