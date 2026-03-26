@@ -34,6 +34,8 @@ from app.services.signal_hub import DEFAULT_PAIRS, SignalHubService
 from app.services.signal_service import SignalService
 from app.services.storage.json_storage import JsonStorage
 from app.services.trade_idea_service import TradeIdeaService
+from app.api.ideas_routes import IdeasRouteServices, build_ideas_router
+from backend.market.services.snapshot_service import MarketSnapshotService
 from backend.chat_service import ChatRequest, ChatResponse, ForexChatService
 from backend.signal_engine import SignalEngine, SUPPORTED_TIMEFRAMES
 
@@ -53,6 +55,7 @@ signal_analytics_service = SignalAnalyticsService(signal_engine=signal_engine)
 mt4_bridge_service = Mt4BridgeService()
 chart_data_service = ChartDataService()
 canonical_market_service = get_canonical_market_service()
+market_snapshot_service = MarketSnapshotService()
 trade_idea_service = TradeIdeaService(signal_engine=signal_engine, chart_data_service=chart_data_service)
 chat_service = ForexChatService()
 calendar_store = JsonStorage("signals_data/calendar.json", {"updated_at_utc": None, "events": []})
@@ -71,6 +74,10 @@ def _static_response(filename: str) -> FileResponse:
     return FileResponse(STATIC_DIR / filename)
 
 
+
+
+def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
+    return market_snapshot_service.attach_live_market_contracts(ideas)
 def _queue_ideas_refresh() -> None:
     global _ideas_refresh_task
     if _ideas_refresh_task is not None and not _ideas_refresh_task.done():
@@ -91,72 +98,17 @@ def _queue_ideas_refresh() -> None:
     _ideas_refresh_task = asyncio.create_task(_runner())
 
 
-def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
-    if not ideas:
-        return ideas
-    symbols = sorted({str(item.get("symbol") or item.get("instrument") or "").upper().strip() for item in ideas if item})
-    contracts: dict[str, dict] = {}
-    for symbol in symbols:
-        if not symbol:
-            continue
-        try:
-            contracts[symbol] = canonical_market_service.get_price_contract(symbol)
-        except Exception:
-            logger.exception("price_contract_failed symbol=%s", symbol)
-            contracts[symbol] = {
-                "symbol": symbol,
-                "data_status": "unavailable",
-                "source": "twelvedata",
-                "source_symbol": symbol,
-                "last_updated_utc": None,
-                "is_live_market_data": False,
-                "price": None,
-            }
-    enriched: list[dict] = []
-    for row in ideas:
-        symbol = str(row.get("symbol") or row.get("instrument") or "").upper().strip()
-        contract = contracts.get(symbol, {})
-        payload = dict(row)
-        row_market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
-        status = contract.get("data_status", "unavailable")
-        current_price = contract.get("price") if status in {"real", "delayed"} else None
-        source = contract.get("source")
-        source_symbol = contract.get("source_symbol")
-        last_updated_utc = contract.get("last_updated_utc")
-        is_live_market_data = bool(contract.get("is_live_market_data", False))
-
-        if status == "unavailable":
-            row_status = str(row.get("data_status") or row_market_context.get("data_status") or "").lower()
-            row_price = row_market_context.get("current_price")
-            if row_price is None:
-                row_price = row.get("current_price")
-            if row_status in {"real", "delayed"} and row_price is not None:
-                status = row_status
-                current_price = row_price
-                source = row_market_context.get("source") or row.get("source")
-                source_symbol = row_market_context.get("source_symbol") or row.get("source_symbol")
-                last_updated_utc = row_market_context.get("last_updated_utc") or row.get("last_updated_utc")
-                is_live_market_data = bool(
-                    row_market_context.get("is_live_market_data")
-                    if row_market_context.get("is_live_market_data") is not None
-                    else row.get("is_live_market_data", False)
-                )
-
-        payload["current_price"] = float(current_price) if current_price is not None else None
-        payload["data_status"] = status
-        payload["source"] = source
-        payload["source_symbol"] = source_symbol
-        payload["last_updated_utc"] = last_updated_utc
-        payload["is_live_market_data"] = is_live_market_data
-        payload["timeframe"] = str(row.get("timeframe") or "H1").upper()
-        if isinstance(payload.get("detail_brief"), dict):
-            header = dict(payload["detail_brief"].get("header") or {})
-            header["market_price"] = f"{float(current_price):.5f}".rstrip("0").rstrip(".") if current_price is not None else ""
-            if current_price is None:
-                header["market_context"] = "Нет актуальных рыночных данных."
-            payload["detail_brief"] = {**payload["detail_brief"], "header": header}
-        enriched.append(payload)
-    return enriched
+app.include_router(
+    build_ideas_router(
+        IdeasRouteServices(
+            trade_idea_service=trade_idea_service,
+            market_snapshot_service=market_snapshot_service,
+            canonical_market_service=canonical_market_service,
+            queue_ideas_refresh=lambda: _queue_ideas_refresh(),
+            attach_live_market_contracts=lambda rows: _attach_live_market_contracts(rows),
+        )
+    )
+)
 
 
 @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
@@ -244,29 +196,6 @@ async def api_signal_news(signal_id: str) -> list[NewsItemResponse]:
         signal.model_dump(mode="json", by_alias=True),
         active_signals=[item.model_dump(mode="json", by_alias=True) for item in active_payload.signals],
     )
-
-
-@app.get("/ideas/market")
-async def market_ideas():
-    _queue_ideas_refresh()
-    payload = trade_idea_service.refresh_market_ideas()
-    payload["ideas"] = _attach_live_market_contracts(payload.get("ideas") or [])
-    payload["archive"] = _attach_live_market_contracts(payload.get("archive") or [])
-    payload["market"] = [canonical_market_service.get_market_contract(symbol) for symbol in DEFAULT_PAIRS]
-    return payload
-
-
-@app.get("/api/ideas")
-async def api_ideas():
-    try:
-        _queue_ideas_refresh()
-        ideas = _attach_live_market_contracts(trade_idea_service.list_api_ideas())
-        symbols = sorted({str(item.get("symbol", "")).upper().strip() for item in ideas if item.get("symbol")})
-        market = [canonical_market_service.get_market_contract(symbol) for symbol in symbols]
-        return {"ideas": ideas, "market": market}
-    except Exception as exc:
-        logger.warning("ideas_openrouter_failed: %s", exc)
-        return {"ideas": [], "market": []}
 
 
 @app.get("/news/market", response_model=NewsListResponse)

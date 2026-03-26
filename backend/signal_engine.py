@@ -5,10 +5,11 @@ import os
 from uuid import uuid4
 
 from backend.data_provider import DataProvider
-from backend.feature_builder import FeatureBuilder
+from backend.analysis.feature_builder import FeatureBuilder
 from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
 from backend.sentiment_provider import build_sentiment_provider
+from backend.signals import build_trade_levels, default_invalidation_text, has_minimum_confluence, infer_action
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
 TIMEFRAME_STACKS = {
@@ -100,13 +101,12 @@ class SignalEngine:
             )
 
         trend_conflict = htf_features["trend"] != mtf_features["trend"]
-        confluence = [
-            mtf_features["bos"],
-            mtf_features["liquidity_sweep"],
-            bool(mtf_features["order_block"]),
-            bool(ltf_features["pattern"]),
-        ]
-        if sum(1 for c in confluence if c) < 3:
+        if not has_minimum_confluence(
+            bos=mtf_features["bos"],
+            liquidity_sweep=mtf_features["liquidity_sweep"],
+            order_block=bool(mtf_features["order_block"]),
+            ltf_pattern=bool(ltf_features["pattern"]),
+        ):
             return self._no_trade(
                 symbol,
                 timeframe,
@@ -116,18 +116,14 @@ class SignalEngine:
                 mtf_pattern_summary,
             )
 
-        action = "BUY" if mtf_features["trend"] == "up" else "SELL"
+        action = infer_action(mtf_features["trend"])
         pattern_impact = self.pattern_detector.signal_impact(action=action, summary=mtf_pattern_summary)
         price = mtf["close"]
         atr_percent = max(mtf_features.get("atr_percent", 0.2), 0.2)
-        stop_distance = price * (atr_percent / 100) * 0.8
-        take_distance = stop_distance * 1.8
-
-        stop = price - stop_distance if action == "BUY" else price + stop_distance
-        take = price + take_distance if action == "BUY" else price - take_distance
-        reward_distance = abs(take - price)
-        risk_distance = abs(price - stop)
-        rr = reward_distance / max(risk_distance, 1e-9)
+        level_plan = build_trade_levels(action=action, price=price, atr_percent=atr_percent)
+        stop = level_plan["stop"]
+        take = level_plan["take"]
+        rr = level_plan["risk_reward"]
 
         confidence = 65
         if not trend_conflict:
@@ -187,7 +183,7 @@ class SignalEngine:
                 "Есть структурное подтверждение, риск-фильтр пройден. "
                 f"Паттерн-модуль: {pattern_impact.get('patternAlignmentLabelRu', 'нейтрально')}."
             ),
-            "invalidation_ru": "Сценарий отменяется при пробое уровня Stop Loss и сломе структуры.",
+            "invalidation_ru": default_invalidation_text(),
             "progress": progress,
             "data_status": mtf["data_status"],
             "created_at_utc": signal_time,
