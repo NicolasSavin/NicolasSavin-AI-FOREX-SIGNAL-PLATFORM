@@ -40,44 +40,55 @@ class SignalEngine:
             snapshots_cache: dict[str, dict] = {}
             sentiment = self.sentiment_provider.get_snapshot(symbol)
             for timeframe in requested_timeframes:
-                stack = TIMEFRAME_STACKS[timeframe]
-                htf = await self._snapshot_for(symbol, stack["htf"], snapshots_cache)
-                mtf = await self._snapshot_for(symbol, stack["mtf"], snapshots_cache)
-                ltf = await self._snapshot_for(symbol, stack["ltf"], snapshots_cache)
-                logger.debug(
-                    "ideas_pipeline_candle_loading symbol=%s timeframe=%s candles_count_htf=%s candles_count_mtf=%s candles_count_ltf=%s",
-                    symbol,
-                    timeframe,
-                    len(htf.get("candles", [])),
-                    len(mtf.get("candles", [])),
-                    len(ltf.get("candles", [])),
-                )
+                try:
+                    stack = TIMEFRAME_STACKS[timeframe]
+                    htf = await self._snapshot_for(symbol, stack["htf"], snapshots_cache)
+                    mtf = await self._snapshot_for(symbol, stack["mtf"], snapshots_cache)
+                    ltf = await self._snapshot_for(symbol, stack["ltf"], snapshots_cache)
+                    logger.debug(
+                        "ideas_pipeline_candle_loading symbol=%s timeframe=%s candles_count_htf=%s candles_count_mtf=%s candles_count_ltf=%s",
+                        symbol,
+                        timeframe,
+                        len(htf.get("candles", [])),
+                        len(mtf.get("candles", [])),
+                        len(ltf.get("candles", [])),
+                    )
 
-                htf_features = self.feature_builder.build(htf)
-                mtf_features = self.feature_builder.build(mtf)
-                ltf_features = self.feature_builder.build(ltf)
-                logger.debug(
-                    "ideas_pipeline_feature_build symbol=%s timeframe=%s features_built_htf=%s features_built_mtf=%s features_built_ltf=%s reason_if_skipped_htf=%s reason_if_skipped_mtf=%s reason_if_skipped_ltf=%s",
-                    symbol,
-                    timeframe,
-                    htf_features.get("status") == "ready",
-                    mtf_features.get("status") == "ready",
-                    ltf_features.get("status") == "ready",
-                    None if htf_features.get("status") == "ready" else htf_features.get("status"),
-                    None if mtf_features.get("status") == "ready" else mtf_features.get("status"),
-                    None if ltf_features.get("status") == "ready" else ltf_features.get("status"),
-                )
-                signal = self._build_signal(
-                    symbol,
-                    timeframe,
-                    htf,
-                    mtf,
-                    ltf,
-                    htf_features,
-                    mtf_features,
-                    ltf_features,
-                    sentiment.model_dump(mode="json"),
-                )
+                    htf_features = self.feature_builder.build(htf)
+                    mtf_features = self.feature_builder.build(mtf)
+                    ltf_features = self.feature_builder.build(ltf)
+                    logger.debug(
+                        "ideas_pipeline_feature_build symbol=%s timeframe=%s features_built_htf=%s features_built_mtf=%s features_built_ltf=%s reason_if_skipped_htf=%s reason_if_skipped_mtf=%s reason_if_skipped_ltf=%s",
+                        symbol,
+                        timeframe,
+                        htf_features.get("status") == "ready",
+                        mtf_features.get("status") == "ready",
+                        ltf_features.get("status") == "ready",
+                        None if htf_features.get("status") == "ready" else htf_features.get("status"),
+                        None if mtf_features.get("status") == "ready" else mtf_features.get("status"),
+                        None if ltf_features.get("status") == "ready" else ltf_features.get("status"),
+                    )
+                    signal = self._build_signal(
+                        symbol,
+                        timeframe,
+                        htf,
+                        mtf,
+                        ltf,
+                        htf_features,
+                        mtf_features,
+                        ltf_features,
+                        sentiment.model_dump(mode="json"),
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "ideas_pipeline_signal_exception symbol=%s timeframe=%s reason_if_skipped=%s",
+                        symbol,
+                        timeframe,
+                        str(exc),
+                    )
+                    mtf = snapshots_cache.get(timeframe, {"candles": [], "data_status": "unavailable"})
+                    signal = self._fallback_signal(symbol=symbol, timeframe=timeframe, snapshot=mtf, features={})
+                    signal["pipeline_debug"]["reason_if_skipped"] = f"exception:{type(exc).__name__}"
                 output.append(signal)
                 debug = signal.get("pipeline_debug", {})
                 logger.debug(
@@ -85,7 +96,7 @@ class SignalEngine:
                     symbol,
                     timeframe,
                     debug.get("candles_count", len(mtf.get("candles", []))),
-                    debug.get("features_built", mtf_features.get("status") == "ready"),
+                    debug.get("features_built"),
                     debug.get("signal_created", True),
                     debug.get("reason_if_skipped"),
                 )
@@ -331,7 +342,19 @@ class SignalEngine:
     ) -> dict:
         base_price = snapshot.get("close")
         if base_price in (None, ""):
-            return self._no_trade(symbol, timeframe, snapshot, reason, chart_patterns, pattern_summary)
+            candles = snapshot.get("candles", [])
+            if candles:
+                base_price = candles[-1].get("close")
+        if base_price in (None, ""):
+            return self._fallback_signal(
+                symbol=symbol,
+                timeframe=timeframe,
+                snapshot=snapshot,
+                features=mtf_features,
+                reason=reason,
+                chart_patterns=chart_patterns,
+                pattern_summary=pattern_summary,
+            )
         price = float(base_price)
         trend_hint = htf_features.get("trend") if htf_features.get("status") == "ready" else mtf_features.get("trend")
         action = "SELL" if trend_hint == "down" else "BUY"
@@ -391,6 +414,96 @@ class SignalEngine:
                 "features_built": False,
                 "signal_created": True,
                 "reason_if_skipped": "insufficient_mtf_structure_replaced_with_weak_default",
+            },
+        }
+
+    def build_fallback_scenario(self, symbol: str, timeframe: str, features: dict) -> dict:
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "bias": "neutral",
+            "confidence": 40,
+            "scenario_type": "range",
+            "entry": None,
+            "sl": None,
+            "tp": None,
+            "data_status": "partial",
+            "validation_state": "developing",
+            "reason": "Structure exists but confirmation is weak or missing",
+            "features_used": bool(features),
+        }
+
+    def _fallback_signal(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        snapshot: dict,
+        features: dict,
+        reason: str | None = None,
+        chart_patterns: list[dict] | None = None,
+        pattern_summary: dict | None = None,
+    ) -> dict:
+        signal_time = datetime.now(timezone.utc).isoformat()
+        scenario = self.build_fallback_scenario(symbol, timeframe, features)
+        summary = pattern_summary or self.pattern_detector.detect([])["summary"]
+        impact = self.pattern_detector.signal_impact(action="NO_TRADE", summary=summary)
+        candles_count = len(snapshot.get("candles", []))
+        data_status = snapshot.get("data_status") or scenario["data_status"]
+        fallback_reason = reason or scenario["reason"]
+        return {
+            "signal_id": f"sig-{uuid4().hex[:10]}",
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "action": "NO_TRADE",
+            "entry": scenario["entry"],
+            "stop_loss": scenario["sl"],
+            "take_profit": scenario["tp"],
+            "signal_time_utc": signal_time,
+            "risk_reward": None,
+            "distance_to_target_percent": None,
+            "probability_percent": scenario["confidence"],
+            "confidence_percent": scenario["confidence"],
+            "status": "неподтверждён",
+            "lifecycle_state": "developing",
+            "description_ru": f"{symbol}: fallback-сценарий диапазона опубликован при неполной структуре.",
+            "reason_ru": fallback_reason,
+            "invalidation_ru": "Сценарий пересматривается после появления новой структуры.",
+            "progress": {
+                "current_price": snapshot.get("close"),
+                "to_take_profit_percent": None,
+                "to_stop_loss_percent": None,
+                "progress_percent": None,
+                "zone": "waiting",
+                "label_ru": "Ожидание подтверждения",
+            },
+            "data_status": data_status,
+            "created_at_utc": signal_time,
+            "idea_id": self._idea_id(symbol, timeframe, "NO_TRADE", summary),
+            "sentiment": snapshot.get("sentiment") or {},
+            "chart_patterns": chart_patterns or [],
+            "pattern_summary": summary,
+            "pattern_signal_impact": impact,
+            "source_candle_count": candles_count,
+            "scenario_type": scenario["scenario_type"],
+            "validation_state": scenario["validation_state"],
+            "structure_state": "developing" if candles_count else "insufficient",
+            "confluence_flags": {
+                "live_snapshot_available": snapshot.get("data_status") in {"real", "delayed"},
+            },
+            "missing_confirmations": ["confluence_threshold"],
+            "invalidation_reasoning": "Сценарий опубликован как fallback и требует подтверждения.",
+            "market_context": {
+                "source": snapshot.get("source"),
+                "message": snapshot.get("message"),
+                "current_price": snapshot.get("close"),
+                "signal_origin": "backend.signal_engine",
+            },
+            "pipeline_debug": {
+                "candles_count": candles_count,
+                "features_built": bool(features),
+                "signal_created": bool(candles_count),
+                "reason_if_skipped": "fallback_range_scenario",
             },
         }
 

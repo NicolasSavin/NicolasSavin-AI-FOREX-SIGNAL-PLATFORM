@@ -121,7 +121,8 @@ class TradeIdeaService:
         return legacy
 
     def build_api_ideas(self) -> list[dict[str, Any]]:
-        primary = self._normalize_for_api(self.refresh_market_ideas().get("ideas", []), source="trade_ideas")
+        primary_source = self.idea_store.read().get("ideas", [])
+        primary = self._normalize_for_api(primary_source, source="trade_ideas_store")
         self._log_api_pipeline(primary, stage="primary")
         if primary:
             return primary
@@ -130,6 +131,15 @@ class TradeIdeaService:
         self._log_api_pipeline(legacy, stage="legacy")
         if legacy:
             return legacy
+
+        logger.debug(
+            "ideas_pipeline_api_response stage=fallback_attempt candles_count=0 features_built=False signal_created=False reason_if_skipped=empty_store_try_generate"
+        )
+        generated_payload = self.refresh_market_ideas()
+        generated = self._normalize_for_api(generated_payload.get("ideas", []), source="refresh_market_ideas")
+        self._log_api_pipeline(generated, stage="refresh_market_ideas")
+        if generated:
+            return generated
 
         logger.debug("ideas_pipeline_api_response stage=empty candles_count=0 features_built=False signal_created=False reason_if_skipped=no_active_ideas")
         return []

@@ -40,6 +40,11 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
         try:
             services.queue_ideas_refresh()
             ideas = services.attach_live_market_contracts(services.trade_idea_service.list_api_ideas())
+            if not ideas:
+                generated = await services.trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
+                ideas = services.attach_live_market_contracts(
+                    services.trade_idea_service._normalize_for_api(generated.get("ideas", []), source="api_force_refresh")
+                )
             symbols = sorted({str(item.get("symbol", "")).upper().strip() for item in ideas if item.get("symbol")})
             market = [services.canonical_market_service.get_market_contract(symbol) for symbol in symbols]
             return {"ideas": ideas, "market": market}

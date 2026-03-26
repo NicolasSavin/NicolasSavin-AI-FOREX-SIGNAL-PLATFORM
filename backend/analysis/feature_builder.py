@@ -54,8 +54,36 @@ class FeatureBuilder:
             }
 
         if candle_count < 3:
-            last_close = float(candles[-1]["close"])
-            prev_close = float(candles[-2]["close"]) if candle_count > 1 else last_close
+            try:
+                last_close = float(candles[-1]["close"])
+                prev_close = float(candles[-2]["close"]) if candle_count > 1 else last_close
+                last_high = float(candles[-1]["high"])
+                last_low = float(candles[-1]["low"])
+            except (TypeError, ValueError, KeyError, IndexError):
+                logger.warning("feature_builder_partial_invalid timeframe=%s symbol=%s", snapshot.get("timeframe"), snapshot.get("symbol"))
+                return {
+                    "status": "partial",
+                    "trend": "unknown",
+                    "bos": False,
+                    "choch": False,
+                    "liquidity_sweep": False,
+                    "order_block": None,
+                    "fvg": False,
+                    "divergence": "none",
+                    "pattern": "none",
+                    "wave_context": "данные частично повреждены",
+                    "delta_percent": 0.0,
+                    "atr_percent": 0.0,
+                    "chart_patterns": pattern_analysis["patterns"],
+                    "pattern_summary": pattern_analysis["summary"],
+                    "has_bullish_pattern": False,
+                    "has_bearish_pattern": False,
+                    "pattern_confidence": 0.0,
+                    "pattern_score": 0.0,
+                    "dominant_pattern_type": None,
+                    "conflicting_pattern_detected": False,
+                    "feature_completeness": "partial",
+                }
             direction = "up" if last_close >= prev_close else "down"
             summary = pattern_analysis["summary"]
             return {
@@ -70,7 +98,7 @@ class FeatureBuilder:
                 "pattern": "inside_bar",
                 "wave_context": "нейтральная структура",
                 "delta_percent": abs(last_close - prev_close) / max(prev_close, 1e-9) * 100 if candle_count > 1 else 0.0,
-                "atr_percent": abs(float(candles[-1]["high"]) - float(candles[-1]["low"])) / max(last_close, 1e-9) * 100,
+                "atr_percent": abs(last_high - last_low) / max(last_close, 1e-9) * 100,
                 "chart_patterns": pattern_analysis["patterns"],
                 "pattern_summary": summary,
                 "has_bullish_pattern": False,
@@ -82,9 +110,35 @@ class FeatureBuilder:
                 "feature_completeness": "minimal",
             }
 
-        closes = [c["close"] for c in candles]
-        highs = [c["high"] for c in candles]
-        lows = [c["low"] for c in candles]
+        try:
+            closes = [float(c["close"]) for c in candles]
+            highs = [float(c["high"]) for c in candles]
+            lows = [float(c["low"]) for c in candles]
+        except (TypeError, ValueError, KeyError):
+            logger.warning("feature_builder_partial_invalid_series timeframe=%s symbol=%s candles=%s", snapshot.get("timeframe"), snapshot.get("symbol"), candle_count)
+            return {
+                "status": "partial",
+                "trend": "unknown",
+                "bos": False,
+                "choch": False,
+                "liquidity_sweep": False,
+                "order_block": None,
+                "fvg": False,
+                "divergence": "none",
+                "pattern": "none",
+                "wave_context": "данные частично повреждены",
+                "delta_percent": 0.0,
+                "atr_percent": 0.0,
+                "chart_patterns": pattern_analysis["patterns"],
+                "pattern_summary": pattern_analysis["summary"],
+                "has_bullish_pattern": False,
+                "has_bearish_pattern": False,
+                "pattern_confidence": 0.0,
+                "pattern_score": 0.0,
+                "dominant_pattern_type": None,
+                "conflicting_pattern_detected": False,
+                "feature_completeness": "partial",
+            }
 
         delta = closes[-1] - closes[-2]
         fast_len = min(10, candle_count)
