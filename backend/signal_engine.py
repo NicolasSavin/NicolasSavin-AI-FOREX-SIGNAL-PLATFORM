@@ -89,24 +89,29 @@ class SignalEngine:
     ) -> dict:
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
-        if mtf_features["status"] != "ready" or htf["data_status"] != "real" or ltf["data_status"] != "real":
+        if mtf_features["status"] != "ready":
             return self._no_trade(
                 symbol,
                 timeframe,
                 mtf,
-                "Недостаточно подтверждённых данных yfinance для MTF-сценария.",
+                "Недостаточно исторических свечей для структурного MTF-сценария.",
                 mtf_patterns,
                 mtf_pattern_summary,
+                allow_invalidate=False,
             )
 
-        trend_conflict = htf_features["trend"] != mtf_features["trend"]
+        htf_ready = htf_features.get("status") == "ready"
+        ltf_ready = ltf_features.get("status") == "ready"
+        trend_conflict = htf_ready and htf_features["trend"] != mtf_features["trend"]
+        ltf_pattern_confirmed = ltf_ready and ltf_features["pattern"] != "none"
         confluence = [
             mtf_features["bos"],
             mtf_features["liquidity_sweep"],
             bool(mtf_features["order_block"]),
-            bool(ltf_features["pattern"]),
+            ltf_pattern_confirmed,
         ]
-        if sum(1 for c in confluence if c) < 3:
+        required_confluence = 3 if ltf_ready else 2
+        if sum(1 for c in confluence if c) < required_confluence:
             return self._no_trade(
                 symbol,
                 timeframe,
@@ -180,7 +185,7 @@ class SignalEngine:
             "lifecycle_state": "active",
             "description_ru": (
                 f"{symbol}: {action} по структуре HTF {htf['timeframe']} → MTF {mtf['timeframe']} → LTF {ltf['timeframe']}, "
-                f"ATR {round(mtf_features.get('atr_percent', 0.0), 2)}% и подтверждённому импульсу {ltf_features['pattern']}. "
+                f"ATR {round(mtf_features.get('atr_percent', 0.0), 2)}% и подтверждённому импульсу {ltf_features['pattern'] if ltf_ready else 'history-only'}. "
                 f"Паттерны: {pattern_summary_ru}"
             ),
             "reason_ru": (
@@ -205,6 +210,8 @@ class SignalEngine:
                 "source": mtf["source"],
                 "message": mtf["message"],
                 "current_price": round(price, 6),
+                "data_status": mtf.get("data_status", "unavailable"),
+                "live_snapshot_available": mtf.get("is_live_market_data", False),
                 "mtf_candle_count": len(mtf.get("candles", [])),
                 "signal_origin": "backend.signal_engine",
                 "patternSummaryRu": pattern_summary_ru,
@@ -225,6 +232,7 @@ class SignalEngine:
         chart_patterns: list[dict] | None = None,
         pattern_summary: dict | None = None,
         pattern_impact: dict | None = None,
+        allow_invalidate: bool = True,
     ) -> dict:
         signal_time = datetime.now(timezone.utc).isoformat()
         summary = pattern_summary or self.pattern_detector.detect([])["summary"]
@@ -270,6 +278,7 @@ class SignalEngine:
                 "signal_origin": "backend.signal_engine",
                 "patternSummaryRu": summary.get("patternSummaryRu", "Явные графические паттерны не обнаружены"),
             },
+            "should_invalidate_active": bool(allow_invalidate),
         }
 
     def _sentiment_alignment(self, action: str, sentiment: dict) -> str:

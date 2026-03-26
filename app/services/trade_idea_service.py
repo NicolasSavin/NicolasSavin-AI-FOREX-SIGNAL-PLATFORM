@@ -228,6 +228,8 @@ class TradeIdeaService:
         for signal in generated:
             action = signal.get("action", "NO_TRADE")
             if action == "NO_TRADE":
+                if signal.get("should_invalidate_active", True) is False:
+                    continue
                 self._invalidate_matching(signal)
                 continue
             self.upsert_trade_idea(signal)

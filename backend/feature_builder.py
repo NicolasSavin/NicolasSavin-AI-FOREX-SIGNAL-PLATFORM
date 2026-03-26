@@ -12,9 +12,11 @@ class FeatureBuilder:
     def build(self, snapshot: dict) -> dict:
         candles = snapshot.get("candles", [])
         pattern_analysis = self.pattern_detector.detect(candles)
-        if snapshot["data_status"] != "real" or len(candles) < 20:
+        data_status = str(snapshot.get("data_status", "unavailable")).lower()
+        if len(candles) < 20:
             return {
                 "status": "insufficient",
+                "data_status": data_status,
                 "trend": "unknown",
                 "bos": False,
                 "choch": False,
@@ -57,6 +59,7 @@ class FeatureBuilder:
 
         return {
             "status": "ready",
+            "data_status": data_status,
             "trend": trend,
             "bos": closes[-1] > max(highs[-6:-1]) or closes[-1] < min(lows[-6:-1]),
             "choch": abs(delta) / max(closes[-2], 1e-9) < 0.0005,
