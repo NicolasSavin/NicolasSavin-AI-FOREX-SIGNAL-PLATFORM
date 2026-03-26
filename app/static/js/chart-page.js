@@ -232,7 +232,10 @@ function truncateText(value, limit = 92) {
 
 function buildShortText(idea) {
   const direct = normalizeWhitespace(idea?.short_text || idea?.shortText);
-  if (direct) return truncateText(direct);
+  if (direct) return direct;
+
+  const scenarioDirect = normalizeWhitespace(idea?.short_scenario_ru || idea?.shortScenarioRu);
+  if (scenarioDirect) return scenarioDirect;
 
   const base = normalizeWhitespace(idea?.summary_ru || idea?.summary || idea?.full_text || idea?.fullText);
   let compact = base.split(/(?<=[.!?])\s+/)[0] || base;
@@ -244,7 +247,7 @@ function buildShortText(idea) {
     compact = `${direction} ${compact}`;
   }
 
-  return truncateText(compact || `${direction} ждать подтверждение структуры`);
+  return truncateText(compact || `${direction} ждать подтверждение структуры`, 140);
 }
 
 function buildFullText(idea) {
