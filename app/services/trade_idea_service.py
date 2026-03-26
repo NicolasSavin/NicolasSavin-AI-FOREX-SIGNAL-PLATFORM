@@ -20,7 +20,16 @@ from backend.data_provider import DataProvider
 from backend.signal_engine import SignalEngine
 
 
-DEFAULT_IDEA_TIMEFRAMES = [tf.strip().upper() for tf in os.getenv("IDEAS_SIGNAL_TIMEFRAMES", "M15,H1").split(",") if tf.strip()]
+DEFAULT_MARKET_SYMBOLS = [
+    symbol.strip().upper()
+    for symbol in os.getenv("IDEAS_MARKET_SYMBOLS", "EURUSD,GBPUSD,USDJPY,XAUUSD").split(",")
+    if symbol.strip()
+]
+DEFAULT_IDEA_TIMEFRAMES = [
+    tf.strip().upper()
+    for tf in os.getenv("IDEAS_SIGNAL_TIMEFRAMES", "M15,H1,H4").split(",")
+    if tf.strip()
+]
 ACTIVE_STATUSES = {"watching", "active", "updated", "triggered"}
 CLOSED_STATUSES = {"tp_hit", "sl_hit", "invalidated", "archived"}
 TERMINAL_STATUSES = {"tp_hit", "sl_hit", "invalidated"}
@@ -55,12 +64,23 @@ class TradeIdeaService:
         self._refresh_in_progress = False
 
     async def generate_or_refresh(self, pairs: list[str] | None = None) -> dict[str, Any]:
-        pairs = pairs or ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "XAUUSD"]
+        pairs = pairs or self.get_market_symbols()
         existing = self.idea_store.read()
-        if self._is_recent_refresh(existing.get("updated_at_utc")):
-            logger.info("ideas_refresh_skipped reason=throttled interval_seconds=%s", self.refresh_interval_seconds)
+        existing_ideas = existing.get("ideas") if isinstance(existing.get("ideas"), list) else []
+        if existing_ideas and self._is_recent_refresh(existing.get("updated_at_utc")):
+            logger.info(
+                "ideas_refresh_skipped reason=throttled interval_seconds=%s existing_ideas_count=%s",
+                self.refresh_interval_seconds,
+                len(existing_ideas),
+            )
             return self.refresh_market_ideas()
+        logger.info(
+            "ideas_generation_started symbols_count=%s timeframes_count=%s",
+            len(pairs),
+            len(self.get_market_timeframes()),
+        )
         generated = await self.signal_engine.generate_live_signals(pairs, timeframes=DEFAULT_IDEA_TIMEFRAMES)
+        logger.info("ideas_generation_raw_signals_count=%s", len(generated))
         return self._apply_updates(generated)
 
     def needs_refresh(self) -> bool:
@@ -146,7 +166,43 @@ class TradeIdeaService:
 
     def fallback_ideas(self, *, reason: str = "unspecified") -> list[dict[str, Any]]:
         logger.warning("market_ideas_unavailable reason=%s", reason)
-        return []
+        fallback: list[dict[str, Any]] = []
+        for symbol in self.get_market_symbols():
+            for timeframe in self.get_market_timeframes():
+                fallback.append(
+                    {
+                        "id": f"{symbol.lower()}-{timeframe.lower()}-fallback",
+                        "symbol": symbol,
+                        "pair": symbol,
+                        "timeframe": timeframe,
+                        "tf": timeframe,
+                        "direction": "neutral",
+                        "bias": "neutral",
+                        "confidence": 35,
+                        "summary": f"{symbol} {timeframe}: генерация временно недоступна, ждём восстановление провайдера данных.",
+                        "summary_ru": f"{symbol} {timeframe}: генерация временно недоступна, ждём восстановление провайдера данных.",
+                        "short_text": f"{symbol} {timeframe}: генерация временно недоступна, ждём восстановление провайдера данных.",
+                        "short_scenario_ru": f"{symbol} {timeframe}: генерация временно недоступна, ждём восстановление провайдера данных.",
+                        "full_text": (
+                            f"По {symbol} на {timeframe} генерация идей временно недоступна. "
+                            f"Причина: {reason}. Данные рынка и пайплайн останутся в проверке до восстановления источника."
+                        ),
+                        "entry": None,
+                        "stopLoss": None,
+                        "takeProfit": None,
+                        "source": "fallback",
+                        "is_fallback": True,
+                        "meta": {"fallback_reason": reason},
+                    }
+                )
+        logger.info("ideas_fallback_built count=%s reason=%s", len(fallback), reason)
+        return fallback
+
+    def get_market_symbols(self) -> list[str]:
+        return list(DEFAULT_MARKET_SYMBOLS)
+
+    def get_market_timeframes(self) -> list[str]:
+        return list(DEFAULT_IDEA_TIMEFRAMES)
 
     def build_openrouter_api_ideas(self) -> list[dict[str, Any]]:
         api_key = get_openrouter_api_key()
@@ -240,6 +296,8 @@ class TradeIdeaService:
     def _apply_updates(self, generated: list[dict]) -> dict[str, Any]:
         symbols_with_candles: set[tuple[str, str]] = set()
         symbols_with_idea: set[tuple[str, str]] = set()
+        skipped_by_no_trade = 0
+        skipped_reasons: dict[str, int] = {}
         for signal in generated:
             symbol = str(signal.get("symbol", "")).upper()
             timeframe = str(signal.get("timeframe", "H1")).upper()
@@ -259,6 +317,9 @@ class TradeIdeaService:
                 action,
             )
             if action == "NO_TRADE":
+                skipped_by_no_trade += 1
+                skip_reason = str(pipeline_debug.get("reason_if_skipped") or "no_trade_signal")
+                skipped_reasons[skip_reason] = skipped_reasons.get(skip_reason, 0) + 1
                 logger.debug(
                     "ideas_pipeline_signal_generation symbol=%s timeframe=%s candles_count=%s features_built=%s signal_created=%s reason_if_skipped=%s",
                     symbol,
@@ -308,7 +369,17 @@ class TradeIdeaService:
                 fallback_signal["action"],
             )
             self.upsert_trade_idea(fallback_signal)
-        return self.refresh_market_ideas()
+        payload = self.refresh_market_ideas()
+        logger.info(
+            "ideas_pipeline_summary generated_count=%s candles_loaded_count=%s ideas_generated_count=%s ideas_filtered_count=%s final_payload_count=%s skipped_reasons=%s",
+            len(generated),
+            len(symbols_with_candles),
+            len(symbols_with_idea),
+            skipped_by_no_trade,
+            len(payload.get("ideas", [])),
+            skipped_reasons,
+        )
+        return payload
 
     def _invalidate_matching(self, signal: dict) -> None:
         store = self.idea_store.read()
