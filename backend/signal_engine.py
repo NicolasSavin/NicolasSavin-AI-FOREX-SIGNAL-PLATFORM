@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 import os
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ TIMEFRAME_STACKS = {
     "D1": {"htf": "W1", "mtf": "D1", "ltf": "H4"},
     "W1": {"htf": "W1", "mtf": "W1", "ltf": "D1"},
 }
+logger = logging.getLogger(__name__)
 
 
 class SignalEngine:
@@ -42,10 +44,26 @@ class SignalEngine:
                 htf = await self._snapshot_for(symbol, stack["htf"], snapshots_cache)
                 mtf = await self._snapshot_for(symbol, stack["mtf"], snapshots_cache)
                 ltf = await self._snapshot_for(symbol, stack["ltf"], snapshots_cache)
+                logger.debug(
+                    "ideas_pipeline_candles symbol=%s timeframe=%s htf=%s mtf=%s ltf=%s",
+                    symbol,
+                    timeframe,
+                    len(htf.get("candles", [])),
+                    len(mtf.get("candles", [])),
+                    len(ltf.get("candles", [])),
+                )
 
                 htf_features = self.feature_builder.build(htf)
                 mtf_features = self.feature_builder.build(mtf)
                 ltf_features = self.feature_builder.build(ltf)
+                logger.debug(
+                    "ideas_pipeline_features symbol=%s timeframe=%s htf=%s mtf=%s ltf=%s",
+                    symbol,
+                    timeframe,
+                    htf_features.get("status"),
+                    mtf_features.get("status"),
+                    ltf_features.get("status"),
+                )
                 output.append(
                     self._build_signal(
                         symbol,
@@ -91,6 +109,11 @@ class SignalEngine:
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
         if mtf_features["status"] != "ready" or htf_features["status"] != "ready" or ltf_features["status"] != "ready":
+            logger.debug(
+                "ideas_pipeline_skipped symbol=%s timeframe=%s reason=insufficient_features",
+                symbol,
+                timeframe,
+            )
             return self._no_trade(
                 symbol,
                 timeframe,
@@ -101,20 +124,12 @@ class SignalEngine:
             )
 
         trend_conflict = htf_features["trend"] != mtf_features["trend"]
-        if not has_minimum_confluence(
+        has_confluence = has_minimum_confluence(
             bos=mtf_features["bos"],
             liquidity_sweep=mtf_features["liquidity_sweep"],
             order_block=bool(mtf_features["order_block"]),
             ltf_pattern=bool(ltf_features["pattern"]),
-        ):
-            return self._no_trade(
-                symbol,
-                timeframe,
-                mtf,
-                "Слабый confluence структуры: сетап отклонён.",
-                mtf_patterns,
-                mtf_pattern_summary,
-            )
+        )
 
         action = infer_action(mtf_features["trend"])
         pattern_impact = self.pattern_detector.signal_impact(action=action, summary=mtf_pattern_summary)
@@ -130,8 +145,10 @@ class SignalEngine:
             confidence += 7
         if ltf_features["pattern"] == "engulfing":
             confidence += 4
+        if not has_confluence:
+            confidence -= 18
         confidence += int(pattern_impact.get("confidenceDelta", 0) or 0)
-        confidence = max(45, min(confidence, 92))
+        confidence = max(35, min(confidence, 92))
 
         risk = self.risk_engine.validate(
             rr=rr,
@@ -139,26 +156,36 @@ class SignalEngine:
             htf_conflict=trend_conflict,
             volatility_percent=mtf_features.get("atr_percent", 0.0),
         )
-
+        weak_reasons: list[str] = []
+        if not has_confluence:
+            weak_reasons.append("структура ещё развивается: confluence ниже базового порога")
+        if trend_conflict:
+            weak_reasons.append("HTF и MTF временно расходятся")
         if not risk["allowed"]:
-            return self._no_trade(
-                symbol,
-                timeframe,
-                mtf,
-                risk["reason_ru"],
-                mtf_patterns,
-                mtf_pattern_summary,
-                pattern_impact,
-            )
+            weak_reasons.append(risk["reason_ru"])
+        logger.debug(
+            "ideas_pipeline_quality symbol=%s timeframe=%s has_confluence=%s risk_allowed=%s weak_reasons=%s",
+            symbol,
+            timeframe,
+            has_confluence,
+            risk.get("allowed"),
+            weak_reasons,
+        )
 
         sentiment_alignment = self._sentiment_alignment(action, sentiment)
         sentiment_delta = self._sentiment_delta(sentiment_alignment, sentiment)
         confidence += sentiment_delta
-        confidence = max(45, min(confidence, 92))
+        confidence = max(30, min(confidence, 92))
 
+        live_data_available = mtf.get("data_status") in {"real", "delayed"}
+        current_price = round(price, 6) if live_data_available else None
         progress = self._build_progress(action, price, price, stop, take)
         signal_time = datetime.now(timezone.utc).isoformat()
         pattern_summary_ru = mtf_pattern_summary.get("patternSummaryRu") or "Явные графические паттерны не обнаружены"
+        lifecycle_state = "developing" if weak_reasons else "active"
+        status = "неподтверждён" if weak_reasons else "актуален"
+        reason_prefix = "Идея опубликована с пониженной уверенностью: " if weak_reasons else "Есть структурное подтверждение, риск-фильтр пройден. "
+        weak_reason_text = "; ".join(weak_reasons)
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -172,15 +199,16 @@ class SignalEngine:
             "distance_to_target_percent": round(abs((take - price) / price) * 100, 3),
             "probability_percent": confidence,
             "confidence_percent": confidence,
-            "status": "актуален",
-            "lifecycle_state": "active",
+            "status": status,
+            "lifecycle_state": lifecycle_state,
             "description_ru": (
                 f"{symbol}: {action} по структуре HTF {htf['timeframe']} → MTF {mtf['timeframe']} → LTF {ltf['timeframe']}, "
                 f"ATR {round(mtf_features.get('atr_percent', 0.0), 2)}% и подтверждённому импульсу {ltf_features['pattern']}. "
                 f"Паттерны: {pattern_summary_ru}"
             ),
             "reason_ru": (
-                "Есть структурное подтверждение, риск-фильтр пройден. "
+                f"{reason_prefix}"
+                f"{weak_reason_text + '. ' if weak_reason_text else ''}"
                 f"Паттерн-модуль: {pattern_impact.get('patternAlignmentLabelRu', 'нейтрально')}."
             ),
             "invalidation_ru": default_invalidation_text(),
@@ -204,7 +232,7 @@ class SignalEngine:
                 "last_updated_utc": mtf.get("last_updated_utc"),
                 "is_live_market_data": bool(mtf.get("is_live_market_data", False)),
                 "message": mtf["message"],
-                "current_price": round(price, 6),
+                "current_price": current_price,
                 "mtf_candle_count": len(mtf.get("candles", [])),
                 "signal_origin": "backend.signal_engine",
                 "patternSummaryRu": pattern_summary_ru,
@@ -213,6 +241,8 @@ class SignalEngine:
                 "patternAlignment": pattern_impact.get("patternAlignmentWithSignal", "neutral"),
                 "sentimentAlignment": sentiment_alignment,
                 "sentimentImpact": round(sentiment_delta / 100, 4),
+                "setup_quality": "developing" if weak_reasons else "confirmed",
+                "weak_reasons": weak_reasons,
             },
         }
 
