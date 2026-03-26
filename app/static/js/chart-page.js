@@ -35,6 +35,31 @@ let candleSeries = null;
 let currentChartPayload = null;
 let detailRequestId = 0;
 const CHART_REQUEST_TIMEOUT_MS = 5000;
+const DEFAULT_PAIR_OPTIONS = ["EURUSD", "GBPUSD", "USDJPY"];
+const DEFAULT_TIMEFRAME_OPTIONS = ["M15", "H1", "H4"];
+const ENABLE_MOCK_IDEAS_ON_EMPTY = new URLSearchParams(window.location.search).get("ideas_mock") === "1";
+const TEMP_MOCK_IDEAS = [
+  {
+    id: "mock-eurusd-h1-buy",
+    symbol: "EURUSD",
+    timeframe: "H1",
+    direction: "buy",
+    entry: 1.082,
+    sl: 1.0795,
+    tp: 1.0865,
+    summary: "Технический откат к поддержке, ожидается восстановление импульса вверх.",
+  },
+  {
+    id: "mock-gbpusd-m15-sell",
+    symbol: "GBPUSD",
+    timeframe: "M15",
+    direction: "sell",
+    entry: 1.266,
+    sl: 1.2682,
+    tp: 1.2624,
+    summary: "Локальный пробой структуры вниз после ретеста сопротивления.",
+  },
+];
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -316,12 +341,19 @@ function renderStats(ideas, payloadStats) {
 function populateFilters(ideas) {
   const symbols = [...new Set(ideas.map(x => x.symbol).filter(Boolean))];
   const timeframes = [...new Set(ideas.map(x => x.timeframe).filter(Boolean))];
+  const symbolOptions = symbols.length ? symbols : DEFAULT_PAIR_OPTIONS;
+  const timeframeOptions = timeframes.length ? timeframes : DEFAULT_TIMEFRAME_OPTIONS;
+  const prevSymbol = String(symbolFilter.value || "ALL").toUpperCase();
+  const prevTimeframe = String(timeframeFilter.value || "ALL").toUpperCase();
 
   symbolFilter.innerHTML = `<option value="ALL">Все пары</option>` +
-    symbols.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
+    symbolOptions.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
 
   timeframeFilter.innerHTML = `<option value="ALL">Все ТФ</option>` +
-    timeframes.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
+    timeframeOptions.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
+
+  symbolFilter.value = ["ALL", ...symbolOptions].includes(prevSymbol) ? prevSymbol : "ALL";
+  timeframeFilter.value = ["ALL", ...timeframeOptions].includes(prevTimeframe) ? prevTimeframe : "ALL";
 }
 
 function getFilteredIdeas() {
@@ -339,7 +371,7 @@ function getFilteredIdeas() {
 
 function renderIdeas(ideas, notice = "") {
   if (!ideas.length) {
-    ideasRoot.innerHTML = `<div class="empty">По выбранным фильтрам идеи не найдены.</div>`;
+    ideasRoot.innerHTML = `<div class="empty">${escapeHtml(notice || "По выбранным фильтрам идеи не найдены.")}</div>`;
     return;
   }
 
@@ -384,7 +416,11 @@ function renderIdeas(ideas, notice = "") {
 }
 
 function applyFilters() {
-  renderIdeas(getFilteredIdeas());
+  const filteredIdeas = getFilteredIdeas();
+  const emptyMessage = allIdeas.length
+    ? "По выбранным фильтрам идеи не найдены."
+    : "Идеи пока не сгенерированы.";
+  renderIdeas(filteredIdeas, emptyMessage);
 }
 
 function normalizeLevel(value) {
@@ -857,10 +893,12 @@ async function load() {
     const res = await fetch("/ideas/market", { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    allIdeas = normalizeIdeas(data);
-    if (!allIdeas.length) {
-      console.warn("Получен пустой массив идей из /api/ideas.");
-      throw new Error("ideas_empty_payload");
+    const normalizedIdeas = normalizeIdeas(data);
+    if (!normalizedIdeas.length && ENABLE_MOCK_IDEAS_ON_EMPTY) {
+      console.warn("Используем временный mock идей: активирован ideas_mock=1.");
+      allIdeas = normalizeIdeas({ ideas: TEMP_MOCK_IDEAS });
+    } else {
+      allIdeas = normalizedIdeas;
     }
     populateFilters(allIdeas);
     applyFilters();
