@@ -19,6 +19,7 @@
 - Endpoint `/ideas/market` остаётся обратносуместимым для текущего UI: старые поля сохранены, но дополнительно всегда возвращаются `idea_id`, `symbol`, `timeframe`, `status`, `sentiment`, `version`, `change_summary`.
 - Страница `/ideas` теперь сохраняет прежний layout, но разделяет short scenario в списке и desk-style full card в modal detail-view: краткая карточка остаётся компактной, а полная показывает `detail_brief`, сценарии, аналитические секции и итоговый trading plan.
 - Добавлена статистика по закрытым торговым идеям: для каждой archived-идеи автоматически считаются `result`, `entry_price`, `exit_price`, `pnl_percent`, `rr`, `duration`, а в `GET /ideas/market` возвращается агрегированный блок `statistics` (`total_trades`, `wins`, `losses`, `winrate`, `avg_rr`, `avg_pnl`, `max_win`, `max_loss`).
+- Усилен pipeline `/api/ideas`: при наличии исторических свечей теперь всегда публикуется минимум один сценарий на symbol/timeframe (включая fallback `range/developing`), убраны жёсткие блокировки по live snapshot/current_price, а debug-логирование дополнено этапами `candles_count / features_built / signal_created / reason_if_skipped`.
 
 ## Что обновлено в версии 3.7
 - Добавлен отдельный модуль графических паттернов: `backend/pattern_detector.py` и `backend/pattern_visualization.py`.
