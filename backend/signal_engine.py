@@ -36,69 +36,85 @@ class SignalEngine:
     async def generate_live_signals(self, pairs: list[str], timeframes: list[str] | None = None) -> list[dict]:
         output: list[dict] = []
         requested_timeframes = self._normalize_timeframes(timeframes)
-        for symbol in pairs:
-            snapshots_cache: dict[str, dict] = {}
-            sentiment = self.sentiment_provider.get_snapshot(symbol)
-            for timeframe in requested_timeframes:
-                try:
-                    stack = TIMEFRAME_STACKS[timeframe]
-                    htf = await self._snapshot_for(symbol, stack["htf"], snapshots_cache)
-                    mtf = await self._snapshot_for(symbol, stack["mtf"], snapshots_cache)
-                    ltf = await self._snapshot_for(symbol, stack["ltf"], snapshots_cache)
-                    logger.debug(
-                        "ideas_pipeline_candle_loading symbol=%s timeframe=%s candles_count_htf=%s candles_count_mtf=%s candles_count_ltf=%s",
-                        symbol,
-                        timeframe,
-                        len(htf.get("candles", [])),
-                        len(mtf.get("candles", [])),
-                        len(ltf.get("candles", [])),
-                    )
+        cycle_id = self.data_provider.begin_request_cycle()
+        try:
+            for symbol in pairs:
+                snapshots_cache: dict[str, dict] = {}
+                sentiment = self.sentiment_provider.get_snapshot(symbol)
+                required_timeframes = self._required_stack_timeframes(requested_timeframes)
+                for stack_timeframe in required_timeframes:
+                    snapshots_cache[stack_timeframe] = await self._snapshot_for(symbol, stack_timeframe, snapshots_cache)
+                for timeframe in requested_timeframes:
+                    try:
+                        stack = TIMEFRAME_STACKS[timeframe]
+                        htf = snapshots_cache.get(stack["htf"], {"candles": [], "data_status": "unavailable"})
+                        mtf = snapshots_cache.get(stack["mtf"], {"candles": [], "data_status": "unavailable"})
+                        ltf = snapshots_cache.get(stack["ltf"], {"candles": [], "data_status": "unavailable"})
+                        logger.debug(
+                            "ideas_pipeline_candle_loading symbol=%s timeframe=%s candles_count_htf=%s candles_count_mtf=%s candles_count_ltf=%s",
+                            symbol,
+                            timeframe,
+                            len(htf.get("candles", [])),
+                            len(mtf.get("candles", [])),
+                            len(ltf.get("candles", [])),
+                        )
 
-                    htf_features = self.feature_builder.build(htf)
-                    mtf_features = self.feature_builder.build(mtf)
-                    ltf_features = self.feature_builder.build(ltf)
+                        htf_features = self.feature_builder.build(htf)
+                        mtf_features = self.feature_builder.build(mtf)
+                        ltf_features = self.feature_builder.build(ltf)
+                        logger.debug(
+                            "ideas_pipeline_feature_build symbol=%s timeframe=%s features_built_htf=%s features_built_mtf=%s features_built_ltf=%s reason_if_skipped_htf=%s reason_if_skipped_mtf=%s reason_if_skipped_ltf=%s",
+                            symbol,
+                            timeframe,
+                            htf_features.get("status") == "ready",
+                            mtf_features.get("status") == "ready",
+                            ltf_features.get("status") == "ready",
+                            None if htf_features.get("status") == "ready" else htf_features.get("status"),
+                            None if mtf_features.get("status") == "ready" else mtf_features.get("status"),
+                            None if ltf_features.get("status") == "ready" else ltf_features.get("status"),
+                        )
+                        signal = self._build_signal(
+                            symbol,
+                            timeframe,
+                            htf,
+                            mtf,
+                            ltf,
+                            htf_features,
+                            mtf_features,
+                            ltf_features,
+                            sentiment.model_dump(mode="json"),
+                        )
+                    except Exception as exc:
+                        logger.exception(
+                            "ideas_pipeline_signal_exception symbol=%s timeframe=%s reason_if_skipped=%s",
+                            symbol,
+                            timeframe,
+                            str(exc),
+                        )
+                        mtf = snapshots_cache.get(timeframe, {"candles": [], "data_status": "unavailable"})
+                        signal = self._fallback_signal(symbol=symbol, timeframe=timeframe, snapshot=mtf, features={})
+                        signal["pipeline_debug"]["reason_if_skipped"] = f"exception:{type(exc).__name__}"
+                    output.append(signal)
+                    debug = signal.get("pipeline_debug", {})
                     logger.debug(
-                        "ideas_pipeline_feature_build symbol=%s timeframe=%s features_built_htf=%s features_built_mtf=%s features_built_ltf=%s reason_if_skipped_htf=%s reason_if_skipped_mtf=%s reason_if_skipped_ltf=%s",
+                        "ideas_pipeline_signal_generation symbol=%s timeframe=%s candles_count=%s features_built=%s signal_created=%s reason_if_skipped=%s",
                         symbol,
                         timeframe,
-                        htf_features.get("status") == "ready",
-                        mtf_features.get("status") == "ready",
-                        ltf_features.get("status") == "ready",
-                        None if htf_features.get("status") == "ready" else htf_features.get("status"),
-                        None if mtf_features.get("status") == "ready" else mtf_features.get("status"),
-                        None if ltf_features.get("status") == "ready" else ltf_features.get("status"),
+                        debug.get("candles_count", len(mtf.get("candles", []))),
+                        debug.get("features_built"),
+                        debug.get("signal_created", True),
+                        debug.get("reason_if_skipped"),
                     )
-                    signal = self._build_signal(
-                        symbol,
-                        timeframe,
-                        htf,
-                        mtf,
-                        ltf,
-                        htf_features,
-                        mtf_features,
-                        ltf_features,
-                        sentiment.model_dump(mode="json"),
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "ideas_pipeline_signal_exception symbol=%s timeframe=%s reason_if_skipped=%s",
-                        symbol,
-                        timeframe,
-                        str(exc),
-                    )
-                    mtf = snapshots_cache.get(timeframe, {"candles": [], "data_status": "unavailable"})
-                    signal = self._fallback_signal(symbol=symbol, timeframe=timeframe, snapshot=mtf, features={})
-                    signal["pipeline_debug"]["reason_if_skipped"] = f"exception:{type(exc).__name__}"
-                output.append(signal)
-                debug = signal.get("pipeline_debug", {})
-                logger.debug(
-                    "ideas_pipeline_signal_generation symbol=%s timeframe=%s candles_count=%s features_built=%s signal_created=%s reason_if_skipped=%s",
-                    symbol,
-                    timeframe,
-                    debug.get("candles_count", len(mtf.get("candles", []))),
-                    debug.get("features_built"),
-                    debug.get("signal_created", True),
-                    debug.get("reason_if_skipped"),
+        finally:
+            cycle_stats = self.data_provider.end_request_cycle(cycle_id)
+            if cycle_stats:
+                logger.info(
+                    "twelvedata_request_cycle_summary api_calls=%s cache_hits=%s cache_misses=%s symbols=%s timeframes=%s",
+                    cycle_stats.get("api_calls", 0),
+                    cycle_stats.get("cache_hits", 0),
+                    cycle_stats.get("cache_misses", 0),
+                    len(pairs),
+                    len(requested_timeframes),
                 )
         return output
 
@@ -116,6 +132,18 @@ class SignalEngine:
         if timeframe not in cache:
             cache[timeframe] = await self.data_provider.snapshot(symbol, timeframe=timeframe)
         return cache[timeframe]
+
+    @staticmethod
+    def _required_stack_timeframes(timeframes: list[str]) -> list[str]:
+        required: list[str] = []
+        for timeframe in timeframes:
+            stack = TIMEFRAME_STACKS.get(timeframe)
+            if not stack:
+                continue
+            for item in (stack["htf"], stack["mtf"], stack["ltf"]):
+                if item not in required:
+                    required.append(item)
+        return required
 
     def _build_signal(
         self,
