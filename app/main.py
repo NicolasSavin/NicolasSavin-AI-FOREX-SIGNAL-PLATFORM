@@ -116,15 +116,38 @@ def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
     for row in ideas:
         symbol = str(row.get("symbol") or row.get("instrument") or "").upper().strip()
         contract = contracts.get(symbol, {})
+        payload = dict(row)
+        row_market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
         status = contract.get("data_status", "unavailable")
         current_price = contract.get("price") if status in {"real", "delayed"} else None
-        payload = dict(row)
-        payload["current_price"] = current_price
+        source = contract.get("source")
+        source_symbol = contract.get("source_symbol")
+        last_updated_utc = contract.get("last_updated_utc")
+        is_live_market_data = bool(contract.get("is_live_market_data", False))
+
+        if status == "unavailable":
+            row_status = str(row.get("data_status") or row_market_context.get("data_status") or "").lower()
+            row_price = row_market_context.get("current_price")
+            if row_price is None:
+                row_price = row.get("current_price")
+            if row_status in {"real", "delayed"} and row_price is not None:
+                status = row_status
+                current_price = row_price
+                source = row_market_context.get("source") or row.get("source")
+                source_symbol = row_market_context.get("source_symbol") or row.get("source_symbol")
+                last_updated_utc = row_market_context.get("last_updated_utc") or row.get("last_updated_utc")
+                is_live_market_data = bool(
+                    row_market_context.get("is_live_market_data")
+                    if row_market_context.get("is_live_market_data") is not None
+                    else row.get("is_live_market_data", False)
+                )
+
+        payload["current_price"] = float(current_price) if current_price is not None else None
         payload["data_status"] = status
-        payload["source"] = contract.get("source")
-        payload["source_symbol"] = contract.get("source_symbol")
-        payload["last_updated_utc"] = contract.get("last_updated_utc")
-        payload["is_live_market_data"] = bool(contract.get("is_live_market_data", False))
+        payload["source"] = source
+        payload["source_symbol"] = source_symbol
+        payload["last_updated_utc"] = last_updated_utc
+        payload["is_live_market_data"] = is_live_market_data
         payload["timeframe"] = str(row.get("timeframe") or "H1").upper()
         if isinstance(payload.get("detail_brief"), dict):
             header = dict(payload["detail_brief"].get("header") or {})

@@ -89,12 +89,12 @@ class SignalEngine:
     ) -> dict:
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
-        if mtf_features["status"] != "ready" or htf["data_status"] != "real" or ltf["data_status"] != "real":
+        if mtf_features["status"] != "ready" or htf_features["status"] != "ready" or ltf_features["status"] != "ready":
             return self._no_trade(
                 symbol,
                 timeframe,
                 mtf,
-                "Недостаточно подтверждённых данных yfinance для MTF-сценария.",
+                "Недостаточно реальных свечных данных для построения структуры и сетапа.",
                 mtf_patterns,
                 mtf_pattern_summary,
             )
@@ -202,7 +202,11 @@ class SignalEngine:
                 "mtf_trend": mtf_features["trend"],
                 "ltf_pattern": ltf_features["pattern"],
                 "atr_percent": round(mtf_features.get("atr_percent", 0.0), 4),
+                "data_status": mtf.get("data_status", "unavailable"),
                 "source": mtf["source"],
+                "source_symbol": mtf.get("source_symbol"),
+                "last_updated_utc": mtf.get("last_updated_utc"),
+                "is_live_market_data": bool(mtf.get("is_live_market_data", False)),
                 "message": mtf["message"],
                 "current_price": round(price, 6),
                 "mtf_candle_count": len(mtf.get("candles", [])),
