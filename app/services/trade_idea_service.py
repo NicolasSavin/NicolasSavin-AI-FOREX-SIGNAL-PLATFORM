@@ -1064,6 +1064,59 @@ class TradeIdeaService:
         existing: dict[str, Any] | None,
     ) -> dict[str, Any]:
         market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        liquidity_sweep_raw = signal.get("liquidity_sweep")
+        liquidity_sweep: str
+        if isinstance(liquidity_sweep_raw, str) and liquidity_sweep_raw.strip():
+            normalized = liquidity_sweep_raw.strip().casefold()
+            if "buy" in normalized:
+                liquidity_sweep = "buy_side"
+            elif "sell" in normalized:
+                liquidity_sweep = "sell_side"
+            elif normalized in {"none", "false", "0"}:
+                liquidity_sweep = "none"
+            else:
+                liquidity_sweep = "buy_side" if direction == "bearish" else "sell_side" if direction == "bullish" else "none"
+        elif bool(liquidity_sweep_raw):
+            liquidity_sweep = "buy_side" if direction == "bearish" else "sell_side" if direction == "bullish" else "none"
+        else:
+            liquidity_sweep = "none"
+
+        structure_raw = str(signal.get("structure_state") or "").strip().casefold()
+        if "choch" in structure_raw:
+            structure_state = "CHoCH"
+        elif "bos" in structure_raw:
+            structure_state = "BOS"
+        elif structure_raw in {"continuation", "trend", "analyzable"}:
+            structure_state = "continuation"
+        else:
+            structure_state = "continuation" if direction in {"bullish", "bearish"} else "CHoCH"
+
+        zone_source = " ".join(
+            str(part or "")
+            for part in (
+                signal.get("smc_ru"),
+                signal.get("ict_ru"),
+                signal.get("pattern_ru"),
+                market_context.get("summaryRu"),
+                market_context.get("patternSummaryRu"),
+            )
+        ).casefold()
+        if any(token in zone_source for token in ("order block", "ob", "supply", "demand")):
+            key_zone = "OB"
+        elif any(token in zone_source for token in ("fvg", "imbalance", "fair value gap", "имбаланс")):
+            key_zone = "FVG"
+        else:
+            key_zone = "none"
+
+        location = "discount" if direction == "bullish" else "premium" if direction == "bearish" else "premium"
+        target_liquidity = cls._format_price(cls._extract_numeric(signal.get("take_profit")))
+        if target_liquidity == "—":
+            target_liquidity = "next_liquidity_pool"
+        invalidation_logic = str(
+            signal.get("invalidation_reasoning")
+            or signal.get("invalidation_ru")
+            or "инвалидация при сломе структуры и возврате за зону снятой ликвидности"
+        )
         return {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -1086,6 +1139,12 @@ class TradeIdeaService:
             "cumulative_delta_facts": signal.get("cumdelta_ru") or signal.get("cumulative_delta_ru"),
             "divergence_facts": signal.get("divergence_ru"),
             "fundamental_facts": signal.get("fundamental_ru"),
+            "liquidity_sweep": liquidity_sweep,
+            "structure_state": structure_state,
+            "key_zone": key_zone,
+            "location": location,
+            "target_liquidity": target_liquidity,
+            "invalidation_logic": invalidation_logic,
             "existing_idea_id": existing.get("idea_id") if existing else None,
         }
 

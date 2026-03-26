@@ -25,6 +25,15 @@ REQUIRED_FIELDS = (
     "short_text",
     "full_text",
 )
+SMC_REQUIRED_TOKENS = ("ликвидност", "sweep", "bos", "choch", "order block", "fvg")
+BANNED_PHRASES = (
+    "строится вокруг",
+    "в рамках",
+    "может привести",
+    "по текущей структуре",
+    "сценарий описан прямо",
+)
+WEAK_CAUSE_PHRASES = ("после коррекции",)
 
 
 @dataclass
@@ -133,17 +142,35 @@ class IdeaNarrativeLLMService:
             if not isinstance(value, str) or not value.strip():
                 return None
             result[field] = value.strip()
+        joined = " ".join(result.values()).casefold()
+        if any(phrase in joined for phrase in BANNED_PHRASES):
+            return None
+        if any(phrase in joined for phrase in WEAK_CAUSE_PHRASES):
+            return None
+        if not any(token in result["full_text"].casefold() for token in SMC_REQUIRED_TOKENS):
+            return None
         return result
 
     @staticmethod
     def _build_prompt(payload: dict[str, Any], *, strict: bool) -> str:
-        banned = ["строится вокруг", "в рамках сценария", "может привести"]
+        banned = list(BANNED_PHRASES)
         strict_line = "Ошибочный формат недопустим." if strict else "Формат обязателен."
         return (
             "Сформируй объяснение торговой идеи только из переданных фактов.\n"
             "Запрещено придумывать новые уровни, направление, статус или причины вне фактов.\n"
+            "Ты пишешь как SMC/ICT-трейдер: жёсткая причинно-следственная логика без общих формулировок.\n"
             f"Запрещённые фразы: {', '.join(banned)}.\n"
-            "Стиль: профессиональный трейдер, кратко, причинно-следственно, конкретно.\n"
+            "Если в фактах нет liquidity_sweep / structure_state / key_zone / location — явно напиши: "
+            "\"структурных подтверждений недостаточно\".\n"
+            "Если SMC-факты неполные, добавь: \"структурная база слабая, идея основана на вторичных факторах\".\n"
+            "Нельзя использовать формулировку \"после коррекции\"; используй только: "
+            "\"после снятия ликвидности\", \"после ложного пробоя\", \"после возврата в order block\".\n"
+            "full_text обязан идти в порядке: "
+            "[1] liquidity event, [2] structure state, [3] premium/discount location, [4] confirmation, "
+            "[5] trade logic entry/SL/TP, [6] risk/invalidation.\n"
+            "Обязательно объясни уровни: почему вход в зоне OB/FVG/ликвидности, почему SL за снятой ликвидностью "
+            "или по инвалидации структуры, почему TP на следующем пуле ликвидности/заполнении имбаланса.\n"
+            "В full_text обязательно должен встретиться минимум один термин: liquidity/ликвидность/sweep/BOS/CHoCH/order block/FVG.\n"
             "Верни только JSON с ключами: "
             + ", ".join(REQUIRED_FIELDS)
             + f". {strict_line}\n\n"
@@ -162,18 +189,31 @@ class IdeaNarrativeLLMService:
         rr = facts.get("rr")
         delta_text = json.dumps(delta or {}, ensure_ascii=False)
         short = f"{symbol} {timeframe}: {direction}, статус {status}."
+        liquidity = str(facts.get("liquidity_sweep") or "none")
+        structure = str(facts.get("structure_state") or "unknown")
+        key_zone = str(facts.get("key_zone") or "none")
+        location = str(facts.get("location") or "unknown")
+        target_liquidity = str(facts.get("target_liquidity") or tp or "не определён")
+        invalidation_logic = str(facts.get("invalidation_logic") or f"пробой уровня SL {sl}")
+        smc_missing = any(value in {"none", "unknown", ""} for value in (liquidity, structure, key_zone, location))
+        structural_warning = "структурных подтверждений недостаточно. " if smc_missing else ""
+        weak_structure_warning = "структурная база слабая, идея основана на вторичных факторах. " if smc_missing else ""
         full = (
-            f"{symbol} {timeframe}: направление {direction}, статус {status}, entry {entry}, SL {sl}, TP {tp}, RR {rr}. "
+            f"{symbol} {timeframe}: после снятия ликвидности ({liquidity}) цена показала {structure}. "
+            f"Локация {location}, рабочая зона {key_zone}. "
+            f"Подтверждение ищем по объёму и delta без конфликта со структурой. "
+            f"Вход у {entry} от {key_zone}; SL {sl} — {invalidation_logic}; TP {tp} — следующий пул ликвидности {target_liquidity}. "
+            f"{structural_warning}{weak_structure_warning}"
             f"Событие: {event_type}. Изменения: {delta_text}."
         )
         return {
             "headline": f"{symbol} {timeframe} — {direction}",
             "summary": short,
-            "cause": "Сценарий основан на подтверждённых фактах анализа без добавления новых уровней.",
+            "cause": "После снятия ликвидности и реакции в ключевой SMC-зоне сценарий строится только по подтверждённым фактам.",
             "confirmation": "Подтверждение фиксируется только при совпадении структуры, объёма и дельты с расчётным сценарием.",
             "risk": "Риск контролируется заранее рассчитанным стоп-уровнем.",
-            "invalidation": f"Инвалидация: статус меняется при нарушении уровня SL {sl}.",
-            "target_logic": f"Цель берётся из расчётного TP {tp}, без изменения со стороны текста.",
+            "invalidation": f"Инвалидация: {invalidation_logic}.",
+            "target_logic": f"Цель берётся из расчётного TP {tp} как следующий пул ликвидности ({target_liquidity}).",
             "update_explanation": f"Обновление ({event_type}) сформировано по новым фактам: {delta_text}.",
             "short_text": short,
             "full_text": full,
