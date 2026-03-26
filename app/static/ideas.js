@@ -36,6 +36,7 @@ function labelClass(label) {
 function renderIdeaCard(idea) {
   const analysis = idea.analysis || {};
   const tradePlan = idea.trade_plan || {};
+  const previewText = idea.short_text || idea.short_scenario_ru || idea.summary_ru || idea.summary || "";
 
   return `
     <article class="idea-card">
@@ -48,7 +49,7 @@ function renderIdeaCard(idea) {
         <div class="idea-label ${labelClass(idea.label)}">${escapeHtml(idea.label || "WATCH")}</div>
       </div>
 
-      <div class="idea-summary">${escapeHtml(idea.summary_ru || "")}</div>
+      <div class="idea-summary">${escapeHtml(previewText)}</div>
 
       ${
         idea.chart_image
