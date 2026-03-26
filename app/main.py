@@ -207,10 +207,7 @@ async def api_ideas():
         return {"ideas": ideas, "market": market}
     except Exception as exc:
         logger.warning("ideas_openrouter_failed: %s", exc)
-        ideas = _attach_live_market_contracts(trade_idea_service.fallback_ideas(reason="route_exception"))
-        symbols = sorted({str(item.get("symbol", "")).upper().strip() for item in ideas if item.get("symbol")})
-        market = [canonical_market_service.get_market_contract(symbol) for symbol in symbols]
-        return {"ideas": ideas, "market": market}
+        return {"ideas": [], "market": []}
 
 
 @app.get("/news/market", response_model=NewsListResponse)

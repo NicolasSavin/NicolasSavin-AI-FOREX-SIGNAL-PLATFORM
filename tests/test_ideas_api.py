@@ -102,15 +102,12 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
     assert "fundamental" in payload[0]["supported_sections"]
 
 
-def test_build_api_ideas_uses_demo_fallback_when_storage_empty(tmp_path: Path) -> None:
+def test_build_api_ideas_returns_empty_when_storage_empty(tmp_path: Path) -> None:
     service = _service(tmp_path)
 
     payload = service.build_api_ideas()
 
-    assert payload
-    assert len(payload) >= 6
-    assert all(item["is_fallback"] for item in payload)
-    assert all(item["source"] == "demo_fallback" for item in payload)
+    assert payload == []
 
 
 def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Path) -> None:
@@ -202,9 +199,7 @@ def test_build_openrouter_api_ideas_falls_back_with_blank_key(monkeypatch, tmp_p
 
     payload = service.build_openrouter_api_ideas()
 
-    assert payload
-    assert len(payload) >= 6
-    assert all(item["source"] == "openrouter_fallback" for item in payload)
+    assert payload == []
 
 
 def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path: Path) -> None:
@@ -213,10 +208,7 @@ def test_build_openrouter_api_ideas_falls_back_without_key(monkeypatch, tmp_path
 
     payload = service.build_openrouter_api_ideas()
 
-    assert payload
-    assert len(payload) >= 6
-    assert all(item["is_fallback"] for item in payload)
-    assert all(item["source"] == "openrouter_fallback" for item in payload)
+    assert payload == []
 
 
 def test_api_ideas_attaches_real_market_contract_fields(monkeypatch) -> None:
@@ -296,7 +288,7 @@ def test_api_ideas_sets_null_current_price_when_unavailable(monkeypatch) -> None
     assert row["detail_brief"]["header"]["market_price"] == ""
 
 
-def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_are_disconnected(monkeypatch, tmp_path: Path) -> None:
+def test_build_openrouter_api_ideas_drops_ideas_with_invalid_levels(monkeypatch, tmp_path: Path) -> None:
     service = _service(tmp_path)
 
     def _chart(symbol: str, timeframe: str = "H1") -> dict:
@@ -348,19 +340,7 @@ def test_build_openrouter_api_ideas_uses_market_aligned_fallback_when_ai_levels_
     monkeypatch.setattr("app.services.trade_idea_service.requests.post", lambda *args, **kwargs: _Response())
 
     payload = service.build_openrouter_api_ideas()
-    eurusd = next(item for item in payload if item["symbol"] == "EURUSD" and item["timeframe"] == "M15")
-
-    assert eurusd["levels_validated"] is False
-    assert eurusd["levels_source"] == "fallback"
-    assert eurusd["latest_close"] == 1.1568
-    assert abs(float(eurusd["entry"]) - 1.1568) < 0.0001
-    assert abs(float(eurusd["stopLoss"]) - 1.1548) < 0.0001
-    assert abs(float(eurusd["takeProfit"]) - 1.1588) < 0.0001
-    assert eurusd["source"] == "openrouter_ai"
-    assert eurusd["validation_errors"]
-    assert eurusd["meta"]["latest_close"] == 1.1568
-    assert eurusd["meta"]["levels_source"] == "fallback"
-    assert eurusd["entry_deviation_pct"] > 0.3
+    assert payload == []
 
 
 def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_path: Path) -> None:
@@ -387,15 +367,13 @@ def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_pa
     assert "trigger" in prompt
 
 
-def test_list_api_ideas_falls_back_when_ai_returns_empty(monkeypatch, tmp_path: Path) -> None:
+def test_list_api_ideas_returns_primary_storage_without_demo_fallback(monkeypatch, tmp_path: Path) -> None:
     service = _service(tmp_path)
-    monkeypatch.setattr(service, "build_openrouter_api_ideas", lambda: [])
+    monkeypatch.setattr(service, "build_api_ideas", lambda: [])
 
     payload = service.list_api_ideas()
 
-    assert payload
-    assert len(payload) >= 6
-    assert all(item["source"] == "openrouter_fallback" for item in payload)
+    assert payload == []
 
 
 def test_api_ideas_route_exists_and_returns_payload(monkeypatch) -> None:
@@ -424,3 +402,35 @@ def test_api_ideas_route_exists_and_returns_payload(monkeypatch) -> None:
     payload = response.json()
     assert payload["ideas"][0]["symbol"] == "EURUSD"
     assert payload["market"][0]["symbol"] == "EURUSD"
+
+
+def test_api_ideas_contract_keeps_market_price_null_when_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        trade_idea_service,
+        "list_api_ideas",
+        lambda: [{"id": "idea-3", "symbol": "GBPUSD", "timeframe": "H1", "detail_brief": {"header": {}}}],
+    )
+    monkeypatch.setattr(
+        canonical_market_service,
+        "get_price_contract",
+        lambda symbol: {
+            "symbol": symbol,
+            "data_status": "unavailable",
+            "source": "twelvedata",
+            "source_symbol": "GBP/USD",
+            "last_updated_utc": None,
+            "is_live_market_data": False,
+            "price": None,
+        },
+    )
+    monkeypatch.setattr(
+        canonical_market_service,
+        "get_market_contract",
+        lambda symbol: {"symbol": symbol, "data_status": "unavailable", "price": None},
+    )
+    client = TestClient(app)
+    payload = client.get("/api/ideas").json()
+    row = payload["ideas"][0]
+    assert row["current_price"] is None
+    assert row["data_status"] == "unavailable"
+    assert row["detail_brief"]["header"]["market_price"] == ""

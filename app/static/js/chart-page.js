@@ -255,7 +255,7 @@ function normalizeIdea(idea) {
     invalidation: idea?.invalidation ?? idea?.invalidation_ru ?? idea?.trade_plan?.invalidation ?? "Идея отменяется при сломе исходной структуры.",
     target: idea?.target ?? idea?.target_ru ?? idea?.trade_plan?.target_1 ?? (idea?.takeProfit || idea?.take_profit ? `Ближайшая цель: ${idea?.takeProfit || idea?.take_profit}.` : "Цель будет уточняться после появления подтверждения."),
     tags: Array.isArray(idea?.tags) ? idea.tags : [symbol, timeframe, getDirectionRu(direction)],
-    is_fallback: Boolean(idea?.is_fallback),
+    is_fallback: false,
     status: idea?.status || "active",
     final_status: idea?.final_status || null,
     update_summary: idea?.update_summary || idea?.change_summary || "",
@@ -423,8 +423,9 @@ function setTextContent(node, value, fallback = "—") {
 function renderMetricChips(detailBrief) {
   if (!detailMetrics) return;
   const header = detailBrief?.header || {};
+  const marketPrice = header.market_price || "Нет актуальных рыночных данных";
   const metrics = [
-    ["Цена", header.market_price || "—"],
+    ["Цена", marketPrice],
     ["Изм. за день", header.daily_change || "Нет данных"],
     ["Bias", header.bias || "—"],
     ["Confidence", header.confidence != null && header.confidence !== "" ? `${header.confidence}%` : "—"],
@@ -450,7 +451,6 @@ function renderAnalysisSections(detailBrief) {
     <section class="analysis-block">
       <div class="analysis-title">${escapeHtml(section.title || section.key || "Секция")}</div>
       <p class="analysis-text">${escapeHtml(section.content || "")}</p>
-      ${section.is_proxy ? '<div class="analysis-badge">proxy / derived context</div>' : ""}
     </section>
   `).join("");
 }
