@@ -1211,6 +1211,10 @@ class TradeIdeaService:
             "target_liquidity": row.get("target") or analysis.get("liquidity_ru"),
             "key_levels": [cls._extract_level(row, "entry", "entry_zone"), cls._extract_level(row, "takeProfit", "take_profit")],
             "confidence_drivers": row.get("confidence_drivers") or [pattern_summary, analysis.get("volume_ru"), analysis.get("fundamental_ru")],
+            "data_status": row.get("data_status") or market_context.get("data_status"),
+            "current_price": cls._extract_numeric_level(market_context, "current_price") or cls._extract_numeric_level(row, "current_price"),
+            "market_data_snapshot": row.get("market_data_snapshot") if isinstance(row.get("market_data_snapshot"), dict) else None,
+            "language": row.get("language") or "ru",
         }
 
     @classmethod

@@ -5,242 +5,240 @@ from typing import Any
 
 
 def generate_signal_text(signal_data: dict[str, Any]) -> str:
-    """Генерирует расширенный desk-style narrative для торговой идеи.
+    """Генерирует единый профессиональный narrative (5–8 предложений в одном абзаце)."""
 
-    Текст строится как причинно-следственная цепочка:
-    поведение цены -> smart money интерпретация -> подтверждения -> ожидаемый ход -> торговый план -> invalidation.
-    """
+    language = _resolve_language(signal_data)
+    if _market_data_unavailable(signal_data):
+        return _build_unavailable_text(signal_data, language=language)
 
     symbol = str(signal_data.get("symbol") or "Инструмент").upper()
     timeframe = str(signal_data.get("timeframe") or "H1").upper()
-    direction = _norm_direction(signal_data.get("direction") or signal_data.get("trend"))
+    direction = _norm_direction(signal_data.get("direction") or signal_data.get("trend") or signal_data.get("bias"))
+
     entry = _fmt_level(signal_data.get("entry"))
     stop_loss = _fmt_level(signal_data.get("stop_loss") or signal_data.get("stopLoss"))
     take_profit = _fmt_level(signal_data.get("take_profit") or signal_data.get("takeProfit"))
-    invalidation_level = _fmt_level(signal_data.get("invalidation_level"))
+    current_price = _fmt_level(signal_data.get("current_price") or signal_data.get("market_price"))
 
-    price_action = _extract_price_action(signal_data)
-    smart_money = _extract_smart_money(signal_data, direction=direction)
-    confluence = _extract_confluence(signal_data)
-    expected_path = _extract_expected_path(signal_data, direction=direction)
+    structure = _clean_text(signal_data.get("market_structure"))
+    trend_phase = _structure_phase(signal_data, direction=direction)
+    liquidity = _liquidity_context(signal_data, direction=direction)
+    smart_money = _smart_money_action(signal_data, direction=direction)
+    zones = _zones_context(signal_data, direction=direction, entry=entry)
+    confirmations = _confirmations(signal_data)
+    expectation = _expected_path(signal_data, direction=direction, take_profit=take_profit)
+    invalidation = _invalidation(signal_data, direction=direction, stop_loss=stop_loss)
 
-    narrative: list[str] = []
-    narrative.append(
-        f"{symbol} на {timeframe} показывает {price_action['headline']}, где ключевая реакция сформировалась в зоне {price_action['zone']}."
-    )
-    narrative.append(price_action["why"])
-    narrative.append(smart_money)
-
-    if confluence:
-        narrative.append(
-            f"Сценарий подтверждается сочетанием факторов: {confluence}, поэтому это не изолированный сигнал, а структурный confluence."
+    sentences: list[str] = []
+    if language == "en":
+        price_ref = f" with spot near {current_price}" if current_price != "—" else ""
+        structure_part = structure or trend_phase
+        sentences.append(
+            f"{symbol} on {timeframe} is trading through {structure_part}{price_ref}, with price behavior consistent with a {trend_phase} regime rather than random noise."
+        )
+        sentences.append(
+            f"Liquidity mapping shows {liquidity}, and that sweep/inducement sequence implies smart money likely {smart_money}."
+        )
+        sentences.append(
+            f"The active dealing zones are {zones}, where premium/discount positioning and supply-demand interaction define whether continuation stays valid."
+        )
+        sentences.append(
+            f"Bias confirmation comes from {confirmations}, so order flow and structure are aligned instead of conflicting."
+        )
+        sentences.append(
+            f"As long as price accepts around entry {entry} and avoids structural failure, the expected next leg is {expectation}, with TP reference at {take_profit}."
+        )
+        sentences.append(
+            f"The setup is invalidated if {invalidation}, which would shift the scenario from continuation to correction/distribution and nullify the current thesis."
+        )
+    else:
+        price_ref = f", при этом текущая цена около {current_price}" if current_price != "—" else ""
+        structure_part = structure or trend_phase
+        sentences.append(
+            f"{symbol} на {timeframe} торгуется через {structure_part}{price_ref}, и текущее поведение цены соответствует {trend_phase} фазе, а не случайной волатильности."
+        )
+        sentences.append(
+            f"Карта ликвидности показывает {liquidity}, а последовательность sweep/inducement указывает, что smart money вероятно {smart_money}."
+        )
+        sentences.append(
+            f"Рабочие зоны сфокусированы в {zones}, где позиция цены в premium/discount и взаимодействие supply/demand определяют валидность продолжения."
+        )
+        sentences.append(
+            f"Подтверждение bias формируется через {confirmations}, поэтому структура и order flow сейчас не конфликтуют между собой."
+        )
+        sentences.append(
+            f"Пока цена принимает зону входа {entry} и не ломает структуру, ожидается {expectation}, с целевым ориентиром TP {take_profit}."
+        )
+        sentences.append(
+            f"Сценарий теряет силу, если {invalidation}; в этом случае логика смещается из continuation в коррекцию/дистрибуцию и текущая идея отменяется."
         )
 
-    narrative.append(expected_path)
-
-    plan_sentence = _build_trade_plan_sentence(
-        direction=direction,
-        entry=entry,
-        stop_loss=stop_loss,
-        take_profit=take_profit,
-        target_liquidity=_clean_text(signal_data.get("target_liquidity")),
-        entry_type=_clean_text(signal_data.get("entry_type")),
-    )
-    narrative.append(plan_sentence)
-
-    invalidation = _build_invalidation_sentence(
-        signal_data,
-        stop_loss=stop_loss,
-        invalidation_level=invalidation_level,
-        direction=direction,
-    )
-    narrative.append(invalidation)
-
-    cleaned = " ".join(_sentence(i) for i in narrative if _clean_text(i))
-    return re.sub(r"\s+", " ", cleaned).strip()
+    paragraph = " ".join(_sentence(x) for x in sentences if _clean_text(x))
+    return re.sub(r"\s+", " ", paragraph).strip()
 
 
 def generate_signal_preview_text(signal_data: dict[str, Any]) -> str:
-    """Короткая, но осмысленная preview-версия для карточки."""
-
-    direction = _norm_direction(signal_data.get("direction") or signal_data.get("trend"))
+    direction = _norm_direction(signal_data.get("direction") or signal_data.get("trend") or signal_data.get("bias"))
     direction_ru = {"bullish": "Лонг", "bearish": "Шорт", "neutral": "Нейтрально"}[direction]
     entry = _fmt_level(signal_data.get("entry"))
     stop_loss = _fmt_level(signal_data.get("stop_loss") or signal_data.get("stopLoss"))
     take_profit = _fmt_level(signal_data.get("take_profit") or signal_data.get("takeProfit"))
-    signal_action = _extract_price_action(signal_data)["short"]
+    action = _structure_phase(signal_data, direction=direction)
+    return f"{direction_ru}: {action}; вход {entry}, стоп {stop_loss}, цель {take_profit}."
 
-    preview = (
-        f"{direction_ru}: {signal_action}; вход {entry}, стоп {stop_loss}, цель {take_profit}. "
-        f"Сценарий активен, пока структура не нарушена."
+
+def _market_data_unavailable(signal_data: dict[str, Any]) -> bool:
+    status = _clean_text(signal_data.get("data_status") or signal_data.get("market_data_status")).lower()
+    if status in {"unavailable", "no_data", "missing", "empty"}:
+        return True
+    snapshot = signal_data.get("market_data_snapshot")
+    if isinstance(snapshot, dict) and not snapshot:
+        return True
+    has_price = any(
+        signal_data.get(key) not in (None, "", "—")
+        for key in ("current_price", "market_price", "entry", "stop_loss", "stopLoss", "take_profit", "takeProfit")
     )
-    return re.sub(r"\s+", " ", preview).strip()
+    return not has_price
 
 
-def _extract_price_action(signal_data: dict[str, Any]) -> dict[str, str]:
-    action = _clean_text(signal_data.get("price_action") or signal_data.get("market_structure") or signal_data.get("trend"))
-    key_levels = _to_list(signal_data.get("key_levels"))
-    zone = ", ".join(key_levels[:2]) if key_levels else _fmt_level(signal_data.get("entry"))
-
-    if any(token in action.lower() for token in ("failed", "лож", "false breakout")):
-        return {
-            "headline": "ложный выход с быстрым возвратом внутрь диапазона",
-            "zone": zone,
-            "short": "после ложного выхода цена вернулась в рабочий диапазон",
-            "why": "Возврат под/над границу после выноса стопов показывает, что пробой не получил acceptance, и импульс сменился фазой переоценки ликвидности.",
-        }
-    if any(token in action.lower() for token in ("consolid", "range", "диапазон")):
-        return {
-            "headline": "сжатие в диапазоне с накоплением ликвидности по его краям",
-            "zone": zone,
-            "short": "цена сжимается в диапазоне перед расширением",
-            "why": "Внутри диапазона рынок уже протестировал обе границы, и теперь накапливается топливо для расширения в сторону, где появится подтверждённый дисбаланс.",
-        }
-
-    return {
-        "headline": "импульс с последующим ретестом ключевой зоны",
-        "zone": zone,
-        "short": "рынок сделал импульс и вернулся в зону ретеста",
-        "why": "Текущий ретест важен, потому что именно здесь решается, останется ли движение продолжением импульса или перейдёт в более глубокую коррекцию.",
-    }
+def _build_unavailable_text(signal_data: dict[str, Any], *, language: str) -> str:
+    symbol = str(signal_data.get("symbol") or "Инструмент").upper()
+    timeframe = str(signal_data.get("timeframe") or "H1").upper()
+    if language == "en":
+        return (
+            f"{symbol} on {timeframe} currently has no reliable market snapshot, so a structured trade narrative cannot be produced without fabricating levels or flow context. "
+            "Until live price, structure, and liquidity references are available, the scenario remains observational and no directional execution thesis is justified."
+        )
+    return (
+        f"По {symbol} на {timeframe} сейчас нет надёжного рыночного снимка, поэтому структурный trade narrative нельзя формировать без подмены фактов по уровням и потоку ордеров. "
+        "До появления актуальной цены, структуры и карты ликвидности сценарий остаётся нейтральным наблюдением без обоснованной directional-идеи."
+    )
 
 
-def _extract_smart_money(signal_data: dict[str, Any], *, direction: str) -> str:
-    liquidity_context = _clean_text(signal_data.get("liquidity_context"))
+def _structure_phase(signal_data: dict[str, Any], *, direction: str) -> str:
+    structure = _clean_text(signal_data.get("market_structure"))
+    hh_hl = _clean_text(signal_data.get("hh_hl_structure"))
+    if structure:
+        lower = structure.lower()
+        if any(x in lower for x in ("hh", "hl", "higher high", "higher low")):
+            return "трендовой HH/HL"
+        if any(x in lower for x in ("ll", "lh", "lower low", "lower high")):
+            return "трендовой LH/LL"
+        if any(x in lower for x in ("range", "consolid", "флет", "диапазон")):
+            return "консолидационной"
+    if hh_hl:
+        return hh_hl
+    return {"bullish": "трендовой HH/HL", "bearish": "трендовой LH/LL", "neutral": "консолидационной"}[direction]
+
+
+def _liquidity_context(signal_data: dict[str, Any], *, direction: str) -> str:
+    liquidity = _clean_text(signal_data.get("liquidity_context"))
+    target = _clean_text(signal_data.get("target_liquidity"))
     eq = _clean_text(signal_data.get("equal_highs_lows"))
     inducement = _clean_text(signal_data.get("inducement"))
-    bos = signal_data.get("bos")
-    choch = signal_data.get("choch")
-    mss = signal_data.get("mss")
-    dealing_range = _clean_text(signal_data.get("dealing_range"))
-    premium_discount = _clean_text(signal_data.get("premium_discount_state"))
-    fvg = _clean_text(signal_data.get("fvg"))
+    if liquidity or target or eq or inducement:
+        bits = [x for x in [liquidity, f"целевая ликвидность: {target}" if target else "", eq, f"inducement: {inducement}" if inducement else ""] if x]
+        return "; ".join(bits)
+    return {
+        "bullish": "снятие sell-side liquidity под локальными минимумами и концентрацию buy-side above highs",
+        "bearish": "снятие buy-side liquidity над локальными максимумами и концентрацию sell-side below lows",
+        "neutral": "двустороннюю ликвидность по границам диапазона без явного приоритета",
+    }[direction]
+
+
+def _smart_money_action(signal_data: dict[str, Any], *, direction: str) -> str:
+    bos = bool(signal_data.get("bos"))
+    choch = bool(signal_data.get("choch"))
+    mss = bool(signal_data.get("mss"))
     order_blocks = _to_list(signal_data.get("order_blocks"))
-    target_liquidity = _clean_text(signal_data.get("target_liquidity"))
+    fvg = _clean_text(signal_data.get("fvg"))
+    imbalances = _to_list(signal_data.get("imbalances"))
 
-    pieces: list[str] = []
-    if liquidity_context or eq:
-        pieces.append(f"По ликвидности рынок отработал {liquidity_context or eq}")
-    if inducement:
-        pieces.append(f"до этого был inducement ({inducement})")
-    if bos or choch or mss:
-        structure_events = ", ".join(
-            item for item in ["BOS" if bos else "", "CHoCH" if choch else "", "MSS" if mss else ""] if item
-        )
-        pieces.append(f"после чего структура дала {structure_events}")
-    if order_blocks:
-        pieces.append(f"реакция прошла от order block {order_blocks[0]}")
-    if fvg:
-        pieces.append(f"дополнительно удерживается FVG/imbalance {fvg}")
-    if dealing_range or premium_discount:
-        pieces.append(f"в рамках dealing range ({dealing_range or 'рабочий диапазон'}) цена остаётся в {premium_discount or 'релевантной части диапазона'}")
-    if target_liquidity:
-        pieces.append(f"следующая target liquidity расположена у {target_liquidity}")
+    events = ", ".join([name for name, flag in (("BOS", bos), ("CHoCH", choch), ("MSS", mss)) if flag])
+    ob_text = f"с защитой через order block {order_blocks[0]}" if order_blocks else "через реакцию в институциональной зоне"
+    imbalance_text = f"и контролирует imbalance/FVG {fvg or (imbalances[0] if imbalances else '')}" if (fvg or imbalances) else "и удерживает дисбаланс в сторону импульса"
 
-    if not pieces:
-        fallback = {
-            "bullish": "Smart money чтение остаётся бычьим: после снятия sell-side liquidity рынок удерживает спрос и сохраняет приоритет движения к внешней buy-side ликвидности.",
-            "bearish": "Smart money чтение остаётся медвежьим: после выноса buy-side liquidity цена закрепилась ниже и сохраняет приоритет движения к внешней sell-side ликвидности.",
-            "neutral": "Smart money чтение нейтральное: пока идёт балансировка между внутренней и внешней ликвидностью, приоритета без подтверждения выхода нет.",
-        }
-        return fallback[direction]
-
-    text = "; ".join(pieces)
-    return f"С точки зрения smart money это читается так: {text}."
+    if events:
+        return f"инициировал {events}, затем провёл ребаланс {ob_text} {imbalance_text}"
+    return {
+        "bullish": f"аккумулировал позицию в discount {ob_text} {imbalance_text}",
+        "bearish": f"распределил объём в premium {ob_text} {imbalance_text}",
+        "neutral": "тестирует обе стороны диапазона, собирая ликвидность до подтверждённого выхода",
+    }[direction]
 
 
-def _extract_confluence(signal_data: dict[str, Any]) -> str:
-    pieces: list[str] = []
+def _zones_context(signal_data: dict[str, Any], *, direction: str, entry: str) -> str:
+    premium_discount = _clean_text(signal_data.get("premium_discount_state"))
+    dealing_range = _clean_text(signal_data.get("dealing_range"))
+    breaker = ", ".join(_to_list(signal_data.get("breaker_blocks"))[:1])
+    mitigation = ", ".join(_to_list(signal_data.get("mitigation_zones"))[:1])
 
-    chart_patterns = _to_list(signal_data.get("chart_patterns"))
-    harmonic_patterns = _to_list(signal_data.get("harmonic_patterns"))
-    wave_context = _clean_text(signal_data.get("wave_context"))
-    volume_context = _clean_text(signal_data.get("volume_context"))
+    zone_core = premium_discount or ({"bullish": "discount-сегменте dealing range", "bearish": "premium-сегменте dealing range", "neutral": "середине dealing range"}[direction])
+    extra = ", ".join([x for x in [dealing_range, breaker, mitigation] if x])
+    if extra:
+        return f"{zone_core} ({extra}), рабочий entry {entry}"
+    return f"{zone_core}, рабочий entry {entry}"
+
+
+def _confirmations(signal_data: dict[str, Any]) -> str:
+    parts: list[str] = []
+    volume = _clean_text(signal_data.get("volume_context"))
     cdelta = _clean_text(signal_data.get("cumulative_delta"))
-    divergence_context = _clean_text(signal_data.get("divergence_context"))
-    options_context = _clean_text(signal_data.get("options_context"))
-    fundamental_context = _clean_text(signal_data.get("fundamental_context"))
+    divergence = _clean_text(signal_data.get("divergence_context"))
+    wave = _clean_text(signal_data.get("wave_context"))
+    chart = ", ".join(_to_list(signal_data.get("chart_patterns"))[:1])
+    harmonic = ", ".join(_to_list(signal_data.get("harmonic_patterns"))[:1])
+    options = _clean_text(signal_data.get("options_context"))
+    fundamental = _clean_text(signal_data.get("fundamental_context"))
     event_risk = _clean_text(signal_data.get("event_risk"))
 
-    if chart_patterns:
-        pieces.append(f"графический паттерн {chart_patterns[0]}")
-    if harmonic_patterns:
-        pieces.append(f"гармоника {harmonic_patterns[0]}")
-    if wave_context:
-        pieces.append(f"волновой контекст ({wave_context})")
-    if volume_context:
-        pieces.append(f"объёмный профиль ({volume_context})")
+    if volume:
+        parts.append(f"объёмную реакцию ({volume})")
     if cdelta:
-        pieces.append(f"cumulative delta ({cdelta})")
-    if divergence_context:
-        pieces.append(f"дивергенции ({divergence_context})")
-    if options_context:
-        pieces.append(f"опционный слой ({options_context})")
-    if fundamental_context:
-        pieces.append(f"фундаментальный фон ({fundamental_context})")
+        parts.append(f"cumulative delta ({cdelta})")
+    if divergence:
+        parts.append(f"дивергенционный фон ({divergence})")
+    if wave:
+        parts.append(f"волновую структуру ({wave})")
+    if chart:
+        parts.append(f"графический паттерн ({chart})")
+    if harmonic:
+        parts.append(f"гармоническую форму ({harmonic})")
+    if options:
+        parts.append(f"деривативный контекст ({options})")
+    if fundamental:
+        parts.append(f"макро фон ({fundamental})")
     if event_risk:
-        pieces.append(f"event risk ({event_risk})")
+        parts.append(f"event risk ({event_risk})")
 
-    return ", ".join(pieces)
-
-
-def _extract_expected_path(signal_data: dict[str, Any], *, direction: str) -> str:
-    target_liquidity = _clean_text(signal_data.get("target_liquidity"))
-    confidence_drivers = _to_list(signal_data.get("confidence_drivers"))
-    confirmation = _clean_text(signal_data.get("scenario_confirmation"))
-
-    direction_map = {
-        "bullish": "Наиболее вероятный путь — удержание ретеста и продолжение вверх",
-        "bearish": "Наиболее вероятный путь — слабый откат и продолжение вниз",
-        "neutral": "Наиболее вероятный путь — финальное сжатие и выход из диапазона после подтверждения",
-    }
-    sentence = direction_map[direction]
-    if target_liquidity:
-        sentence += f" к зоне ликвидности {target_liquidity}"
-    if confirmation:
-        sentence += f"; подтверждением будет {confirmation}"
-    elif confidence_drivers:
-        sentence += f"; подтверждением остаются {', '.join(confidence_drivers[:3])}"
-    return f"{sentence}."
+    if parts:
+        return ", ".join(parts)
+    return "структурную последовательность BOS/CHoCH, отсутствие встречного acceptance и контролируемый order-flow"
 
 
-def _build_trade_plan_sentence(
-    *,
-    direction: str,
-    entry: str,
-    stop_loss: str,
-    take_profit: str,
-    target_liquidity: str,
-    entry_type: str,
-) -> str:
-    side = {"bullish": "лонг", "bearish": "шорт", "neutral": "сделка"}[direction]
-    trigger = entry_type or "реакция цены и структурное подтверждение"
-    target_explain = target_liquidity or take_profit
-    return (
-        f"Торговый план: {side} рассматривается от {entry} по триггеру '{trigger}', "
-        f"stop loss на {stop_loss} стоит за зоной, где сценарий теряет структурную валидность, "
-        f"take profit на {take_profit} привязан к цели {target_explain} как ближайшему вероятному магниту ликвидности."
-    )
-
-
-def _build_invalidation_sentence(
-    signal_data: dict[str, Any],
-    *,
-    stop_loss: str,
-    invalidation_level: str,
-    direction: str,
-) -> str:
-    raw = _clean_text(signal_data.get("invalidation_condition") or signal_data.get("invalidation"))
-    level = invalidation_level if invalidation_level != "—" else stop_loss
-    if raw:
-        return f"Инвалидация: {raw}; технически критичный уровень — {level}."
-
-    condition = {
-        "bullish": "закрепление ниже защитной зоны и потеря спроса в discount",
-        "bearish": "закрепление выше защитной зоны и потеря предложения в premium",
-        "neutral": "ложный выход с возвратом обратно в диапазон без acceptance",
+def _expected_path(signal_data: dict[str, Any], *, direction: str, take_profit: str) -> str:
+    target = _clean_text(signal_data.get("target_liquidity")) or take_profit
+    scenario_confirmation = _clean_text(signal_data.get("scenario_confirmation"))
+    base = {
+        "bullish": f"продолжение импульса к buy-side liquidity в районе {target}",
+        "bearish": f"продолжение давления к sell-side liquidity в районе {target}",
+        "neutral": f"выход из баланса после подтверждения в сторону ликвидности {target}",
     }[direction]
-    return f"Инвалидация: {condition}; технически критичный уровень — {level}."
+    if scenario_confirmation:
+        return f"{base}; подтверждением станет {scenario_confirmation}"
+    return base
+
+
+def _invalidation(signal_data: dict[str, Any], *, direction: str, stop_loss: str) -> str:
+    raw = _clean_text(signal_data.get("invalidation") or signal_data.get("invalidation_condition"))
+    if raw:
+        return f"{raw} (критичный уровень {stop_loss})"
+    default = {
+        "bullish": f"цена закрепится ниже последнего HL и вернётся под demand/discount (уровень {stop_loss})",
+        "bearish": f"цена закрепится выше последнего LH и вернётся над supply/premium (уровень {stop_loss})",
+        "neutral": f"выход из диапазона не получит acceptance и вернётся в баланс (уровень {stop_loss})",
+    }
+    return default[direction]
 
 
 def _to_list(value: Any) -> list[str]:
@@ -249,6 +247,13 @@ def _to_list(value: Any) -> list[str]:
     if isinstance(value, str) and _clean_text(value):
         return [_clean_text(value)]
     return []
+
+
+def _resolve_language(signal_data: dict[str, Any]) -> str:
+    raw = _clean_text(signal_data.get("language") or signal_data.get("lang") or signal_data.get("locale")).lower()
+    if raw.startswith("en"):
+        return "en"
+    return "ru"
 
 
 def _norm_direction(value: Any) -> str:
