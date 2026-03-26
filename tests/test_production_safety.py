@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, trade_idea_service
+from app.services.market_service_registry import get_canonical_market_service
 from app.services.canonical_market_service import CanonicalMarketService
 from app.services.signal_hub import SignalHubService
 
@@ -88,6 +89,12 @@ def test_h4_is_derived_from_h1_without_extra_provider_calls() -> None:
     assert len([call for call in live.candles_calls if call[1] == "H4"]) == 0
 
 
+def test_canonical_market_service_is_shared_singleton() -> None:
+    first = get_canonical_market_service()
+    second = get_canonical_market_service()
+    assert first is second
+
+
 def test_signal_hub_caches_generation_to_reduce_provider_fanout() -> None:
     service = SignalHubService(signal_engine=_EngineStub(), news_service=_NewsStub())
 
@@ -97,3 +104,40 @@ def test_signal_hub_caches_generation_to_reduce_provider_fanout() -> None:
     asyncio.run(service.list_signals(pairs=["EURUSD"]))
 
     assert service.signal_engine.calls == 1
+
+
+def test_ideas_route_does_not_block_on_provider_refresh(monkeypatch) -> None:
+    calls = {"queue": 0}
+
+    def _queue() -> None:
+        calls["queue"] += 1
+
+    monkeypatch.setattr("app.main._queue_ideas_refresh", _queue)
+    monkeypatch.setattr(
+        trade_idea_service,
+        "refresh_market_ideas",
+        lambda: {"updated_at_utc": "2026-03-26T00:00:00+00:00", "ideas": [], "archive": [], "statistics": {}},
+    )
+    monkeypatch.setattr("app.main.DEFAULT_PAIRS", ["EURUSD"])
+    monkeypatch.setattr(
+        "app.main._attach_live_market_contracts",
+        lambda rows: rows,
+    )
+    monkeypatch.setattr(
+        "app.main.canonical_market_service.get_market_contract",
+        lambda symbol: {
+            "symbol": symbol,
+            "current_price": None,
+            "data_status": "unavailable",
+            "source": "twelvedata",
+            "source_symbol": symbol,
+            "timeframe": None,
+            "last_updated_utc": None,
+            "is_live_market_data": False,
+        },
+    )
+
+    client = TestClient(app)
+    response = client.get("/ideas/market")
+    assert response.status_code == 200
+    assert calls["queue"] == 1

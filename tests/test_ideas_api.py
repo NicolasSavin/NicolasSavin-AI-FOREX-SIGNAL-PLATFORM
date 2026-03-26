@@ -286,6 +286,7 @@ def test_api_ideas_sets_null_current_price_when_unavailable(monkeypatch) -> None
     assert row["current_price"] is None
     assert row["data_status"] == "unavailable"
     assert row["detail_brief"]["header"]["market_price"] == ""
+    assert row["detail_brief"]["header"]["market_context"] == "Нет актуальных рыночных данных."
 
 
 def test_build_openrouter_api_ideas_drops_ideas_with_invalid_levels(monkeypatch, tmp_path: Path) -> None:
@@ -434,3 +435,4 @@ def test_api_ideas_contract_keeps_market_price_null_when_unavailable(monkeypatch
     assert row["current_price"] is None
     assert row["data_status"] == "unavailable"
     assert row["detail_brief"]["header"]["market_price"] == ""
+    assert row["detail_brief"]["header"]["market_context"] == "Нет актуальных рыночных данных."
