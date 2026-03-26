@@ -20,6 +20,8 @@
 - Страница `/ideas` теперь сохраняет прежний layout, но разделяет short scenario в списке и desk-style full card в modal detail-view: краткая карточка остаётся компактной, а полная показывает `detail_brief`, сценарии, аналитические секции и итоговый trading plan.
 - Добавлена статистика по закрытым торговым идеям: для каждой archived-идеи автоматически считаются `result`, `entry_price`, `exit_price`, `pnl_percent`, `rr`, `duration`, а в `GET /ideas/market` возвращается агрегированный блок `statistics` (`total_trades`, `wins`, `losses`, `winrate`, `avg_rr`, `avg_pnl`, `max_win`, `max_loss`).
 - Усилен pipeline `/api/ideas`: при наличии исторических свечей теперь всегда публикуется минимум один сценарий на symbol/timeframe (включая fallback `range/developing`), убраны жёсткие блокировки по live snapshot/current_price, а debug-логирование дополнено этапами `candles_count / features_built / signal_created / reason_if_skipped`.
+- Идеи переведены в stateful lifecycle-модель: `CREATED → WAITING → TRIGGERED → ACTIVE → TP_HIT / SL_HIT → ARCHIVED`, а обновления теперь пишутся в `updates[]` с timestamp/event/explanation и не создают новые карточки, если совпадает `symbol + timeframe`.
+- Добавлен structured analysis engine (`smc`, `ict`, `pattern`, `harmonic_pattern`, `volume`, `cum_delta`, `divergence`, `fundamental`) и weighted scoring decision model с полем `decision.weighted_score` и причинно-следственным `current_reasoning`.
 
 ## Что обновлено в версии 3.7
 - Добавлен отдельный модуль графических паттернов: `backend/pattern_detector.py` и `backend/pattern_visualization.py`.
@@ -151,7 +153,7 @@
 - `symbol`
 - `timeframe`
 - `setup_type`
-- `status` (`watching`, `active`, `updated`, `triggered`, `tp_hit`, `sl_hit`, `invalidated`, `archived`)
+- `status` (`created`, `waiting`, `triggered`, `active`, `tp_hit`, `sl_hit`, `archived`)
 - `bias`
 - `confidence`
 - `entry_zone`
@@ -163,6 +165,10 @@
 - `updated_at`
 - `version`
 - `change_summary`
+- `updates[]` (`timestamp`, `event_type`, `explanation`)
+- `current_reasoning`
+- `decision` (weighted scoring + факторы confluence)
+- `entry_explanation_ru` / `stop_explanation_ru` / `target_explanation_ru`
 - `short_scenario_ru` / `short_text` — сверхкраткий сценарий для карточки списка
 - `detail_brief.header` — market price / daily change / bias / confidence / confluence
 - `detail_brief.scenarios` — primary / swing / invalidation
@@ -177,7 +183,7 @@
   - `duration`
 
 Важно:
-- идея **обновляется**, а не пересоздаётся, если совпадают `symbol`, `timeframe`, `setup_type` и lifecycle ещё активен;
+- идея **обновляется**, а не пересоздаётся, если совпадают `symbol` и `timeframe`, пока lifecycle активен;
 - при новом lifecycle создаётся новая идея с новым `idea_id`;
 - `symbol` и `timeframe` всегда остаются в ответе API;
 - текущий UI не менялся, поэтому карточки продолжают рендериться в прежнем дизайне.

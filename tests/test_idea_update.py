@@ -44,6 +44,8 @@ def test_trade_idea_updates_without_duplication(tmp_path: Path) -> None:
     assert payload["ideas"][0]["idea_id"] == idea_one["idea_id"]
     assert payload["ideas"][0]["symbol"] == "EURUSD"
     assert payload["ideas"][0]["timeframe"] == "H1"
+    assert payload["ideas"][0]["status"] in {"waiting", "triggered", "active", "created"}
+    assert isinstance(payload["ideas"][0]["updates"], list)
 
 
 def test_trade_idea_new_lifecycle_creates_new_record(tmp_path: Path) -> None:
@@ -110,4 +112,6 @@ def test_trade_idea_archives_on_tp_and_keeps_history(tmp_path: Path) -> None:
     assert payload["statistics"]["wins"] == 1
     assert payload["statistics"]["winrate"] == 100.0
     history_types = [item["type"] for item in archived["history"]]
-    assert history_types == ["created", "updated", "tp_hit", "archived"]
+    assert "tp_hit" in history_types
+    assert "archived" in history_types
+    assert any(item["event_type"] == "archived" for item in archived["updates"])
