@@ -208,8 +208,8 @@ function buildDetailBrief(idea) {
 }
 
 function normalizeIdea(idea) {
-  const symbol = String(idea?.symbol || idea?.pair || idea?.instrument || "MARKET").toUpperCase();
-  const timeframe = String(idea?.timeframe || idea?.tf || "H1").toUpperCase();
+  const symbol = String(idea?.symbol || idea?.pair || idea?.instrument || "MARKET").trim().toUpperCase();
+  const timeframe = String(idea?.timeframe || idea?.tf || "H1").trim().toUpperCase();
   const direction = String(idea?.direction || idea?.bias || "neutral").toLowerCase();
   const summary = idea?.summary_ru || idea?.summary || idea?.description_ru || idea?.rationale || "";
   const fullText = buildFullText({
@@ -276,6 +276,18 @@ function normalizeIdeas(data) {
   return [];
 }
 
+function extractFilterValue(idea, field) {
+  const raw = field === "symbol"
+    ? (idea?.symbol || idea?.pair || idea?.instrument)
+    : (idea?.timeframe || idea?.tf);
+  const value = String(raw || "").trim().toUpperCase();
+  return value || null;
+}
+
+function isMalformedFilterIdea(idea) {
+  return !extractFilterValue(idea, "symbol") || !extractFilterValue(idea, "timeframe");
+}
+
 function computeAggregateStats(ideas) {
   const archived = ideas.filter((idea) => idea.status === "archived");
   const pnlValues = archived.map((idea) => Number(idea.pnl_percent)).filter((value) => Number.isFinite(value));
@@ -314,8 +326,12 @@ function renderStats(ideas, payloadStats) {
 }
 
 function populateFilters(ideas) {
-  const symbols = [...new Set(ideas.map(x => x.symbol).filter(Boolean))];
-  const timeframes = [...new Set(ideas.map(x => x.timeframe).filter(Boolean))];
+  const validIdeas = ideas.filter((idea) => !isMalformedFilterIdea(idea));
+  const symbols = [...new Set(validIdeas.map((idea) => extractFilterValue(idea, "symbol")).filter(Boolean))];
+  const timeframes = [...new Set(validIdeas.map((idea) => extractFilterValue(idea, "timeframe")).filter(Boolean))];
+
+  console.debug("[ideas] extracted symbols count:", symbols.length);
+  console.debug("[ideas] extracted timeframes count:", timeframes.length);
 
   symbolFilter.innerHTML = `<option value="ALL">Все пары</option>` +
     symbols.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
@@ -854,12 +870,30 @@ function closeModal() {
 
 async function load() {
   try {
-    const res = await fetch("/ideas/market", { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    let data = null;
+    let lastError = null;
+    const candidateEndpoints = ["/api/ideas", "/ideas/market"];
+
+    for (const endpoint of candidateEndpoints) {
+      try {
+        const res = await fetch(endpoint, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        data = await res.json();
+        console.debug("[ideas] loaded endpoint:", endpoint);
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!data) {
+      throw lastError || new Error("ideas_fetch_failed");
+    }
+
     allIdeas = normalizeIdeas(data);
+    console.debug("[ideas] ideas count from API:", allIdeas.length);
     if (!allIdeas.length) {
-      console.warn("Получен пустой массив идей из /api/ideas.");
+      console.warn("Получен пустой массив идей из API.");
       throw new Error("ideas_empty_payload");
     }
     populateFilters(allIdeas);
