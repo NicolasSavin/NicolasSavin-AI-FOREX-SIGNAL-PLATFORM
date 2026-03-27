@@ -234,6 +234,45 @@
       width: 100%;
       height: 100%;
       display: block;
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+    }
+
+    .chart-image {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      background: #060d18;
+    }
+
+    .chart-image.open {
+      display: block;
+    }
+
+    .chart-debug {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 3;
+      display: none;
+      border: 1px solid rgba(248, 113, 113, 0.4);
+      background: rgba(37, 17, 22, 0.88);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 12px;
+      color: #fecaca;
+      line-height: 1.45;
+      white-space: pre-line;
+    }
+
+    .chart-debug.open {
+      display: block;
     }
 
     .legend {
@@ -325,7 +364,9 @@
       </div>
 
       <div class="chart-shell">
+        <img id="modal-chart-image" class="chart-image" alt="Chart image" />
         <canvas id="modal-chart" class="chart-canvas"></canvas>
+        <div id="modal-chart-debug" class="chart-debug"></div>
       </div>
 
       <div class="legend">
@@ -396,6 +437,8 @@
     const modalTitle = document.getElementById("modal-title");
     const modalSub = document.getElementById("modal-sub");
     const modalChart = document.getElementById("modal-chart");
+    const modalChartImage = document.getElementById("modal-chart-image");
+    const modalChartDebug = document.getElementById("modal-chart-debug");
 
     const modalSummary = document.getElementById("modal-summary");
     const modalTechnical = document.getElementById("modal-technical");
@@ -410,6 +453,7 @@
 
     let activeIdea = null;
     let resizeHandler = null;
+    let lastImageSrc = "";
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -503,6 +547,58 @@
       return Array.isArray(idea?.chart_data?.patterns) ? idea.chart_data.patterns : [];
     }
 
+    function getChartImageSrc(idea) {
+      const raw = getText(
+        idea?.chart_image,
+        idea?.chartImage,
+        idea?.chart_data?.chart_image,
+        idea?.chart_data?.chartImage,
+        idea?.chart_data?.image,
+        idea?.chart_data?.base_image_url,
+      );
+      return raw || "";
+    }
+
+    function normalizeOverlayPayload(idea) {
+      const chartData = idea?.chart_data || {};
+      const overlays = chartData.overlays || {};
+      const zones = Array.isArray(chartData.zones)
+        ? chartData.zones
+        : Array.isArray(overlays.zones)
+          ? overlays.zones
+          : [];
+      const levels = Array.isArray(chartData.levels)
+        ? chartData.levels
+        : Array.isArray(overlays.levels)
+          ? overlays.levels
+          : [];
+      const arrows = Array.isArray(chartData.arrows)
+        ? chartData.arrows
+        : Array.isArray(overlays.arrows)
+          ? overlays.arrows
+          : [];
+      const labels = Array.isArray(chartData.labels)
+        ? chartData.labels
+        : Array.isArray(overlays.labels)
+          ? overlays.labels
+          : [];
+      const annotations = Array.isArray(chartData.annotations)
+        ? chartData.annotations
+        : [];
+      return { zones, levels, arrows, labels, annotations };
+    }
+
+    function setModalChartDebug(message, details = "") {
+      if (!modalChartDebug) return;
+      if (!message) {
+        modalChartDebug.classList.remove("open");
+        modalChartDebug.textContent = "";
+        return;
+      }
+      modalChartDebug.classList.add("open");
+      modalChartDebug.textContent = `${message}${details ? `\n${details}` : ""}`;
+    }
+
     function zoneStyle(type) {
       const raw = String(type || "").toLowerCase();
       if (["bullish_ob", "demand", "buy_zone"].includes(raw)) {
@@ -577,6 +673,83 @@
       ctx.restore();
     }
 
+    function renderImageOverlays(ctx, width, height, idea, candles, compact = false) {
+      const overlayPayload = normalizeOverlayPayload(idea);
+      const zones = overlayPayload.zones;
+      const levels = overlayPayload.levels;
+      const arrows = overlayPayload.arrows;
+      const labels = overlayPayload.labels;
+      const annotations = overlayPayload.annotations;
+
+      const hasCandles = candles.length > 0;
+      const priceMin = hasCandles ? Math.min(...candles.map(c => c.low)) : 0;
+      const priceMax = hasCandles ? Math.max(...candles.map(c => c.high)) : 1;
+      const minPrice = priceMin - (priceMax - priceMin || 1) * 0.12;
+      const maxPrice = priceMax + (priceMax - priceMin || 1) * 0.12;
+
+      const xForIndex = (index) => {
+        if (!hasCandles) return null;
+        if (candles.length === 1) return width / 2;
+        return (Math.max(0, Math.min(candles.length - 1, Number(index))) / (candles.length - 1)) * width;
+      };
+      const yForPrice = (price) => {
+        if (!hasCandles) return null;
+        return ((maxPrice - Number(price)) / (maxPrice - minPrice || 1)) * height;
+      };
+      const xValue = (value) => (value == null ? null : Number(value) <= 1 ? Number(value) * width : Number(value));
+      const yValue = (value) => (value == null ? null : Number(value) <= 1 ? Number(value) * height : Number(value));
+
+      zones.forEach((zone) => {
+        const x1 = xValue(zone.x1 ?? zone.left ?? zone.start_x ?? xForIndex(zone.startIndex ?? zone.from_index ?? 0));
+        const x2 = xValue(zone.x2 ?? zone.right ?? zone.end_x ?? xForIndex(zone.endIndex ?? zone.to_index ?? candles.length - 1));
+        const y1 = yValue(zone.y1 ?? zone.top ?? yForPrice(zone.to ?? zone.priceTo));
+        const y2 = yValue(zone.y2 ?? zone.bottom ?? yForPrice(zone.from ?? zone.priceFrom));
+        if ([x1, x2, y1, y2].some(v => !Number.isFinite(v))) return;
+        const style = zoneStyle(zone.type);
+        ctx.save();
+        ctx.fillStyle = style.fill;
+        ctx.strokeStyle = style.stroke;
+        ctx.lineWidth = 2;
+        drawRoundRect(ctx, Math.min(x1, x2), Math.min(y1, y2), Math.max(12, Math.abs(x2 - x1)), Math.max(12, Math.abs(y2 - y1)), 10);
+        ctx.fill();
+        ctx.stroke();
+        if (!compact) drawLabel(ctx, Math.min(x1, x2) + 8, Math.min(y1, y2) + 24, String(zone.label || "Зона"), style.stroke);
+        ctx.restore();
+      });
+
+      levels.forEach((level) => {
+        const y = yValue(level.y ?? yForPrice(level.price));
+        if (!Number.isFinite(y)) return;
+        ctx.save();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 6]);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (!compact) drawLabel(ctx, Math.max(12, width - 180), y - 6, String(level.label || "Liquidity"), "#ffffff");
+        ctx.restore();
+      });
+
+      arrows.forEach((arrow) => {
+        const x1 = xValue(arrow.x1 ?? arrow.from_x ?? xForIndex(arrow.fromIndex ?? arrow.from_index ?? 0));
+        const x2 = xValue(arrow.x2 ?? arrow.to_x ?? xForIndex(arrow.toIndex ?? arrow.to_index ?? candles.length - 1));
+        const y1 = yValue(arrow.y1 ?? arrow.from_y ?? yForPrice(arrow.fromPrice ?? arrow.from_price));
+        const y2 = yValue(arrow.y2 ?? arrow.to_y ?? yForPrice(arrow.toPrice ?? arrow.to_price));
+        if ([x1, x2, y1, y2].some(v => !Number.isFinite(v))) return;
+        drawArrow(ctx, x1, y1, x2, y2, "#facc15", compact ? "" : String(arrow.text || arrow.label || "Сценарий"));
+      });
+
+      [...labels, ...annotations.filter((item) => item?.type === "label")].forEach((label) => {
+        const x = xValue(label.x ?? xForIndex(label.index ?? label.at_index ?? 0));
+        const y = yValue(label.y ?? yForPrice(label.price ?? label.value));
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        drawLabel(ctx, x + 6, y - 6, String(label.text || label.label || "Метка"), "#38bdf8");
+      });
+    }
+
     function renderChart(canvas, idea, compact = false) {
       const { ctx, width, height } = fitCanvas(canvas);
 
@@ -585,6 +758,47 @@
       const levels = normalizeLevels(idea);
       const arrows = normalizeArrows(idea, candles);
       const patterns = normalizePatterns(idea);
+      const chartImageSrc = getChartImageSrc(idea);
+      const isModalCanvas = canvas === modalChart;
+      const useImageMode = isModalCanvas && Boolean(chartImageSrc);
+
+      console.log("[ideas/modal] chart data incoming", {
+        symbol: idea?.symbol || idea?.instrument,
+        timeframe: idea?.timeframe,
+        chartImageSrc,
+        candles: candles.length,
+        overlays: normalizeOverlayPayload(idea),
+        chartData: idea?.chart_data || null,
+      });
+
+      if (isModalCanvas) {
+        if (chartImageSrc) {
+          modalChartImage.classList.add("open");
+          if (lastImageSrc !== chartImageSrc) {
+            lastImageSrc = chartImageSrc;
+            modalChartImage.onload = () => {
+              if (activeIdea?.id === idea?.id) renderChart(modalChart, activeIdea, false);
+            };
+            modalChartImage.onerror = () => {
+              setModalChartDebug("Не удалось загрузить chart image.", chartImageSrc);
+            };
+            modalChartImage.src = chartImageSrc;
+          }
+          setModalChartDebug("");
+        } else {
+          modalChartImage.classList.remove("open");
+          setModalChartDebug(
+            "Chart image отсутствует во входящих данных.",
+            "Ожидаемые поля: chart_image | chartImage | chart_data.chart_image | chart_data.image"
+          );
+        }
+      }
+
+      if (useImageMode) {
+        ctx.clearRect(0, 0, width, height);
+        renderImageOverlays(ctx, width, height, idea, candles, compact);
+        return;
+      }
 
       const padLeft = compact ? 8 : 52;
       const padRight = compact ? 8 : 26;
@@ -734,7 +948,8 @@
             let pIndex = candles.findIndex(c => Math.abs(new Date(c.time).getTime() - new Date(point.time).getTime()) < 1000);
             if (pIndex < 0) pIndex = idx;
             const x = xForIndex(Math.min(candles.length - 1, Math.max(0, pIndex)));
-            const y = yForPrice(Number(point.price || candle.close || 0));
+            const fallbackClose = candles[Math.min(candles.length - 1, Math.max(0, pIndex))]?.close || candles[candles.length - 1]?.close || 0;
+            const y = yForPrice(Number(point.price || fallbackClose));
 
             if (idx === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
