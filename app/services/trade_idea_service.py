@@ -725,7 +725,7 @@ class TradeIdeaService:
             invalidation=invalidation,
             bias=bias,
         )
-        full_text = llm_result.data.get("unified_narrative") or llm_result.data.get("full_text") or self._build_full_text(
+        unified_narrative_text = llm_result.data.get("unified_narrative") or llm_result.data.get("full_text") or self._build_full_text(
             signal,
             summary=summary_text,
             idea_context=idea_context,
@@ -733,6 +733,7 @@ class TradeIdeaService:
             invalidation=invalidation,
             target=target,
         )
+        full_text = llm_result.data.get("full_text") or unified_narrative_text
         short_scenario = llm_result.data.get("short_text") or self._build_trade_scenario_line(
             direction=bias,
             entry=self._format_zone(entry_value),
@@ -810,8 +811,8 @@ class TradeIdeaService:
             if is_terminal
             else existing.get("close_explanation") if existing else None
         )
-        if is_terminal and (llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")):
-            close_explanation = llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")
+        if is_terminal and (unified_narrative_text or full_text):
+            close_explanation = unified_narrative_text or full_text
         history = self._build_history(
             existing=existing,
             status=status,
@@ -878,7 +879,7 @@ class TradeIdeaService:
             "short_scenario_ru": short_scenario,
             "short_text": short_scenario,
             "full_text": full_text,
-            "unified_narrative": full_text,
+            "unified_narrative": unified_narrative_text,
             "signal": str(llm_result.data.get("signal") or ("BUY" if action == "BUY" else "SELL" if action == "SELL" else "WAIT")).upper(),
             "risk_note": str(llm_result.data.get("risk_note") or llm_result.data.get("risk") or ""),
             "summary_structured": narrative_structured.get("summary_structured"),
@@ -3083,6 +3084,7 @@ class TradeIdeaService:
             direction = self._extract_direction(row)
             summary = (
                 row.get("summary")
+                or row.get("unified_narrative")
                 or row.get("full_text")
                 or row.get("fullText")
                 or row.get("summary_ru")
@@ -3125,7 +3127,8 @@ class TradeIdeaService:
                 or self._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2"))
                 or (f"Ближайшая цель: {take_profit}." if take_profit != "—" else "Цель будет уточняться после появления подтверждения.")
             )
-            full_text = str(row.get("unified_narrative") or "").strip() or self._build_full_text(
+            unified_narrative = str(row.get("unified_narrative") or row.get("full_text") or row.get("fullText") or "").strip()
+            full_text = self._build_full_text(
                 row,
                 summary=str(summary),
                 idea_context=str(idea_context),
@@ -3133,6 +3136,8 @@ class TradeIdeaService:
                 invalidation=str(invalidation),
                 target=str(target),
             )
+            if not unified_narrative:
+                unified_narrative = full_text
             short_text = self._build_short_text(
                 row,
                 direction=direction,
@@ -3225,7 +3230,12 @@ class TradeIdeaService:
                         "short_text": short_text,
                         "short_scenario_ru": short_text,
                         "full_text": full_text,
-                        "unified_narrative": str(row.get("unified_narrative") or full_text),
+                        "unified_narrative": unified_narrative,
+                        "signal": str(
+                            row.get("signal")
+                            or ("BUY" if direction == "bullish" else "SELL" if direction == "bearish" else "WAIT")
+                        ).upper(),
+                        "risk_note": str(row.get("risk_note") or row.get("risk") or ""),
                         "summary_structured": row.get("summary_structured") or (detail_brief.get("narrative_structured") or {}).get("summary_structured"),
                         "trade_plan_structured": row.get("trade_plan_structured") or (detail_brief.get("narrative_structured") or {}).get("trade_plan_structured"),
                         "market_structure_structured": row.get("market_structure_structured") or (detail_brief.get("narrative_structured") or {}).get("market_structure_structured"),
@@ -3364,13 +3374,16 @@ class TradeIdeaService:
         return (
             "Сгенерируй 6 торговых идей строго по переданным market contexts.\n\n"
             "Каждая идея должна соответствовать ОДНОЙ записи из списка contexts и содержать:\n"
-            "- id\n- symbol\n- timeframe\n- direction (bullish/bearish/neutral)\n- confidence (60-80)\n- short_text\n- full_text\n- entry\n- stopLoss\n- takeProfit\n- tags (массив)\n\n"
+            "- id\n- symbol\n- timeframe\n- direction (bullish/bearish/neutral)\n- confidence (60-80)\n- unified_narrative\n- short_text\n- full_text\n- signal\n- risk_note\n- entry\n- stopLoss\n- takeProfit\n- tags (массив)\n\n"
             "Обязательно добавь структурированные narrative-блоки (Grok пишет текст сам, без шаблонов):\n"
             "- summary_structured: signal, situation, cause, effect, action, risk_note\n"
             "- trade_plan_structured: entry_trigger, entry_zone, stop_loss, take_profit, invalidation\n"
             "- market_structure_structured: bias, structure, liquidity, zone, confluence\n"
             "Правила для structured-текста: простой язык, короткие предложения, cause->effect->action явный, без длинных эссе и без повторов symbol/timeframe в каждом поле.\n"
+            "unified_narrative — это главный связный текст объяснения (3-6 коротких предложений, без секций).\n"
             "full_text и short_text оставь для обратной совместимости, но structured-поля обязательны.\n"
+            "signal верни строго BUY / SELL / WAIT.\n"
+            "risk_note верни короткой фразой про ключевой риск/invalidation.\n"
             "Если данных мало, не выдумывай: честно укажи ограниченность подтверждений в risk_note/confluence.\n\n"
             "Требования к short_text:\n"
             "- 1-2 предложения для карточки, но без бессмысленных общих слов\n"

@@ -169,12 +169,6 @@ function buildShortText(idea) {
 function buildFullText(idea) {
   const unified = normalizeWhitespace(idea?.unified_narrative);
   if (isRenderableNarrative(unified)) return unified;
-  const { summaryStructured, tradePlanStructured, marketStructureStructured } = getStructuredNarrativeBlocks(idea);
-  const structuredText = normalizeWhitespace(summaryStructured?.situation) || normalizeWhitespace(tradePlanStructured?.entry_trigger);
-  if (isRenderableNarrative(structuredText)) return structuredText;
-
-  const detailSummary = normalizeWhitespace(idea?.detail_brief?.summary_narrative);
-  if (isRenderableNarrative(detailSummary)) return detailSummary;
   const direct = normalizeWhitespace(
     idea?.full_text
       || idea?.fullText
@@ -184,6 +178,11 @@ function buildFullText(idea) {
       || idea?.rationale
   );
   if (isRenderableNarrative(direct)) return direct;
+  const { summaryStructured, tradePlanStructured } = getStructuredNarrativeBlocks(idea);
+  const structuredText = normalizeWhitespace(summaryStructured?.situation) || normalizeWhitespace(tradePlanStructured?.entry_trigger);
+  if (isRenderableNarrative(structuredText)) return structuredText;
+  const detailSummary = normalizeWhitespace(idea?.detail_brief?.summary_narrative);
+  if (isRenderableNarrative(detailSummary)) return detailSummary;
   return normalizeWhitespace(idea?.summary || idea?.summary_ru);
 }
 
@@ -239,7 +238,7 @@ function buildDetailBrief(idea) {
       confidence: Number(idea?.confidence ?? 0),
       confluence_rating: Number(idea?.confidence ?? 0),
     },
-    summary_narrative: normalizeWhitespace(summaryStructured?.situation) || buildFullText(idea),
+    summary_narrative: buildFullText(idea) || normalizeWhitespace(summaryStructured?.situation),
     scenarios: {
       primary: normalizeWhitespace(summaryStructured?.action || tradePlanStructured?.entry_trigger || idea?.trigger || idea?.summary),
       swing: normalizeWhitespace(summaryStructured?.effect),
@@ -534,7 +533,7 @@ function renderTradingPlan(detailBrief) {
 
 function renderDetailText(idea) {
   const detailBrief = buildDetailBrief(idea);
-  const fullText = normalizeWhitespace(idea?.unified_narrative) || normalizeWhitespace(detailBrief?.summary_narrative) || buildFullText(idea);
+  const fullText = buildFullText(idea) || normalizeWhitespace(detailBrief?.summary_narrative);
   setTextContent(ideaSummary, fullText, "");
   if (fullText) {
     setTextContent(analysisText, fullText, "");
