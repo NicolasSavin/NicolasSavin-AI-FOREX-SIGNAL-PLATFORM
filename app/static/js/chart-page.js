@@ -596,7 +596,7 @@ function showChartPlaceholder(message) {
 
 function hideChartPlaceholder() {
   chartPlaceholder.classList.remove("open");
-  chartPlaceholderText.textContent = "График для этой идеи сейчас недоступен.";
+  chartPlaceholderText.textContent = "Chart unavailable (data temporarily missing)";
 }
 
 function normalizeChartImageUrl(url) {
@@ -610,12 +610,14 @@ function normalizeChartImageUrl(url) {
 
 function snapshotStatusRu(status) {
   const key = String(status || "").toLowerCase();
-  return {
+  const reason = {
     rate_limited: "Снапшот не подготовлен из-за лимита источника данных.",
     no_data: "Снапшот не подготовлен: по инструменту нет данных.",
     fetch_error: "Снапшот не подготовлен: ошибка при получении данных.",
     unavailable: "Снапшот временно недоступен.",
-  }[key] || "График для этой идеи сейчас недоступен.";
+  }[key];
+  if (reason) return `Chart unavailable (data temporarily missing) — ${reason}`;
+  return "Chart unavailable (data temporarily missing)";
 }
 
 function setChartMode(mode) {
@@ -658,7 +660,7 @@ function showLiveChart(payload) {
 
 function showUnavailableChart(message) {
   setChartMode("unavailable");
-  showChartPlaceholder(message || "График для этой идеи сейчас недоступен.");
+  showChartPlaceholder(message || "Chart unavailable (data temporarily missing)");
 }
 
 function updateDetailStatus(message) {
@@ -987,7 +989,7 @@ function closeModal() {
   modal.classList.remove("open");
   activeIdea = null;
   detailRequestId += 1;
-  showUnavailableChart("График для этой идеи сейчас недоступен.");
+  showUnavailableChart("Chart unavailable (data temporarily missing)");
 }
 
 async function load() {

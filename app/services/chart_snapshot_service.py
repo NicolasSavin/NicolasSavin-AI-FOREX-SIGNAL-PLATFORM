@@ -50,6 +50,13 @@ class ChartSnapshotService:
         filename = f"{symbol}_{timeframe}_{timestamp}.png"
         absolute_path = self.charts_dir / filename
         relative_path = f"/static/charts/{filename}"
+        logger.info(
+            "idea_snapshot_render_start symbol=%s timeframe=%s candles=%s output=%s",
+            symbol,
+            timeframe,
+            len(candles),
+            relative_path,
+        )
 
         fig, ax = plt.subplots(figsize=(12, 7), dpi=100)
         try:
