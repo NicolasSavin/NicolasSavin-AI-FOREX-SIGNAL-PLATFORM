@@ -40,6 +40,7 @@ BANNED_PHRASES = (
     "сценарий описан прямо",
 )
 WEAK_CAUSE_PHRASES = ("после коррекции",)
+FORBIDDEN_SYSTEM_TOKENS = ("none", "fallback", "idea_created", "status created", "debug", "schema", "payload")
 
 
 @dataclass
@@ -148,6 +149,9 @@ class IdeaNarrativeLLMService:
             if not isinstance(value, str) or not value.strip():
                 return None
             result[field] = value.strip()
+        raw_signal = str(raw.get("signal") or "").strip().upper()
+        result["signal"] = raw_signal if raw_signal in {"BUY", "SELL", "WAIT"} else "WAIT"
+        result["risk_note"] = str(raw.get("risk_note") or "").strip()
 
         for group_key, fields in STRUCTURED_SCHEMA.items():
             group_value = raw.get(group_key)
@@ -169,6 +173,8 @@ class IdeaNarrativeLLMService:
         narrative_text = f"{result['unified_narrative']} {result['full_text']}".casefold()
         if not any(token in narrative_text for token in SMC_REQUIRED_TOKENS):
             return None
+        if any(token in narrative_text for token in FORBIDDEN_SYSTEM_TOKENS):
+            return None
         return result
 
     @staticmethod
@@ -179,10 +185,11 @@ class IdeaNarrativeLLMService:
             "Сформируй объяснение торговой идеи только из переданных фактов.\n"
             "Запрещено придумывать новые уровни, направление, статус или причины вне фактов.\n"
             "Ты пишешь как SMC/ICT-трейдер: простые слова, короткие предложения, дружелюбный тон для трейдера.\n"
-            "Во всех объяснениях соблюдай порядок CAUSE → EFFECT → ACTION.\n"
-            "Cause → effect → action должны быть явно связаны и без разрывов логики.\n"
+            "unified_narrative должен содержать 3-6 коротких естественных предложений.\n"
+            "Обязательно объясни: что происходит сейчас, почему это происходит, что из этого следует, и что делать трейдеру дальше.\n"
             "unified_narrative верни ОДНИМ связным текстом без секций и подзаголовков.\n"
-            "Структура unified_narrative: SITUATION → CAUSE → EFFECT → ACTION → RISK.\n"
+            "Запрещены машинные шаблоны в формате 'Ситуация: ... Причина: ... Следствие: ... Действие: ...'.\n"
+            "Запрещены слова/фрагменты для видимого текста: None, fallback, idea_created, status created, debug.\n"
             "Каждый смысловой шаг должен быть выражен короткими предложениями, без повторов символа/таймфрейма и без воды.\n"
             f"Запрещённые фразы: {', '.join(banned)}.\n"
             "Если в фактах нет liquidity_sweep / structure_state / key_zone / location — явно напиши: "
@@ -199,6 +206,8 @@ class IdeaNarrativeLLMService:
             "или по инвалидации структуры, почему TP на следующем пуле ликвидности/заполнении имбаланса.\n"
             "В unified_narrative обязательно должен встретиться минимум один термин: liquidity/ликвидность/sweep/BOS/CHoCH/order block/FVG.\n"
             "Каждое текстовое поле должно быть лаконичным и без длинных абзацев.\n"
+            "signal верни строго как BUY, SELL или WAIT.\n"
+            "risk_note верни короткой фразой, без системных меток.\n"
             "В structured-полях не повторяй в каждом поле символ/таймфрейм, если это не нужно для смысла.\n"
             "Ответ должен быть ВАЛИДНЫМ JSON и только JSON, без markdown, комментариев и префиксов.\n"
             "Верни только JSON с ключами: "
@@ -233,13 +242,14 @@ class IdeaNarrativeLLMService:
         structural_warning = "структурных подтверждений недостаточно. " if smc_missing else ""
         weak_structure_warning = "структурная база слабая, идея основана на вторичных факторах. " if smc_missing else ""
         unified = (
-            f"Ситуация: {symbol} {timeframe} в статусе {status}, рабочая зона {key_zone} ({location}). "
-            f"Причина: после снятия ликвидности ({liquidity}) цена показала {structure}. "
+            f"Сейчас {symbol} на {timeframe} держится возле рабочей зоны {key_zone}, а структура выглядит как {structure}. "
+            f"Сценарий сформировался после реакции на ликвидность ({liquidity}), поэтому рынок может тянуться к следующей цели {target_liquidity}. "
             f"{structural_warning}{weak_structure_warning}"
-            f"Следствие: это повышает вероятность движения к {target_liquidity}, пока не нарушена структура. "
-            f"Действие: вход {entry}, SL {sl}, TP {tp}; работаем только при подтверждении в зоне. "
-            f"Риск: {invalidation_logic}; при сломе структуры — без сделки. Событие: {event_type}. Изменения: {delta_text}."
+            f"Пока структура не сломана, приоритет — работать только от подтверждённого входа около {entry} с контролем риска через SL {sl}. "
+            f"Если подтверждения нет или появляется пробой против сценария, лучше пропустить сделку и дождаться новой реакции."
         )
+        signal = "BUY" if direction == "bullish" else "SELL" if direction == "bearish" else "WAIT"
+        risk_note = f"Инвалидация сценария: {invalidation_logic}."
         return {
             "headline": f"{symbol} {timeframe} — {direction}",
             "summary": short,
@@ -252,4 +262,6 @@ class IdeaNarrativeLLMService:
             "short_text": short,
             "full_text": unified,
             "unified_narrative": unified,
+            "signal": signal,
+            "risk_note": risk_note,
         }
