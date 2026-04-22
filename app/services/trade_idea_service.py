@@ -1198,6 +1198,41 @@ class TradeIdeaService:
     def recover_legacy_chart_snapshots_once(self) -> dict[str, int]:
         return self.rebuild_missing_snapshots(force=True)
 
+    def rebuild_missing_idea_assets(self, *, force: bool = False) -> dict[str, int]:
+        payload = self.idea_store.read()
+        ideas = payload.get("ideas") if isinstance(payload.get("ideas"), list) else []
+        recovered_ideas, chart_changed = self._recover_missing_chart_snapshots(ideas, force=force)
+        recovered_ideas, description_changed, description_rebuilt = self._recover_missing_structured_descriptions(recovered_ideas)
+        changed = chart_changed or description_changed
+        if changed:
+            self.idea_store.write({"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": recovered_ideas})
+            self.refresh_market_ideas()
+        recovered_chart_count = sum(
+            1 for idea in recovered_ideas if (idea.get("chartSnapshotStatus") or idea.get("chart_snapshot_status")) == "ok"
+        )
+        missing_chart_count = sum(1 for idea in recovered_ideas if not (idea.get("chartImageUrl") or idea.get("chart_image")))
+        missing_structured_count = sum(
+            1
+            for idea in recovered_ideas
+            if self._is_structured_description_missing(idea)
+        )
+        logger.info(
+            "idea_assets_backfill_completed changed=%s ideas_total=%s recovered_ok=%s missing_chart_after=%s description_rebuilt=%s missing_structured_after=%s",
+            changed,
+            len(recovered_ideas),
+            recovered_chart_count,
+            missing_chart_count,
+            description_rebuilt,
+            missing_structured_count,
+        )
+        return {
+            "ideas_total": len(recovered_ideas),
+            "recovered_charts_ok": recovered_chart_count,
+            "missing_chart_after": missing_chart_count,
+            "descriptions_rebuilt": description_rebuilt,
+            "missing_structured_after": missing_structured_count,
+        }
+
     def _recover_missing_chart_snapshots(self, ideas: list[dict[str, Any]], *, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
         recovered_ideas: list[dict[str, Any]] = []
         changed = False
@@ -1276,6 +1311,154 @@ class TradeIdeaService:
             recovered_ideas.append(current)
 
         return recovered_ideas, changed
+
+    def _recover_missing_structured_descriptions(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool, int]:
+        rebuilt_ideas: list[dict[str, Any]] = []
+        changed = False
+        rebuilt_count = 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for idea in ideas:
+            current = dict(idea)
+            if not self._is_structured_description_missing(current):
+                rebuilt_ideas.append(current)
+                continue
+            logger.info(
+                "idea_description_missing_detected idea_id=%s symbol=%s timeframe=%s",
+                current.get("idea_id"),
+                current.get("symbol"),
+                current.get("timeframe"),
+            )
+            rebuilt = self._rebuild_structured_description(current, now_iso=now_iso)
+            if rebuilt != current:
+                changed = True
+                rebuilt_count += 1
+            rebuilt_ideas.append(rebuilt)
+        return rebuilt_ideas, changed, rebuilt_count
+
+    def _rebuild_structured_description(self, idea: dict[str, Any], *, now_iso: str) -> dict[str, Any]:
+        symbol = str(idea.get("symbol", "")).upper()
+        timeframe = str(idea.get("timeframe", "H1")).upper()
+        direction = str(idea.get("direction") or idea.get("bias") or "neutral").lower()
+        status = str(idea.get("status") or IDEA_STATUS_WAITING).lower()
+        rationale = str(idea.get("rationale") or idea.get("summary") or idea.get("summary_ru") or "").strip()
+        trigger = str(idea.get("trigger") or "Триггер — подтверждение входа в рабочей зоне.").strip()
+        invalidation = str(idea.get("invalidation") or "Идея отменяется при сломе структуры.").strip()
+        entry_zone = self._format_zone(self._extract_numeric(idea.get("entry")))
+        stop_loss = self._format_price(self._extract_numeric(idea.get("stop_loss") or idea.get("stopLoss")))
+        take_profit = self._format_price(self._extract_numeric(idea.get("take_profit") or idea.get("takeProfit")))
+        signal = self._idea_row_to_signal_for_backfill(idea)
+        llm_facts = self._build_narrative_facts(
+            signal=signal,
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=direction,
+            status=status,
+            rationale=rationale,
+            existing=idea,
+        )
+        llm_result = self.narrative_llm.generate(
+            event_type="backfill_missing_structured_description",
+            facts=llm_facts,
+            previous_summary=str(idea.get("summary") or idea.get("summary_ru") or ""),
+            delta={"backfill": "structured_narrative"},
+        )
+        narrative_structured = self._resolve_structured_narrative(
+            llm_data=llm_result.data,
+            trigger=trigger,
+            entry_zone=entry_zone,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            invalidation=invalidation,
+            bias=direction,
+        )
+        if self._is_structured_description_missing({"narrative_structured": narrative_structured}):
+            logger.info(
+                "idea_description_rebuild_failed idea_id=%s symbol=%s timeframe=%s reason=invalid_structured_result",
+                idea.get("idea_id"),
+                symbol,
+                timeframe,
+            )
+            return idea
+
+        updated = dict(idea)
+        summary_structured = updated.get("summary_structured") if isinstance(updated.get("summary_structured"), dict) else {}
+        trade_plan_structured = updated.get("trade_plan_structured") if isinstance(updated.get("trade_plan_structured"), dict) else {}
+        market_structure_structured = (
+            updated.get("market_structure_structured") if isinstance(updated.get("market_structure_structured"), dict) else {}
+        )
+        updated["summary_structured"] = {**narrative_structured["summary_structured"], **summary_structured}
+        updated["trade_plan_structured"] = {**narrative_structured["trade_plan_structured"], **trade_plan_structured}
+        updated["market_structure_structured"] = {**narrative_structured["market_structure_structured"], **market_structure_structured}
+        updated["narrative_structured"] = {
+            "summary_structured": updated["summary_structured"],
+            "trade_plan_structured": updated["trade_plan_structured"],
+            "market_structure_structured": updated["market_structure_structured"],
+        }
+        if not str(updated.get("short_text") or "").strip():
+            updated["short_text"] = str(llm_result.data.get("short_text") or updated.get("summary") or "").strip()
+        if not str(updated.get("full_text") or "").strip():
+            updated["full_text"] = str(llm_result.data.get("full_text") or "").strip()
+        updated["narrative_source"] = str(llm_result.source or updated.get("narrative_source") or "llm")
+        detail_brief = updated.get("detail_brief") if isinstance(updated.get("detail_brief"), dict) else {}
+        detail_brief["narrative_structured"] = updated["narrative_structured"]
+        if not str(detail_brief.get("summary_narrative") or "").strip():
+            detail_brief["summary_narrative"] = (
+                updated["summary_structured"].get("situation")
+                or str(updated.get("full_text") or updated.get("summary") or "").strip()
+            )
+        updated["detail_brief"] = detail_brief
+        updated["updated_at"] = now_iso
+        logger.info(
+            "idea_description_rebuild_success idea_id=%s symbol=%s timeframe=%s source=%s",
+            updated.get("idea_id"),
+            symbol,
+            timeframe,
+            updated.get("narrative_source"),
+        )
+        return updated
+
+    @classmethod
+    def _idea_row_to_signal_for_backfill(cls, idea: dict[str, Any]) -> dict[str, Any]:
+        analysis = idea.get("analysis") if isinstance(idea.get("analysis"), dict) else {}
+        market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else {}
+        trade_plan = idea.get("trade_plan") if isinstance(idea.get("trade_plan"), dict) else {}
+        return {
+            "entry": cls._extract_numeric(idea.get("entry")),
+            "stop_loss": cls._extract_numeric(idea.get("stop_loss") or idea.get("stopLoss")),
+            "take_profit": cls._extract_numeric(idea.get("take_profit") or idea.get("takeProfit")),
+            "market_context": market_context,
+            "smc_ru": analysis.get("smc_ict_ru"),
+            "ict_ru": analysis.get("smc_ict_ru"),
+            "pattern_ru": analysis.get("pattern_ru"),
+            "harmonic_ru": analysis.get("harmonic_ru"),
+            "volume_ru": analysis.get("volume_ru"),
+            "cumdelta_ru": analysis.get("cumdelta_ru") or analysis.get("cumulative_delta_ru"),
+            "cumulative_delta_ru": analysis.get("cumdelta_ru") or analysis.get("cumulative_delta_ru"),
+            "divergence_ru": analysis.get("divergence_ru"),
+            "fundamental_ru": analysis.get("fundamental_ru"),
+            "invalidation_reasoning": trade_plan.get("invalidation") or idea.get("invalidation"),
+            "invalidation_ru": trade_plan.get("invalidation") or idea.get("invalidation"),
+            "liquidity_sweep": idea.get("liquidity_sweep"),
+            "structure_state": idea.get("structure_state"),
+            "latest_close": cls._extract_numeric(idea.get("latest_close") or idea.get("current_price")),
+        }
+
+    @classmethod
+    def _is_structured_description_missing(cls, idea: dict[str, Any]) -> bool:
+        narrative_structured = idea.get("narrative_structured") if isinstance(idea.get("narrative_structured"), dict) else {}
+        summary = cls._structured_group(
+            idea.get("summary_structured") or narrative_structured.get("summary_structured"),
+            ("signal", "situation", "cause", "effect", "action", "risk_note"),
+        )
+        trade_plan = cls._structured_group(
+            idea.get("trade_plan_structured") or narrative_structured.get("trade_plan_structured"),
+            ("entry_trigger", "entry_zone", "stop_loss", "take_profit", "invalidation"),
+        )
+        market_structure = cls._structured_group(
+            idea.get("market_structure_structured") or narrative_structured.get("market_structure_structured"),
+            ("bias", "structure", "liquidity", "zone", "confluence"),
+        )
+        return not (summary and trade_plan and market_structure)
 
     def _should_retry_chart_snapshot(self, idea: dict[str, Any], now: datetime, *, force: bool = False) -> bool:
         chart_url = idea.get("chartImageUrl") or idea.get("chart_image")

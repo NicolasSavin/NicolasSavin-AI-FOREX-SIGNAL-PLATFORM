@@ -154,7 +154,14 @@ function buildShortText(idea) {
 function buildFullText(idea) {
   const detailSummary = normalizeWhitespace(idea?.detail_brief?.summary_narrative);
   if (detailSummary) return detailSummary;
-  const direct = normalizeWhitespace(idea?.full_text || idea?.fullText || idea?.narrative);
+  const direct = normalizeWhitespace(
+    idea?.full_text
+      || idea?.fullText
+      || idea?.narrative
+      || idea?.description_ru
+      || idea?.reason_ru
+      || idea?.rationale
+  );
   if (direct) return direct;
   return normalizeWhitespace(idea?.summary || idea?.summary_ru);
 }

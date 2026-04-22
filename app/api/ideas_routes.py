@@ -102,4 +102,9 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
         logger.info("ideas_snapshot_admin_rebuild_started")
         return services.trade_idea_service.rebuild_missing_snapshots(force=True)
 
+    @router.post("/api/admin/rebuild-missing-idea-assets")
+    async def rebuild_missing_idea_assets_admin():
+        logger.info("ideas_assets_admin_backfill_started")
+        return services.trade_idea_service.rebuild_missing_idea_assets(force=True)
+
     return router
