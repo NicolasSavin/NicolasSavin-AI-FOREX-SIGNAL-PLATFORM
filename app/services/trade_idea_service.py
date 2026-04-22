@@ -695,9 +695,22 @@ class TradeIdeaService:
         chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
         if not chart_data and isinstance(signal.get("chartData"), dict):
             chart_data = signal.get("chartData")
-        candles = chart_data.get("candles") if isinstance(chart_data.get("candles"), list) else []
-        chart_payload: dict[str, Any] = {"status": "ok", "candles": candles}
+        normalized_chart_payload, candles = self.chart_data_service.normalize_provider_payload(chart_data)
+        chart_payload: dict[str, Any] = {
+            "status": normalized_chart_payload.get("status") or "ok",
+            "candles": candles,
+            "meta": normalized_chart_payload.get("meta") if isinstance(normalized_chart_payload.get("meta"), dict) else {},
+            "message_ru": normalized_chart_payload.get("message_ru"),
+        }
         fetch_status = str(chart_payload.get("status") or "ok").lower()
+        logger.info(
+            "idea_snapshot_signal_chart_payload symbol=%s timeframe=%s has_values=%s has_candles=%s normalized_candles=%s",
+            symbol,
+            timeframe,
+            isinstance(chart_data.get("values"), list),
+            isinstance(chart_data.get("candles"), list),
+            len(candles),
+        )
         if not candles:
             chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
             fetch_status = str(chart_payload.get("status") or "").lower()
@@ -789,7 +802,7 @@ class TradeIdeaService:
         message = str(chart_payload.get("message_ru") or "").lower()
         if "limit" in message or "429" in message or "rate" in message:
             return "rate_limited"
-        if "не вернул candles" in message or "пуст" in message or "no data" in message:
+        if "не вернул candles" in message or "не вернул values" in message or "пуст" in message or "no data" in message:
             return "no_data"
         return "no_data"
 

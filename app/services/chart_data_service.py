@@ -95,9 +95,16 @@ class ChartDataService:
                 reason="fetch_error",
             )
 
-        payload = self._normalize_twelvedata_payload(payload)
-        candles = self._normalize_candles(payload.get("candles"))
+        payload, candles = self.normalize_provider_payload(payload)
         provider_status = str(payload.get("status") or "").lower()
+        logger.info(
+            "twelvedata_payload_normalized symbol=%s tf=%s provider_status=%s candle_count=%s keys=%s",
+            normalized_symbol,
+            normalized_tf,
+            provider_status or "unknown",
+            len(candles),
+            sorted(payload.keys()),
+        )
         if not candles:
             if provider_status == "error":
                 logger.warning(
@@ -118,7 +125,7 @@ class ChartDataService:
             return self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
-                message_ru="Свечной API не вернул candles для выбранной идеи.",
+                message_ru="Свечной API не вернул candles/values для выбранной идеи.",
                 reason="no_data",
             )
 
@@ -165,15 +172,33 @@ class ChartDataService:
         return normalized
 
     @classmethod
+    def normalize_provider_payload(cls, payload: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        normalized_payload = cls._normalize_twelvedata_payload(payload)
+        raw_candles = normalized_payload.get("candles")
+        candles = cls._normalize_candles(raw_candles)
+        normalized_payload["candles"] = candles
+        if candles:
+            normalized_payload["status"] = "ok"
+        logger.info(
+            "twelvedata_payload_shape status=%s has_values=%s has_candles=%s raw_candles_count=%s normalized_candles_count=%s",
+            normalized_payload.get("status"),
+            isinstance(normalized_payload.get("values"), list),
+            isinstance(raw_candles, list),
+            len(raw_candles) if isinstance(raw_candles, list) else 0,
+            len(candles),
+        )
+        return normalized_payload, candles
+
+    @classmethod
     def _normalize_candles(cls, values: Any) -> list[dict[str, Any]]:
         if not isinstance(values, list):
             return []
 
         candles: list[dict[str, Any]] = []
-        for item in reversed(values):
+        for item in values:
             if not isinstance(item, dict):
                 continue
-            timestamp = cls._parse_timestamp(item.get("datetime"))
+            timestamp = cls._extract_timestamp(item)
             open_price = cls._to_float(item.get("open"))
             high_price = cls._to_float(item.get("high"))
             low_price = cls._to_float(item.get("low"))
@@ -190,7 +215,26 @@ class ChartDataService:
                     "close": close_price,
                 }
             )
+        candles.sort(key=lambda candle: int(candle["time"]))
         return candles
+
+    @classmethod
+    def _extract_timestamp(cls, item: dict[str, Any]) -> int | None:
+        for key in ("time", "timestamp"):
+            numeric_ts = cls._parse_numeric_timestamp(item.get(key))
+            if numeric_ts is not None:
+                return numeric_ts
+        return cls._parse_timestamp(item.get("datetime"))
+
+    @staticmethod
+    def _parse_numeric_timestamp(value: Any) -> int | None:
+        try:
+            parsed = int(float(value))
+        except (TypeError, ValueError):
+            return None
+        if parsed <= 0:
+            return None
+        return parsed
 
     @staticmethod
     def _parse_timestamp(value: Any) -> int | None:
