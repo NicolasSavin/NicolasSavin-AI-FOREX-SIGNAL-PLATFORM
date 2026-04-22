@@ -154,7 +154,16 @@ class TradeIdeaService:
         return legacy
 
     def build_api_ideas(self) -> list[dict[str, Any]]:
-        primary_source = self.idea_store.read().get("ideas", [])
+        primary_payload = self.idea_store.read()
+        primary_source = primary_payload.get("ideas", [])
+        primary_source, lazy_snapshot_changed = self._lazy_rebuild_missing_chart_snapshots(primary_source)
+        if lazy_snapshot_changed:
+            self.idea_store.write(
+                {
+                    "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "ideas": primary_source,
+                }
+            )
         primary = self._normalize_for_api(primary_source, source="trade_ideas_store")
         self._log_api_pipeline(primary, stage="primary")
         if primary:
@@ -176,6 +185,47 @@ class TradeIdeaService:
 
         logger.debug("ideas_pipeline_api_response stage=empty candles_count=0 features_built=False signal_created=False reason_if_skipped=no_active_ideas")
         return []
+
+    def _lazy_rebuild_missing_chart_snapshots(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+        rebuilt: list[dict[str, Any]] = []
+        changed = False
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        for idea in ideas:
+            current = dict(idea)
+            if current.get("chartImageUrl") or current.get("chart_image"):
+                rebuilt.append(current)
+                continue
+            try:
+                snapshot = self._resolve_chart_snapshot(
+                    signal=current,
+                    existing=current,
+                    symbol=str(current.get("symbol", "")).upper(),
+                    timeframe=str(current.get("timeframe", "H1")).upper(),
+                    entry=self._extract_numeric(current.get("entry")),
+                    stop_loss=self._extract_numeric(current.get("stop_loss") or current.get("stopLoss")),
+                    take_profit=self._extract_numeric(current.get("take_profit") or current.get("takeProfit")),
+                    bias=str(current.get("bias") or current.get("direction") or "neutral"),
+                    confidence=int(self._extract_numeric(current.get("confidence")) or 0),
+                    status=str(current.get("status") or IDEA_STATUS_WAITING),
+                )
+                if snapshot.get("chartImageUrl"):
+                    current["chart_image"] = snapshot["chartImageUrl"]
+                    current["chartImageUrl"] = snapshot["chartImageUrl"]
+                    current["chart_snapshot_status"] = "ok"
+                    current["chartSnapshotStatus"] = "ok"
+                    current["updated_at"] = now_iso
+                    changed = True
+            except Exception:
+                logger.exception(
+                    "idea_snapshot_lazy_retry_failed idea_id=%s symbol=%s timeframe=%s",
+                    current.get("idea_id") or current.get("id"),
+                    current.get("symbol"),
+                    current.get("timeframe"),
+                )
+            rebuilt.append(current)
+
+        return rebuilt, changed
 
     def fallback_ideas(self, *, reason: str = "unspecified") -> list[dict[str, Any]]:
         logger.warning("market_ideas_unavailable reason=%s", reason)
