@@ -212,7 +212,7 @@ class IdeaNarrativeLLMService:
             "Ответ должен быть ВАЛИДНЫМ JSON и только JSON, без markdown, комментариев и префиксов.\n"
             "Верни только JSON с ключами: "
             + ", ".join(REQUIRED_FIELDS)
-            + ", summary_structured, trade_plan_structured, market_structure_structured"
+            + ", signal, risk_note, summary_structured, trade_plan_structured, market_structure_structured"
             + f". {strict_line}\n\n"
             + "Структура обязательна:\n"
             + json.dumps(STRUCTURED_SCHEMA, ensure_ascii=False)
