@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 
 
@@ -36,6 +37,8 @@ class ChartSnapshotService:
         status: str | None = None,
         markers: list[dict[str, Any]] | None = None,
         patterns: list[dict[str, Any]] | None = None,
+        arrows: list[dict[str, Any]] | None = None,
+        setup_text: str | None = None,
     ) -> str | None:
         if not candles:
             logger.info("idea_snapshot_skipped reason=no_candles symbol=%s timeframe=%s", symbol, timeframe)
@@ -44,6 +47,7 @@ class ChartSnapshotService:
         zones = zones or []
         markers = markers or []
         patterns = patterns or []
+        arrows = arrows or []
         take_profits = [value for value in (take_profits or []) if value is not None]
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -60,7 +64,7 @@ class ChartSnapshotService:
             absolute_path,
         )
 
-        fig, ax = plt.subplots(figsize=(12, 7), dpi=100)
+        fig, ax = plt.subplots(figsize=(14, 9), dpi=100)
         try:
             highs = [float(candle["high"]) for candle in candles]
             lows = [float(candle["low"]) for candle in candles]
@@ -69,16 +73,17 @@ class ChartSnapshotService:
 
             min_price = min(lows)
             max_price = max(highs)
-            price_padding = (max_price - min_price) * 0.1 if max_price > min_price else max_price * 0.001
+            raw_range = max(max_price - min_price, max(abs(max_price), 1.0) * 0.0005)
+            price_padding = raw_range * 0.06
 
             ax.set_facecolor("#0b1220")
             fig.patch.set_facecolor("#0b1220")
             ax.grid(True, color="#1f2937", linewidth=0.6, alpha=0.7)
 
-            candle_width = 0.6
+            candle_width = 0.72
             for idx, (open_price, high_price, low_price, close_price) in enumerate(zip(opens, highs, lows, closes)):
                 color = "#22c55e" if close_price >= open_price else "#ef4444"
-                ax.vlines(idx, low_price, high_price, color="#cbd5e1", linewidth=0.8, alpha=0.9)
+                ax.vlines(idx, low_price, high_price, color="#cbd5e1", linewidth=1.0, alpha=0.92, zorder=3)
                 body_bottom = min(open_price, close_price)
                 body_height = max(0.000001, abs(close_price - open_price))
                 ax.add_patch(
@@ -89,6 +94,7 @@ class ChartSnapshotService:
                         facecolor=color,
                         edgecolor=color,
                         linewidth=1.0,
+                        zorder=4,
                     )
                 )
 
@@ -102,21 +108,45 @@ class ChartSnapshotService:
                 take_profits=take_profits,
             )
             rendered = self._draw_smc_markers(ax=ax, markers=markers, candles_count=len(candles))
+            rendered += self._draw_arrows(ax=ax, arrows=arrows, candles_count=len(candles), highs=highs, lows=lows)
             rendered += self._draw_patterns(ax=ax, patterns=patterns, candles_count=len(candles))
             if rendered < 5:
                 self._draw_direction_hint(ax=ax, candles_count=len(candles), entry=entry, take_profits=take_profits, bias=bias)
 
             header = self._build_header(symbol=symbol, timeframe=timeframe, bias=bias, confidence=confidence, status=status)
-            ax.set_title(header, color="#e5e7eb", fontsize=12, fontweight="bold", pad=14)
+            ax.set_title(header, color="#e5e7eb", fontsize=15, fontweight="bold", pad=14, loc="left")
+            if setup_text:
+                ax.text(
+                    0.0,
+                    1.01,
+                    self._shorten_text(setup_text, limit=130),
+                    transform=ax.transAxes,
+                    color="#94a3b8",
+                    fontsize=10,
+                    va="bottom",
+                    ha="left",
+                )
             self._draw_compact_legend(fig)
-            ax.set_xlim(-1, len(candles))
-            ax.set_ylim(min_price - price_padding, max_price + price_padding)
-            ax.tick_params(colors="#9ca3af", labelsize=8)
-            ax.set_xlabel("Индекс свечи", color="#9ca3af", fontsize=8)
-            ax.set_ylabel("Цена", color="#9ca3af", fontsize=8)
+            ax.set_xlim(-1, len(candles) + 0.8)
+            y_min, y_max = self._calculate_y_limits(
+                min_price=min_price,
+                max_price=max_price,
+                padding=price_padding,
+                levels=levels,
+                zones=zones,
+                markers=markers,
+                entry=entry,
+                stop_loss=stop_loss,
+                take_profits=take_profits,
+                arrows=arrows,
+            )
+            ax.set_ylim(y_min, y_max)
+            ax.tick_params(colors="#9ca3af", labelsize=10)
+            ax.set_xlabel("Свечи", color="#9ca3af", fontsize=9)
+            ax.set_ylabel("Цена", color="#9ca3af", fontsize=9)
             for spine in ax.spines.values():
                 spine.set_color("#374151")
-            fig.tight_layout(rect=[0, 0.035, 1, 0.98])
+            fig.tight_layout(rect=[0.01, 0.06, 0.99, 0.95])
 
             success = False
             try:
@@ -170,10 +200,13 @@ class ChartSnapshotService:
             "demand": {"face": "#22c55e", "label": "Demand"},
             "supply": {"face": "#ef4444", "label": "Supply"},
             "fvg": {"face": "#8b5cf6", "label": "FVG"},
+            "imbalance": {"face": "#a855f7", "label": "Imbalance"},
             "order_block": {"face": "#f59e0b", "label": "OB"},
             "ob": {"face": "#f59e0b", "label": "OB"},
+            "liquidity": {"face": "#06b6d4", "label": "Liquidity"},
+            "mitigation": {"face": "#14b8a6", "label": "Mitigation"},
         }
-        for zone in zones[:5]:
+        for zone in zones[:10]:
             zone_type_raw = str(zone.get("type") or zone.get("kind") or zone.get("label") or "").lower().replace(" ", "_")
             style = styles.get(zone_type_raw, {"face": "#38bdf8", "label": "Zone"})
             price_from = self._to_float(zone.get("from") or zone.get("priceFrom") or zone.get("low"))
@@ -193,14 +226,25 @@ class ChartSnapshotService:
                     height,
                     facecolor=style["face"],
                     edgecolor=style["face"],
-                    alpha=0.16,
-                    linewidth=0.8,
+                    alpha=0.18,
+                    linewidth=1.2,
+                    zorder=1,
                 )
             )
-            ax.text(start_idx, bottom + height / 2, style["label"], color="#e5e7eb", fontsize=7, alpha=0.85)
+            ax.text(
+                start_idx,
+                bottom + height / 2,
+                style["label"],
+                color="#e5e7eb",
+                fontsize=8,
+                alpha=0.9,
+                va="center",
+                zorder=5,
+                bbox={"boxstyle": "round,pad=0.2", "facecolor": "#0f172a", "edgecolor": style["face"], "alpha": 0.55},
+            )
 
     def _draw_horizontal_levels(self, *, ax: Any, levels: list[dict[str, Any]], candles_count: int) -> None:
-        for level in levels[:6]:
+        for level in levels[:10]:
             price = self._to_float(level.get("price") or level.get("value") or level.get("level"))
             if price is None:
                 continue
@@ -208,7 +252,17 @@ class ChartSnapshotService:
             lowered = level_type.lower()
             style = ":" if "liq" in lowered or "session" in lowered else "--"
             ax.axhline(price, color="#60a5fa", linewidth=0.9, linestyle=style, alpha=0.8)
-            ax.text(candles_count - 0.1, price, level_type[:14], color="#93c5fd", fontsize=7, ha="right", va="bottom", alpha=0.9)
+            ax.text(
+                candles_count + 0.55,
+                price,
+                level_type[:20],
+                color="#93c5fd",
+                fontsize=8,
+                ha="right",
+                va="center",
+                alpha=0.95,
+                bbox={"boxstyle": "round,pad=0.16", "facecolor": "#0f172a", "edgecolor": "#1d4ed8", "alpha": 0.55},
+            )
 
     def _draw_trade_levels(
         self,
@@ -221,16 +275,16 @@ class ChartSnapshotService:
     ) -> None:
         if entry is not None:
             ax.axhline(entry, color="#facc15", linewidth=1.2, linestyle="-", alpha=0.95)
-            ax.text(candles_count - 0.1, entry, "Entry", color="#fde68a", fontsize=8, ha="right", va="bottom")
+            ax.text(candles_count + 0.55, entry, "Entry", color="#fde68a", fontsize=9, ha="right", va="center")
         if stop_loss is not None:
             ax.axhline(stop_loss, color="#ef4444", linewidth=1.2, linestyle="--", alpha=0.95)
-            ax.text(candles_count - 0.1, stop_loss, "SL", color="#fca5a5", fontsize=8, ha="right", va="bottom")
+            ax.text(candles_count + 0.55, stop_loss, "SL", color="#fca5a5", fontsize=9, ha="right", va="center")
         for index, tp in enumerate(take_profits[:3], start=1):
             ax.axhline(tp, color="#22c55e", linewidth=1.1, linestyle="--", alpha=0.92)
-            ax.text(candles_count - 0.1, tp, f"TP{index}", color="#86efac", fontsize=8, ha="right", va="bottom")
+            ax.text(candles_count + 0.55, tp, f"TP{index}", color="#86efac", fontsize=9, ha="right", va="center")
 
     def _draw_smc_markers(self, *, ax: Any, markers: list[dict[str, Any]], candles_count: int) -> int:
-        allowed = {"bos", "choch", "sweep", "eqh", "eql"}
+        allowed = {"bos", "choch", "sweep", "eqh", "eql", "liquidity", "mitigation", "breaker", "ob"}
         rendered = 0
         for marker in markers:
             marker_type = str(marker.get("type") or marker.get("label") or "").lower()
@@ -241,15 +295,24 @@ class ChartSnapshotService:
             if price is None:
                 continue
             index = max(0, min(index, candles_count - 1))
-            ax.text(index, price, marker_type.upper(), color="#c4b5fd", fontsize=7, alpha=0.85)
+            ax.text(
+                index,
+                price,
+                marker_type.upper()[:10],
+                color="#ddd6fe",
+                fontsize=8,
+                alpha=0.95,
+                zorder=6,
+                bbox={"boxstyle": "round,pad=0.18", "facecolor": "#111827", "edgecolor": "#8b5cf6", "alpha": 0.75},
+            )
             rendered += 1
-            if rendered >= 4:
+            if rendered >= 12:
                 break
         return rendered
 
     def _draw_patterns(self, *, ax: Any, patterns: list[dict[str, Any]], candles_count: int) -> int:
         rendered = 0
-        for pattern in patterns[:2]:
+        for pattern in patterns[:6]:
             name = str(pattern.get("type") or pattern.get("name") or pattern.get("pattern") or "").strip()
             if not name:
                 continue
@@ -267,11 +330,71 @@ class ChartSnapshotService:
                     xs.append(max(0, min(x_val, candles_count - 1)))
                     ys.append(y_val)
                 if len(xs) >= 2:
-                    ax.plot(xs, ys, color="#f9a8d4", linewidth=0.9, alpha=0.7)
+                    ax.plot(xs, ys, color="#f9a8d4", linewidth=1.0, alpha=0.8, zorder=2)
             label_price = self._to_float(pattern.get("price") or pattern.get("y"))
             label_index = int(pattern.get("index") or pattern.get("x") or candles_count - 3)
             if label_price is not None:
-                ax.text(max(0, min(label_index, candles_count - 1)), label_price, name[:12], color="#fbcfe8", fontsize=7, alpha=0.85)
+                ax.text(
+                    max(0, min(label_index, candles_count - 1)),
+                    label_price,
+                    self._shorten_text(name, limit=16),
+                    color="#fbcfe8",
+                    fontsize=8,
+                    alpha=0.95,
+                    zorder=6,
+                    bbox={"boxstyle": "round,pad=0.16", "facecolor": "#111827", "edgecolor": "#ec4899", "alpha": 0.65},
+                )
+            rendered += 1
+        return rendered
+
+    def _draw_arrows(
+        self,
+        *,
+        ax: Any,
+        arrows: list[dict[str, Any]],
+        candles_count: int,
+        highs: list[float],
+        lows: list[float],
+    ) -> int:
+        rendered = 0
+        price_span = max(max(highs) - min(lows), max(abs(max(highs)), 1.0) * 0.0005)
+        for arrow in arrows[:8]:
+            start_x = self._to_float(arrow.get("start_index") or arrow.get("from_index") or arrow.get("start") or arrow.get("x"))
+            end_x = self._to_float(arrow.get("end_index") or arrow.get("to_index") or arrow.get("end") or arrow.get("x2"))
+            start_price = self._to_float(arrow.get("start_price") or arrow.get("from_price") or arrow.get("price") or arrow.get("y"))
+            end_price = self._to_float(arrow.get("end_price") or arrow.get("to_price") or arrow.get("target") or arrow.get("y2"))
+            if start_x is None and end_x is None:
+                continue
+            if start_x is None:
+                start_x = end_x - 3 if end_x is not None else candles_count - 6
+            if end_x is None:
+                end_x = start_x + 3
+            start_x = max(0, min(start_x, candles_count - 1))
+            end_x = max(0, min(end_x, candles_count - 1))
+            if start_price is None:
+                start_price = lows[int(start_x)] + price_span * 0.03
+            if end_price is None:
+                end_price = highs[int(end_x)] - price_span * 0.03
+            direction = str(arrow.get("direction") or "").lower()
+            color = "#22c55e" if direction == "up" or end_price >= start_price else "#ef4444"
+            ax.annotate(
+                "",
+                xy=(end_x, end_price),
+                xytext=(start_x, start_price),
+                arrowprops={"arrowstyle": "-|>", "color": color, "lw": 1.8, "alpha": 0.88, "mutation_scale": 16},
+                zorder=7,
+            )
+            label = str(arrow.get("label") or arrow.get("type") or "").strip()
+            if label:
+                ax.text(
+                    end_x,
+                    end_price,
+                    self._shorten_text(label, limit=12),
+                    color="#e5e7eb",
+                    fontsize=8,
+                    zorder=8,
+                    bbox={"boxstyle": "round,pad=0.14", "facecolor": "#111827", "edgecolor": color, "alpha": 0.72},
+                )
             rendered += 1
         return rendered
 
@@ -308,15 +431,73 @@ class ChartSnapshotService:
 
     @staticmethod
     def _draw_compact_legend(fig: Any) -> None:
-        fig.text(
-            0.5,
-            0.008,
-            "Demand | Supply | FVG | OB | BOS | CHoCH | Liquidity",
-            ha="center",
-            color="#94a3b8",
-            fontsize=7,
-            alpha=0.75,
+        handles = [
+            Line2D([0], [0], color="#facc15", lw=1.3, label="Entry"),
+            Line2D([0], [0], color="#ef4444", lw=1.3, ls="--", label="SL"),
+            Line2D([0], [0], color="#22c55e", lw=1.3, ls="--", label="TP"),
+            Rectangle((0, 0), 1, 1, facecolor="#22c55e", alpha=0.18, edgecolor="#22c55e", label="Demand/OB"),
+            Rectangle((0, 0), 1, 1, facecolor="#8b5cf6", alpha=0.18, edgecolor="#8b5cf6", label="FVG/Imbalance"),
+        ]
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.01),
+            ncol=5,
+            frameon=False,
+            labelcolor="#94a3b8",
+            fontsize=8,
         )
+
+    def _calculate_y_limits(
+        self,
+        *,
+        min_price: float,
+        max_price: float,
+        padding: float,
+        levels: list[dict[str, Any]],
+        zones: list[dict[str, Any]],
+        markers: list[dict[str, Any]],
+        entry: float | None,
+        stop_loss: float | None,
+        take_profits: list[float],
+        arrows: list[dict[str, Any]],
+    ) -> tuple[float, float]:
+        price_points: list[float] = [min_price, max_price]
+        if entry is not None:
+            price_points.append(entry)
+        if stop_loss is not None:
+            price_points.append(stop_loss)
+        price_points.extend(take_profits[:3])
+        for level in levels:
+            candidate = self._to_float(level.get("price") or level.get("value") or level.get("level"))
+            if candidate is not None:
+                price_points.append(candidate)
+        for zone in zones:
+            for key in ("from", "to", "priceFrom", "priceTo", "low", "high"):
+                candidate = self._to_float(zone.get(key))
+                if candidate is not None:
+                    price_points.append(candidate)
+        for marker in markers:
+            candidate = self._to_float(marker.get("price") or marker.get("value"))
+            if candidate is not None:
+                price_points.append(candidate)
+        for arrow in arrows:
+            for key in ("start_price", "end_price", "from_price", "to_price", "price", "target", "y", "y2"):
+                candidate = self._to_float(arrow.get(key))
+                if candidate is not None:
+                    price_points.append(candidate)
+        y_min = min(price_points) - padding
+        y_max = max(price_points) + padding
+        if y_max <= y_min:
+            y_max = y_min + max(abs(y_min), 1.0) * 0.001
+        return y_min, y_max
+
+    @staticmethod
+    def _shorten_text(value: str, *, limit: int) -> str:
+        clean = " ".join(str(value).split())
+        if len(clean) <= limit:
+            return clean
+        return f"{clean[: limit - 1]}…"
 
     @staticmethod
     def _to_float(value: Any) -> float | None:
