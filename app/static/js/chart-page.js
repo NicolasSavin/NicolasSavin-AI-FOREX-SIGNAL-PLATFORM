@@ -156,35 +156,15 @@ function buildFullText(idea) {
   if (detailSummary) return detailSummary;
   const direct = normalizeWhitespace(idea?.full_text || idea?.fullText || idea?.narrative);
   if (direct) return direct;
-
-  const segments = [
-    idea?.summary,
-    idea?.summary_ru,
-    idea?.ideaContext,
-    idea?.trigger,
-    idea?.invalidation,
-    idea?.target,
-  ];
-  const unique = [];
-  const seen = new Set();
-
-  segments.forEach((segment) => {
-    const text = normalizeWhitespace(segment);
-    if (!text) return;
-    const key = text.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    unique.push(text.replace(/[.!?]+$/, ""));
-  });
-
-  const joined = unique.join(". ").trim();
-  if (!joined) return "Идея подготовлена без расширенного аналитического текста.";
-  return /[.!?]$/.test(joined) ? joined : `${joined}.`;
+  return normalizeWhitespace(idea?.summary || idea?.summary_ru);
 }
 
 function buildDetailBrief(idea) {
   const existing = idea?.detail_brief;
   if (existing && typeof existing === "object") return existing;
+  const summaryStructured = idea?.summary_structured || idea?.narrative_structured?.summary_structured || {};
+  const tradePlanStructured = idea?.trade_plan_structured || idea?.narrative_structured?.trade_plan_structured || {};
+  const marketStructureStructured = idea?.market_structure_structured || idea?.narrative_structured?.market_structure_structured || {};
 
   const entry = formatLevel(idea?.entry);
   const stop = formatLevel(idea?.stopLoss);
@@ -199,13 +179,20 @@ function buildDetailBrief(idea) {
     sections.push({ key, title, content: text, is_proxy: isProxy });
   };
 
-  registerSection("smc_ict", "SMC / ICT", idea?.analysis?.smc_ict_ru || idea?.summary_ru || idea?.summary);
-  registerSection("chart_patterns", "Графические паттерны", idea?.analysis?.pattern_ru);
-  registerSection("waves", "Волновой анализ", idea?.analysis?.waves_ru);
-  registerSection("fundamental", "Фундаментал / макро", idea?.analysis?.fundamental_ru || idea?.ideaContext);
-  registerSection("volume_profile", "Объёмы / Volume Profile", idea?.analysis?.volume_ru, /proxy/i.test(String(idea?.analysis?.volume_ru || "")));
-  registerSection("cumdelta", "CumDelta / order flow", idea?.analysis?.cumdelta_ru || idea?.analysis?.cumulative_delta_ru, true);
-  registerSection("liquidity", "Ликвидность", idea?.analysis?.liquidity_ru || idea?.target);
+  registerSection("bias", "Bias", marketStructureStructured?.bias);
+  registerSection("structure", "Структура", marketStructureStructured?.structure);
+  registerSection("liquidity", "Ликвидность", marketStructureStructured?.liquidity);
+  registerSection("zone", "Зона", marketStructureStructured?.zone);
+  registerSection("confluence", "Конфлюенс", marketStructureStructured?.confluence);
+  if (!sections.length) {
+    registerSection("smc_ict", "SMC / ICT", idea?.analysis?.smc_ict_ru || idea?.summary_ru || idea?.summary);
+    registerSection("chart_patterns", "Графические паттерны", idea?.analysis?.pattern_ru);
+    registerSection("waves", "Волновой анализ", idea?.analysis?.waves_ru);
+    registerSection("fundamental", "Фундаментал / макро", idea?.analysis?.fundamental_ru || idea?.ideaContext);
+    registerSection("volume_profile", "Объёмы / Volume Profile", idea?.analysis?.volume_ru, /proxy/i.test(String(idea?.analysis?.volume_ru || "")));
+    registerSection("cumdelta", "CumDelta / order flow", idea?.analysis?.cumdelta_ru || idea?.analysis?.cumulative_delta_ru, true);
+    registerSection("liquidity", "Ликвидность", idea?.analysis?.liquidity_ru || idea?.target);
+  }
 
   const marketUnavailable = idea?.current_price == null || String(idea?.data_status || "").toLowerCase() === "unavailable";
   return {
@@ -217,20 +204,25 @@ function buildDetailBrief(idea) {
       confidence: Number(idea?.confidence ?? 0),
       confluence_rating: Number(idea?.confidence ?? 0),
     },
-    summary_narrative: buildFullText(idea),
+    summary_narrative: normalizeWhitespace(summaryStructured?.situation) || buildFullText(idea),
     scenarios: {
-      primary: normalizeWhitespace(idea?.trigger || idea?.summary),
-      swing: "Среднесрочный сценарий будет уточняться по мере удержания текущей структуры.",
-      invalidation: normalizeWhitespace(idea?.invalidation),
+      primary: normalizeWhitespace(summaryStructured?.action || tradePlanStructured?.entry_trigger || idea?.trigger || idea?.summary),
+      swing: normalizeWhitespace(summaryStructured?.effect),
+      invalidation: normalizeWhitespace(summaryStructured?.risk_note || tradePlanStructured?.invalidation || idea?.invalidation),
     },
     sections,
     trade_plan: {
-      entry_zone: entry,
-      stop,
-      take_profits: takeProfit,
+      entry_zone: normalizeWhitespace(tradePlanStructured?.entry_zone) || entry,
+      stop: normalizeWhitespace(tradePlanStructured?.stop_loss) || stop,
+      take_profits: normalizeWhitespace(tradePlanStructured?.take_profit) || takeProfit,
       risk_reward: calculateRiskReward(idea),
-      primary_scenario: buildFullText(idea),
-      alternative_scenario: normalizeWhitespace(idea?.trade_plan?.alternative_scenario_ru || "Если подтверждение не появится, сделку лучше пропустить."),
+      primary_scenario: normalizeWhitespace(summaryStructured?.action) || buildFullText(idea),
+      alternative_scenario: normalizeWhitespace(summaryStructured?.risk_note || idea?.trade_plan?.alternative_scenario_ru),
+    },
+    structured_blocks: {
+      summary: summaryStructured,
+      trade_plan: tradePlanStructured,
+      market_structure: marketStructureStructured,
     },
     supported_sections: supportedSections,
   };
@@ -274,6 +266,10 @@ function normalizeIdea(idea) {
       full_text: fullText,
       short_text: shortText,
     }),
+    summary_structured: idea?.summary_structured || idea?.narrative_structured?.summary_structured || null,
+    trade_plan_structured: idea?.trade_plan_structured || idea?.narrative_structured?.trade_plan_structured || null,
+    market_structure_structured: idea?.market_structure_structured || idea?.narrative_structured?.market_structure_structured || null,
+    narrative_structured: idea?.narrative_structured || null,
     entry: idea?.entry ?? idea?.entry_zone ?? "—",
     stopLoss: idea?.stopLoss ?? idea?.stop_loss ?? "—",
     takeProfit: idea?.takeProfit ?? idea?.take_profit ?? "—",
@@ -484,8 +480,10 @@ function renderAnalysisSections(detailBrief) {
   const sections = Array.isArray(detailBrief?.sections) ? detailBrief.sections : [];
   if (!sections.length) {
     analysisSectionsRoot.innerHTML = "";
+    analysisSectionsRoot.style.display = "none";
     return;
   }
+  analysisSectionsRoot.style.display = "";
   analysisSectionsRoot.innerHTML = sections.map((section) => `
     <section class="analysis-block">
       <div class="analysis-title">${escapeHtml(section.title || section.key || "Секция")}</div>
@@ -496,6 +494,16 @@ function renderAnalysisSections(detailBrief) {
 
 function renderTradingPlan(detailBrief) {
   const plan = detailBrief?.trade_plan || {};
+  const hasPlan = [plan.entry_zone, plan.stop, plan.take_profits, plan.primary_scenario, plan.alternative_scenario]
+    .some((value) => normalizeWhitespace(value));
+  if (!hasPlan) {
+    setTextContent(tradingPlanText, "", "");
+    const block = tradingPlanText?.closest(".analysis-block");
+    if (block) block.style.display = "none";
+    return;
+  }
+  const block = tradingPlanText?.closest(".analysis-block");
+  if (block) block.style.display = "";
   const lines = [
     `Entry zone: ${plan.entry_zone || "—"}`,
     `Stop: ${plan.stop || "—"}`,
@@ -510,22 +518,37 @@ function renderTradingPlan(detailBrief) {
 function renderDetailText(idea) {
   const detailBrief = buildDetailBrief(idea);
   const fullText = normalizeWhitespace(detailBrief?.summary_narrative) || buildFullText(idea);
-  setTextContent(ideaSummary, fullText, "Идея доступна без расширенного summary.");
-  setTextContent(analysisText, fullText, "Идея доступна без расширенного summary.");
+  setTextContent(ideaSummary, fullText, "");
+  if (fullText) {
+    setTextContent(analysisText, fullText, "");
+    analysisText?.closest(".analysis-block")?.style?.removeProperty("display");
+  } else {
+    setTextContent(analysisText, "", "");
+    const block = analysisText?.closest(".analysis-block");
+    if (block) block.style.display = "none";
+  }
   setTextContent(levelEntry, formatLevel(idea.entry));
   setTextContent(levelSl, formatLevel(idea.stopLoss));
   setTextContent(levelTp, formatLevel(idea.takeProfit));
   setTextContent(levelRr, calculateRiskReward(idea));
   renderMetricChips(detailBrief);
-  setTextContent(scenarioPrimary, detailBrief?.scenarios?.primary, "Основной сценарий не передан.");
-  setTextContent(scenarioSwing, detailBrief?.scenarios?.swing, "Среднесрочный сценарий не передан.");
-  setTextContent(scenarioInvalidation, detailBrief?.scenarios?.invalidation, "Инвалидация не передана.");
+  setTextContent(scenarioPrimary, detailBrief?.scenarios?.primary, "");
+  setTextContent(scenarioSwing, detailBrief?.scenarios?.swing, "");
+  setTextContent(scenarioInvalidation, detailBrief?.scenarios?.invalidation, "");
+  document.querySelectorAll(".scenario-card").forEach((card) => {
+    const paragraph = card.querySelector("p");
+    card.style.display = normalizeWhitespace(paragraph?.textContent) ? "" : "none";
+  });
   renderTradingPlan(detailBrief);
   renderAnalysisSections(detailBrief);
   if (idea.current_price == null || String(idea.data_status || "").toLowerCase() === "unavailable") {
-    setTextContent(scenarioPrimary, "Нет актуальных рыночных данных", "Нет актуальных рыночных данных");
-    setTextContent(scenarioSwing, "Нет актуальных рыночных данных", "Нет актуальных рыночных данных");
-    setTextContent(scenarioInvalidation, detailBrief?.scenarios?.invalidation, "Инвалидация не передана.");
+    setTextContent(scenarioPrimary, "", "");
+    setTextContent(scenarioSwing, "", "");
+    setTextContent(scenarioInvalidation, detailBrief?.scenarios?.invalidation, "");
+    document.querySelectorAll(".scenario-card").forEach((card) => {
+      const paragraph = card.querySelector("p");
+      card.style.display = normalizeWhitespace(paragraph?.textContent) ? "" : "none";
+    });
   }
   if (idea.status === "archived") {
     const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";

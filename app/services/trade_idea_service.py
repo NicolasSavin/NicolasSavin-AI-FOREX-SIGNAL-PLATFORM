@@ -749,6 +749,15 @@ class TradeIdeaService:
             previous_summary=previous_summary,
             delta=delta_payload,
         )
+        narrative_structured = self._resolve_structured_narrative(
+            llm_data=llm_result.data,
+            trigger=trigger,
+            entry_zone=self._format_zone(entry_value),
+            stop_loss=self._format_price(stop_loss),
+            take_profit=self._format_price(take_profit),
+            invalidation=invalidation,
+            bias=bias,
+        )
         full_text = llm_result.data.get("full_text") or self._build_full_text(
             signal,
             summary=summary_text,
@@ -802,6 +811,7 @@ class TradeIdeaService:
             target=target,
             analysis=analysis_payload,
             trade_plan=trade_plan_payload,
+            narrative_structured=narrative_structured,
         )
         chart_snapshot = self._resolve_chart_snapshot(
             signal=signal,
@@ -885,6 +895,10 @@ class TradeIdeaService:
             "short_scenario_ru": short_scenario,
             "short_text": short_scenario,
             "full_text": full_text,
+            "summary_structured": narrative_structured.get("summary_structured"),
+            "trade_plan_structured": narrative_structured.get("trade_plan_structured"),
+            "market_structure_structured": narrative_structured.get("market_structure_structured"),
+            "narrative_structured": narrative_structured,
             "update_explanation": llm_result.data.get("update_explanation") or rationale,
             "narrative_source": llm_result.source,
             "idea_context": idea_context,
@@ -2357,6 +2371,74 @@ class TradeIdeaService:
             return "—"
         return f"{reward / risk:.2f}R"
 
+    @staticmethod
+    def _structured_group(raw: Any, keys: tuple[str, ...]) -> dict[str, str] | None:
+        if not isinstance(raw, dict):
+            return None
+        result: dict[str, str] = {}
+        for key in keys:
+            value = str(raw.get(key) or "").strip()
+            if not value:
+                return None
+            result[key] = value
+        return result
+
+    @classmethod
+    def _resolve_structured_narrative(
+        cls,
+        *,
+        llm_data: dict[str, Any],
+        trigger: str,
+        entry_zone: str,
+        stop_loss: str,
+        take_profit: str,
+        invalidation: str,
+        bias: str,
+    ) -> dict[str, dict[str, str]]:
+        summary = cls._structured_group(
+            llm_data.get("summary_structured"),
+            ("signal", "situation", "cause", "effect", "action", "risk_note"),
+        )
+        trade_plan = cls._structured_group(
+            llm_data.get("trade_plan_structured"),
+            ("entry_trigger", "entry_zone", "stop_loss", "take_profit", "invalidation"),
+        )
+        market_structure = cls._structured_group(
+            llm_data.get("market_structure_structured"),
+            ("bias", "structure", "liquidity", "zone", "confluence"),
+        )
+        if summary and trade_plan and market_structure:
+            return {
+                "summary_structured": summary,
+                "trade_plan_structured": trade_plan,
+                "market_structure_structured": market_structure,
+            }
+
+        return {
+            "summary_structured": {
+                "signal": str(llm_data.get("headline") or "Сигнал требует подтверждения.").strip(),
+                "situation": str(llm_data.get("summary") or "").strip() or "Рынок в рабочей зоне, ждём реакцию цены.",
+                "cause": str(llm_data.get("cause") or "").strip() or "Причина сценария опирается на структуру и ликвидность.",
+                "effect": str(llm_data.get("confirmation") or "").strip() or "Если структура сохраняется, сценарий получает продолжение.",
+                "action": str(llm_data.get("action") or trigger).strip() or trigger,
+                "risk_note": str(llm_data.get("risk") or "").strip() or "Риск повышается при потере структуры.",
+            },
+            "trade_plan_structured": {
+                "entry_trigger": str(trigger).strip(),
+                "entry_zone": str(entry_zone).strip(),
+                "stop_loss": str(stop_loss).strip(),
+                "take_profit": str(take_profit).strip(),
+                "invalidation": str(invalidation).strip(),
+            },
+            "market_structure_structured": {
+                "bias": str(bias).strip(),
+                "structure": str(llm_data.get("confirmation") or "").strip() or "Структура в фазе подтверждения.",
+                "liquidity": str(llm_data.get("target_logic") or "").strip() or "Ликвидность остаётся ключевым ориентиром цели.",
+                "zone": str(llm_data.get("cause") or "").strip() or "Рабочая зона подтверждает сценарий только при реакции цены.",
+                "confluence": str(llm_data.get("invalidation") or "").strip() or "Конфлюенс действителен, пока условия инвалидации не сработали.",
+            },
+        }
+
     @classmethod
     def _build_detail_brief(
         cls,
@@ -2374,6 +2456,7 @@ class TradeIdeaService:
         target: str,
         analysis: dict[str, Any],
         trade_plan: dict[str, Any],
+        narrative_structured: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
         sentiment = row.get("sentiment") if isinstance(row.get("sentiment"), dict) else {}
@@ -2383,17 +2466,35 @@ class TradeIdeaService:
         stop_loss = cls._extract_level(row, "stopLoss", "stop_loss")
         take_profit = cls._extract_level(row, "takeProfit", "take_profit")
         target_2 = cls._extract_level(trade_plan, "target_2")
-        narrative_summary = cls._compose_briefing_summary(
-            symbol=symbol,
-            timeframe=timeframe,
-            direction=direction,
-            summary=summary,
-            full_text=full_text,
-            idea_context=idea_context,
-            trigger=trigger,
-            invalidation=invalidation,
-            target=target,
+        resolved_structured = narrative_structured if isinstance(narrative_structured, dict) else {}
+        summary_structured = (
+            resolved_structured.get("summary_structured")
+            if isinstance(resolved_structured.get("summary_structured"), dict)
+            else {}
         )
+        trade_plan_structured = (
+            resolved_structured.get("trade_plan_structured")
+            if isinstance(resolved_structured.get("trade_plan_structured"), dict)
+            else {}
+        )
+        market_structure_structured = (
+            resolved_structured.get("market_structure_structured")
+            if isinstance(resolved_structured.get("market_structure_structured"), dict)
+            else {}
+        )
+        narrative_summary = cls._clean_sentence(summary_structured.get("situation") or full_text)
+        if not narrative_summary:
+            narrative_summary = cls._compose_briefing_summary(
+                symbol=symbol,
+                timeframe=timeframe,
+                direction=direction,
+                summary=summary,
+                full_text=full_text,
+                idea_context=idea_context,
+                trigger=trigger,
+                invalidation=invalidation,
+                target=target,
+            )
         sections = cls._build_analysis_sections(
             row,
             direction=direction,
@@ -2420,22 +2521,46 @@ class TradeIdeaService:
                 "confluence_rating": confluence_rating,
             },
             "summary_narrative": narrative_summary,
+            "narrative_structured": resolved_structured,
             "scenarios": {
-                "primary": cls._clean_sentence(trigger or summary),
+                "primary": cls._clean_sentence(summary_structured.get("action") or trigger or summary),
                 "swing": cls._clean_sentence(
-                    trade_plan.get("medium_term_scenario_ru")
+                    summary_structured.get("effect")
+                    or trade_plan.get("medium_term_scenario_ru")
                     or f"На горизонте 1–4 недели сценарий остаётся валиден, пока цена не ломает базовую структуру и сохраняет работу к {target}."
                 ),
-                "invalidation": cls._clean_sentence(invalidation),
+                "invalidation": cls._clean_sentence(
+                    trade_plan_structured.get("invalidation")
+                    or summary_structured.get("risk_note")
+                    or invalidation
+                ),
             },
             "sections": sections,
             "trade_plan": {
-                "entry_zone": entry,
-                "stop": stop_loss,
-                "take_profits": cls._combine_targets(take_profit, target_2) or target,
+                "entry_zone": trade_plan_structured.get("entry_zone") or entry,
+                "stop": trade_plan_structured.get("stop_loss") or stop_loss,
+                "take_profits": (
+                    cls._combine_targets(trade_plan_structured.get("take_profit"), target_2)
+                    if trade_plan_structured.get("take_profit") and target_2 and trade_plan_structured.get("take_profit") != target_2
+                    else trade_plan_structured.get("take_profit")
+                )
+                or cls._combine_targets(take_profit, target_2)
+                or target,
                 "risk_reward": cls._risk_reward_text(entry, stop_loss, take_profit),
-                "primary_scenario": cls._clean_sentence(trade_plan.get("primary_scenario_ru") or narrative_summary),
-                "alternative_scenario": cls._clean_sentence(trade_plan.get("alternative_scenario_ru")),
+                "primary_scenario": cls._clean_sentence(
+                    summary_structured.get("action")
+                    or trade_plan.get("primary_scenario_ru")
+                    or narrative_summary
+                ),
+                "alternative_scenario": cls._clean_sentence(
+                    summary_structured.get("risk_note")
+                    or trade_plan.get("alternative_scenario_ru")
+                ),
+            },
+            "structured_blocks": {
+                "summary": summary_structured,
+                "trade_plan": trade_plan_structured,
+                "market_structure": market_structure_structured,
             },
             "supported_sections": supported_sections,
         }
@@ -2671,6 +2796,15 @@ class TradeIdeaService:
                 target=str(target),
                 analysis=normalized_analysis,
                 trade_plan=normalized_trade_plan,
+                narrative_structured=self._resolve_structured_narrative(
+                    llm_data=row,
+                    trigger=str(trigger),
+                    entry_zone=entry,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    invalidation=str(invalidation),
+                    bias=direction,
+                ),
             )
             chart_data = row.get("chartData") or row.get("chart_data")
             chart_image_url = row.get("chartImageUrl") or row.get("chart_image")
@@ -2700,6 +2834,10 @@ class TradeIdeaService:
                         "short_text": short_text,
                         "short_scenario_ru": short_text,
                         "full_text": full_text,
+                        "summary_structured": row.get("summary_structured") or (detail_brief.get("narrative_structured") or {}).get("summary_structured"),
+                        "trade_plan_structured": row.get("trade_plan_structured") or (detail_brief.get("narrative_structured") or {}).get("trade_plan_structured"),
+                        "market_structure_structured": row.get("market_structure_structured") or (detail_brief.get("narrative_structured") or {}).get("market_structure_structured"),
+                        "narrative_structured": row.get("narrative_structured") or detail_brief.get("narrative_structured"),
                         "update_explanation": row.get("update_explanation") or row.get("update_summary") or "",
                         "narrative_source": row.get("narrative_source") or ("fallback" if row.get("is_fallback") else "llm"),
                         "status": str(row.get("status") or IDEA_STATUS_WAITING),
@@ -2835,31 +2973,13 @@ class TradeIdeaService:
             "Сгенерируй 6 торговых идей строго по переданным market contexts.\n\n"
             "Каждая идея должна соответствовать ОДНОЙ записи из списка contexts и содержать:\n"
             "- id\n- symbol\n- timeframe\n- direction (bullish/bearish/neutral)\n- confidence (60-80)\n- short_text\n- full_text\n- entry\n- stopLoss\n- takeProfit\n- tags (массив)\n\n"
-            "Требования к full_text:\n"
-            "- верни ОДИН цельный текст в поле full_text\n"
-            "- без заголовков, списков и разделения на блоки\n"
-            "- стиль: desk-style комментарий трейдера, сухо и профессионально, без AI-тона и маркетинга\n"
-            "- длина динамическая: если подтверждений мало, 6-8 предложений; если confluence богатый, 9-13 предложений\n"
-            "- обязательно выстрой причинно-следственную цепочку: что сделала цена -> почему -> smart money интерпретация -> подтверждения -> ожидаемый следующий ход -> торговый план -> invalidation\n"
-            "- сначала дай контекст: структура рынка, где сейчас цена и какая рабочая зона\n"
-            "- затем свяжи SMC / ICT, паттерн, объёмы, дивергенцию, CumDelta, опционы, фундаментал, волны, Wyckoff и сентимент в единый сценарий, а не в список отдельных блоков\n"
-            "- не пиши форматом 'SMC: ...', 'Volumes: ...', 'Divergence: ...'\n"
-            "- SMC / ICT должны давать зону и структуру, паттерн — тайминг входа, объёмы / CumDelta / дивергенция — подтверждение или слабость, фундаментал — общий bias, Wyckoff и волны — фазу движения, сентимент — фильтр толпы против smart money\n"
-            "- потом дай главный сценарий: откуда вход, куда цель и почему рынок должен пройти именно туда\n"
-            "- обязательно прямо объясни ПОЧЕМУ вход именно от entry: какое событие произошло, где именно оно произошло и почему это даёт точку входа\n"
-            "- обязательно назови хотя бы ОДНО конкретное событие из price action / SMC: order block, FVG / imbalance, liquidity sweep, BOS, CHOCH, пробой клина, пробой канала, пробой диапазона, пробой треугольника, displacement\n"
-            "- если называешь событие, обязательно привяжи его к уровню или зоне в тексте: например order block 1.1550-1.1570, FVG 1.1545-1.1560, liquidity sweep ниже 1.1530\n"
-            "- обязательно отдельно и ясно пропиши trigger: какое конкретно действие цены должно произойти для входа\n"
-            "- trigger не должен быть абстрактным; пиши, что именно ждём: реакцию, импульс, BOS/CHOCH, пробой паттерна, возврат под/выше уровень\n"
-            "- после trigger дай подтверждение: что именно нужно увидеть в объёмах, delta, дивергенции или паттерне\n"
-            "- затем укажи entry/stop loss/take profit и почему именно эти уровни выбраны\n"
-            "- обязательно укажи invalidation и target отдельными предложениями внутри того же цельного текста\n"
-            "- уровни ОБЯЗАТЕЛЬНО вписывай прямо в текст, например: зона 1.1550-1.1570, цель 1.1600, отмена ниже 1.1525\n"
-            "- текст должен читаться как execution-ready setup, а не как обзор рынка\n"
-            "- не пиши абстракции вроде 'при подтверждении' без объяснения, что именно является подтверждением\n"
-            "- обязательно включи основной сценарий, trigger, подтверждение, invalidation, цель и логику движения цены\n"
-            "- если это диапазон, объясни внутреннюю механику диапазона: какие ликвидности уже сняты, где ложный выход, какой breakout будет валидным\n"
-            "- если каких-то данных нет, не выдумывай их; опирайся только на цену и переданный контекст\n\n"
+            "Обязательно добавь структурированные narrative-блоки (Grok пишет текст сам, без шаблонов):\n"
+            "- summary_structured: signal, situation, cause, effect, action, risk_note\n"
+            "- trade_plan_structured: entry_trigger, entry_zone, stop_loss, take_profit, invalidation\n"
+            "- market_structure_structured: bias, structure, liquidity, zone, confluence\n"
+            "Правила для structured-текста: простой язык, короткие предложения, cause->effect->action явный, без длинных эссе и без повторов symbol/timeframe в каждом поле.\n"
+            "full_text и short_text оставь для обратной совместимости, но structured-поля обязательны.\n"
+            "Если данных мало, не выдумывай: честно укажи ограниченность подтверждений в risk_note/confluence.\n\n"
             "Требования к short_text:\n"
             "- 1-2 предложения для карточки, но без бессмысленных общих слов\n"
             "- должен содержать действие цены + рабочую идею + уровень отмены или цель\n\n"
@@ -2874,7 +2994,7 @@ class TradeIdeaService:
             "- Для bullish: stopLoss < entry < takeProfit.\n"
             "- Для bearish: takeProfit < entry < stopLoss.\n"
             "- Для neutral не делай агрессивный directional setup без основания; уровни должны оставаться осторожными и близкими к current_price.\n\n"
-            "Верни строго JSON array и ничего кроме него.\n\n"
+            "Верни строго VALID JSON array и ничего кроме него.\n\n"
             f"contexts = {json.dumps(contexts, ensure_ascii=False)}"
         )
 
