@@ -67,6 +67,8 @@ class TradeIdeaService:
         self.chart_data_service = chart_data_service or ChartDataService()
         self.chart_snapshot_service = ChartSnapshotService()
         self.refresh_interval_seconds = int(os.getenv("IDEAS_REFRESH_INTERVAL_SECONDS", "180"))
+        self.live_price_refresh_seconds = int(os.getenv("IDEAS_LIVE_PRICE_REFRESH_SECONDS", "15"))
+        self.live_chart_refresh_seconds = int(os.getenv("IDEAS_LIVE_CHART_REFRESH_SECONDS", "45"))
         self.idea_store = JsonStorage("signals_data/trade_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
         self.legacy_store = JsonStorage("signals_data/market_ideas.json", {"updated_at_utc": None, "ideas": []})
@@ -128,9 +130,10 @@ class TradeIdeaService:
     def refresh_market_ideas(self) -> dict[str, Any]:
         payload = self.idea_store.read()
         ideas = payload.get("ideas", [])
+        ideas, live_refresh_changed = self._refresh_active_ideas(ideas)
         ideas, snapshot_recovered = self._recover_missing_chart_snapshots(ideas)
         ideas, changed = self._ensure_statistics(ideas)
-        storage_changed = changed or snapshot_recovered
+        storage_changed = changed or snapshot_recovered or live_refresh_changed
         if not ideas:
             payload = {
                 "updated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -143,7 +146,7 @@ class TradeIdeaService:
         else:
             payload = {"updated_at_utc": payload.get("updated_at_utc"), "ideas": ideas}
         active_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES]
-        archived_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") == "archived"]
+        archived_ideas = [idea for idea in payload.get("ideas", []) if str(idea.get("status")).lower() in CLOSED_STATUSES]
         legacy = {
             "updated_at_utc": payload.get("updated_at_utc"),
             "ideas": [self._to_legacy_card(idea) for idea in active_ideas],
@@ -152,6 +155,191 @@ class TradeIdeaService:
         }
         self.legacy_store.write(legacy)
         return legacy
+
+    def _refresh_active_ideas(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+        if not ideas:
+            return ideas, False
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        refreshed: list[dict[str, Any]] = []
+        changed = False
+        for idea in ideas:
+            current = dict(idea)
+            status = str(current.get("status") or "").lower()
+            if status not in ACTIVE_STATUSES:
+                refreshed.append(current)
+                continue
+            if not self._is_live_price_refresh_due(current, now):
+                refreshed.append(current)
+                continue
+            symbol = str(current.get("symbol", "")).upper()
+            timeframe = str(current.get("timeframe", "H1")).upper()
+            chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
+            candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
+            if not candles:
+                refreshed.append(current)
+                continue
+            latest_candle = candles[-1] if isinstance(candles[-1], dict) else {}
+            latest_close = self._extract_numeric(latest_candle.get("close"))
+            if latest_close is None:
+                refreshed.append(current)
+                continue
+            current["current_price"] = latest_close
+            current["last_price_update_at"] = now_iso
+            current["current_candle_time"] = latest_candle.get("time") or latest_candle.get("timestamp")
+            changed = True
+            new_status = self._status_from_live_price(current, latest_close)
+            previous_status = str(current.get("status") or "").lower()
+            if new_status != previous_status:
+                current["status"] = new_status
+                current["updated_at"] = now_iso
+                current["update_summary"] = self._status_update_summary(new_status, symbol=symbol)
+                current["history"] = self._append_history_event(
+                    current.get("history"),
+                    event_type=self._history_event_from_status(new_status),
+                    note=current["update_summary"],
+                    at=now_iso,
+                )
+                current["updates"] = self._history_to_updates(current.get("history"))
+                changed = True
+                if new_status in TERMINAL_STATUSES:
+                    current["closed_at"] = now_iso
+                    current["final_status"] = new_status
+                    current["close_reason"] = self._close_reason(new_status)
+                    current["close_explanation"] = self._build_close_explanation(
+                        status=new_status,
+                        symbol=symbol,
+                        direction=str(current.get("direction") or current.get("bias") or "neutral"),
+                        target=self._format_price(current.get("take_profit") or current.get("takeProfit")),
+                        invalidation=str(current.get("invalidation") or ""),
+                    )
+            candle_hash = self._candle_fingerprint(candles)
+            previous_hash = str(current.get("last_candle_fingerprint") or "")
+            chart_due = self._is_chart_refresh_due(current, now)
+            if candle_hash and candle_hash != previous_hash and chart_due:
+                chart_snapshot = self._resolve_chart_snapshot(
+                    signal={**current, "chart_data": chart_payload},
+                    existing=current,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    entry=self._extract_numeric(current.get("entry")),
+                    stop_loss=self._extract_numeric(current.get("stop_loss") or current.get("stopLoss")),
+                    take_profit=self._extract_numeric(current.get("take_profit") or current.get("takeProfit")),
+                    bias=str(current.get("bias") or current.get("direction") or "neutral"),
+                    confidence=int(self._extract_numeric(current.get("confidence")) or 0),
+                    status=str(current.get("status") or IDEA_STATUS_WAITING),
+                )
+                if chart_snapshot.get("chartImageUrl"):
+                    current["chart_image"] = chart_snapshot["chartImageUrl"]
+                    current["chartImageUrl"] = chart_snapshot["chartImageUrl"]
+                    current["chart_snapshot_status"] = "ok"
+                    current["chartSnapshotStatus"] = "ok"
+                    current["last_chart_refresh_at"] = now_iso
+                    current["chart_version"] = int(current.get("chart_version") or 0) + 1
+                    current["last_candle_fingerprint"] = candle_hash
+                    changed = True
+                else:
+                    current["chart_snapshot_status"] = chart_snapshot.get("status") or "snapshot_failed"
+                    current["chartSnapshotStatus"] = chart_snapshot.get("status") or "snapshot_failed"
+            refreshed.append(current)
+        return refreshed, changed
+
+    @staticmethod
+    def _candle_fingerprint(candles: list[dict[str, Any]]) -> str:
+        if not candles:
+            return ""
+        tail = candles[-1] if isinstance(candles[-1], dict) else {}
+        return "|".join(
+            [
+                str(len(candles)),
+                str(tail.get("time") or tail.get("timestamp") or ""),
+                str(tail.get("open") or ""),
+                str(tail.get("high") or ""),
+                str(tail.get("low") or ""),
+                str(tail.get("close") or ""),
+            ]
+        )
+
+    def _is_live_price_refresh_due(self, idea: dict[str, Any], now: datetime) -> bool:
+        return self._is_refresh_field_due(
+            idea=idea,
+            field="last_price_update_at",
+            refresh_seconds=max(self.live_price_refresh_seconds, 1),
+            now=now,
+        )
+
+    def _is_chart_refresh_due(self, idea: dict[str, Any], now: datetime) -> bool:
+        return self._is_refresh_field_due(
+            idea=idea,
+            field="last_chart_refresh_at",
+            refresh_seconds=max(self.live_chart_refresh_seconds, 1),
+            now=now,
+        )
+
+    @staticmethod
+    def _is_refresh_field_due(*, idea: dict[str, Any], field: str, refresh_seconds: int, now: datetime) -> bool:
+        raw_value = idea.get(field)
+        if not raw_value:
+            return True
+        try:
+            parsed = datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return (now - parsed.astimezone(timezone.utc)).total_seconds() >= refresh_seconds
+
+    @classmethod
+    def _status_from_live_price(cls, idea: dict[str, Any], latest_close: float) -> str:
+        existing_status = str(idea.get("status") or "").lower()
+        if existing_status in CLOSED_STATUSES:
+            return existing_status
+        direction = str(idea.get("direction") or idea.get("bias") or "").lower()
+        entry = cls._extract_numeric(idea.get("entry"))
+        stop_loss = cls._extract_numeric(idea.get("stop_loss") or idea.get("stopLoss"))
+        take_profit = cls._extract_numeric(idea.get("take_profit") or idea.get("takeProfit"))
+        if direction == "bullish":
+            if take_profit is not None and latest_close >= take_profit:
+                return IDEA_STATUS_TP_HIT
+            if stop_loss is not None and latest_close <= stop_loss:
+                return IDEA_STATUS_SL_HIT
+            if entry is not None and latest_close >= entry:
+                return IDEA_STATUS_ACTIVE if existing_status in {IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE} else IDEA_STATUS_TRIGGERED
+            return IDEA_STATUS_WAITING if existing_status in {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING} else existing_status
+        if direction == "bearish":
+            if take_profit is not None and latest_close <= take_profit:
+                return IDEA_STATUS_TP_HIT
+            if stop_loss is not None and latest_close >= stop_loss:
+                return IDEA_STATUS_SL_HIT
+            if entry is not None and latest_close <= entry:
+                return IDEA_STATUS_ACTIVE if existing_status in {IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE} else IDEA_STATUS_TRIGGERED
+            return IDEA_STATUS_WAITING if existing_status in {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING} else existing_status
+        return IDEA_STATUS_WAITING if existing_status in {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING} else existing_status
+
+    @staticmethod
+    def _history_event_from_status(status: str) -> str:
+        return {
+            IDEA_STATUS_CREATED: "created",
+            IDEA_STATUS_WAITING: "waiting",
+            IDEA_STATUS_TRIGGERED: "price_enters_zone",
+            IDEA_STATUS_ACTIVE: "active",
+            IDEA_STATUS_TP_HIT: "tp_hit",
+            IDEA_STATUS_SL_HIT: "sl_hit",
+        }.get(status, "updated")
+
+    @staticmethod
+    def _status_update_summary(status: str, *, symbol: str) -> str:
+        if status == IDEA_STATUS_WAITING:
+            return f"{symbol}: цена ещё не подтвердила вход, идея остаётся в ожидании."
+        if status == IDEA_STATUS_TRIGGERED:
+            return f"{symbol}: цена вошла в зону входа, сценарий активирован."
+        if status == IDEA_STATUS_ACTIVE:
+            return f"{symbol}: сценарий в активной фазе сопровождения."
+        if status == IDEA_STATUS_TP_HIT:
+            return f"{symbol}: достигнут take-profit, идея закрыта."
+        if status == IDEA_STATUS_SL_HIT:
+            return f"{symbol}: сработал stop-loss, идея закрыта."
+        return f"{symbol}: статус идеи обновлён."
 
     def build_api_ideas(self) -> list[dict[str, Any]]:
         primary_payload = self.idea_store.read()
@@ -627,6 +815,9 @@ class TradeIdeaService:
             confidence=int(signal.get("confidence_percent") or signal.get("probability_percent") or 0),
             status=status,
         )
+        initial_candle_fingerprint = self._candle_fingerprint(
+            chart_snapshot.get("candles") if isinstance(chart_snapshot.get("candles"), list) else []
+        )
         is_terminal = status in TERMINAL_STATUSES
         closed_at = now.isoformat() if is_terminal else None
         final_status = status if is_terminal else existing.get("final_status") if existing else None
@@ -653,7 +844,7 @@ class TradeIdeaService:
             signal=signal,
         )
         updates = self._history_to_updates(history)
-        persisted_status = IDEA_STATUS_ARCHIVED if is_terminal else status
+        persisted_status = status
 
         payload = {
             "idea_id": idea_id,
@@ -675,6 +866,7 @@ class TradeIdeaService:
             "stopLoss": self._format_price(stop_loss),
             "takeProfit": self._format_price(take_profit),
             "latest_close": latest_close,
+            "current_price": latest_close,
             "sentiment": signal_sentiment,
             "rationale": rationale,
             "created_at": created_at,
@@ -710,6 +902,10 @@ class TradeIdeaService:
             "chartImageUrl": chart_snapshot["chartImageUrl"],
             "chart_snapshot_status": chart_snapshot["status"],
             "chartSnapshotStatus": chart_snapshot["status"],
+            "last_price_update_at": now.isoformat(),
+            "last_chart_refresh_at": now.isoformat() if chart_snapshot["chartImageUrl"] else existing.get("last_chart_refresh_at") if existing else None,
+            "chart_version": (int(existing.get("chart_version") or 0) + 1 if chart_snapshot["chartImageUrl"] else int(existing.get("chart_version") or 0)) if existing else (1 if chart_snapshot["chartImageUrl"] else 0),
+            "last_candle_fingerprint": initial_candle_fingerprint or (existing.get("last_candle_fingerprint") if existing else ""),
             "history": history,
             "updates": updates,
             "current_reasoning": decision_payload.get("explanation_ru"),
@@ -783,7 +979,7 @@ class TradeIdeaService:
                 symbol,
                 timeframe,
             )
-            return {"chartImageUrl": None, "status": "no_data"}
+            return {"chartImageUrl": None, "status": "no_data", "candles": []}
         if fetch_status != "ok":
             logger.info(
                 "idea_snapshot_candle_override symbol=%s timeframe=%s payload_status=%s effective_status=ok candles=%s",
@@ -834,8 +1030,8 @@ class TradeIdeaService:
                     existing_url,
                     existing_status,
                 )
-                return {"chartImageUrl": existing_url, "status": "snapshot_failed"}
-            return {"chartImageUrl": None, "status": "snapshot_failed"}
+                return {"chartImageUrl": existing_url, "status": "snapshot_failed", "candles": candles}
+            return {"chartImageUrl": None, "status": "snapshot_failed", "candles": candles}
         logger.info(
             "snapshot_success symbol=%s timeframe=%s candles=%s path=%s",
             symbol,
@@ -843,7 +1039,7 @@ class TradeIdeaService:
             len(candles),
             image_path,
         )
-        return {"chartImageUrl": image_path, "status": "ok"}
+        return {"chartImageUrl": image_path, "status": "ok", "candles": candles}
 
     def _extract_take_profits(self, *, signal: dict[str, Any], fallback_take_profit: float | None) -> list[float]:
         candidates = signal.get("take_profits")
