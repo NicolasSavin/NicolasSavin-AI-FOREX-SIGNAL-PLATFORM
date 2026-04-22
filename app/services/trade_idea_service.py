@@ -705,13 +705,15 @@ class TradeIdeaService:
         }
         fetch_status = str(chart_payload.get("status") or "ok").lower()
         logger.info(
-            "idea_snapshot_signal_chart_payload symbol=%s timeframe=%s payload_status=%s has_values=%s has_candles=%s normalized_candles=%s",
+            "idea_snapshot_signal_chart_payload symbol=%s timeframe=%s payload_status=%s has_values=%s has_candles=%s normalized_candles=%s existing_chart_url=%s existing_chart_status=%s",
             symbol,
             timeframe,
             normalized_status,
             isinstance(chart_data.get("values"), list),
             isinstance(chart_data.get("candles"), list),
             len(candles),
+            bool(existing_url),
+            existing_status,
         )
         if not candles:
             chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
@@ -779,13 +781,13 @@ class TradeIdeaService:
             )
             if existing_url:
                 logger.info(
-                    "idea_snapshot_reused_existing symbol=%s timeframe=%s path=%s previous_status=%s",
+                    "idea_snapshot_reused_existing symbol=%s timeframe=%s path=%s previous_status=%s new_status=snapshot_failed",
                     symbol,
                     timeframe,
                     existing_url,
                     existing_status,
                 )
-                return {"chartImageUrl": existing_url, "status": existing_status}
+                return {"chartImageUrl": existing_url, "status": "snapshot_failed"}
             return {"chartImageUrl": None, "status": "snapshot_failed"}
         logger.info(
             "snapshot_success symbol=%s timeframe=%s candles=%s path=%s",
@@ -842,7 +844,29 @@ class TradeIdeaService:
         )
         self.snapshot_store.write({"snapshots": snapshots})
 
-    def _recover_missing_chart_snapshots(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    def recover_legacy_chart_snapshots_once(self) -> dict[str, int]:
+        payload = self.idea_store.read()
+        ideas = payload.get("ideas") if isinstance(payload.get("ideas"), list) else []
+        recovered_ideas, changed = self._recover_missing_chart_snapshots(ideas, force=True)
+        recovered_count = sum(1 for idea in recovered_ideas if (idea.get("chartSnapshotStatus") or idea.get("chart_snapshot_status")) == "ok")
+        missing_count = sum(1 for idea in recovered_ideas if not (idea.get("chartImageUrl") or idea.get("chart_image")))
+        if changed:
+            self.idea_store.write({"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": recovered_ideas})
+            self.refresh_market_ideas()
+        logger.info(
+            "idea_snapshot_recovery_once completed changed=%s ideas_total=%s recovered_ok=%s missing_chart_after=%s",
+            changed,
+            len(recovered_ideas),
+            recovered_count,
+            missing_count,
+        )
+        return {
+            "ideas_total": len(recovered_ideas),
+            "recovered_ok": recovered_count,
+            "missing_chart_after": missing_count,
+        }
+
+    def _recover_missing_chart_snapshots(self, ideas: list[dict[str, Any]], *, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
         recovered_ideas: list[dict[str, Any]] = []
         changed = False
         now = datetime.now(timezone.utc)
@@ -850,17 +874,19 @@ class TradeIdeaService:
 
         for idea in ideas:
             current = dict(idea)
-            if not self._should_retry_chart_snapshot(current, now):
+            if not self._should_retry_chart_snapshot(current, now, force=force):
                 recovered_ideas.append(current)
                 continue
 
             logger.info(
-                "idea_snapshot_retry_started idea_id=%s symbol=%s timeframe=%s current_status=%s has_chart=%s",
+                "idea_snapshot_retry_started idea_id=%s symbol=%s timeframe=%s current_status=%s has_chart=%s existing_chart_url=%s existing_chart_status=%s",
                 current.get("idea_id"),
                 current.get("symbol"),
                 current.get("timeframe"),
                 current.get("chartSnapshotStatus") or current.get("chart_snapshot_status"),
                 bool(current.get("chartImageUrl") or current.get("chart_image")),
+                current.get("chartImageUrl") or current.get("chart_image"),
+                current.get("chartSnapshotStatus") or current.get("chart_snapshot_status"),
             )
             snapshot = self._resolve_chart_snapshot(
                 signal=current,
@@ -895,22 +921,36 @@ class TradeIdeaService:
                     current.get("timeframe"),
                 )
             else:
+                current["chart_snapshot_status"] = "snapshot_failed"
+                current["chartSnapshotStatus"] = "snapshot_failed"
+                changed = True
                 logger.info(
-                    "idea_snapshot_retry_finished_without_image idea_id=%s symbol=%s timeframe=%s status=%s",
+                    "idea_snapshot_retry_finished_without_image idea_id=%s symbol=%s timeframe=%s status=%s final_chart_url=%s",
                     current.get("idea_id"),
                     current.get("symbol"),
                     current.get("timeframe"),
                     snapshot.get("status"),
+                    current.get("chartImageUrl") or current.get("chart_image"),
                 )
+            logger.info(
+                "idea_snapshot_retry_final idea_id=%s symbol=%s timeframe=%s final_chart_url=%s final_status=%s",
+                current.get("idea_id"),
+                current.get("symbol"),
+                current.get("timeframe"),
+                current.get("chartImageUrl") or current.get("chart_image"),
+                current.get("chartSnapshotStatus") or current.get("chart_snapshot_status"),
+            )
             recovered_ideas.append(current)
 
         return recovered_ideas, changed
 
-    def _should_retry_chart_snapshot(self, idea: dict[str, Any], now: datetime) -> bool:
+    def _should_retry_chart_snapshot(self, idea: dict[str, Any], now: datetime, *, force: bool = False) -> bool:
         chart_url = idea.get("chartImageUrl") or idea.get("chart_image")
         chart_status = str(idea.get("chartSnapshotStatus") or idea.get("chart_snapshot_status") or "ok").lower()
         if chart_url:
             return False
+        if force:
+            return True
         # Даже при status=ok повторяем попытку, если фактический URL снапшота отсутствует.
         if chart_status == "ok" and not chart_url:
             return True
