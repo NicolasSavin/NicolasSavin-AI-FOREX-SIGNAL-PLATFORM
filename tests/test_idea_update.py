@@ -159,6 +159,39 @@ def test_archive_explanation_generation_on_tp_sl(tmp_path: Path) -> None:
     assert "sl_hit" in (sl.get("close_explanation") or "")
 
 
+def test_no_trade_does_not_reopen_closed_lifecycle(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    base_signal = {
+        "symbol": "EURUSD",
+        "timeframe": "H1",
+        "action": "BUY",
+        "entry": 1.0820,
+        "stop_loss": 1.0790,
+        "take_profit": 1.0880,
+        "latest_close": 1.0823,
+        "confidence_percent": 74,
+        "description_ru": "Первичный long-сценарий.",
+        "reason_ru": "Структура подтверждает long.",
+        "market_context": {"patternBias": "bullish"},
+    }
+
+    service.upsert_trade_idea(base_signal)
+    closed = service.upsert_trade_idea({**base_signal, "latest_close": 1.0890})
+    unchanged = service.upsert_trade_idea({
+        "symbol": "EURUSD",
+        "timeframe": "H1",
+        "action": "NO_TRADE",
+        "market_context": {"patternBias": "bullish"},
+        "reason_ru": "Нового подтверждения нет.",
+    })
+
+    ideas = service.idea_store.read()["ideas"]
+    assert len(ideas) == 1
+    assert unchanged["idea_id"] == closed["idea_id"]
+    assert unchanged["status"] == "archived"
+    assert unchanged["final_status"] == "tp_hit"
+
+
 def test_build_narrative_facts_contains_smc_contract() -> None:
     facts = TradeIdeaService._build_narrative_facts(
         signal={
