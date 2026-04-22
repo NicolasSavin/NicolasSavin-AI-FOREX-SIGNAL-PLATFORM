@@ -688,17 +688,14 @@ class TradeIdeaService:
         confidence: int,
         status: str,
     ) -> dict[str, Any]:
-        if existing is not None:
-            existing_url = existing.get("chartImageUrl") or existing.get("chart_image")
-            existing_status = existing.get("chartSnapshotStatus") or existing.get("chart_snapshot_status") or "ok"
-            return {"chartImageUrl": existing_url, "status": existing_status}
-
+        existing_url = (existing or {}).get("chartImageUrl") or (existing or {}).get("chart_image")
+        existing_status = (existing or {}).get("chartSnapshotStatus") or (existing or {}).get("chart_snapshot_status") or "ok"
         chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
         if not chart_data and isinstance(signal.get("chartData"), dict):
             chart_data = signal.get("chartData")
         candles = chart_data.get("candles") if isinstance(chart_data.get("candles"), list) else []
         chart_payload: dict[str, Any] = {"status": "ok", "candles": candles}
-        fetch_status = "ok"
+        fetch_status = str(chart_payload.get("status") or "ok").lower()
         if not candles:
             chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
             fetch_status = str(chart_payload.get("status") or "").lower()
@@ -724,6 +721,13 @@ class TradeIdeaService:
         markers = chart_data.get("markers") if isinstance(chart_data.get("markers"), list) else []
         patterns = signal.get("chart_patterns") if isinstance(signal.get("chart_patterns"), list) else []
         take_profits = self._extract_take_profits(signal=signal, fallback_take_profit=take_profit)
+        logger.info(
+            "idea_snapshot_start symbol=%s timeframe=%s candles=%s has_existing=%s",
+            symbol,
+            timeframe,
+            len(candles),
+            bool(existing_url),
+        )
         image_path = self.chart_snapshot_service.build_snapshot(
             symbol=symbol,
             timeframe=timeframe,
@@ -740,6 +744,21 @@ class TradeIdeaService:
             patterns=patterns,
         )
         if not image_path:
+            logger.warning(
+                "idea_snapshot_generation_failed symbol=%s timeframe=%s candles=%s",
+                symbol,
+                timeframe,
+                len(candles),
+            )
+            if existing_url:
+                logger.info(
+                    "idea_snapshot_reused_existing symbol=%s timeframe=%s path=%s previous_status=%s",
+                    symbol,
+                    timeframe,
+                    existing_url,
+                    existing_status,
+                )
+                return {"chartImageUrl": existing_url, "status": existing_status}
             return {"chartImageUrl": None, "status": "fetch_error"}
         logger.info("idea_snapshot_final_path symbol=%s timeframe=%s path=%s", symbol, timeframe, image_path)
         return {"chartImageUrl": image_path, "status": "ok"}
