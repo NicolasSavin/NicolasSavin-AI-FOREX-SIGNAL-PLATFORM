@@ -35,10 +35,9 @@ function labelClass(label) {
 
 function renderIdeaCard(idea) {
   const chartImageUrl = idea.chartImageUrl || idea.chart_image || null;
-  const analysis = idea.analysis || {};
   const tradePlan = idea.trade_plan || {};
   const updates = Array.isArray(idea.updates) ? idea.updates.slice(-5).reverse() : [];
-  const reasoning = idea.current_reasoning || idea.full_text || "";
+  const reasoning = idea.unified_narrative || idea.current_reasoning || idea.full_text || "";
 
   return `
     <article class="idea-card">
@@ -62,14 +61,10 @@ function renderIdeaCard(idea) {
           : `<div class="idea-chart-missing">Снапшот графика недоступен (${escapeHtml(idea.chartSnapshotStatus || idea.chart_snapshot_status || "no_data")}).</div>`
       }
 
-      <div class="idea-analysis-grid">
-        <section class="idea-section"><h4>Фундаментал</h4><p>${escapeHtml(analysis.fundamental_ru || "")}</p></section>
-        <section class="idea-section"><h4>SMC / ICT</h4><p>${escapeHtml(analysis.smc_ict_ru || "")}</p></section>
-        <section class="idea-section"><h4>Паттерн</h4><p>${escapeHtml(analysis.pattern_ru || "")}</p></section>
-        <section class="idea-section"><h4>Волны</h4><p>${escapeHtml(analysis.waves_ru || "")}</p></section>
-        <section class="idea-section"><h4>Объёмы</h4><p>${escapeHtml(analysis.volume_ru || "")}</p></section>
-        <section class="idea-section"><h4>Ликвидность</h4><p>${escapeHtml(analysis.liquidity_ru || "")}</p></section>
-      </div>
+      <section class="idea-section idea-section-plan">
+        <h4>Единый нарратив</h4>
+        <p>${escapeHtml(reasoning)}</p>
+      </section>
 
       <section class="idea-section idea-section-plan">
         <h4>Торговый сценарий</h4>
@@ -81,11 +76,6 @@ function renderIdeaCard(idea) {
           <li><strong>Цель 2:</strong> ${escapeHtml(tradePlan.target_2 || "")}</li>
           <li><strong>Альтернатива:</strong> ${escapeHtml(tradePlan.alternative_scenario_ru || "")}</li>
         </ul>
-      </section>
-
-      <section class="idea-section idea-section-plan">
-        <h4>Текущее обоснование</h4>
-        <p>${escapeHtml(reasoning)}</p>
       </section>
 
       <section class="idea-section idea-section-plan">

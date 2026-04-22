@@ -714,7 +714,7 @@ class TradeIdeaService:
             invalidation=invalidation,
             bias=bias,
         )
-        full_text = llm_result.data.get("full_text") or self._build_full_text(
+        full_text = llm_result.data.get("unified_narrative") or llm_result.data.get("full_text") or self._build_full_text(
             signal,
             summary=summary_text,
             idea_context=idea_context,
@@ -799,8 +799,8 @@ class TradeIdeaService:
             if is_terminal
             else existing.get("close_explanation") if existing else None
         )
-        if is_terminal and llm_result.data.get("full_text"):
-            close_explanation = llm_result.data.get("full_text")
+        if is_terminal and (llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")):
+            close_explanation = llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")
         history = self._build_history(
             existing=existing,
             status=status,
@@ -851,6 +851,7 @@ class TradeIdeaService:
             "short_scenario_ru": short_scenario,
             "short_text": short_scenario,
             "full_text": full_text,
+            "unified_narrative": full_text,
             "summary_structured": narrative_structured.get("summary_structured"),
             "trade_plan_structured": narrative_structured.get("trade_plan_structured"),
             "market_structure_structured": narrative_structured.get("market_structure_structured"),
@@ -1390,7 +1391,9 @@ class TradeIdeaService:
         if self._is_weak_narrative_text(updated.get("short_text")):
             updated["short_text"] = str(llm_result.data.get("short_text") or updated.get("summary") or "").strip()
         if self._is_weak_narrative_text(updated.get("full_text")):
-            updated["full_text"] = str(llm_result.data.get("full_text") or "").strip()
+            updated["full_text"] = str(llm_result.data.get("unified_narrative") or llm_result.data.get("full_text") or "").strip()
+        if self._is_weak_narrative_text(updated.get("unified_narrative")):
+            updated["unified_narrative"] = str(llm_result.data.get("unified_narrative") or updated.get("full_text") or "").strip()
         updated["narrative_source"] = str(llm_result.source or updated.get("narrative_source") or "llm")
         detail_brief = updated.get("detail_brief") if isinstance(updated.get("detail_brief"), dict) else {}
         detail_brief["narrative_structured"] = updated["narrative_structured"]
@@ -2900,7 +2903,7 @@ class TradeIdeaService:
                 or self._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2"))
                 or (f"Ближайшая цель: {take_profit}." if take_profit != "—" else "Цель будет уточняться после появления подтверждения.")
             )
-            full_text = self._build_full_text(
+            full_text = str(row.get("unified_narrative") or "").strip() or self._build_full_text(
                 row,
                 summary=str(summary),
                 idea_context=str(idea_context),
@@ -3000,6 +3003,7 @@ class TradeIdeaService:
                         "short_text": short_text,
                         "short_scenario_ru": short_text,
                         "full_text": full_text,
+                        "unified_narrative": str(row.get("unified_narrative") or full_text),
                         "summary_structured": row.get("summary_structured") or (detail_brief.get("narrative_structured") or {}).get("summary_structured"),
                         "trade_plan_structured": row.get("trade_plan_structured") or (detail_brief.get("narrative_structured") or {}).get("trade_plan_structured"),
                         "market_structure_structured": row.get("market_structure_structured") or (detail_brief.get("narrative_structured") or {}).get("market_structure_structured"),
