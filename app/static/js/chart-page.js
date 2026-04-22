@@ -168,24 +168,13 @@ function buildShortText(idea) {
 
 function buildFullText(idea) {
   const unified = normalizeWhitespace(idea?.unified_narrative);
-  if (unified) return unified;
+  if (isRenderableNarrative(unified)) return unified;
   const { summaryStructured, tradePlanStructured, marketStructureStructured } = getStructuredNarrativeBlocks(idea);
-  const structuredText = [
-    summaryStructured?.situation,
-    summaryStructured?.cause,
-    summaryStructured?.effect,
-    summaryStructured?.action,
-    summaryStructured?.risk_note,
-    marketStructureStructured?.structure,
-    tradePlanStructured?.entry_trigger,
-  ]
-    .map((value) => normalizeWhitespace(value))
-    .filter(Boolean)
-    .join(" ");
-  if (structuredText) return structuredText;
+  const structuredText = normalizeWhitespace(summaryStructured?.situation) || normalizeWhitespace(tradePlanStructured?.entry_trigger);
+  if (isRenderableNarrative(structuredText)) return structuredText;
 
   const detailSummary = normalizeWhitespace(idea?.detail_brief?.summary_narrative);
-  if (detailSummary) return detailSummary;
+  if (isRenderableNarrative(detailSummary)) return detailSummary;
   const direct = normalizeWhitespace(
     idea?.full_text
       || idea?.fullText
@@ -194,8 +183,17 @@ function buildFullText(idea) {
       || idea?.reason_ru
       || idea?.rationale
   );
-  if (direct) return direct;
+  if (isRenderableNarrative(direct)) return direct;
   return normalizeWhitespace(idea?.summary || idea?.summary_ru);
+}
+
+function isRenderableNarrative(value) {
+  const text = normalizeWhitespace(value).toLowerCase();
+  if (!text) return false;
+  const blocked = ["none", "fallback", "idea_created", "status created", "debug", "schema", "payload"];
+  if (blocked.some((token) => text.includes(token))) return false;
+  if (text.includes("ситуация:") && text.includes("причина:") && text.includes("следствие:") && text.includes("действие:")) return false;
+  return true;
 }
 
 function buildDetailBrief(idea) {

@@ -37,7 +37,7 @@ function renderIdeaCard(idea) {
   const chartImageUrl = idea.chartImageUrl || idea.chart_image || null;
   const tradePlan = idea.trade_plan || {};
   const updates = Array.isArray(idea.updates) ? idea.updates.slice(-5).reverse() : [];
-  const reasoning = idea.unified_narrative || idea.current_reasoning || idea.full_text || "";
+  const reasoning = resolveVisibleNarrative(idea);
 
   return `
     <article class="idea-card">
@@ -95,6 +95,23 @@ function renderIdeaCard(idea) {
       </section>
     </article>
   `;
+}
+
+function isSystemLikeNarrative(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return true;
+  const blockedTokens = ["none", "fallback", "idea_created", "status created", "debug", "payload", "schema"];
+  if (blockedTokens.some((token) => text.includes(token))) return true;
+  if (text.includes("ситуация:") && text.includes("причина:") && text.includes("следствие:") && text.includes("действие:")) return true;
+  return false;
+}
+
+function resolveVisibleNarrative(idea) {
+  const unified = String(idea?.unified_narrative || "").trim();
+  if (!isSystemLikeNarrative(unified)) return unified;
+  const legacy = String(idea?.full_text || idea?.summary_ru || idea?.summary || "").trim();
+  if (!isSystemLikeNarrative(legacy)) return legacy;
+  return "Сценарий есть, но текст пояснения обновляется. Ориентируйтесь на структуру, уровни и подтверждение входа.";
 }
 
 function renderIdeas(payload) {

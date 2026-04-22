@@ -879,6 +879,8 @@ class TradeIdeaService:
             "short_text": short_scenario,
             "full_text": full_text,
             "unified_narrative": full_text,
+            "signal": str(llm_result.data.get("signal") or ("BUY" if action == "BUY" else "SELL" if action == "SELL" else "WAIT")).upper(),
+            "risk_note": str(llm_result.data.get("risk_note") or llm_result.data.get("risk") or ""),
             "summary_structured": narrative_structured.get("summary_structured"),
             "trade_plan_structured": narrative_structured.get("trade_plan_structured"),
             "market_structure_structured": narrative_structured.get("market_structure_structured"),
@@ -1034,6 +1036,9 @@ class TradeIdeaService:
                 "update_explanation": str(existing.get("update_explanation") or "Нарратив сохранён без изменений."),
                 "short_text": str(existing.get("short_text") or existing.get("summary") or fallback_summary),
                 "full_text": str(existing.get("full_text") or fallback_summary),
+                "unified_narrative": str(existing.get("unified_narrative") or existing.get("full_text") or fallback_summary),
+                "signal": str(existing.get("signal") or "WAIT"),
+                "risk_note": str(existing.get("risk_note") or existing.get("risk") or ""),
                 "summary_structured": existing.get("summary_structured") if isinstance(existing.get("summary_structured"), dict) else {},
                 "trade_plan_structured": existing.get("trade_plan_structured") if isinstance(existing.get("trade_plan_structured"), dict) else {},
                 "market_structure_structured": existing.get("market_structure_structured") if isinstance(existing.get("market_structure_structured"), dict) else {},
@@ -1443,13 +1448,16 @@ class TradeIdeaService:
                 current["chartImageUrl"] = snapshot["chartImageUrl"]
                 current["chart_snapshot_status"] = "ok"
                 current["chartSnapshotStatus"] = "ok"
+                current["last_chart_refresh_at"] = now_iso
+                current["chart_version"] = int(current.get("chart_version") or 0) + 1
                 current["updated_at"] = now_iso
                 changed = True
                 logger.info(
-                    "idea_snapshot_recovered idea_id=%s symbol=%s timeframe=%s",
+                    "idea_snapshot_recovered idea_id=%s symbol=%s timeframe=%s chart_url=%s",
                     current.get("idea_id"),
                     current.get("symbol"),
                     current.get("timeframe"),
+                    current.get("chartImageUrl"),
                 )
             else:
                 retry_status = str(snapshot.get("status") or "snapshot_failed").lower()
@@ -1483,19 +1491,36 @@ class TradeIdeaService:
         now_iso = datetime.now(timezone.utc).isoformat()
         for idea in ideas:
             current = dict(idea)
-            if not self._is_structured_description_missing(current):
+            missing_structured = self._is_structured_description_missing(current)
+            missing_narrative = self._needs_narrative_rebuild(current)
+            if not missing_structured and not missing_narrative:
                 rebuilt_ideas.append(current)
                 continue
             logger.info(
-                "idea_description_missing_detected idea_id=%s symbol=%s timeframe=%s",
+                "idea_description_missing_detected idea_id=%s symbol=%s timeframe=%s missing_structured=%s missing_good_narrative=%s",
                 current.get("idea_id"),
                 current.get("symbol"),
                 current.get("timeframe"),
+                missing_structured,
+                missing_narrative,
             )
             rebuilt = self._rebuild_structured_description(current, now_iso=now_iso)
             if rebuilt != current:
                 changed = True
                 rebuilt_count += 1
+                logger.info(
+                    "idea_narrative_rebuild_success idea_id=%s symbol=%s timeframe=%s",
+                    rebuilt.get("idea_id"),
+                    rebuilt.get("symbol"),
+                    rebuilt.get("timeframe"),
+                )
+            else:
+                logger.info(
+                    "idea_narrative_rebuild_failed idea_id=%s symbol=%s timeframe=%s",
+                    current.get("idea_id"),
+                    current.get("symbol"),
+                    current.get("timeframe"),
+                )
             rebuilt_ideas.append(rebuilt)
         return rebuilt_ideas, changed, rebuilt_count
 
@@ -1565,6 +1590,8 @@ class TradeIdeaService:
         if self._is_weak_narrative_text(updated.get("unified_narrative")):
             updated["unified_narrative"] = str(llm_result.data.get("unified_narrative") or updated.get("full_text") or "").strip()
         updated["narrative_source"] = str(llm_result.source or updated.get("narrative_source") or "llm")
+        updated["signal"] = str(llm_result.data.get("signal") or updated.get("signal") or "").upper()
+        updated["risk_note"] = str(llm_result.data.get("risk_note") or updated.get("risk_note") or "").strip()
         detail_brief = updated.get("detail_brief") if isinstance(updated.get("detail_brief"), dict) else {}
         detail_brief["narrative_structured"] = updated["narrative_structured"]
         if not str(detail_brief.get("summary_narrative") or "").strip():
@@ -1574,6 +1601,14 @@ class TradeIdeaService:
             )
         updated["detail_brief"] = detail_brief
         updated["updated_at"] = now_iso
+        if self._needs_narrative_rebuild(updated):
+            logger.info(
+                "idea_description_rebuild_failed idea_id=%s symbol=%s timeframe=%s reason=weak_narrative_after_rebuild",
+                idea.get("idea_id"),
+                symbol,
+                timeframe,
+            )
+            return idea
         logger.info(
             "idea_description_rebuild_success idea_id=%s symbol=%s timeframe=%s source=%s",
             updated.get("idea_id"),
@@ -1593,8 +1628,18 @@ class TradeIdeaService:
             "статус waiting",
             "торговая идея обновлена",
             "ждать подтверждение структуры",
+            "ситуация:",
+            "причина:",
+            "следствие:",
+            "действие:",
+            "none",
+            "fallback",
+            "idea_created",
+            "status created",
+            "debug",
         )
-        return any(token in text for token in weak_tokens) or len(text) < 40
+        sentences = [chunk for chunk in re.split(r"[.!?]+", text) if chunk.strip()]
+        return any(token in text for token in weak_tokens) or len(text) < 40 or len(sentences) > 6 or len(sentences) < 2
 
     @classmethod
     def _idea_row_to_signal_for_backfill(cls, idea: dict[str, Any]) -> dict[str, Any]:
@@ -1638,6 +1683,13 @@ class TradeIdeaService:
             ("bias", "structure", "liquidity", "zone", "confluence"),
         )
         return not (summary and trade_plan and market_structure)
+
+    @classmethod
+    def _needs_narrative_rebuild(cls, idea: dict[str, Any]) -> bool:
+        unified = idea.get("unified_narrative")
+        full_text = idea.get("full_text")
+        short_text = idea.get("short_text")
+        return cls._is_weak_narrative_text(unified) or cls._is_weak_narrative_text(full_text) or cls._is_weak_narrative_text(short_text)
 
     def _should_retry_chart_snapshot(self, idea: dict[str, Any], now: datetime, *, force: bool = False) -> bool:
         chart_url = idea.get("chartImageUrl") or idea.get("chart_image")
