@@ -34,6 +34,7 @@ function labelClass(label) {
 }
 
 function renderIdeaCard(idea) {
+  const chartImageUrl = idea.chartImageUrl || idea.chart_image || null;
   const analysis = idea.analysis || {};
   const tradePlan = idea.trade_plan || {};
   const updates = Array.isArray(idea.updates) ? idea.updates.slice(-5).reverse() : [];
@@ -54,11 +55,11 @@ function renderIdeaCard(idea) {
       <div class="idea-summary">${escapeHtml(idea.summary_ru || "")}</div>
 
       ${
-        idea.chart_image
+        chartImageUrl
           ? `<div class="idea-chart-wrap">
-               <img class="idea-chart-image" src="${escapeHtml(idea.chart_image)}?t=${Date.now()}" alt="${escapeHtml(idea.title || "chart")}" />
+               <img class="idea-chart-image" src="${escapeHtml(chartImageUrl)}?t=${Date.now()}" alt="${escapeHtml(idea.title || "chart")}" />
              </div>`
-          : `<div class="idea-chart-missing">Картинка сценария пока не сгенерирована.</div>`
+          : `<div class="idea-chart-missing">Снапшот графика недоступен (${escapeHtml(idea.chartSnapshotStatus || idea.chart_snapshot_status || "no_data")}).</div>`
       }
 
       <div class="idea-analysis-grid">

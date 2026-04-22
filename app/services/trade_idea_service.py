@@ -13,6 +13,7 @@ import requests
 
 from app.core.env import get_openrouter_api_key, get_openrouter_model
 from app.services.chart_data_service import ChartDataService
+from app.services.chart_snapshot_service import ChartSnapshotService
 from app.services.idea_narrative_llm import IdeaNarrativeLLMService
 from app.services.narrative_generator import generate_signal_preview_text, generate_signal_text
 from app.services.storage.json_storage import JsonStorage
@@ -64,6 +65,7 @@ class TradeIdeaService:
         self.signal_engine = signal_engine
         self.data_provider = DataProvider()
         self.chart_data_service = chart_data_service or ChartDataService()
+        self.chart_snapshot_service = ChartSnapshotService()
         self.refresh_interval_seconds = int(os.getenv("IDEAS_REFRESH_INTERVAL_SECONDS", "180"))
         self.idea_store = JsonStorage("signals_data/trade_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
@@ -532,6 +534,15 @@ class TradeIdeaService:
             analysis=analysis_payload,
             trade_plan=trade_plan_payload,
         )
+        chart_snapshot = self._resolve_chart_snapshot(
+            signal=signal,
+            existing=existing,
+            symbol=symbol,
+            timeframe=timeframe,
+            entry=entry_value,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
         is_terminal = status in TERMINAL_STATUSES
         closed_at = now.isoformat() if is_terminal else None
         final_status = status if is_terminal else existing.get("final_status") if existing else None
@@ -611,7 +622,10 @@ class TradeIdeaService:
             "trade_plan": trade_plan_payload,
             "detail_brief": detail_brief,
             "supported_sections": detail_brief.get("supported_sections", []),
-            "chart_image": None,
+            "chart_image": chart_snapshot["chartImageUrl"],
+            "chartImageUrl": chart_snapshot["chartImageUrl"],
+            "chart_snapshot_status": chart_snapshot["status"],
+            "chartSnapshotStatus": chart_snapshot["status"],
             "history": history,
             "updates": updates,
             "current_reasoning": decision_payload.get("explanation_ru"),
@@ -627,6 +641,72 @@ class TradeIdeaService:
             },
         }
         return self._attach_trade_result_metrics(payload)
+
+    def _resolve_chart_snapshot(
+        self,
+        *,
+        signal: dict[str, Any],
+        existing: dict[str, Any] | None,
+        symbol: str,
+        timeframe: str,
+        entry: float | None,
+        stop_loss: float | None,
+        take_profit: float | None,
+    ) -> dict[str, Any]:
+        if existing is not None:
+            existing_url = existing.get("chartImageUrl") or existing.get("chart_image")
+            existing_status = existing.get("chartSnapshotStatus") or existing.get("chart_snapshot_status") or "ok"
+            return {"chartImageUrl": existing_url, "status": existing_status}
+
+        chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
+        fetch_status = str(chart_payload.get("status") or "").lower()
+        candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
+        logger.info(
+            "idea_snapshot_candle_fetch symbol=%s timeframe=%s fetch_status=%s candles=%s",
+            symbol,
+            timeframe,
+            fetch_status or "unknown",
+            len(candles),
+        )
+
+        if fetch_status != "ok":
+            failure_status = self._map_chart_fetch_status(chart_payload)
+            logger.warning("idea_snapshot_skipped symbol=%s timeframe=%s status=%s", symbol, timeframe, failure_status)
+            return {"chartImageUrl": None, "status": failure_status}
+        if not candles:
+            logger.warning("idea_snapshot_skipped symbol=%s timeframe=%s status=no_data", symbol, timeframe)
+            return {"chartImageUrl": None, "status": "no_data"}
+
+        chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
+        levels = chart_data.get("levels") if isinstance(chart_data.get("levels"), list) else []
+        zones = chart_data.get("zones") if isinstance(chart_data.get("zones"), list) else []
+        image_path = self.chart_snapshot_service.build_snapshot(
+            symbol=symbol,
+            timeframe=timeframe,
+            candles=candles,
+            levels=levels,
+            zones=zones,
+            entry=self._extract_numeric(entry),
+            stop_loss=self._extract_numeric(stop_loss),
+            take_profit=self._extract_numeric(take_profit),
+        )
+        if not image_path:
+            return {"chartImageUrl": None, "status": "fetch_error"}
+        logger.info("idea_snapshot_final_path symbol=%s timeframe=%s path=%s", symbol, timeframe, image_path)
+        return {"chartImageUrl": image_path, "status": "ok"}
+
+    @staticmethod
+    def _map_chart_fetch_status(chart_payload: dict[str, Any]) -> str:
+        meta = chart_payload.get("meta") if isinstance(chart_payload.get("meta"), dict) else {}
+        reason = str(meta.get("reason") or "").lower()
+        if reason in {"rate_limited", "no_data", "fetch_error"}:
+            return reason
+        message = str(chart_payload.get("message_ru") or "").lower()
+        if "limit" in message or "429" in message or "rate" in message:
+            return "rate_limited"
+        if "не вернул candles" in message or "пуст" in message or "no data" in message:
+            return "no_data"
+        return "fetch_error"
 
     def _append_snapshot(self, idea: dict[str, Any], previous: dict[str, Any] | None) -> None:
         snapshots = self.snapshot_store.read().get("snapshots", [])
@@ -2012,6 +2092,8 @@ class TradeIdeaService:
                 trade_plan=normalized_trade_plan,
             )
             chart_data = row.get("chartData") or row.get("chart_data")
+            chart_image_url = row.get("chartImageUrl") or row.get("chart_image")
+            chart_snapshot_status = row.get("chartSnapshotStatus") or row.get("chart_snapshot_status") or "ok"
             tags = row.get("tags")
             if not isinstance(tags, list) or not tags:
                 tags = [source, symbol, timeframe, direction]
@@ -2053,6 +2135,10 @@ class TradeIdeaService:
                         "stopLoss": stop_loss,
                         "takeProfit": take_profit,
                         "chartData": chart_data,
+                        "chartImageUrl": chart_image_url,
+                        "chart_image": chart_image_url,
+                        "chartSnapshotStatus": chart_snapshot_status,
+                        "chart_snapshot_status": chart_snapshot_status,
                         "ideaContext": str(idea_context),
                         "trigger": str(trigger),
                         "invalidation": str(invalidation),

@@ -54,6 +54,7 @@ class ChartDataService:
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Неподдерживаемый таймфрейм для свечного графика.",
+                reason="fetch_error",
             )
 
         if not self.api_key:
@@ -62,6 +63,7 @@ class ChartDataService:
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Свечной API не настроен: отсутствует TWELVEDATA_API_KEY.",
+                reason="fetch_error",
             )
 
         params = {
@@ -82,6 +84,7 @@ class ChartDataService:
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Не удалось загрузить реальные свечные данные из Twelve Data.",
+                reason="fetch_error",
             )
         except ValueError:
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=invalid_json", normalized_symbol, normalized_tf)
@@ -89,6 +92,7 @@ class ChartDataService:
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Свечной API вернул некорректный ответ.",
+                reason="fetch_error",
             )
 
         if payload.get("status") == "error":
@@ -99,10 +103,12 @@ class ChartDataService:
                 payload.get("code"),
                 payload.get("message"),
             )
+            reason = "rate_limited" if str(payload.get("code")) == "429" else "fetch_error"
             return self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru=f"Twelve Data недоступен: {payload.get('message') or 'неизвестная ошибка'}.",
+                reason=reason,
             )
 
         candles = self._normalize_candles(payload.get("values"))
@@ -112,6 +118,7 @@ class ChartDataService:
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Свечной API не вернул candles для выбранной идеи.",
+                reason="no_data",
             )
 
         logger.info("twelvedata_success symbol=%s tf=%s candles=%s", normalized_symbol, normalized_tf, len(candles))
@@ -197,7 +204,7 @@ class ChartDataService:
             return None
 
     @classmethod
-    def build_unavailable_payload(cls, *, symbol: str, timeframe: str, message_ru: str) -> dict[str, Any]:
+    def build_unavailable_payload(cls, *, symbol: str, timeframe: str, message_ru: str, reason: str) -> dict[str, Any]:
         return {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -209,5 +216,6 @@ class ChartDataService:
                 "provider": "Twelve Data",
                 "interval": TIMEFRAME_MAPPING.get(timeframe),
                 "outputsize": 0,
+                "reason": reason,
             },
         }
