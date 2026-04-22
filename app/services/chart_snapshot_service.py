@@ -36,6 +36,7 @@ class ChartSnapshotService:
         confidence: int | None = None,
         status: str | None = None,
         markers: list[dict[str, Any]] | None = None,
+        labels: list[dict[str, Any]] | None = None,
         patterns: list[dict[str, Any]] | None = None,
         arrows: list[dict[str, Any]] | None = None,
         setup_text: str | None = None,
@@ -46,6 +47,7 @@ class ChartSnapshotService:
         levels = levels or []
         zones = zones or []
         markers = markers or []
+        labels = labels or []
         patterns = patterns or []
         arrows = arrows or []
         take_profits = [value for value in (take_profits or []) if value is not None]
@@ -107,7 +109,8 @@ class ChartSnapshotService:
                 stop_loss=stop_loss,
                 take_profits=take_profits,
             )
-            rendered = self._draw_smc_markers(ax=ax, markers=markers, candles_count=len(candles))
+            merged_markers = labels + markers
+            rendered = self._draw_smc_markers(ax=ax, markers=merged_markers, candles_count=len(candles))
             rendered += self._draw_arrows(ax=ax, arrows=arrows, candles_count=len(candles), highs=highs, lows=lows)
             rendered += self._draw_patterns(ax=ax, patterns=patterns, candles_count=len(candles))
             if rendered < 5:
@@ -134,7 +137,7 @@ class ChartSnapshotService:
                 padding=price_padding,
                 levels=levels,
                 zones=zones,
-                markers=markers,
+                markers=merged_markers,
                 entry=entry,
                 stop_loss=stop_loss,
                 take_profits=take_profits,

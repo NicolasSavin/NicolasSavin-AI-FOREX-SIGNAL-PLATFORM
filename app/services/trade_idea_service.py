@@ -14,6 +14,7 @@ import requests
 from app.core.env import get_openrouter_api_key, get_openrouter_model
 from app.services.chart_data_service import ChartDataService
 from app.services.chart_snapshot_service import ChartSnapshotService
+from app.services.smc_engine import SmcEngine
 from app.services.idea_narrative_llm import IdeaNarrativeLLMService
 from app.services.narrative_generator import generate_signal_preview_text, generate_signal_text
 from app.services.storage.json_storage import JsonStorage
@@ -66,6 +67,7 @@ class TradeIdeaService:
         self.data_provider = DataProvider()
         self.chart_data_service = chart_data_service or ChartDataService()
         self.chart_snapshot_service = ChartSnapshotService()
+        self.smc_engine = SmcEngine()
         self.refresh_interval_seconds = int(os.getenv("IDEAS_REFRESH_INTERVAL_SECONDS", "180"))
         self.idea_store = JsonStorage("signals_data/trade_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
@@ -660,6 +662,12 @@ class TradeIdeaService:
             "chartImageUrl": chart_snapshot["chartImageUrl"],
             "chart_snapshot_status": chart_snapshot["status"],
             "chartSnapshotStatus": chart_snapshot["status"],
+            "smc_overlays": chart_snapshot.get("smc_overlays") or {},
+            "zones": (chart_snapshot.get("smc_overlays") or {}).get("zones", []),
+            "levels": (chart_snapshot.get("smc_overlays") or {}).get("levels", []),
+            "labels": (chart_snapshot.get("smc_overlays") or {}).get("labels", []),
+            "arrows": (chart_snapshot.get("smc_overlays") or {}).get("arrows", []),
+            "patterns": (chart_snapshot.get("smc_overlays") or {}).get("patterns", []),
             "history": history,
             "updates": updates,
             "current_reasoning": decision_payload.get("explanation_ru"),
@@ -735,7 +743,11 @@ class TradeIdeaService:
                 timeframe,
                 failure_status,
             )
-            return {"chartImageUrl": None, "status": failure_status}
+            return {
+                "chartImageUrl": None,
+                "status": failure_status,
+                "smc_overlays": self.smc_engine.analyze(candles=[], symbol=symbol, timeframe=timeframe, bias=bias),
+            }
         if fetch_status != "ok":
             logger.info(
                 "idea_snapshot_candle_override symbol=%s timeframe=%s payload_status=%s effective_status=ok candles=%s",
@@ -745,7 +757,18 @@ class TradeIdeaService:
                 len(candles),
             )
 
-        levels, zones, markers, patterns, arrows = self._extract_snapshot_overlays(signal=signal, chart_data=chart_data)
+        smc_overlays = self.smc_engine.analyze(
+            candles=candles,
+            symbol=symbol,
+            timeframe=timeframe,
+            bias=bias,
+            context={"status": status},
+        )
+        levels, zones, markers, patterns, arrows = self._extract_snapshot_overlays(
+            signal=signal,
+            chart_data=chart_data,
+            smc_overlays=smc_overlays,
+        )
         take_profits = self._extract_take_profits(signal=signal, fallback_take_profit=take_profit)
         logger.info(
             "snapshot_start symbol=%s timeframe=%s candles=%s has_existing=%s",
@@ -767,6 +790,7 @@ class TradeIdeaService:
             confidence=confidence,
             status=status,
             markers=markers,
+            labels=smc_overlays.get("labels"),
             patterns=patterns,
             arrows=arrows,
             setup_text=signal.get("short_scenario_ru") or signal.get("short_text") or signal.get("summary_ru"),
@@ -786,8 +810,8 @@ class TradeIdeaService:
                     existing_url,
                     existing_status,
                 )
-                return {"chartImageUrl": existing_url, "status": "snapshot_failed"}
-            return {"chartImageUrl": None, "status": "snapshot_failed"}
+                return {"chartImageUrl": existing_url, "status": "snapshot_failed", "smc_overlays": smc_overlays}
+            return {"chartImageUrl": None, "status": "snapshot_failed", "smc_overlays": smc_overlays}
         logger.info(
             "snapshot_success symbol=%s timeframe=%s candles=%s path=%s",
             symbol,
@@ -795,7 +819,7 @@ class TradeIdeaService:
             len(candles),
             image_path,
         )
-        return {"chartImageUrl": image_path, "status": "ok"}
+        return {"chartImageUrl": image_path, "status": "ok", "smc_overlays": smc_overlays}
 
     def _extract_take_profits(self, *, signal: dict[str, Any], fallback_take_profit: float | None) -> list[float]:
         candidates = signal.get("take_profits")
@@ -820,7 +844,9 @@ class TradeIdeaService:
         *,
         signal: dict[str, Any],
         chart_data: dict[str, Any],
+        smc_overlays: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        smc_overlays = smc_overlays if isinstance(smc_overlays, dict) else {}
         levels = self._pick_dict_list(signal, chart_data, "levels", "horizontal_levels", "key_levels", "liquidity_levels", "session_levels")
         zones = self._pick_dict_list(
             signal,
@@ -846,6 +872,11 @@ class TradeIdeaService:
         )
         arrows = self._pick_dict_list(signal, chart_data, "arrows", "directional_arrows", "narrative_arrows")
         patterns = self._pick_dict_list(signal, chart_data, "patterns", "chart_patterns", "harmonic_patterns")
+        levels = [item for item in (smc_overlays.get("levels") or []) if isinstance(item, dict)] + levels
+        zones = [item for item in (smc_overlays.get("zones") or []) if isinstance(item, dict)] + zones
+        markers = [item for item in (smc_overlays.get("labels") or []) if isinstance(item, dict)] + markers
+        arrows = [item for item in (smc_overlays.get("arrows") or []) if isinstance(item, dict)] + arrows
+        patterns = [item for item in (smc_overlays.get("patterns") or []) if isinstance(item, dict)] + patterns
 
         normalized_zones = [self._normalize_zone_overlay(item) for item in zones]
         normalized_markers = [self._normalize_marker_overlay(item) for item in markers]

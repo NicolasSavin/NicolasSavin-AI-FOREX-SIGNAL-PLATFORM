@@ -355,3 +355,10 @@ TWELVEDATA_OUTPUTSIZE=50
 - При сломе сценария идея помечается как `invalidated`, а при новом lifecycle создаётся новая запись.
 - Это поведение реализовано без радикального изменения текущего UI: список на `/ideas` оставлен компактным, а depth анализа перенесён в modal full card.
 - Sentiment внутри trade idea используется только как дополнительный контекст и не даёт гарантий результата.
+
+## Backend SMC overlays (server-side only)
+- Добавлен backend-движок `app/services/smc_engine.py`, который считает SMC-структуры по реальным свечам (`candles`) и формирует готовый overlay payload.
+- Детекция выполняется только на сервере: Swing High/Low, BOS, CHoCH, EQH/EQL, liquidity pools, FVG/imbalance и bullish/bearish order blocks.
+- `TradeIdeaService` теперь запускает SMC engine после получения свечей, прикрепляет `smc_overlays` к payload идеи и передаёт эти данные в snapshot renderer.
+- `ChartSnapshotService` рисует уже готовые backend overlays (zones/levels/labels/arrows/patterns) без frontend-вычислений.
+- Frontend по-прежнему только потребляет `chartImageUrl` и metadata, без JS-детекции SMC.
