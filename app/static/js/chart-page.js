@@ -12,6 +12,9 @@ const analysisText = document.getElementById("analysis-text");
 const tradingPlanText = document.getElementById("trading-plan-text");
 const analysisSectionsRoot = document.getElementById("analysis-sections");
 
+const chartSnapshotLayer = document.getElementById("chart-snapshot-layer");
+const chartSnapshotImage = document.getElementById("chart-snapshot-image");
+const chartLiveLayer = document.getElementById("chart-live-layer");
 const chartHost = document.getElementById("chart-host");
 const overlayCanvas = document.getElementById("chart-overlay");
 const chartPlaceholder = document.getElementById("chart-placeholder");
@@ -34,6 +37,7 @@ let chart = null;
 let candleSeries = null;
 let currentChartPayload = null;
 let detailRequestId = 0;
+let chartDisplayMode = "unavailable";
 const CHART_REQUEST_TIMEOUT_MS = 5000;
 const DEFAULT_PAIR_OPTIONS = ["EURUSD", "GBPUSD", "USDJPY"];
 const DEFAULT_TIMEFRAME_OPTIONS = ["M15", "H1", "H4"];
@@ -572,12 +576,17 @@ function ensureChart() {
 
 function resetChartState() {
   currentChartPayload = null;
+  if (chartSnapshotImage) {
+    chartSnapshotImage.removeAttribute("src");
+  }
   if (chart) {
     candleSeries.setData([]);
     chart.timeScale().fitContent();
   }
-  const ctx = fitOverlayCanvas();
-  ctx.clearRect(0, 0, overlayCanvas.clientWidth, overlayCanvas.clientHeight);
+  const ctx = overlayCanvas?.getContext("2d");
+  if (ctx) {
+    ctx.clearRect(0, 0, overlayCanvas.width || overlayCanvas.clientWidth, overlayCanvas.height || overlayCanvas.clientHeight);
+  }
 }
 
 function showChartPlaceholder(message) {
@@ -590,12 +599,74 @@ function hideChartPlaceholder() {
   chartPlaceholderText.textContent = "График для этой идеи сейчас недоступен.";
 }
 
+function normalizeChartImageUrl(url) {
+  const raw = normalizeWhitespace(url);
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
+  if (raw.startsWith("static/")) return `/${raw}`;
+  if (raw.startsWith("./")) return `/${raw.slice(2)}`;
+  return `/static/${raw.replace(/^\/+/, "")}`;
+}
+
+function snapshotStatusRu(status) {
+  const key = String(status || "").toLowerCase();
+  return {
+    rate_limited: "Снапшот не подготовлен из-за лимита источника данных.",
+    no_data: "Снапшот не подготовлен: по инструменту нет данных.",
+    fetch_error: "Снапшот не подготовлен: ошибка при получении данных.",
+    unavailable: "Снапшот временно недоступен.",
+  }[key] || "График для этой идеи сейчас недоступен.";
+}
+
+function setChartMode(mode) {
+  chartDisplayMode = mode;
+  if (mode === "snapshot") {
+    chartSnapshotLayer?.classList.add("open");
+    chartLiveLayer?.classList.remove("open");
+    hideChartPlaceholder();
+    return;
+  }
+  if (mode === "live") {
+    chartSnapshotLayer?.classList.remove("open");
+    chartLiveLayer?.classList.add("open");
+    hideChartPlaceholder();
+    return;
+  }
+  chartSnapshotLayer?.classList.remove("open");
+  chartLiveLayer?.classList.remove("open");
+}
+
+function showSnapshotChart(imageUrl) {
+  if (!chartSnapshotImage || !imageUrl) return false;
+  chartSnapshotImage.src = imageUrl;
+  setChartMode("snapshot");
+  return true;
+}
+
+function showLiveChart(payload) {
+  if (!payload?.candles?.length) return false;
+  setChartMode("live");
+  ensureChart();
+  currentChartPayload = payload;
+  candleSeries.setData(payload.candles);
+  chart.timeScale().fitContent();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => drawOverlay());
+  });
+  return true;
+}
+
+function showUnavailableChart(message) {
+  setChartMode("unavailable");
+  showChartPlaceholder(message || "График для этой идеи сейчас недоступен.");
+}
+
 function updateDetailStatus(message) {
   detailStatus.textContent = message;
 }
 
 function resizeChart() {
-  if (!chart) return;
+  if (!chart || chartDisplayMode !== "live") return;
   chart.applyOptions({
     width: chartHost.clientWidth,
     height: chartHost.clientHeight,
@@ -836,19 +907,54 @@ async function openIdea(idea) {
 
   renderDetailText(idea);
   updateDetailStatus("Загружаем desk-style detail-view идеи и проверяем доступность графика.");
-  ensureChart();
   resetChartState();
-  showChartPlaceholder("Загружаем график для идеи...");
+  showUnavailableChart("Загружаем график для идеи...");
+
+  const rawSnapshotUrl = idea.chartImageUrl || idea.chart_image || "";
+  const snapshotUrl = normalizeChartImageUrl(rawSnapshotUrl);
+  const snapshotStatus = idea.chartSnapshotStatus || idea.chart_snapshot_status || "";
+  const liveFallbackMessage = snapshotStatusRu(snapshotStatus);
+
+  if (snapshotUrl) {
+    const snapshotLoaded = await new Promise((resolve) => {
+      const img = chartSnapshotImage;
+      if (!img) {
+        resolve(false);
+        return;
+      }
+      const done = (ok) => {
+        img.removeEventListener("load", onLoad);
+        img.removeEventListener("error", onError);
+        resolve(ok);
+      };
+      const onLoad = () => done(true);
+      const onError = () => done(false);
+      img.addEventListener("load", onLoad, { once: true });
+      img.addEventListener("error", onError, { once: true });
+      showSnapshotChart(snapshotUrl);
+    });
+
+    if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
+    if (snapshotLoaded) {
+      if (idea.status === "archived") {
+        const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
+        updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
+      } else {
+        const updateText = normalizeWhitespace(idea.update_summary);
+        updateDetailStatus(
+          updateText
+            ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`
+            : "Detail-view заполнен: narrative, сценарии, trading plan и snapshot графика доступны."
+        );
+      }
+      return;
+    }
+  }
 
   const payload = await resolveChartData(idea);
   if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
 
-  if (payload?.candles?.length) {
-    hideChartPlaceholder();
-    currentChartPayload = payload;
-
-    candleSeries.setData(payload.candles);
-    chart.timeScale().fitContent();
+  if (showLiveChart(payload)) {
     if (idea.status === "archived") {
       const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
       updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
@@ -860,14 +966,10 @@ async function openIdea(idea) {
           : "Detail-view заполнен: narrative, сценарии, trading plan и график доступны."
       );
     }
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => drawOverlay());
-    });
     return;
   }
 
-  showChartPlaceholder("Chart unavailable");
+  showUnavailableChart(liveFallbackMessage);
   if (idea.status === "archived") {
     const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
     updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
@@ -885,7 +987,7 @@ function closeModal() {
   modal.classList.remove("open");
   activeIdea = null;
   detailRequestId += 1;
-  showChartPlaceholder("График для этой идеи сейчас недоступен.");
+  showUnavailableChart("График для этой идеи сейчас недоступен.");
 }
 
 async function load() {
