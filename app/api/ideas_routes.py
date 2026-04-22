@@ -92,4 +92,9 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
                 "diagnostics": {"error": str(exc), "reason": fallback_reason},
             }
 
+    @router.post("/api/ideas/recover-missing-chart-snapshots")
+    async def recover_missing_chart_snapshots():
+        logger.info("ideas_snapshot_recovery_endpoint_started")
+        return services.trade_idea_service.recover_legacy_chart_snapshots_once()
+
     return router

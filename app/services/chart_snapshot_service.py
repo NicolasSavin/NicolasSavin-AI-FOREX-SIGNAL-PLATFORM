@@ -120,7 +120,7 @@ class ChartSnapshotService:
 
             success = False
             try:
-                plt.savefig(absolute_path, facecolor=fig.get_facecolor())
+                fig.savefig(absolute_path, facecolor=fig.get_facecolor())
                 success = absolute_path.exists()
                 if not success:
                     logger.error(
