@@ -24,6 +24,7 @@ REQUIRED_FIELDS = (
     "update_explanation",
     "short_text",
     "full_text",
+    "unified_narrative",
 )
 STRUCTURED_SCHEMA = {
     "summary_structured": ("signal", "situation", "cause", "effect", "action", "risk_note"),
@@ -165,7 +166,8 @@ class IdeaNarrativeLLMService:
             return None
         if any(phrase in joined for phrase in WEAK_CAUSE_PHRASES):
             return None
-        if not any(token in result["full_text"].casefold() for token in SMC_REQUIRED_TOKENS):
+        narrative_text = f"{result['unified_narrative']} {result['full_text']}".casefold()
+        if not any(token in narrative_text for token in SMC_REQUIRED_TOKENS):
             return None
         return result
 
@@ -179,8 +181,9 @@ class IdeaNarrativeLLMService:
             "Ты пишешь как SMC/ICT-трейдер: простые слова, короткие предложения, дружелюбный тон для трейдера.\n"
             "Во всех объяснениях соблюдай порядок CAUSE → EFFECT → ACTION.\n"
             "Cause → effect → action должны быть явно связаны и без разрывов логики.\n"
-            "full_text верни строго в 3 блока с заголовками: CAUSE:, EFFECT:, ACTION:.\n"
-            "В каждом блоке максимум 1–2 коротких предложения, без повторов символа/таймфрейма и без воды.\n"
+            "unified_narrative верни ОДНИМ связным текстом без секций и подзаголовков.\n"
+            "Структура unified_narrative: SITUATION → CAUSE → EFFECT → ACTION → RISK.\n"
+            "Каждый смысловой шаг должен быть выражен короткими предложениями, без повторов символа/таймфрейма и без воды.\n"
             f"Запрещённые фразы: {', '.join(banned)}.\n"
             "Если в фактах нет liquidity_sweep / structure_state / key_zone / location — явно напиши: "
             "\"структурных подтверждений недостаточно\".\n"
@@ -194,7 +197,7 @@ class IdeaNarrativeLLMService:
             "ACTION должен описывать: buy/sell/wait, условие входа, и когда no trade.\n"
             "Обязательно объясни уровни: почему вход в зоне OB/FVG/ликвидности, почему SL за снятой ликвидностью "
             "или по инвалидации структуры, почему TP на следующем пуле ликвидности/заполнении имбаланса.\n"
-            "В full_text обязательно должен встретиться минимум один термин: liquidity/ликвидность/sweep/BOS/CHoCH/order block/FVG.\n"
+            "В unified_narrative обязательно должен встретиться минимум один термин: liquidity/ликвидность/sweep/BOS/CHoCH/order block/FVG.\n"
             "Каждое текстовое поле должно быть лаконичным и без длинных абзацев.\n"
             "В structured-полях не повторяй в каждом поле символ/таймфрейм, если это не нужно для смысла.\n"
             "Ответ должен быть ВАЛИДНЫМ JSON и только JSON, без markdown, комментариев и префиксов.\n"
@@ -229,16 +232,13 @@ class IdeaNarrativeLLMService:
         smc_missing = any(value in {"none", "unknown", ""} for value in (liquidity, structure, key_zone, location))
         structural_warning = "структурных подтверждений недостаточно. " if smc_missing else ""
         weak_structure_warning = "структурная база слабая, идея основана на вторичных факторах. " if smc_missing else ""
-        full = (
-            "CAUSE:\n"
-            f"{symbol} {timeframe}: после снятия ликвидности ({liquidity}) цена дала {structure} в зоне {key_zone} ({location}). "
-            f"{structural_warning}{weak_structure_warning}\n\n"
-            "EFFECT:\n"
-            f"Снятие ликвидности → реакция участников → цель к следующему пулу {target_liquidity}. "
-            "Структура считается рабочей, пока нет инвалидации.\n\n"
-            "ACTION:\n"
-            f"Рабочий план: вход {entry}, SL {sl} ({invalidation_logic}), TP {tp}. "
-            f"Если структура ломается, no trade. Событие: {event_type}. Изменения: {delta_text}."
+        unified = (
+            f"Ситуация: {symbol} {timeframe} в статусе {status}, рабочая зона {key_zone} ({location}). "
+            f"Причина: после снятия ликвидности ({liquidity}) цена показала {structure}. "
+            f"{structural_warning}{weak_structure_warning}"
+            f"Следствие: это повышает вероятность движения к {target_liquidity}, пока не нарушена структура. "
+            f"Действие: вход {entry}, SL {sl}, TP {tp}; работаем только при подтверждении в зоне. "
+            f"Риск: {invalidation_logic}; при сломе структуры — без сделки. Событие: {event_type}. Изменения: {delta_text}."
         )
         return {
             "headline": f"{symbol} {timeframe} — {direction}",
@@ -250,5 +250,6 @@ class IdeaNarrativeLLMService:
             "target_logic": f"Цель берётся из расчётного TP {tp} как следующий пул ликвидности ({target_liquidity}).",
             "update_explanation": f"ACTION: обновление ({event_type}) основано на новых фактах: {delta_text}.",
             "short_text": short,
-            "full_text": full,
+            "full_text": unified,
+            "unified_narrative": unified,
         }

@@ -167,6 +167,8 @@ function buildShortText(idea) {
 }
 
 function buildFullText(idea) {
+  const unified = normalizeWhitespace(idea?.unified_narrative);
+  if (unified) return unified;
   const { summaryStructured, tradePlanStructured, marketStructureStructured } = getStructuredNarrativeBlocks(idea);
   const structuredText = [
     summaryStructured?.situation,
@@ -294,6 +296,7 @@ function normalizeIdea(idea) {
     summary_ru: shortText,
     short_text: shortText,
     full_text: fullText,
+    unified_narrative: normalizeWhitespace(idea?.unified_narrative) || fullText,
     detail_brief: buildDetailBrief({
       ...idea,
       summary,
@@ -512,19 +515,8 @@ function renderMetricChips(detailBrief) {
 
 function renderAnalysisSections(detailBrief) {
   if (!analysisSectionsRoot) return;
-  const sections = Array.isArray(detailBrief?.sections) ? detailBrief.sections : [];
-  if (!sections.length) {
-    analysisSectionsRoot.innerHTML = "";
-    analysisSectionsRoot.style.display = "none";
-    return;
-  }
-  analysisSectionsRoot.style.display = "";
-  analysisSectionsRoot.innerHTML = sections.map((section) => `
-    <section class="analysis-block">
-      <div class="analysis-title">${escapeHtml(section.title || section.key || "Секция")}</div>
-      <p class="analysis-text">${escapeHtml(section.content || "")}</p>
-    </section>
-  `).join("");
+  analysisSectionsRoot.innerHTML = "";
+  analysisSectionsRoot.style.display = "none";
 }
 
 function renderTradingPlan(detailBrief) {
@@ -538,21 +530,13 @@ function renderTradingPlan(detailBrief) {
     return;
   }
   const block = tradingPlanText?.closest(".analysis-block");
-  if (block) block.style.display = "";
-  const lines = [
-    `Entry zone: ${plan.entry_zone || "—"}`,
-    `Stop: ${plan.stop || "—"}`,
-    `Take profits: ${plan.take_profits || "—"}`,
-    `R:R: ${plan.risk_reward || "—"}`,
-    `Основной сценарий: ${plan.primary_scenario || "—"}`,
-    `Альтернативный сценарий: ${plan.alternative_scenario || "—"}`,
-  ];
-  setTextContent(tradingPlanText, lines.join("\n"), "Торговый план недоступен.");
+  if (block) block.style.display = "none";
+  setTextContent(tradingPlanText, "", "");
 }
 
 function renderDetailText(idea) {
   const detailBrief = buildDetailBrief(idea);
-  const fullText = normalizeWhitespace(detailBrief?.summary_narrative) || buildFullText(idea);
+  const fullText = normalizeWhitespace(idea?.unified_narrative) || normalizeWhitespace(detailBrief?.summary_narrative) || buildFullText(idea);
   setTextContent(ideaSummary, fullText, "");
   if (fullText) {
     setTextContent(analysisText, fullText, "");

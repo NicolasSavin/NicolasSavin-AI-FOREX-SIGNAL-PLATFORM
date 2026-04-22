@@ -137,6 +137,7 @@ def test_archive_explanation_generation_on_tp_sl(tmp_path: Path) -> None:
                 "update_explanation": f"Обновление: {event_type}",
                 "short_text": "Короткий текст",
                 "full_text": f"Полное объяснение: {event_type}",
+                "unified_narrative": f"Полное объяснение: {event_type}",
             },
         )
 
