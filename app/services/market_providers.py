@@ -141,6 +141,7 @@ class TwelveDataProvider(RealMarketDataProvider):
                 "format": "JSON",
             },
         )
+        payload = _normalize_td_payload(payload)
         td_error = _extract_td_error(payload)
         if td_error is not None:
             if _is_rate_limit_error(td_error):
@@ -170,10 +171,10 @@ class TwelveDataProvider(RealMarketDataProvider):
             self._cycle_cache_set(cycle_key, error_payload)
             return error_payload
 
-        candles = _normalize_td_candles(payload.get("values"))
+        candles = _normalize_td_candles(payload.get("candles"))
         if not candles and isinstance(payload, dict):
             logger.warning(
-                "twelvedata_empty_values normalized_symbol=%s normalized_timeframe=%s provider_symbol=%s provider_interval=%s meta=%s",
+                "twelvedata_empty_candles normalized_symbol=%s normalized_timeframe=%s provider_symbol=%s provider_interval=%s meta=%s",
                 normalized,
                 normalized_tf,
                 provider_symbol,
@@ -486,6 +487,7 @@ def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:
             continue
         ts = _parse_ts(item.get("datetime"))
         candle = {
+            "timestamp": ts,
             "time": ts,
             "datetime": item.get("datetime"),
             "open": _to_float(item.get("open")),
@@ -572,6 +574,17 @@ def _extract_td_error(payload: dict[str, Any]) -> str | None:
         flattened = "; ".join(f"{key}={value}" for key, value in errors.items())
         return flattened[:400]
     return None
+
+
+def _normalize_td_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {"candles": []}
+    normalized = dict(payload)
+    candles = normalized.get("candles")
+    values = normalized.get("values")
+    if not isinstance(candles, list):
+        normalized["candles"] = values if isinstance(values, list) else []
+    return normalized
 
 
 def _unavailable(symbol: str, source: str, message: str) -> dict[str, Any]:

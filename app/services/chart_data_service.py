@@ -95,8 +95,8 @@ class ChartDataService:
                 reason="fetch_error",
             )
 
-        raw_candles = payload.get("candles") if isinstance(payload.get("candles"), list) else payload.get("values")
-        candles = self._normalize_candles(raw_candles)
+        payload = self._normalize_twelvedata_payload(payload)
+        candles = self._normalize_candles(payload.get("candles"))
         provider_status = str(payload.get("status") or "").lower()
         if not candles:
             if provider_status == "error":
@@ -152,6 +152,18 @@ class ChartDataService:
             return f"{symbol[:3]}/{symbol[3:]}"
         return symbol
 
+    @staticmethod
+    def _normalize_twelvedata_payload(payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {"candles": []}
+
+        normalized = dict(payload)
+        candles = normalized.get("candles")
+        values = normalized.get("values")
+        if not isinstance(candles, list):
+            normalized["candles"] = values if isinstance(values, list) else []
+        return normalized
+
     @classmethod
     def _normalize_candles(cls, values: Any) -> list[dict[str, Any]]:
         if not isinstance(values, list):
@@ -170,6 +182,7 @@ class ChartDataService:
                 continue
             candles.append(
                 {
+                    "timestamp": timestamp,
                     "time": timestamp,
                     "open": open_price,
                     "high": high_price,
