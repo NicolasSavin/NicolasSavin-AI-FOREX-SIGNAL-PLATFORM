@@ -286,6 +286,7 @@ class TradeIdeaService:
         symbol = str(signal.get("symbol", "")).upper()
         timeframe = str(signal.get("timeframe", "H1")).upper()
         setup_type = self._setup_type(signal)
+        action = str(signal.get("action", "NO_TRADE")).upper()
         now = datetime.now(timezone.utc)
         active_index = next(
             (
@@ -293,10 +294,20 @@ class TradeIdeaService:
                 for index, idea in enumerate(ideas)
                 if idea.get("symbol") == symbol
                 and idea.get("timeframe") == timeframe
+                and idea.get("setup_type") == setup_type
                 and idea.get("status") in ACTIVE_STATUSES
             ),
             None,
         )
+
+        if active_index is None and action == "NO_TRADE":
+            latest_matching_idea = self._latest_matching_idea(
+                ideas=ideas,
+                symbol=symbol,
+                timeframe=timeframe,
+            )
+            if latest_matching_idea is not None:
+                return latest_matching_idea
 
         if active_index is not None:
             current = ideas[active_index]
@@ -311,6 +322,24 @@ class TradeIdeaService:
         store = {"updated_at_utc": now.isoformat(), "ideas": ideas}
         self.idea_store.write(store)
         return updated
+
+    @staticmethod
+    def _latest_matching_idea(
+        *,
+        ideas: list[dict[str, Any]],
+        symbol: str,
+        timeframe: str,
+    ) -> dict[str, Any] | None:
+        matched = [
+            idea
+            for idea in ideas
+            if idea.get("symbol") == symbol
+            and idea.get("timeframe") == timeframe
+        ]
+        if not matched:
+            return None
+        matched.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+        return matched[0]
 
     def _apply_updates(self, generated: list[dict]) -> dict[str, Any]:
         symbols_with_candles: set[tuple[str, str]] = set()
