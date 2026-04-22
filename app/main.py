@@ -43,8 +43,10 @@ from backend.signal_engine import SignalEngine, SUPPORTED_TIMEFRAMES
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+CHARTS_DIR = STATIC_DIR / "charts"
 
 app = FastAPI(title="NicolasSavin AI FOREX SIGNAL PLATFORM", version="3.8.0")
+CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 signal_engine = SignalEngine()

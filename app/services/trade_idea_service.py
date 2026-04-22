@@ -734,7 +734,7 @@ class TradeIdeaService:
         patterns = signal.get("chart_patterns") if isinstance(signal.get("chart_patterns"), list) else []
         take_profits = self._extract_take_profits(signal=signal, fallback_take_profit=take_profit)
         logger.info(
-            "idea_snapshot_start symbol=%s timeframe=%s candles=%s has_existing=%s",
+            "snapshot_start symbol=%s timeframe=%s candles=%s has_existing=%s",
             symbol,
             timeframe,
             len(candles),
@@ -757,7 +757,7 @@ class TradeIdeaService:
         )
         if not image_path:
             logger.warning(
-                "idea_snapshot_generation_failed symbol=%s timeframe=%s candles=%s status=snapshot_failed",
+                "snapshot_failed symbol=%s timeframe=%s candles=%s status=snapshot_failed",
                 symbol,
                 timeframe,
                 len(candles),
@@ -772,7 +772,13 @@ class TradeIdeaService:
                 )
                 return {"chartImageUrl": existing_url, "status": existing_status}
             return {"chartImageUrl": None, "status": "snapshot_failed"}
-        logger.info("idea_snapshot_final_path symbol=%s timeframe=%s path=%s", symbol, timeframe, image_path)
+        logger.info(
+            "snapshot_success symbol=%s timeframe=%s candles=%s path=%s",
+            symbol,
+            timeframe,
+            len(candles),
+            image_path,
+        )
         return {"chartImageUrl": image_path, "status": "ok"}
 
     def _extract_take_profits(self, *, signal: dict[str, Any], fallback_take_profit: float | None) -> list[float]:
@@ -874,8 +880,9 @@ class TradeIdeaService:
         chart_status = str(idea.get("chartSnapshotStatus") or idea.get("chart_snapshot_status") or "ok").lower()
         if chart_url:
             return False
-        if chart_status == "ok":
-            return False
+        # Даже при status=ok повторяем попытку, если фактический URL снапшота отсутствует.
+        if chart_status == "ok" and not chart_url:
+            return True
 
         retry_at_raw = idea.get("chartSnapshotRetryAt") or idea.get("chart_snapshot_retry_at")
         if not retry_at_raw:
