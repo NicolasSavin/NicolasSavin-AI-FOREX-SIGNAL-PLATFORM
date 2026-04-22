@@ -728,14 +728,12 @@ class TradeIdeaService:
         )
 
         if not candles:
-            failure_status = self._map_chart_fetch_status(chart_payload)
             logger.warning(
-                "idea_snapshot_skipped symbol=%s timeframe=%s status=%s reason=no_candles",
+                "idea_snapshot_skipped symbol=%s timeframe=%s status=no_data reason=no_candles",
                 symbol,
                 timeframe,
-                failure_status,
             )
-            return {"chartImageUrl": None, "status": failure_status}
+            return {"chartImageUrl": None, "status": "no_data"}
         if fetch_status != "ok":
             logger.info(
                 "idea_snapshot_candle_override symbol=%s timeframe=%s payload_status=%s effective_status=ok candles=%s",
@@ -1054,27 +1052,11 @@ class TradeIdeaService:
 
     def _should_retry_chart_snapshot(self, idea: dict[str, Any], now: datetime, *, force: bool = False) -> bool:
         chart_url = idea.get("chartImageUrl") or idea.get("chart_image")
-        chart_status = str(idea.get("chartSnapshotStatus") or idea.get("chart_snapshot_status") or "ok").lower()
         if chart_url:
             return False
-        if force:
-            return True
-        # Даже при status=ok повторяем попытку, если фактический URL снапшота отсутствует.
-        if chart_status == "ok" and not chart_url:
-            return True
-
-        retry_at_raw = idea.get("chartSnapshotRetryAt") or idea.get("chart_snapshot_retry_at")
-        if not retry_at_raw:
-            return True
-        try:
-            retry_at = datetime.fromisoformat(str(retry_at_raw).replace("Z", "+00:00"))
-        except ValueError:
-            return True
-        if retry_at.tzinfo is None:
-            retry_at = retry_at.replace(tzinfo=timezone.utc)
-        if self.refresh_interval_seconds <= 0:
-            return True
-        return (now - retry_at.astimezone(timezone.utc)).total_seconds() >= self.refresh_interval_seconds
+        # Если изображения нет, всегда пытаемся построить снапшот заново:
+        # наличие свечей должно иметь приоритет над любыми статусами/тайм-аутами.
+        return True
 
     def _ensure_statistics(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
         changed = False
