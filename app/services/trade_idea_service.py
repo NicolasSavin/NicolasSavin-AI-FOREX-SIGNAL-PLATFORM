@@ -133,8 +133,9 @@ class TradeIdeaService:
         ideas = payload.get("ideas", [])
         ideas, live_refresh_changed = self._refresh_active_ideas(ideas)
         ideas, snapshot_recovered = self._recover_missing_chart_snapshots(ideas)
+        ideas, description_recovered, _ = self._recover_missing_structured_descriptions(ideas)
         ideas, changed = self._ensure_statistics(ideas)
-        storage_changed = changed or snapshot_recovered or live_refresh_changed
+        storage_changed = changed or snapshot_recovered or live_refresh_changed or description_recovered
         if not ideas:
             payload = {
                 "updated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -345,14 +346,6 @@ class TradeIdeaService:
     def build_api_ideas(self) -> list[dict[str, Any]]:
         primary_payload = self.idea_store.read()
         primary_source = primary_payload.get("ideas", [])
-        primary_source, lazy_snapshot_changed = self._lazy_rebuild_missing_chart_snapshots(primary_source)
-        if lazy_snapshot_changed:
-            self.idea_store.write(
-                {
-                    "updated_at_utc": datetime.now(timezone.utc).isoformat(),
-                    "ideas": primary_source,
-                }
-            )
         primary = self._normalize_for_api(primary_source, source="trade_ideas_store")
         self._log_api_pipeline(primary, stage="primary")
         if primary:
@@ -1386,17 +1379,17 @@ class TradeIdeaService:
         market_structure_structured = (
             updated.get("market_structure_structured") if isinstance(updated.get("market_structure_structured"), dict) else {}
         )
-        updated["summary_structured"] = {**narrative_structured["summary_structured"], **summary_structured}
-        updated["trade_plan_structured"] = {**narrative_structured["trade_plan_structured"], **trade_plan_structured}
-        updated["market_structure_structured"] = {**narrative_structured["market_structure_structured"], **market_structure_structured}
+        updated["summary_structured"] = {**summary_structured, **narrative_structured["summary_structured"]}
+        updated["trade_plan_structured"] = {**trade_plan_structured, **narrative_structured["trade_plan_structured"]}
+        updated["market_structure_structured"] = {**market_structure_structured, **narrative_structured["market_structure_structured"]}
         updated["narrative_structured"] = {
             "summary_structured": updated["summary_structured"],
             "trade_plan_structured": updated["trade_plan_structured"],
             "market_structure_structured": updated["market_structure_structured"],
         }
-        if not str(updated.get("short_text") or "").strip():
+        if self._is_weak_narrative_text(updated.get("short_text")):
             updated["short_text"] = str(llm_result.data.get("short_text") or updated.get("summary") or "").strip()
-        if not str(updated.get("full_text") or "").strip():
+        if self._is_weak_narrative_text(updated.get("full_text")):
             updated["full_text"] = str(llm_result.data.get("full_text") or "").strip()
         updated["narrative_source"] = str(llm_result.source or updated.get("narrative_source") or "llm")
         detail_brief = updated.get("detail_brief") if isinstance(updated.get("detail_brief"), dict) else {}
@@ -1416,6 +1409,19 @@ class TradeIdeaService:
             updated.get("narrative_source"),
         )
         return updated
+
+    @staticmethod
+    def _is_weak_narrative_text(value: Any) -> bool:
+        text = str(value or "").strip().lower()
+        if not text:
+            return True
+        weak_tokens = (
+            "статус created",
+            "статус waiting",
+            "торговая идея обновлена",
+            "ждать подтверждение структуры",
+        )
+        return any(token in text for token in weak_tokens) or len(text) < 40
 
     @classmethod
     def _idea_row_to_signal_for_backfill(cls, idea: dict[str, Any]) -> dict[str, Any]:
