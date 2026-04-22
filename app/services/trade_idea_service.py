@@ -749,6 +749,19 @@ class TradeIdeaService:
         zones = chart_data.get("zones") if isinstance(chart_data.get("zones"), list) else []
         markers = chart_data.get("markers") if isinstance(chart_data.get("markers"), list) else []
         patterns = signal.get("chart_patterns") if isinstance(signal.get("chart_patterns"), list) else []
+        order_blocks = self._extract_overlay_items(signal=signal, chart_data=chart_data, keys=("order_blocks", "orderBlocks", "ob"))
+        liquidity_levels = self._extract_overlay_items(
+            signal=signal,
+            chart_data=chart_data,
+            keys=("liquidity", "liquidity_levels", "liquidityLevels", "liquidity_areas", "liquidityAreas"),
+        )
+        pattern_items = self._extract_overlay_items(signal=signal, chart_data=chart_data, keys=("patterns",))
+        labels = self._extract_overlay_items(signal=signal, chart_data=chart_data, keys=("labels", "smc_labels", "smcLabels"))
+        arrows = self._extract_overlay_items(signal=signal, chart_data=chart_data, keys=("arrows", "entry_arrows", "structure_arrows"))
+        zones = [*zones, *order_blocks, *self._extract_fvg_zones(pattern_items)]
+        levels = [*levels, *self._liquidity_to_levels(liquidity_levels)]
+        labels = [*labels, *self._patterns_to_labels(pattern_items)]
+        arrows = [*arrows, *self._build_default_trade_arrows(entry=entry, take_profit=take_profit, bias=bias, candles_count=len(candles))]
         take_profits = self._extract_take_profits(signal=signal, fallback_take_profit=take_profit)
         logger.info(
             "snapshot_start symbol=%s timeframe=%s candles=%s has_existing=%s",
@@ -771,6 +784,10 @@ class TradeIdeaService:
             status=status,
             markers=markers,
             patterns=patterns,
+            order_blocks=order_blocks,
+            liquidity_levels=liquidity_levels,
+            labels=labels,
+            arrows=arrows,
         )
         if not image_path:
             logger.warning(
@@ -815,6 +832,96 @@ class TradeIdeaService:
         if fallback_value is not None and not take_profits:
             take_profits.append(fallback_value)
         return take_profits
+
+    @staticmethod
+    def _extract_overlay_items(
+        *,
+        signal: dict[str, Any],
+        chart_data: dict[str, Any],
+        keys: tuple[str, ...],
+    ) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for key in keys:
+            values = signal.get(key)
+            if isinstance(values, list):
+                items.extend(item for item in values if isinstance(item, dict))
+            chart_values = chart_data.get(key)
+            if isinstance(chart_values, list):
+                items.extend(item for item in chart_values if isinstance(item, dict))
+        return items
+
+    @classmethod
+    def _extract_fvg_zones(cls, patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        zones: list[dict[str, Any]] = []
+        for pattern in patterns:
+            pattern_name = str(pattern.get("type") or pattern.get("name") or "").lower()
+            if "fvg" not in pattern_name and "imbalance" not in pattern_name:
+                continue
+            low = cls._extract_numeric(pattern.get("low") or pattern.get("price_from"))
+            high = cls._extract_numeric(pattern.get("high") or pattern.get("price_to"))
+            if low is None or high is None:
+                continue
+            zones.append(
+                {
+                    "type": "fvg",
+                    "from": low,
+                    "to": high,
+                    "startIndex": pattern.get("startIndex") or pattern.get("start") or 0,
+                    "endIndex": pattern.get("endIndex") or pattern.get("end") or 9999,
+                }
+            )
+        return zones
+
+    @classmethod
+    def _liquidity_to_levels(cls, liquidity: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        levels: list[dict[str, Any]] = []
+        for item in liquidity:
+            price = cls._extract_numeric(item.get("price") or item.get("value") or item.get("level"))
+            if price is None:
+                continue
+            level_label = str(item.get("label") or item.get("type") or "Liquidity")
+            levels.append({"price": price, "type": level_label})
+        return levels
+
+    @staticmethod
+    def _patterns_to_labels(patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        labels: list[dict[str, Any]] = []
+        allowed = ("bos", "choch", "liquidity", "sweep", "ob", "fvg")
+        for item in patterns:
+            name = str(item.get("type") or item.get("name") or "").strip()
+            if not name or not any(token in name.lower() for token in allowed):
+                continue
+            price = item.get("price") or item.get("y") or item.get("value")
+            idx = item.get("index") or item.get("x") or item.get("candleIndex")
+            labels.append({"text": name.upper(), "price": price, "index": idx})
+        return labels
+
+    @classmethod
+    def _build_default_trade_arrows(
+        cls,
+        *,
+        entry: float | None,
+        take_profit: float | None,
+        bias: str,
+        candles_count: int,
+    ) -> list[dict[str, Any]]:
+        entry_price = cls._extract_numeric(entry)
+        target_price = cls._extract_numeric(take_profit)
+        if entry_price is None or target_price is None:
+            return []
+        start = max(candles_count - 14, 1)
+        end = candles_count - 2
+        direction = str(bias or "").lower()
+        arrow_type = "entry" if direction in {"bullish", "bearish"} else "structure"
+        return [
+            {
+                "type": arrow_type,
+                "from_index": start,
+                "to_index": end,
+                "from_price": entry_price,
+                "to_price": target_price,
+            }
+        ]
 
     @staticmethod
     def _map_chart_fetch_status(chart_payload: dict[str, Any]) -> str:
