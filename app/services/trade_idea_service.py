@@ -708,13 +708,10 @@ class TradeIdeaService:
             len(candles),
         )
 
-        if fetch_status != "ok":
+        if not candles:
             failure_status = self._map_chart_fetch_status(chart_payload)
             logger.warning("idea_snapshot_skipped symbol=%s timeframe=%s status=%s", symbol, timeframe, failure_status)
             return {"chartImageUrl": None, "status": failure_status}
-        if not candles:
-            logger.warning("idea_snapshot_skipped symbol=%s timeframe=%s status=no_data", symbol, timeframe)
-            return {"chartImageUrl": None, "status": "no_data"}
 
         levels = chart_data.get("levels") if isinstance(chart_data.get("levels"), list) else []
         zones = chart_data.get("zones") if isinstance(chart_data.get("zones"), list) else []
@@ -792,7 +789,7 @@ class TradeIdeaService:
             return "rate_limited"
         if "не вернул candles" in message or "пуст" in message or "no data" in message:
             return "no_data"
-        return "fetch_error"
+        return "no_data"
 
     def _append_snapshot(self, idea: dict[str, Any], previous: dict[str, Any] | None) -> None:
         snapshots = self.snapshot_store.read().get("snapshots", [])
@@ -2298,12 +2295,13 @@ class TradeIdeaService:
             chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
             candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
             latest_close = candles[-1].get("close") if candles else None
-            if chart_payload.get("status") != "ok" or latest_close in (None, "") or not candles:
+            if latest_close in (None, "") or not candles:
                 logger.warning(
-                    "idea_market_reference_unavailable symbol=%s timeframe=%s chart_status=%s",
+                    "idea_market_reference_unavailable symbol=%s timeframe=%s chart_status=%s candles=%s",
                     symbol,
                     timeframe,
                     chart_payload.get("status"),
+                    len(candles),
                 )
                 continue
             references[(symbol, timeframe)] = {

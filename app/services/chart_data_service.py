@@ -95,24 +95,25 @@ class ChartDataService:
                 reason="fetch_error",
             )
 
-        if payload.get("status") == "error":
-            logger.warning(
-                "twelvedata_failed symbol=%s tf=%s reason=api_error code=%s message=%s",
-                normalized_symbol,
-                normalized_tf,
-                payload.get("code"),
-                payload.get("message"),
-            )
-            reason = "rate_limited" if str(payload.get("code")) == "429" else "fetch_error"
-            return self.build_unavailable_payload(
-                symbol=normalized_symbol,
-                timeframe=normalized_tf,
-                message_ru=f"Twelve Data недоступен: {payload.get('message') or 'неизвестная ошибка'}.",
-                reason=reason,
-            )
-
-        candles = self._normalize_candles(payload.get("values"))
+        raw_candles = payload.get("candles") if isinstance(payload.get("candles"), list) else payload.get("values")
+        candles = self._normalize_candles(raw_candles)
+        provider_status = str(payload.get("status") or "").lower()
         if not candles:
+            if provider_status == "error":
+                logger.warning(
+                    "twelvedata_failed symbol=%s tf=%s reason=api_error code=%s message=%s",
+                    normalized_symbol,
+                    normalized_tf,
+                    payload.get("code"),
+                    payload.get("message"),
+                )
+                reason = "rate_limited" if str(payload.get("code")) == "429" else "fetch_error"
+                return self.build_unavailable_payload(
+                    symbol=normalized_symbol,
+                    timeframe=normalized_tf,
+                    message_ru=f"Twelve Data недоступен: {payload.get('message') or 'неизвестная ошибка'}.",
+                    reason=reason,
+                )
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=empty_candles", normalized_symbol, normalized_tf)
             return self.build_unavailable_payload(
                 symbol=normalized_symbol,
