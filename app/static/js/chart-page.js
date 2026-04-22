@@ -131,7 +131,22 @@ function truncateText(value, limit = 92) {
   return `${text.slice(0, limit - 1).trimEnd()}…`;
 }
 
+function getStructuredNarrativeBlocks(idea) {
+  const summaryStructured = idea?.summary_structured || idea?.narrative_structured?.summary_structured || {};
+  const tradePlanStructured = idea?.trade_plan_structured || idea?.narrative_structured?.trade_plan_structured || {};
+  const marketStructureStructured = idea?.market_structure_structured || idea?.narrative_structured?.market_structure_structured || {};
+  return {
+    summaryStructured,
+    tradePlanStructured,
+    marketStructureStructured,
+  };
+}
+
 function buildShortText(idea) {
+  const { summaryStructured } = getStructuredNarrativeBlocks(idea);
+  const structuredShort = normalizeWhitespace(summaryStructured?.signal || summaryStructured?.action);
+  if (structuredShort) return truncateText(structuredShort, 140);
+
   const direct = normalizeWhitespace(idea?.short_text || idea?.shortText);
   if (direct) return direct;
 
@@ -152,6 +167,21 @@ function buildShortText(idea) {
 }
 
 function buildFullText(idea) {
+  const { summaryStructured, tradePlanStructured, marketStructureStructured } = getStructuredNarrativeBlocks(idea);
+  const structuredText = [
+    summaryStructured?.situation,
+    summaryStructured?.cause,
+    summaryStructured?.effect,
+    summaryStructured?.action,
+    summaryStructured?.risk_note,
+    marketStructureStructured?.structure,
+    tradePlanStructured?.entry_trigger,
+  ]
+    .map((value) => normalizeWhitespace(value))
+    .filter(Boolean)
+    .join(" ");
+  if (structuredText) return structuredText;
+
   const detailSummary = normalizeWhitespace(idea?.detail_brief?.summary_narrative);
   if (detailSummary) return detailSummary;
   const direct = normalizeWhitespace(
@@ -169,9 +199,7 @@ function buildFullText(idea) {
 function buildDetailBrief(idea) {
   const existing = idea?.detail_brief;
   if (existing && typeof existing === "object") return existing;
-  const summaryStructured = idea?.summary_structured || idea?.narrative_structured?.summary_structured || {};
-  const tradePlanStructured = idea?.trade_plan_structured || idea?.narrative_structured?.trade_plan_structured || {};
-  const marketStructureStructured = idea?.market_structure_structured || idea?.narrative_structured?.market_structure_structured || {};
+  const { summaryStructured, tradePlanStructured, marketStructureStructured } = getStructuredNarrativeBlocks(idea);
 
   const entry = formatLevel(idea?.entry);
   const stop = formatLevel(idea?.stopLoss);
