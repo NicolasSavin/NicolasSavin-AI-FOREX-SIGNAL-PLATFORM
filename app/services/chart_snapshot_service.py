@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class ChartSnapshotService:
-    def __init__(self, charts_dir: str = "static/charts") -> None:
+    def __init__(self, charts_dir: str = "app/static/charts") -> None:
         self.charts_dir = Path(charts_dir)
-        os.makedirs("static/charts", exist_ok=True)
+        os.makedirs("app/static/charts", exist_ok=True)
         self.charts_dir.mkdir(parents=True, exist_ok=True)
 
     def build_snapshot(
@@ -52,8 +52,9 @@ class ChartSnapshotService:
         filename = f"{symbol}_{timeframe}_{timestamp}.png"
         absolute_path = self.charts_dir / filename
         relative_path = f"/static/charts/{filename}"
+        os.makedirs("app/static/charts", exist_ok=True)
         logger.info(
-            "idea_snapshot_start symbol=%s timeframe=%s candles=%s output=%s absolute_path=%s",
+            "snapshot_start symbol=%s timeframe=%s candles=%s output=%s absolute_path=%s",
             symbol,
             timeframe,
             len(candles),
@@ -119,11 +120,13 @@ class ChartSnapshotService:
                 spine.set_color("#374151")
             fig.tight_layout(rect=[0, 0.035, 1, 0.98])
 
+            success = False
             try:
                 plt.savefig(absolute_path, facecolor=fig.get_facecolor())
+                success = True
             except Exception as exc:
                 logger.exception(
-                    "idea_snapshot_failed symbol=%s timeframe=%s candles=%s path=%s error=%s",
+                    "snapshot_failed symbol=%s timeframe=%s candles=%s path=%s error=%s",
                     symbol,
                     timeframe,
                     len(candles),
@@ -133,17 +136,18 @@ class ChartSnapshotService:
                 return None
 
             logger.info(
-                "idea_snapshot_success symbol=%s timeframe=%s candles=%s file=%s absolute_path=%s",
+                "snapshot_success symbol=%s timeframe=%s candles=%s file=%s absolute_path=%s success=%s",
                 symbol,
                 timeframe,
                 len(candles),
                 relative_path,
                 absolute_path,
+                success,
             )
             return relative_path
         except Exception as exc:
             logger.exception(
-                "idea_snapshot_failed symbol=%s timeframe=%s candles=%s path=%s error=%s",
+                "snapshot_failed symbol=%s timeframe=%s candles=%s path=%s error=%s",
                 symbol,
                 timeframe,
                 len(candles),
