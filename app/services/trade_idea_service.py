@@ -696,6 +696,7 @@ class TradeIdeaService:
         if not chart_data and isinstance(signal.get("chartData"), dict):
             chart_data = signal.get("chartData")
         normalized_chart_payload, candles = self.chart_data_service.normalize_provider_payload(chart_data)
+        normalized_status = str(normalized_chart_payload.get("status") or "unknown").lower()
         chart_payload: dict[str, Any] = {
             "status": normalized_chart_payload.get("status") or "ok",
             "candles": candles,
@@ -704,9 +705,10 @@ class TradeIdeaService:
         }
         fetch_status = str(chart_payload.get("status") or "ok").lower()
         logger.info(
-            "idea_snapshot_signal_chart_payload symbol=%s timeframe=%s has_values=%s has_candles=%s normalized_candles=%s",
+            "idea_snapshot_signal_chart_payload symbol=%s timeframe=%s payload_status=%s has_values=%s has_candles=%s normalized_candles=%s",
             symbol,
             timeframe,
+            normalized_status,
             isinstance(chart_data.get("values"), list),
             isinstance(chart_data.get("candles"), list),
             len(candles),
@@ -725,8 +727,21 @@ class TradeIdeaService:
 
         if not candles:
             failure_status = self._map_chart_fetch_status(chart_payload)
-            logger.warning("idea_snapshot_skipped symbol=%s timeframe=%s status=%s", symbol, timeframe, failure_status)
+            logger.warning(
+                "idea_snapshot_skipped symbol=%s timeframe=%s status=%s reason=no_candles",
+                symbol,
+                timeframe,
+                failure_status,
+            )
             return {"chartImageUrl": None, "status": failure_status}
+        if fetch_status != "ok":
+            logger.info(
+                "idea_snapshot_candle_override symbol=%s timeframe=%s payload_status=%s effective_status=ok candles=%s",
+                symbol,
+                timeframe,
+                fetch_status,
+                len(candles),
+            )
 
         levels = chart_data.get("levels") if isinstance(chart_data.get("levels"), list) else []
         zones = chart_data.get("zones") if isinstance(chart_data.get("zones"), list) else []
@@ -839,6 +854,14 @@ class TradeIdeaService:
                 recovered_ideas.append(current)
                 continue
 
+            logger.info(
+                "idea_snapshot_retry_started idea_id=%s symbol=%s timeframe=%s current_status=%s has_chart=%s",
+                current.get("idea_id"),
+                current.get("symbol"),
+                current.get("timeframe"),
+                current.get("chartSnapshotStatus") or current.get("chart_snapshot_status"),
+                bool(current.get("chartImageUrl") or current.get("chart_image")),
+            )
             snapshot = self._resolve_chart_snapshot(
                 signal=current,
                 existing=current,
@@ -870,6 +893,14 @@ class TradeIdeaService:
                     current.get("idea_id"),
                     current.get("symbol"),
                     current.get("timeframe"),
+                )
+            else:
+                logger.info(
+                    "idea_snapshot_retry_finished_without_image idea_id=%s symbol=%s timeframe=%s status=%s",
+                    current.get("idea_id"),
+                    current.get("symbol"),
+                    current.get("timeframe"),
+                    snapshot.get("status"),
                 )
             recovered_ideas.append(current)
 

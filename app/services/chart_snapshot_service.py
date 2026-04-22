@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +18,6 @@ logger = logging.getLogger(__name__)
 class ChartSnapshotService:
     def __init__(self, charts_dir: str = "app/static/charts") -> None:
         self.charts_dir = Path(charts_dir)
-        os.makedirs("app/static/charts", exist_ok=True)
         self.charts_dir.mkdir(parents=True, exist_ok=True)
 
     def build_snapshot(
@@ -52,7 +50,7 @@ class ChartSnapshotService:
         filename = f"{symbol}_{timeframe}_{timestamp}.png"
         absolute_path = self.charts_dir / filename
         relative_path = f"/static/charts/{filename}"
-        os.makedirs("app/static/charts", exist_ok=True)
+        self.charts_dir.mkdir(parents=True, exist_ok=True)
         logger.info(
             "snapshot_start symbol=%s timeframe=%s candles=%s output=%s absolute_path=%s",
             symbol,
@@ -123,7 +121,16 @@ class ChartSnapshotService:
             success = False
             try:
                 plt.savefig(absolute_path, facecolor=fig.get_facecolor())
-                success = True
+                success = absolute_path.exists()
+                if not success:
+                    logger.error(
+                        "snapshot_failed symbol=%s timeframe=%s candles=%s path=%s error=file_not_created",
+                        symbol,
+                        timeframe,
+                        len(candles),
+                        absolute_path,
+                    )
+                    return None
             except Exception as exc:
                 logger.exception(
                     "snapshot_failed symbol=%s timeframe=%s candles=%s path=%s error=%s",
