@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from app.services.narrative_generator import generate_signal_preview_text, generate_signal_text
 
 
@@ -35,11 +33,11 @@ def test_generate_signal_text_contains_structured_causal_chain() -> None:
         }
     )
 
-    sentences = [x for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()]
-    assert 5 <= len(sentences) <= 8
-    assert "smart money" in text.lower()
-    assert "liquidity" in text.lower()
-    assert "bias" in text.lower()
+    assert "ПРИЧИНА:" in text
+    assert "ЭФФЕКТ:" in text
+    assert "ДЕЙСТВИЕ:" in text
+    assert "снятие ликвидности" in text.lower()
+    assert "→" in text
     assert "TP 1.0876" in text
     assert "1.0828" in text
 
@@ -54,8 +52,10 @@ def test_generate_signal_text_returns_neutral_when_market_data_unavailable() -> 
         }
     )
 
+    assert "ПРИЧИНА:" in text
+    assert "ЭФФЕКТ:" in text
+    assert "ДЕЙСТВИЕ:" in text
     assert "нет надёжного рыночного снимка" in text
-    assert "нейтральным наблюдением" in text
 
 
 def test_generate_signal_preview_text_is_short_but_meaningful() -> None:

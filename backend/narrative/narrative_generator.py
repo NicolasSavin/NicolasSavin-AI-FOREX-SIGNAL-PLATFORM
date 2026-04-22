@@ -5,7 +5,7 @@ from typing import Any
 
 
 def generate_signal_text(signal_data: dict[str, Any]) -> str:
-    """Генерирует единый профессиональный narrative (5–8 предложений в одном абзаце)."""
+    """Генерирует короткий narrative в формате CAUSE → EFFECT → ACTION."""
 
     language = _resolve_language(signal_data)
     if _market_data_unavailable(signal_data):
@@ -20,61 +20,44 @@ def generate_signal_text(signal_data: dict[str, Any]) -> str:
     take_profit = _fmt_level(signal_data.get("take_profit") or signal_data.get("takeProfit"))
     current_price = _fmt_level(signal_data.get("current_price") or signal_data.get("market_price"))
 
-    structure = _clean_text(signal_data.get("market_structure"))
     trend_phase = _structure_phase(signal_data, direction=direction)
+    structure = _clean_text(signal_data.get("market_structure")) or trend_phase
     liquidity = _liquidity_context(signal_data, direction=direction)
-    smart_money = _smart_money_action(signal_data, direction=direction)
-    zones = _zones_context(signal_data, direction=direction, entry=entry)
-    confirmations = _confirmations(signal_data)
+    confirmation = _confirmations(signal_data)
     expectation = _expected_path(signal_data, direction=direction, take_profit=take_profit)
     invalidation = _invalidation(signal_data, direction=direction, stop_loss=stop_loss)
+    action_hint = {"bullish": "buy", "bearish": "sell", "neutral": "wait"}[direction]
 
-    sentences: list[str] = []
     if language == "en":
-        price_ref = f" with spot near {current_price}" if current_price != "—" else ""
-        structure_part = structure or trend_phase
-        sentences.append(
-            f"{symbol} on {timeframe} is trading through {structure_part}{price_ref}, with price behavior consistent with a {trend_phase} regime rather than random noise."
+        price_ref = f" Spot is near {current_price}." if current_price != "—" else ""
+        cause = (
+            f"CAUSE:\n{symbol} {timeframe}: liquidity context is {liquidity}. "
+            f"Structure is {structure}.{price_ref}".strip()
         )
-        sentences.append(
-            f"Liquidity mapping shows {liquidity}, and that sweep/inducement sequence implies smart money likely {smart_money}."
+        effect = (
+            f"EFFECT:\nLiquidity sweep → smart money reaction → {expectation}. "
+            f"Confirmation comes from {confirmation}."
         )
-        sentences.append(
-            f"The active dealing zones are {zones}, where premium/discount positioning and supply-demand interaction define whether continuation stays valid."
-        )
-        sentences.append(
-            f"Bias confirmation comes from {confirmations}, so order flow and structure are aligned instead of conflicting."
-        )
-        sentences.append(
-            f"As long as price accepts around entry {entry} and avoids structural failure, the expected next leg is {expectation}, with TP reference at {take_profit}."
-        )
-        sentences.append(
-            f"The setup is invalidated if {invalidation}, which would shift the scenario from continuation to correction/distribution and nullify the current thesis."
+        action = (
+            f"ACTION:\n{action_hint.upper()} near entry {entry}, SL {stop_loss}, TP {take_profit}. "
+            f"No trade if {invalidation}."
         )
     else:
-        price_ref = f", при этом текущая цена около {current_price}" if current_price != "—" else ""
-        structure_part = structure or trend_phase
-        sentences.append(
-            f"{symbol} на {timeframe} торгуется через {structure_part}{price_ref}, и текущее поведение цены соответствует {trend_phase} фазе, а не случайной волатильности."
+        price_ref = f" Текущая цена около {current_price}." if current_price != "—" else ""
+        cause = (
+            f"ПРИЧИНА:\n{symbol} {timeframe}: ликвидность — {liquidity}. "
+            f"Структура — {structure}.{price_ref}".strip()
         )
-        sentences.append(
-            f"Карта ликвидности показывает {liquidity}, а последовательность sweep/inducement указывает, что smart money вероятно {smart_money}."
+        effect = (
+            f"ЭФФЕКТ:\nСнятие ликвидности → реакция крупных участников → {expectation}. "
+            f"Подтверждение: {confirmation}."
         )
-        sentences.append(
-            f"Рабочие зоны сфокусированы в {zones}, где позиция цены в premium/discount и взаимодействие supply/demand определяют валидность продолжения."
-        )
-        sentences.append(
-            f"Подтверждение bias формируется через {confirmations}, поэтому структура и order flow сейчас не конфликтуют между собой."
-        )
-        sentences.append(
-            f"Пока цена принимает зону входа {entry} и не ломает структуру, ожидается {expectation}, с целевым ориентиром TP {take_profit}."
-        )
-        sentences.append(
-            f"Сценарий теряет силу, если {invalidation}; в этом случае логика смещается из continuation в коррекцию/дистрибуцию и текущая идея отменяется."
+        action = (
+            f"ДЕЙСТВИЕ:\n{action_hint.upper()} от зоны входа {entry}, SL {stop_loss}, TP {take_profit}. "
+            f"Без сделки, если {invalidation}."
         )
 
-    paragraph = " ".join(_sentence(x) for x in sentences if _clean_text(x))
-    return re.sub(r"\s+", " ", paragraph).strip()
+    return f"{cause}\n\n{effect}\n\n{action}".strip()
 
 
 def generate_signal_preview_text(signal_data: dict[str, Any]) -> str:
@@ -106,12 +89,16 @@ def _build_unavailable_text(signal_data: dict[str, Any], *, language: str) -> st
     timeframe = str(signal_data.get("timeframe") or "H1").upper()
     if language == "en":
         return (
-            f"{symbol} on {timeframe} currently has no reliable market snapshot, so a structured trade narrative cannot be produced without fabricating levels or flow context. "
-            "Until live price, structure, and liquidity references are available, the scenario remains observational and no directional execution thesis is justified."
+            "CAUSE:\n"
+            f"{symbol} {timeframe}: no reliable market snapshot.\n\n"
+            "EFFECT:\nWithout live price, structure, and liquidity, direction cannot be confirmed.\n\n"
+            "ACTION:\nWait and do not open a trade until market data is restored."
         )
     return (
-        f"По {symbol} на {timeframe} сейчас нет надёжного рыночного снимка, поэтому структурный trade narrative нельзя формировать без подмены фактов по уровням и потоку ордеров. "
-        "До появления актуальной цены, структуры и карты ликвидности сценарий остаётся нейтральным наблюдением без обоснованной directional-идеи."
+        "ПРИЧИНА:\n"
+        f"{symbol} {timeframe}: нет надёжного рыночного снимка.\n\n"
+        "ЭФФЕКТ:\nБез актуальной цены, структуры и ликвидности направление не подтверждается.\n\n"
+        "ДЕЙСТВИЕ:\nЖдать и не открывать сделку до восстановления рыночных данных."
     )
 
 
