@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class ChartSnapshotService:
-    def __init__(self, charts_dir: str = "app/static/charts") -> None:
+    def __init__(self, charts_dir: str = "static/charts") -> None:
         self.charts_dir = Path(charts_dir)
+        os.makedirs("static/charts", exist_ok=True)
         self.charts_dir.mkdir(parents=True, exist_ok=True)
 
     def build_snapshot(
@@ -51,16 +53,16 @@ class ChartSnapshotService:
         absolute_path = self.charts_dir / filename
         relative_path = f"/static/charts/{filename}"
         logger.info(
-            "idea_snapshot_render_start symbol=%s timeframe=%s candles=%s output=%s",
+            "idea_snapshot_start symbol=%s timeframe=%s candles=%s output=%s absolute_path=%s",
             symbol,
             timeframe,
             len(candles),
             relative_path,
+            absolute_path,
         )
 
         fig, ax = plt.subplots(figsize=(12, 7), dpi=100)
         try:
-            x_values = list(range(len(candles)))
             highs = [float(candle["high"]) for candle in candles]
             lows = [float(candle["low"]) for candle in candles]
             closes = [float(candle["close"]) for candle in candles]
@@ -116,11 +118,38 @@ class ChartSnapshotService:
             for spine in ax.spines.values():
                 spine.set_color("#374151")
             fig.tight_layout(rect=[0, 0.035, 1, 0.98])
-            fig.savefig(absolute_path, facecolor=fig.get_facecolor())
-            logger.info("idea_snapshot_success symbol=%s timeframe=%s file=%s", symbol, timeframe, relative_path)
+
+            try:
+                plt.savefig(absolute_path, facecolor=fig.get_facecolor())
+            except Exception as exc:
+                logger.exception(
+                    "idea_snapshot_failed symbol=%s timeframe=%s candles=%s path=%s error=%s",
+                    symbol,
+                    timeframe,
+                    len(candles),
+                    absolute_path,
+                    exc,
+                )
+                return None
+
+            logger.info(
+                "idea_snapshot_success symbol=%s timeframe=%s candles=%s file=%s absolute_path=%s",
+                symbol,
+                timeframe,
+                len(candles),
+                relative_path,
+                absolute_path,
+            )
             return relative_path
-        except Exception:
-            logger.exception("idea_snapshot_failed symbol=%s timeframe=%s", symbol, timeframe)
+        except Exception as exc:
+            logger.exception(
+                "idea_snapshot_failed symbol=%s timeframe=%s candles=%s path=%s error=%s",
+                symbol,
+                timeframe,
+                len(candles),
+                absolute_path,
+                exc,
+            )
             return None
         finally:
             plt.close(fig)

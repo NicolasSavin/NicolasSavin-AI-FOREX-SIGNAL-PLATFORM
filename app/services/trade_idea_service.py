@@ -757,7 +757,7 @@ class TradeIdeaService:
         )
         if not image_path:
             logger.warning(
-                "idea_snapshot_generation_failed symbol=%s timeframe=%s candles=%s",
+                "idea_snapshot_generation_failed symbol=%s timeframe=%s candles=%s status=snapshot_failed",
                 symbol,
                 timeframe,
                 len(candles),
@@ -771,7 +771,7 @@ class TradeIdeaService:
                     existing_status,
                 )
                 return {"chartImageUrl": existing_url, "status": existing_status}
-            return {"chartImageUrl": None, "status": "fetch_error"}
+            return {"chartImageUrl": None, "status": "snapshot_failed"}
         logger.info("idea_snapshot_final_path symbol=%s timeframe=%s path=%s", symbol, timeframe, image_path)
         return {"chartImageUrl": image_path, "status": "ok"}
 
