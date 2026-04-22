@@ -571,6 +571,9 @@ class TradeIdeaService:
             entry=entry_value,
             stop_loss=stop_loss,
             take_profit=take_profit,
+            bias=bias,
+            confidence=int(signal.get("confidence_percent") or signal.get("probability_percent") or 0),
+            status=status,
         )
         is_terminal = status in TERMINAL_STATUSES
         closed_at = now.isoformat() if is_terminal else None
@@ -681,15 +684,25 @@ class TradeIdeaService:
         entry: float | None,
         stop_loss: float | None,
         take_profit: float | None,
+        bias: str,
+        confidence: int,
+        status: str,
     ) -> dict[str, Any]:
         if existing is not None:
             existing_url = existing.get("chartImageUrl") or existing.get("chart_image")
             existing_status = existing.get("chartSnapshotStatus") or existing.get("chart_snapshot_status") or "ok"
             return {"chartImageUrl": existing_url, "status": existing_status}
 
-        chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
-        fetch_status = str(chart_payload.get("status") or "").lower()
-        candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
+        chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
+        if not chart_data and isinstance(signal.get("chartData"), dict):
+            chart_data = signal.get("chartData")
+        candles = chart_data.get("candles") if isinstance(chart_data.get("candles"), list) else []
+        chart_payload: dict[str, Any] = {"status": "ok", "candles": candles}
+        fetch_status = "ok"
+        if not candles:
+            chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
+            fetch_status = str(chart_payload.get("status") or "").lower()
+            candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
         logger.info(
             "idea_snapshot_candle_fetch symbol=%s timeframe=%s fetch_status=%s candles=%s",
             symbol,
@@ -706,9 +719,11 @@ class TradeIdeaService:
             logger.warning("idea_snapshot_skipped symbol=%s timeframe=%s status=no_data", symbol, timeframe)
             return {"chartImageUrl": None, "status": "no_data"}
 
-        chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
         levels = chart_data.get("levels") if isinstance(chart_data.get("levels"), list) else []
         zones = chart_data.get("zones") if isinstance(chart_data.get("zones"), list) else []
+        markers = chart_data.get("markers") if isinstance(chart_data.get("markers"), list) else []
+        patterns = signal.get("chart_patterns") if isinstance(signal.get("chart_patterns"), list) else []
+        take_profits = self._extract_take_profits(signal=signal, fallback_take_profit=take_profit)
         image_path = self.chart_snapshot_service.build_snapshot(
             symbol=symbol,
             timeframe=timeframe,
@@ -717,12 +732,35 @@ class TradeIdeaService:
             zones=zones,
             entry=self._extract_numeric(entry),
             stop_loss=self._extract_numeric(stop_loss),
-            take_profit=self._extract_numeric(take_profit),
+            take_profits=take_profits,
+            bias=bias,
+            confidence=confidence,
+            status=status,
+            markers=markers,
+            patterns=patterns,
         )
         if not image_path:
             return {"chartImageUrl": None, "status": "fetch_error"}
         logger.info("idea_snapshot_final_path symbol=%s timeframe=%s path=%s", symbol, timeframe, image_path)
         return {"chartImageUrl": image_path, "status": "ok"}
+
+    def _extract_take_profits(self, *, signal: dict[str, Any], fallback_take_profit: float | None) -> list[float]:
+        candidates = signal.get("take_profits")
+        if not isinstance(candidates, list):
+            candidates = signal.get("take_profit_levels")
+        take_profits: list[float] = []
+        if isinstance(candidates, list):
+            for item in candidates:
+                if isinstance(item, dict):
+                    value = self._extract_numeric(item.get("price") or item.get("value"))
+                else:
+                    value = self._extract_numeric(item)
+                if value is not None:
+                    take_profits.append(value)
+        fallback_value = self._extract_numeric(fallback_take_profit)
+        if fallback_value is not None and not take_profits:
+            take_profits.append(fallback_value)
+        return take_profits
 
     @staticmethod
     def _map_chart_fetch_status(chart_payload: dict[str, Any]) -> str:
