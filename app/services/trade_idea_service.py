@@ -14,7 +14,7 @@ import requests
 from app.core.env import get_openrouter_api_key, get_openrouter_model
 from app.services.chart_data_service import ChartDataService
 from app.services.chart_snapshot_service import ChartSnapshotService
-from app.services.idea_narrative_llm import IdeaNarrativeLLMService
+from app.services.idea_narrative_llm import IdeaNarrativeLLMService, NarrativeResult
 from app.services.narrative_generator import generate_signal_preview_text, generate_signal_text
 from app.services.storage.json_storage import JsonStorage
 from app.services.trade_idea_stats_service import TradeIdeaStatsService
@@ -57,6 +57,7 @@ LEVEL_STOP_LOSS_OFFSET = 0.0020
 LEVEL_TAKE_PROFIT_OFFSET = 0.0040
 CANDLE_CONTEXT_COUNT = 40
 SNAPSHOT_RETRY_INTERVAL_SECONDS = int(os.getenv("IDEAS_SNAPSHOT_RETRY_INTERVAL_SECONDS", "1800"))
+NARRATIVE_REFRESH_COOLDOWN_SECONDS = int(os.getenv("IDEAS_NARRATIVE_REFRESH_COOLDOWN_SECONDS", "300"))
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +75,7 @@ class TradeIdeaService:
         self.snapshot_store = JsonStorage("signals_data/trade_idea_snapshots.json", {"snapshots": []})
         self.legacy_store = JsonStorage("signals_data/market_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.narrative_llm = IdeaNarrativeLLMService()
+        self.narrative_refresh_cooldown_seconds = NARRATIVE_REFRESH_COOLDOWN_SECONDS
         self._refresh_lock = Lock()
         self._refresh_in_progress = False
 
@@ -690,6 +692,12 @@ class TradeIdeaService:
         target = signal.get("target_ru") or f"Ближайшая цель: {self._format_price(take_profit)}."
         previous_summary = str((existing or {}).get("summary_ru") or (existing or {}).get("summary") or "")
         delta_payload = self._build_signal_delta(existing=existing, signal=signal, status=status)
+        should_refresh_narrative, narrative_reason = self._should_refresh_narrative(
+            existing=existing,
+            signal=signal,
+            status=status,
+            now=now,
+        )
         llm_facts = self._build_narrative_facts(
             signal=signal,
             symbol=symbol,
@@ -699,12 +707,15 @@ class TradeIdeaService:
             rationale=rationale,
             existing=existing,
         )
-        llm_result = self.narrative_llm.generate(
-            event_type=self._event_type_from_status(status=status, existing=existing),
-            facts=llm_facts,
-            previous_summary=previous_summary,
-            delta=delta_payload,
-        )
+        if should_refresh_narrative:
+            llm_result = self.narrative_llm.generate(
+                event_type=narrative_reason,
+                facts=llm_facts,
+                previous_summary=previous_summary,
+                delta=delta_payload,
+            )
+        else:
+            llm_result = self._reuse_existing_narrative(existing=existing, fallback_summary=summary_text)
         narrative_structured = self._resolve_structured_narrative(
             llm_data=llm_result.data,
             trigger=trigger,
@@ -810,7 +821,23 @@ class TradeIdeaService:
             signal=signal,
         )
         updates = self._history_to_updates(history)
-        persisted_status = status
+        persisted_status = IDEA_STATUS_ARCHIVED if is_terminal else status
+        existing_narrative_version = int(existing.get("narrative_version") or 1) if existing else 0
+        narrative_version = existing_narrative_version + 1 if should_refresh_narrative else max(existing_narrative_version, 1)
+        narrative_history = self._append_narrative_history(
+            existing=existing,
+            should_refresh=should_refresh_narrative,
+            reason=narrative_reason,
+            now_iso=now.isoformat(),
+        )
+        last_narrative_refresh_at = (
+            now.isoformat()
+            if should_refresh_narrative
+            else (existing.get("last_narrative_refresh_at") if existing else now.isoformat())
+        )
+        last_narrative_reason = (
+            narrative_reason if should_refresh_narrative else (existing.get("last_narrative_reason") if existing else "idea_created")
+        )
 
         payload = {
             "idea_id": idea_id,
@@ -858,6 +885,11 @@ class TradeIdeaService:
             "narrative_structured": narrative_structured,
             "update_explanation": llm_result.data.get("update_explanation") or rationale,
             "narrative_source": llm_result.source,
+            "narrative_version": narrative_version,
+            "narrative_update_reason": narrative_reason if should_refresh_narrative else "unchanged",
+            "last_narrative_refresh_at": last_narrative_refresh_at,
+            "last_narrative_reason": last_narrative_reason,
+            "narrative_history": narrative_history,
             "idea_context": idea_context,
             "trigger": trigger,
             "invalidation": invalidation,
@@ -892,6 +924,144 @@ class TradeIdeaService:
             },
         }
         return self._attach_trade_result_metrics(payload)
+
+    def _should_refresh_narrative(
+        self,
+        *,
+        existing: dict[str, Any] | None,
+        signal: dict[str, Any],
+        status: str,
+        now: datetime,
+    ) -> tuple[bool, str]:
+        if existing is None:
+            return True, "idea_created"
+
+        previous_status = str(existing.get("status") or "").lower()
+        previous_final_status = str(existing.get("final_status") or "").lower()
+        if previous_status in TERMINAL_STATUSES or previous_final_status in TERMINAL_STATUSES:
+            return False, "terminal_state_locked"
+
+        if status in TERMINAL_STATUSES and status != previous_status:
+            return True, status
+
+        if status != previous_status:
+            if status == IDEA_STATUS_TRIGGERED:
+                return self._allow_narrative_refresh_after_cooldown(existing=existing, now=now, reason="entry_triggered")
+            return self._allow_narrative_refresh_after_cooldown(existing=existing, now=now, reason="status_changed")
+
+        bias_before = str(existing.get("bias") or existing.get("direction") or "").lower()
+        action = str(signal.get("action") or "NO_TRADE").upper()
+        bias_now = "bullish" if action == "BUY" else "bearish" if action == "SELL" else "neutral"
+        if bias_before and bias_now and bias_before != bias_now:
+            return self._allow_narrative_refresh_after_cooldown(existing=existing, now=now, reason="bias_changed")
+
+        if bool(signal.get("structure_break")) or bool(signal.get("bos_detected")) or bool(signal.get("choch_detected")):
+            return self._allow_narrative_refresh_after_cooldown(existing=existing, now=now, reason="structure_changed")
+
+        if bool(signal.get("zone_reaction")) or bool(signal.get("major_zone_reaction")):
+            return self._allow_narrative_refresh_after_cooldown(existing=existing, now=now, reason="major_zone_reaction")
+
+        if bool(signal.get("entry_triggered")) or bool(signal.get("price_in_entry_zone")):
+            return self._allow_narrative_refresh_after_cooldown(existing=existing, now=now, reason="entry_zone_touched")
+
+        previous_confidence = self._extract_numeric(existing.get("confidence"))
+        new_confidence = self._extract_numeric(signal.get("confidence_percent") or signal.get("probability_percent"))
+        if previous_confidence is not None and new_confidence is not None and abs(previous_confidence - new_confidence) >= 10:
+            return self._allow_narrative_refresh_after_cooldown(
+                existing=existing,
+                now=now,
+                reason="scenario_strength_changed",
+            )
+
+        if self._is_invalidation_getting_close(existing=existing, signal=signal):
+            return self._allow_narrative_refresh_after_cooldown(existing=existing, now=now, reason="invalidation_near")
+
+        return False, "no_meaningful_trigger"
+
+    def _allow_narrative_refresh_after_cooldown(
+        self,
+        *,
+        existing: dict[str, Any],
+        now: datetime,
+        reason: str,
+    ) -> tuple[bool, str]:
+        if self.narrative_refresh_cooldown_seconds <= 0:
+            return True, reason
+        last_refresh_at = existing.get("last_narrative_refresh_at")
+        if not last_refresh_at:
+            return True, reason
+        try:
+            parsed = datetime.fromisoformat(str(last_refresh_at).replace("Z", "+00:00"))
+        except ValueError:
+            return True, reason
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        age_seconds = (now - parsed.astimezone(timezone.utc)).total_seconds()
+        if age_seconds < self.narrative_refresh_cooldown_seconds:
+            return False, f"cooldown:{reason}"
+        return True, reason
+
+    @classmethod
+    def _is_invalidation_getting_close(cls, *, existing: dict[str, Any], signal: dict[str, Any]) -> bool:
+        current_price = cls._extract_latest_close(signal)
+        stop_loss = cls._extract_numeric(signal.get("stop_loss") or existing.get("stop_loss") or existing.get("stopLoss"))
+        entry = cls._extract_numeric(signal.get("entry") or existing.get("entry"))
+        if current_price is None or stop_loss is None or entry is None:
+            return False
+        baseline = abs(entry - stop_loss)
+        if baseline <= 0:
+            return False
+        distance_to_sl = abs(current_price - stop_loss)
+        return (distance_to_sl / baseline) <= 0.25
+
+    def _reuse_existing_narrative(self, *, existing: dict[str, Any] | None, fallback_summary: str) -> NarrativeResult:
+        if not existing:
+            return self.narrative_llm.generate(
+                event_type="idea_created",
+                facts={"summary": fallback_summary},
+                previous_summary="",
+                delta={"fallback": "missing_existing"},
+            )
+        return NarrativeResult(
+            data={
+                "headline": str(existing.get("headline") or ""),
+                "summary": str(existing.get("summary") or fallback_summary),
+                "cause": str(existing.get("cause") or existing.get("rationale") or ""),
+                "confirmation": str(existing.get("confirmation") or ""),
+                "risk": str(existing.get("risk") or ""),
+                "invalidation": str(existing.get("invalidation") or ""),
+                "target_logic": str(existing.get("target_logic") or existing.get("target") or ""),
+                "update_explanation": str(existing.get("update_explanation") or "Нарратив сохранён без изменений."),
+                "short_text": str(existing.get("short_text") or existing.get("summary") or fallback_summary),
+                "full_text": str(existing.get("full_text") or fallback_summary),
+                "summary_structured": existing.get("summary_structured") if isinstance(existing.get("summary_structured"), dict) else {},
+                "trade_plan_structured": existing.get("trade_plan_structured") if isinstance(existing.get("trade_plan_structured"), dict) else {},
+                "market_structure_structured": existing.get("market_structure_structured") if isinstance(existing.get("market_structure_structured"), dict) else {},
+            },
+            source=str(existing.get("narrative_source") or "stored"),
+        )
+
+    @staticmethod
+    def _append_narrative_history(
+        *,
+        existing: dict[str, Any] | None,
+        should_refresh: bool,
+        reason: str,
+        now_iso: str,
+    ) -> list[dict[str, Any]]:
+        history = list(existing.get("narrative_history") or []) if existing else []
+        if existing is None:
+            history.append({"at": now_iso, "reason": "idea_created", "narrative": None})
+            return history
+        if should_refresh:
+            history.append(
+                {
+                    "at": now_iso,
+                    "reason": reason,
+                    "narrative": str(existing.get("full_text") or ""),
+                }
+            )
+        return history
 
     def _resolve_chart_snapshot(
         self,
