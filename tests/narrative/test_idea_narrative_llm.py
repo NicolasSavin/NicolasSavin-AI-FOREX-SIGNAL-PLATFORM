@@ -20,7 +20,10 @@ def _ok_content() -> str:
     return (
         '{"headline":"EURUSD H1 long","summary":"Кратко","cause":"После снятия ликвидности причина ясна","confirmation":"Подтверждение",'
         '"risk":"Риск","invalidation":"Инвалидация","target_logic":"Логика цели",'
-        '"update_explanation":"Что изменилось","short_text":"Коротко","full_text":"После sweep ликвидности сформирован BOS и вход от order block."}'
+        '"update_explanation":"Что изменилось","short_text":"Коротко","full_text":"После sweep ликвидности сформирован BOS и вход от order block.",'
+        '"summary_structured":{"signal":"BUY","situation":"Рынок у зоны","cause":"Сняли ликвидность","effect":"Ожидаем импульс","action":"Ждать триггер и входить","risk_note":"Риск растет при сломе структуры"},'
+        '"trade_plan_structured":{"entry_trigger":"BOS вверх","entry_zone":"1.0800-1.0810","stop_loss":"ниже 1.0790","take_profit":"1.0840","invalidation":"уход ниже 1.0790"},'
+        '"market_structure_structured":{"bias":"бычий","structure":"локальный BOS","liquidity":"снята нижняя ликвидность","zone":"discount OB","confluence":"SMC + импульс"}}'
     )
 
 
@@ -80,7 +83,10 @@ def test_rejects_banned_phrase_and_retries(monkeypatch) -> None:
     invalid = (
         '{"headline":"EURUSD H1 long","summary":"Кратко","cause":"Причина","confirmation":"Подтверждение",'
         '"risk":"Риск","invalidation":"Инвалидация","target_logic":"Логика цели",'
-        '"update_explanation":"Что изменилось","short_text":"Коротко","full_text":"Сценарий строится вокруг зоны входа."}'
+        '"update_explanation":"Что изменилось","short_text":"Коротко","full_text":"Сценарий строится вокруг зоны входа.",'
+        '"summary_structured":{"signal":"BUY","situation":"Рынок у зоны","cause":"Причина","effect":"Эффект","action":"Действие","risk_note":"Риск"},'
+        '"trade_plan_structured":{"entry_trigger":"Триггер","entry_zone":"Зона","stop_loss":"SL","take_profit":"TP","invalidation":"Инвалидация"},'
+        '"market_structure_structured":{"bias":"бычий","structure":"структура","liquidity":"ликвидность","zone":"зона","confluence":"конфлюенс"}}'
     )
 
     def _post(*args, **kwargs):

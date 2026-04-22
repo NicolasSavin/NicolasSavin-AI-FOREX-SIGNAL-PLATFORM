@@ -46,9 +46,9 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["direction"] == "bullish"
     assert payload[0]["summary"].startswith("Лонг")
     assert payload[0]["short_text"] == payload[0]["summary"]
-    assert "сценар" in payload[0]["full_text"].lower()
+    assert "действие" in payload[0]["full_text"].lower()
     assert "eurusd" in payload[0]["full_text"].lower()
-    assert "сценар" in payload[0]["full_text"].lower()
+    assert "ликвид" in payload[0]["full_text"].lower()
     assert "ликвид" in payload[0]["full_text"].lower()
     assert len(payload[0]["full_text"]) > 80
     assert payload[0]["detail_brief"]["header"]["bias"] == "Лонг / buy-the-dip bias"
@@ -89,7 +89,7 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
     assert payload[0]["short_text"] == payload[0]["summary"]
     assert "1.271" in payload[0]["full_text"]
     assert "возврат выше 1.276" in payload[0]["full_text"].lower()
-    assert "отменя" in payload[0]["full_text"].lower()
+    assert "без сделки" in payload[0]["full_text"].lower()
     assert payload[0]["full_text"].count(".") >= 6
     assert payload[0]["entry"] == "1.271"
     assert payload[0]["stopLoss"] == "1.276"
@@ -179,9 +179,9 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["summary"].startswith("Лонг")
     assert "цель" in payload[0]["summary"]
     assert payload[0]["full_text"].count(".") >= 5
-    assert "сценар" in payload[0]["full_text"].lower()
+    assert "действие" in payload[0]["full_text"].lower()
     assert "1.0852" in payload[0]["full_text"]
-    assert "сценар" in payload[0]["full_text"].lower()
+    assert "идея отменяется" in payload[0]["full_text"].lower()
     assert "идея отменяется" in payload[0]["full_text"].lower()
     assert payload[0]["label"] == "BUY IDEA"
     assert payload[0]["latest_close"] == 1.0852
@@ -412,11 +412,11 @@ def test_openrouter_prompt_requires_event_reason_trigger_and_invalidation(tmp_pa
         }
     )
 
-    assert "ПОЧЕМУ вход именно от entry" in prompt
+    assert "summary_structured" in prompt
     assert "current_price" in prompt
     assert "entry = current_price" in prompt
-    assert "order block, FVG / imbalance, liquidity sweep, BOS, CHOCH" in prompt
-    assert "trigger не должен быть абстрактным" in prompt
+    assert "cause->effect->action" in prompt
+    assert "VALID JSON array" in prompt
     assert "trigger" in prompt
 
 

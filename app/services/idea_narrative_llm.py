@@ -25,6 +25,11 @@ REQUIRED_FIELDS = (
     "short_text",
     "full_text",
 )
+STRUCTURED_SCHEMA = {
+    "summary_structured": ("signal", "situation", "cause", "effect", "action", "risk_note"),
+    "trade_plan_structured": ("entry_trigger", "entry_zone", "stop_loss", "take_profit", "invalidation"),
+    "market_structure_structured": ("bias", "structure", "liquidity", "zone", "confluence"),
+}
 SMC_REQUIRED_TOKENS = ("ликвидност", "sweep", "bos", "choch", "order block", "fvg")
 BANNED_PHRASES = (
     "строится вокруг",
@@ -81,7 +86,7 @@ class IdeaNarrativeLLMService:
         logger.warning("idea_narrative_llm_fallback_used event_type=%s", event_type)
         return NarrativeResult(data=fallback, source="fallback")
 
-    def _request_llm(self, *, prompt: str) -> dict[str, str] | None:
+    def _request_llm(self, *, prompt: str) -> dict[str, Any] | None:
         logger.info(
             "idea_narrative_llm_request_started model=%s prompt_payload_size=%s",
             self.model,
@@ -123,7 +128,7 @@ class IdeaNarrativeLLMService:
             return None
 
     @staticmethod
-    def _parse_json(content: Any) -> dict[str, str] | None:
+    def _parse_json(content: Any) -> dict[str, Any] | None:
         if not isinstance(content, str):
             return None
         text = content.strip()
@@ -136,13 +141,26 @@ class IdeaNarrativeLLMService:
             return None
         if not isinstance(raw, dict):
             return None
-        result: dict[str, str] = {}
+        result: dict[str, Any] = {}
         for field in REQUIRED_FIELDS:
             value = raw.get(field)
             if not isinstance(value, str) or not value.strip():
                 return None
             result[field] = value.strip()
-        joined = " ".join(result.values()).casefold()
+
+        for group_key, fields in STRUCTURED_SCHEMA.items():
+            group_value = raw.get(group_key)
+            if not isinstance(group_value, dict):
+                return None
+            group_result: dict[str, str] = {}
+            for field in fields:
+                value = group_value.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    return None
+                group_result[field] = value.strip()
+            result[group_key] = group_result
+
+        joined = " ".join(str(result[field]) for field in REQUIRED_FIELDS).casefold()
         if any(phrase in joined for phrase in BANNED_PHRASES):
             return None
         if any(phrase in joined for phrase in WEAK_CAUSE_PHRASES):
@@ -158,8 +176,9 @@ class IdeaNarrativeLLMService:
         return (
             "Сформируй объяснение торговой идеи только из переданных фактов.\n"
             "Запрещено придумывать новые уровни, направление, статус или причины вне фактов.\n"
-            "Ты пишешь как SMC/ICT-трейдер: жёсткая причинно-следственная логика без общих формулировок.\n"
+            "Ты пишешь как SMC/ICT-трейдер: простые слова, короткие предложения, дружелюбный тон для трейдера.\n"
             "Во всех объяснениях соблюдай порядок CAUSE → EFFECT → ACTION.\n"
+            "Cause → effect → action должны быть явно связаны и без разрывов логики.\n"
             "full_text верни строго в 3 блока с заголовками: CAUSE:, EFFECT:, ACTION:.\n"
             "В каждом блоке максимум 1–2 коротких предложения, без повторов символа/таймфрейма и без воды.\n"
             f"Запрещённые фразы: {', '.join(banned)}.\n"
@@ -176,9 +195,16 @@ class IdeaNarrativeLLMService:
             "Обязательно объясни уровни: почему вход в зоне OB/FVG/ликвидности, почему SL за снятой ликвидностью "
             "или по инвалидации структуры, почему TP на следующем пуле ликвидности/заполнении имбаланса.\n"
             "В full_text обязательно должен встретиться минимум один термин: liquidity/ликвидность/sweep/BOS/CHoCH/order block/FVG.\n"
+            "Каждое текстовое поле должно быть лаконичным и без длинных абзацев.\n"
+            "В structured-полях не повторяй в каждом поле символ/таймфрейм, если это не нужно для смысла.\n"
+            "Ответ должен быть ВАЛИДНЫМ JSON и только JSON, без markdown, комментариев и префиксов.\n"
             "Верни только JSON с ключами: "
             + ", ".join(REQUIRED_FIELDS)
+            + ", summary_structured, trade_plan_structured, market_structure_structured"
             + f". {strict_line}\n\n"
+            + "Структура обязательна:\n"
+            + json.dumps(STRUCTURED_SCHEMA, ensure_ascii=False)
+            + "\n\n"
             + json.dumps(payload, ensure_ascii=False)
         )
 
