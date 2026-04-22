@@ -128,15 +128,17 @@ class TradeIdeaService:
     def refresh_market_ideas(self) -> dict[str, Any]:
         payload = self.idea_store.read()
         ideas = payload.get("ideas", [])
+        ideas, snapshot_recovered = self._recover_missing_chart_snapshots(ideas)
         ideas, changed = self._ensure_statistics(ideas)
+        storage_changed = changed or snapshot_recovered
         if not ideas:
             payload = {
                 "updated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "ideas": [],
             }
             self.idea_store.write(payload)
-        elif changed:
-            payload = {"updated_at_utc": payload.get("updated_at_utc"), "ideas": ideas}
+        elif storage_changed:
+            payload = {"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": ideas}
             self.idea_store.write(payload)
         else:
             payload = {"updated_at_utc": payload.get("updated_at_utc"), "ideas": ideas}
@@ -805,6 +807,75 @@ class TradeIdeaService:
             }
         )
         self.snapshot_store.write({"snapshots": snapshots})
+
+    def _recover_missing_chart_snapshots(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+        recovered_ideas: list[dict[str, Any]] = []
+        changed = False
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+
+        for idea in ideas:
+            current = dict(idea)
+            if not self._should_retry_chart_snapshot(current, now):
+                recovered_ideas.append(current)
+                continue
+
+            snapshot = self._resolve_chart_snapshot(
+                signal=current,
+                existing=current,
+                symbol=str(current.get("symbol", "")).upper(),
+                timeframe=str(current.get("timeframe", "H1")).upper(),
+                entry=self._extract_numeric(current.get("entry")),
+                stop_loss=self._extract_numeric(current.get("stop_loss") or current.get("stopLoss")),
+                take_profit=self._extract_numeric(current.get("take_profit") or current.get("takeProfit")),
+                bias=str(current.get("bias") or current.get("direction") or "neutral"),
+                confidence=int(self._extract_numeric(current.get("confidence")) or 0),
+                status=str(current.get("status") or IDEA_STATUS_WAITING),
+            )
+
+            previous_retry_at = current.get("chartSnapshotRetryAt") or current.get("chart_snapshot_retry_at")
+            current["chart_snapshot_retry_at"] = now_iso
+            current["chartSnapshotRetryAt"] = now_iso
+            if previous_retry_at != now_iso:
+                changed = True
+
+            if snapshot.get("chartImageUrl") and snapshot.get("status") == "ok":
+                current["chart_image"] = snapshot["chartImageUrl"]
+                current["chartImageUrl"] = snapshot["chartImageUrl"]
+                current["chart_snapshot_status"] = "ok"
+                current["chartSnapshotStatus"] = "ok"
+                current["updated_at"] = now_iso
+                changed = True
+                logger.info(
+                    "idea_snapshot_recovered idea_id=%s symbol=%s timeframe=%s",
+                    current.get("idea_id"),
+                    current.get("symbol"),
+                    current.get("timeframe"),
+                )
+            recovered_ideas.append(current)
+
+        return recovered_ideas, changed
+
+    def _should_retry_chart_snapshot(self, idea: dict[str, Any], now: datetime) -> bool:
+        chart_url = idea.get("chartImageUrl") or idea.get("chart_image")
+        chart_status = str(idea.get("chartSnapshotStatus") or idea.get("chart_snapshot_status") or "ok").lower()
+        if chart_url:
+            return False
+        if chart_status == "ok":
+            return False
+
+        retry_at_raw = idea.get("chartSnapshotRetryAt") or idea.get("chart_snapshot_retry_at")
+        if not retry_at_raw:
+            return True
+        try:
+            retry_at = datetime.fromisoformat(str(retry_at_raw).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        if self.refresh_interval_seconds <= 0:
+            return True
+        return (now - retry_at.astimezone(timezone.utc)).total_seconds() >= self.refresh_interval_seconds
 
     def _ensure_statistics(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
         changed = False
