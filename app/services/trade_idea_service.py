@@ -56,6 +56,7 @@ LEVEL_ENTRY_MAX_DEVIATION_PCT = 0.5
 LEVEL_STOP_LOSS_OFFSET = 0.0020
 LEVEL_TAKE_PROFIT_OFFSET = 0.0040
 CANDLE_CONTEXT_COUNT = 40
+SNAPSHOT_RETRY_INTERVAL_SECONDS = int(os.getenv("IDEAS_SNAPSHOT_RETRY_INTERVAL_SECONDS", "1800"))
 logger = logging.getLogger(__name__)
 
 
@@ -375,45 +376,7 @@ class TradeIdeaService:
         return []
 
     def _lazy_rebuild_missing_chart_snapshots(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
-        rebuilt: list[dict[str, Any]] = []
-        changed = False
-        now_iso = datetime.now(timezone.utc).isoformat()
-
-        for idea in ideas:
-            current = dict(idea)
-            if current.get("chartImageUrl") or current.get("chart_image"):
-                rebuilt.append(current)
-                continue
-            try:
-                snapshot = self._resolve_chart_snapshot(
-                    signal=current,
-                    existing=current,
-                    symbol=str(current.get("symbol", "")).upper(),
-                    timeframe=str(current.get("timeframe", "H1")).upper(),
-                    entry=self._extract_numeric(current.get("entry")),
-                    stop_loss=self._extract_numeric(current.get("stop_loss") or current.get("stopLoss")),
-                    take_profit=self._extract_numeric(current.get("take_profit") or current.get("takeProfit")),
-                    bias=str(current.get("bias") or current.get("direction") or "neutral"),
-                    confidence=int(self._extract_numeric(current.get("confidence")) or 0),
-                    status=str(current.get("status") or IDEA_STATUS_WAITING),
-                )
-                if snapshot.get("chartImageUrl"):
-                    current["chart_image"] = snapshot["chartImageUrl"]
-                    current["chartImageUrl"] = snapshot["chartImageUrl"]
-                    current["chart_snapshot_status"] = "ok"
-                    current["chartSnapshotStatus"] = "ok"
-                    current["updated_at"] = now_iso
-                    changed = True
-            except Exception:
-                logger.exception(
-                    "idea_snapshot_lazy_retry_failed idea_id=%s symbol=%s timeframe=%s",
-                    current.get("idea_id") or current.get("id"),
-                    current.get("symbol"),
-                    current.get("timeframe"),
-                )
-            rebuilt.append(current)
-
-        return rebuilt, changed
+        return self._recover_missing_chart_snapshots(ideas, force=False)
 
     def fallback_ideas(self, *, reason: str = "unspecified") -> list[dict[str, Any]]:
         logger.warning("market_ideas_unavailable reason=%s", reason)
@@ -1210,17 +1173,17 @@ class TradeIdeaService:
         )
         self.snapshot_store.write({"snapshots": snapshots})
 
-    def recover_legacy_chart_snapshots_once(self) -> dict[str, int]:
+    def rebuild_missing_snapshots(self, *, force: bool = True) -> dict[str, int]:
         payload = self.idea_store.read()
         ideas = payload.get("ideas") if isinstance(payload.get("ideas"), list) else []
-        recovered_ideas, changed = self._recover_missing_chart_snapshots(ideas, force=True)
+        recovered_ideas, changed = self._recover_missing_chart_snapshots(ideas, force=force)
         recovered_count = sum(1 for idea in recovered_ideas if (idea.get("chartSnapshotStatus") or idea.get("chart_snapshot_status")) == "ok")
         missing_count = sum(1 for idea in recovered_ideas if not (idea.get("chartImageUrl") or idea.get("chart_image")))
         if changed:
             self.idea_store.write({"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": recovered_ideas})
             self.refresh_market_ideas()
         logger.info(
-            "idea_snapshot_recovery_once completed changed=%s ideas_total=%s recovered_ok=%s missing_chart_after=%s",
+            "idea_snapshot_rebuild_missing completed changed=%s ideas_total=%s recovered_ok=%s missing_chart_after=%s",
             changed,
             len(recovered_ideas),
             recovered_count,
@@ -1231,6 +1194,9 @@ class TradeIdeaService:
             "recovered_ok": recovered_count,
             "missing_chart_after": missing_count,
         }
+
+    def recover_legacy_chart_snapshots_once(self) -> dict[str, int]:
+        return self.rebuild_missing_snapshots(force=True)
 
     def _recover_missing_chart_snapshots(self, ideas: list[dict[str, Any]], *, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
         recovered_ideas: list[dict[str, Any]] = []
@@ -1245,7 +1211,7 @@ class TradeIdeaService:
                 continue
 
             logger.info(
-                "idea_snapshot_retry_started idea_id=%s symbol=%s timeframe=%s current_status=%s has_chart=%s existing_chart_url=%s existing_chart_status=%s",
+                "idea_snapshot_missing_chart_detected idea_id=%s symbol=%s timeframe=%s current_status=%s has_chart=%s existing_chart_url=%s existing_chart_status=%s",
                 current.get("idea_id"),
                 current.get("symbol"),
                 current.get("timeframe"),
@@ -1287,8 +1253,9 @@ class TradeIdeaService:
                     current.get("timeframe"),
                 )
             else:
-                current["chart_snapshot_status"] = "snapshot_failed"
-                current["chartSnapshotStatus"] = "snapshot_failed"
+                retry_status = str(snapshot.get("status") or "snapshot_failed").lower()
+                current["chart_snapshot_status"] = retry_status
+                current["chartSnapshotStatus"] = retry_status
                 changed = True
                 logger.info(
                     "idea_snapshot_retry_finished_without_image idea_id=%s symbol=%s timeframe=%s status=%s final_chart_url=%s",
@@ -1314,9 +1281,19 @@ class TradeIdeaService:
         chart_url = idea.get("chartImageUrl") or idea.get("chart_image")
         if chart_url:
             return False
-        # Если изображения нет, всегда пытаемся построить снапшот заново:
-        # наличие свечей должно иметь приоритет над любыми статусами/тайм-аутами.
-        return True
+        if force:
+            return True
+        retry_at_raw = idea.get("chartSnapshotRetryAt") or idea.get("chart_snapshot_retry_at")
+        if not retry_at_raw:
+            return True
+        try:
+            retry_at = datetime.fromisoformat(str(retry_at_raw).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        retry_age_seconds = (now - retry_at.astimezone(timezone.utc)).total_seconds()
+        return retry_age_seconds >= SNAPSHOT_RETRY_INTERVAL_SECONDS
 
     def _ensure_statistics(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
         changed = False

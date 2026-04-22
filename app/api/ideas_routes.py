@@ -95,6 +95,11 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
     @router.post("/api/ideas/recover-missing-chart-snapshots")
     async def recover_missing_chart_snapshots():
         logger.info("ideas_snapshot_recovery_endpoint_started")
-        return services.trade_idea_service.recover_legacy_chart_snapshots_once()
+        return services.trade_idea_service.rebuild_missing_snapshots(force=True)
+
+    @router.post("/api/admin/rebuild-missing-charts")
+    async def rebuild_missing_charts_admin():
+        logger.info("ideas_snapshot_admin_rebuild_started")
+        return services.trade_idea_service.rebuild_missing_snapshots(force=True)
 
     return router
