@@ -159,15 +159,20 @@ class IdeaNarrativeLLMService:
             "Сформируй объяснение торговой идеи только из переданных фактов.\n"
             "Запрещено придумывать новые уровни, направление, статус или причины вне фактов.\n"
             "Ты пишешь как SMC/ICT-трейдер: жёсткая причинно-следственная логика без общих формулировок.\n"
+            "Во всех объяснениях соблюдай порядок CAUSE → EFFECT → ACTION.\n"
+            "full_text верни строго в 3 блока с заголовками: CAUSE:, EFFECT:, ACTION:.\n"
+            "В каждом блоке максимум 1–2 коротких предложения, без повторов символа/таймфрейма и без воды.\n"
             f"Запрещённые фразы: {', '.join(banned)}.\n"
             "Если в фактах нет liquidity_sweep / structure_state / key_zone / location — явно напиши: "
             "\"структурных подтверждений недостаточно\".\n"
             "Если SMC-факты неполные, добавь: \"структурная база слабая, идея основана на вторичных факторах\".\n"
             "Нельзя использовать формулировку \"после коррекции\"; используй только: "
             "\"после снятия ликвидности\", \"после ложного пробоя\", \"после возврата в order block\".\n"
-            "full_text обязан идти в порядке: "
-            "[1] liquidity event, [2] structure state, [3] premium/discount location, [4] confirmation, "
-            "[5] trade logic entry/SL/TP, [6] risk/invalidation.\n"
+            "Логическая цепочка обязательна минимум одна: "
+            "например, liquidity sweep → sellers/buyers entered → continuation/reversal expected.\n"
+            "CAUSE должен описывать: liquidity sweep / реакцию от зоны / BOS-CHoCH / imbalance.\n"
+            "EFFECT должен описывать: continuation или reversal и статус структуры.\n"
+            "ACTION должен описывать: buy/sell/wait, условие входа, и когда no trade.\n"
             "Обязательно объясни уровни: почему вход в зоне OB/FVG/ликвидности, почему SL за снятой ликвидностью "
             "или по инвалидации структуры, почему TP на следующем пуле ликвидности/заполнении имбаланса.\n"
             "В full_text обязательно должен встретиться минимум один термин: liquidity/ликвидность/sweep/BOS/CHoCH/order block/FVG.\n"
@@ -199,22 +204,25 @@ class IdeaNarrativeLLMService:
         structural_warning = "структурных подтверждений недостаточно. " if smc_missing else ""
         weak_structure_warning = "структурная база слабая, идея основана на вторичных факторах. " if smc_missing else ""
         full = (
-            f"{symbol} {timeframe}: после снятия ликвидности ({liquidity}) цена показала {structure}. "
-            f"Локация {location}, рабочая зона {key_zone}. "
-            f"Подтверждение ищем по объёму и delta без конфликта со структурой. "
-            f"Вход у {entry} от {key_zone}; SL {sl} — {invalidation_logic}; TP {tp} — следующий пул ликвидности {target_liquidity}. "
-            f"{structural_warning}{weak_structure_warning}"
-            f"Событие: {event_type}. Изменения: {delta_text}."
+            "CAUSE:\n"
+            f"{symbol} {timeframe}: после снятия ликвидности ({liquidity}) цена дала {structure} в зоне {key_zone} ({location}). "
+            f"{structural_warning}{weak_structure_warning}\n\n"
+            "EFFECT:\n"
+            f"Снятие ликвидности → реакция участников → цель к следующему пулу {target_liquidity}. "
+            "Структура считается рабочей, пока нет инвалидации.\n\n"
+            "ACTION:\n"
+            f"Рабочий план: вход {entry}, SL {sl} ({invalidation_logic}), TP {tp}. "
+            f"Если структура ломается, no trade. Событие: {event_type}. Изменения: {delta_text}."
         )
         return {
             "headline": f"{symbol} {timeframe} — {direction}",
             "summary": short,
-            "cause": "После снятия ликвидности и реакции в ключевой SMC-зоне сценарий строится только по подтверждённым фактам.",
-            "confirmation": "Подтверждение фиксируется только при совпадении структуры, объёма и дельты с расчётным сценарием.",
+            "cause": "CAUSE: liquidity sweep и реакция в ключевой SMC-зоне подтверждают исходную причину идеи.",
+            "confirmation": "EFFECT: структура подтверждается только при совпадении BOS/CHoCH, объёма и дельты.",
             "risk": "Риск контролируется заранее рассчитанным стоп-уровнем.",
             "invalidation": f"Инвалидация: {invalidation_logic}.",
             "target_logic": f"Цель берётся из расчётного TP {tp} как следующий пул ликвидности ({target_liquidity}).",
-            "update_explanation": f"Обновление ({event_type}) сформировано по новым фактам: {delta_text}.",
+            "update_explanation": f"ACTION: обновление ({event_type}) основано на новых фактах: {delta_text}.",
             "short_text": short,
             "full_text": full,
         }
