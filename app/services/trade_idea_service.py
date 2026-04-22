@@ -745,10 +745,7 @@ class TradeIdeaService:
                 len(candles),
             )
 
-        levels = chart_data.get("levels") if isinstance(chart_data.get("levels"), list) else []
-        zones = chart_data.get("zones") if isinstance(chart_data.get("zones"), list) else []
-        markers = chart_data.get("markers") if isinstance(chart_data.get("markers"), list) else []
-        patterns = signal.get("chart_patterns") if isinstance(signal.get("chart_patterns"), list) else []
+        levels, zones, markers, patterns, arrows = self._extract_snapshot_overlays(signal=signal, chart_data=chart_data)
         take_profits = self._extract_take_profits(signal=signal, fallback_take_profit=take_profit)
         logger.info(
             "snapshot_start symbol=%s timeframe=%s candles=%s has_existing=%s",
@@ -771,6 +768,8 @@ class TradeIdeaService:
             status=status,
             markers=markers,
             patterns=patterns,
+            arrows=arrows,
+            setup_text=signal.get("short_scenario_ru") or signal.get("short_text") or signal.get("summary_ru"),
         )
         if not image_path:
             logger.warning(
@@ -815,6 +814,115 @@ class TradeIdeaService:
         if fallback_value is not None and not take_profits:
             take_profits.append(fallback_value)
         return take_profits
+
+    def _extract_snapshot_overlays(
+        self,
+        *,
+        signal: dict[str, Any],
+        chart_data: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        levels = self._pick_dict_list(signal, chart_data, "levels", "horizontal_levels", "key_levels", "liquidity_levels", "session_levels")
+        zones = self._pick_dict_list(
+            signal,
+            chart_data,
+            "zones",
+            "order_blocks",
+            "orderBlocks",
+            "mitigation_zones",
+            "fvg",
+            "fvg_zones",
+            "imbalances",
+            "liquidity_zones",
+        )
+        markers = self._pick_dict_list(
+            signal,
+            chart_data,
+            "markers",
+            "labels",
+            "smc_labels",
+            "smc_markers",
+            "structure_events",
+            "liquidity_events",
+        )
+        arrows = self._pick_dict_list(signal, chart_data, "arrows", "directional_arrows", "narrative_arrows")
+        patterns = self._pick_dict_list(signal, chart_data, "patterns", "chart_patterns", "harmonic_patterns")
+
+        normalized_zones = [self._normalize_zone_overlay(item) for item in zones]
+        normalized_markers = [self._normalize_marker_overlay(item) for item in markers]
+        normalized_arrows = [self._normalize_arrow_overlay(item) for item in arrows]
+        normalized_patterns = [self._normalize_pattern_overlay(item) for item in patterns]
+
+        compact_pattern_text = signal.get("pattern_summary") or chart_data.get("pattern_summary")
+        if compact_pattern_text and not normalized_patterns:
+            normalized_patterns.append({"name": str(compact_pattern_text)})
+        return levels, normalized_zones, normalized_markers, normalized_patterns, normalized_arrows
+
+    @staticmethod
+    def _pick_dict_list(signal: dict[str, Any], chart_data: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        for source in (chart_data, signal):
+            if not isinstance(source, dict):
+                continue
+            for key in keys:
+                payload = source.get(key)
+                if isinstance(payload, list):
+                    merged.extend(item for item in payload if isinstance(item, dict))
+        return merged
+
+    @classmethod
+    def _normalize_zone_overlay(cls, zone: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(zone)
+        zone_type = str(zone.get("type") or zone.get("kind") or zone.get("label") or "").strip().lower()
+        if "imbalance" in zone_type and "type" not in normalized:
+            normalized["type"] = "imbalance"
+        elif "fvg" in zone_type and "type" not in normalized:
+            normalized["type"] = "fvg"
+        elif "order" in zone_type and "type" not in normalized:
+            normalized["type"] = "order_block"
+        elif "liquidity" in zone_type and "type" not in normalized:
+            normalized["type"] = "liquidity"
+        return normalized
+
+    @classmethod
+    def _normalize_marker_overlay(cls, marker: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(marker)
+        label = str(marker.get("type") or marker.get("label") or "").strip()
+        lowered = label.casefold()
+        alias_map = {
+            "break of structure": "bos",
+            "choch": "choch",
+            "change of character": "choch",
+            "liquidity sweep": "sweep",
+            "mitigation": "mitigation",
+            "breaker": "breaker",
+        }
+        for alias, mapped in alias_map.items():
+            if alias in lowered:
+                normalized["type"] = mapped
+                break
+        return normalized
+
+    @classmethod
+    def _normalize_arrow_overlay(cls, arrow: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(arrow)
+        if "start_index" not in normalized:
+            normalized["start_index"] = arrow.get("from_index") or arrow.get("from")
+        if "end_index" not in normalized:
+            normalized["end_index"] = arrow.get("to_index") or arrow.get("to")
+        if "start_price" not in normalized:
+            normalized["start_price"] = arrow.get("from_price") or arrow.get("price")
+        if "end_price" not in normalized:
+            normalized["end_price"] = arrow.get("to_price") or arrow.get("target")
+        return normalized
+
+    @classmethod
+    def _normalize_pattern_overlay(cls, pattern: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(pattern)
+        if "name" not in normalized and pattern.get("pattern"):
+            normalized["name"] = pattern.get("pattern")
+        if "type" not in normalized and pattern.get("name"):
+            normalized["type"] = pattern.get("name")
+        return normalized
 
     @staticmethod
     def _map_chart_fetch_status(chart_payload: dict[str, Any]) -> str:
