@@ -236,6 +236,31 @@ class TradeIdeaService:
             base_confidence = int(sum(confidence_values) / len(confidence_values)) if confidence_values else 0
             final_confidence = max(25, base_confidence - 12) if final_signal == "wait" else max(base_confidence, 50)
 
+            h4_structure = str((h4 or {}).get("summary_ru") or (h4 or {}).get("summary") or "").strip()
+            h1_structure = str((h1 or {}).get("summary_ru") or (h1 or {}).get("summary") or "").strip()
+            m15_trigger = str((m15 or {}).get("summary_ru") or (m15 or {}).get("summary") or "").strip()
+            direction_ru = {
+                "buy": "покупки",
+                "sell": "продажи",
+                "wait": "ожидание",
+            }.get(final_signal, "ожидание")
+            expectation_text = {
+                "buy": "ожидаем продолжение восходящего импульса к целям ликвидности выше.",
+                "sell": "ожидаем продолжение нисходящего импульса к целям ликвидности ниже.",
+                "wait": "приоритет — дождаться подтверждения и не форсировать вход против структуры.",
+            }.get(final_signal, "дождаться подтверждения.")
+            action_text = {
+                "buy": "План: работать только от long-сценария при подтверждении M15, SL ниже структуры, TP по ближайшей ликвидности.",
+                "sell": "План: работать только от short-сценария при подтверждении M15, SL выше структуры, TP по ближайшей ликвидности.",
+                "wait": "План: без входа до синхронизации H4/H1 и появления чистого M15-триггера.",
+            }.get(final_signal, "План: сохранять дисциплину риска и дождаться подтверждения.")
+            unified_narrative = (
+                f"Ситуация: {symbol} торгуется в режиме MTF-оценки, текущий фокус — {direction_ru}. "
+                f"Причина: H4 — {h4_structure or h4_dir}, H1 — {h1_structure or h1_dir}, M15 — {m15_trigger or m15_dir}. "
+                f"Ожидание: {expectation_text} "
+                f"Действие: {action_text} ({final_reason})"
+            )
+
             preferred_timeframe_idea = m15 or h1 or h4 or symbol_ideas[0]
             latest_update = max(
                 (
@@ -259,15 +284,10 @@ class TradeIdeaService:
                     "bias": final_direction,
                     "confidence": final_confidence,
                     "idea_thesis": (
-                        f"{symbol}: HTF={h4_dir if h4 else 'нет'}; MTF={h1_dir if h1 else 'нет'}; "
-                        f"LTF={m15_dir if m15 else 'нет'}. Итог: {final_signal.upper()}."
+                        f"{symbol}: H4={h4_dir if h4 else 'нет данных'}; H1={h1_dir if h1 else 'нет данных'}; "
+                        f"M15={m15_dir if m15 else 'нет данных'}. Итог: {final_signal.upper()}."
                     ),
-                    "unified_narrative": (
-                        f"{symbol}: HTF bias — {h4_dir if h4 else 'нет данных'}, "
-                        f"MTF структура — {h1_dir if h1 else 'нет данных'}, "
-                        f"LTF триггер — {m15_dir if m15 else 'нет данных'}. "
-                        f"Финальное решение: {final_signal.upper()} ({final_reason})"
-                    ),
+                    "unified_narrative": unified_narrative,
                     "summary": final_reason,
                     "summary_ru": final_reason,
                     "short_text": final_reason,
