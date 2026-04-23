@@ -671,6 +671,25 @@ class TradeIdeaService:
         ideas = store.get("ideas", [])
         symbol = str(signal.get("symbol", "")).upper()
         timeframe = str(signal.get("timeframe", "H1")).upper()
+        latest_matching_idea = self._latest_matching_idea(
+            ideas=ideas,
+            symbol=symbol,
+            timeframe=timeframe,
+        )
+        chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
+        final_candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
+        if len(final_candles) < MIN_IDEA_CANDLES_REQUIRED:
+            logger.info(
+                "ideas_pipeline_skip_upsert_final_provider_candles symbol=%s timeframe=%s candles_count=%s min_required=%s provider=%s",
+                symbol,
+                timeframe,
+                len(final_candles),
+                MIN_IDEA_CANDLES_REQUIRED,
+                chart_payload.get("source"),
+            )
+            if latest_matching_idea is not None:
+                return latest_matching_idea
+            return signal
         setup_type = self._setup_type(signal)
         action = str(signal.get("action", "NO_TRADE")).upper()
         now = datetime.now(timezone.utc)
@@ -687,11 +706,6 @@ class TradeIdeaService:
         )
 
         if active_index is None and action == "NO_TRADE":
-            latest_matching_idea = self._latest_matching_idea(
-                ideas=ideas,
-                symbol=symbol,
-                timeframe=timeframe,
-            )
             if latest_matching_idea is not None:
                 return latest_matching_idea
 

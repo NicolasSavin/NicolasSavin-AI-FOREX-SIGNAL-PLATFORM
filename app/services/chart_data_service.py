@@ -32,7 +32,12 @@ class ChartDataService:
         self.output_size = int(os.getenv("TWELVEDATA_OUTPUTSIZE", str(DEFAULT_CHART_LIMIT)))
         self.yahoo_service = YahooMarketDataService()
         self._last_market_health: dict[str, Any] = {
-            "provider": None,
+            "primary_provider": "twelvedata",
+            "primary_error": None,
+            "fallback_attempted": False,
+            "fallback_provider": "yahoo_finance",
+            "fallback_error": None,
+            "final_provider_used": None,
             "request_succeeded": False,
             "candles_count": 0,
             "error": "not_started",
@@ -67,7 +72,12 @@ class ChartDataService:
                 reason="fetch_error",
             )
             self._set_market_health(
-                provider="twelvedata",
+                primary_provider="twelvedata",
+                primary_error="unsupported_timeframe",
+                fallback_attempted=False,
+                fallback_provider="yahoo_finance",
+                fallback_error=None,
+                final_provider_used="twelvedata",
                 request_succeeded=False,
                 candles_count=0,
                 error="unsupported_timeframe",
@@ -179,7 +189,12 @@ class ChartDataService:
 
         logger.info("twelvedata_success symbol=%s tf=%s candles=%s", normalized_symbol, normalized_tf, len(candles))
         self._set_market_health(
-            provider="twelvedata",
+            primary_provider="twelvedata",
+            primary_error=None,
+            fallback_attempted=False,
+            fallback_provider="yahoo_finance",
+            fallback_error=None,
+            final_provider_used="twelvedata",
             request_succeeded=True,
             candles_count=len(candles),
             error=None,
@@ -224,7 +239,12 @@ class ChartDataService:
         if yahoo_candles:
             logger.info("yahoo_fallback_success symbol=%s tf=%s candles=%s", symbol, timeframe, len(yahoo_candles))
             self._set_market_health(
-                provider="yahoo_finance",
+                primary_provider="twelvedata",
+                primary_error=twelvedata_error,
+                fallback_attempted=True,
+                fallback_provider="yahoo_finance",
+                fallback_error=None,
+                final_provider_used="yahoo_finance",
                 request_succeeded=True,
                 candles_count=len(yahoo_candles),
                 error=None,
@@ -247,7 +267,12 @@ class ChartDataService:
             }
         logger.warning("yahoo_fallback_failed symbol=%s tf=%s error=%s", symbol, timeframe, yahoo_error)
         self._set_market_health(
-            provider="twelvedata",
+            primary_provider="twelvedata",
+            primary_error=twelvedata_error,
+            fallback_attempted=True,
+            fallback_provider="yahoo_finance",
+            fallback_error=yahoo_error or "unknown_error",
+            final_provider_used=None,
             request_succeeded=False,
             candles_count=0,
             error=f"twelvedata:{twelvedata_error};yahoo:{yahoo_error or 'unknown_error'}",
@@ -258,22 +283,34 @@ class ChartDataService:
     def _set_market_health(
         self,
         *,
-        provider: str,
+        primary_provider: str,
+        primary_error: str | None,
+        fallback_attempted: bool,
+        fallback_provider: str | None,
+        fallback_error: str | None,
+        final_provider_used: str | None,
         request_succeeded: bool,
         candles_count: int,
         error: str | None,
         source_symbol: str | None,
     ) -> None:
         self._last_market_health = {
-            "provider": provider,
+            "primary_provider": primary_provider,
+            "primary_error": primary_error,
+            "fallback_attempted": fallback_attempted,
+            "fallback_provider": fallback_provider,
+            "fallback_error": fallback_error,
+            "final_provider_used": final_provider_used,
             "request_succeeded": request_succeeded,
             "candles_count": max(0, int(candles_count or 0)),
             "error": error,
             "source_symbol": source_symbol,
         }
         logger.info(
-            "market_provider_selected provider=%s request_succeeded=%s candles=%s error=%s source_symbol=%s",
-            provider,
+            "market_provider_selected primary_provider=%s final_provider=%s fallback_attempted=%s request_succeeded=%s candles=%s error=%s source_symbol=%s",
+            primary_provider,
+            final_provider_used,
+            fallback_attempted,
             request_succeeded,
             candles_count,
             error,

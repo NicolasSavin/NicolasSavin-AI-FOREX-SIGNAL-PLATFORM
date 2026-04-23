@@ -35,6 +35,7 @@ from app.services.signal_hub import DEFAULT_PAIRS, SignalHubService
 from app.services.signal_service import SignalService
 from app.services.storage.json_storage import JsonStorage
 from app.services.trade_idea_service import TradeIdeaService
+from app.services.yahoo_market_data_service import YahooMarketDataService
 from app.api.ideas_routes import IdeasRouteServices, build_ideas_router
 from backend.market.services.snapshot_service import MarketSnapshotService
 from backend.chat_service import ChatRequest, ChatResponse, ForexChatService
@@ -57,6 +58,7 @@ signal_service = SignalService(market_data_service=market_data_service)
 signal_analytics_service = SignalAnalyticsService(signal_engine=signal_engine)
 mt4_bridge_service = Mt4BridgeService()
 chart_data_service = ChartDataService()
+yahoo_market_data_service = YahooMarketDataService()
 canonical_market_service = get_canonical_market_service()
 market_snapshot_service = MarketSnapshotService()
 trade_idea_service = TradeIdeaService(signal_engine=signal_engine, chart_data_service=chart_data_service)
@@ -197,12 +199,17 @@ async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", lim
     candles = payload.get("candles") if isinstance(payload, dict) and isinstance(payload.get("candles"), list) else []
     meta = payload.get("meta") if isinstance(payload, dict) and isinstance(payload.get("meta"), dict) else {}
     health = chart_data_service.get_last_market_health()
-    provider_used = health.get("provider") or payload.get("source") or "unknown"
+    final_provider_used = health.get("final_provider_used") or payload.get("source") or "unknown"
     source_symbol = health.get("source_symbol")
     if not source_symbol:
-        source_symbol = _td_symbol(str(symbol).upper().replace("/", "").strip()) if provider_used == "twelvedata" else str(symbol).upper().replace("/", "").strip()
+        source_symbol = _td_symbol(str(symbol).upper().replace("/", "").strip()) if final_provider_used == "twelvedata" else str(symbol).upper().replace("/", "").strip()
     return {
-        "provider_used": provider_used,
+        "primary_provider": health.get("primary_provider") or "twelvedata",
+        "primary_error": health.get("primary_error"),
+        "fallback_attempted": bool(health.get("fallback_attempted")),
+        "fallback_provider": health.get("fallback_provider"),
+        "fallback_error": health.get("fallback_error"),
+        "final_provider_used": final_provider_used,
         "request_succeeded": bool(health.get("request_succeeded") or len(candles) > 0),
         "candles_count": int(health.get("candles_count") or len(candles)),
         "error": health.get("error"),
@@ -212,6 +219,24 @@ async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", lim
         "requested_limit": max(1, int(limit or 1)),
         "status": payload.get("status"),
         "meta_provider": meta.get("provider"),
+    }
+
+
+@app.get("/api/debug/yahoo-test")
+@app.get("/api/debug/yahoo-test/{symbol}/{timeframe}")
+async def yahoo_test_debug(symbol: str = "EURUSD", timeframe: str = "H1", limit: int = 120) -> dict:
+    yahoo_payload = await asyncio.to_thread(yahoo_market_data_service.get_candles, symbol, timeframe, limit)
+    candles = yahoo_payload.get("candles") if isinstance(yahoo_payload.get("candles"), list) else []
+    return {
+        "provider": "yahoo",
+        "request_succeeded": len(candles) > 0,
+        "candles_count": len(candles),
+        "error": yahoo_payload.get("error"),
+        "source_symbol": yahoo_payload.get("source_symbol"),
+        "symbol": str(symbol).upper().replace("/", "").strip(),
+        "timeframe": str(timeframe or "H1").upper().strip(),
+        "first_candle": candles[0] if candles else None,
+        "last_candle": candles[-1] if candles else None,
     }
 
 
