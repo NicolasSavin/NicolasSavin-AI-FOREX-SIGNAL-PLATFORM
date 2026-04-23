@@ -239,17 +239,17 @@ class ChartSnapshotService:
     ) -> dict[str, Any]:
         existing_valid = existing_chart if self.is_valid_snapshot_path(existing_chart) else None
         new_valid = new_chart if self.is_valid_snapshot_path(new_chart) else None
+        if self.should_preserve_existing_chart(existing_chart=existing_valid, new_chart=new_valid):
+            return {
+                "chartImageUrl": existing_valid,
+                "status": "snapshot_failed",
+                "chart_status": "snapshot",
+                "fallback_to_candles": False,
+            }
         if new_valid:
             return {
                 "chartImageUrl": new_valid,
                 "status": "ok",
-                "chart_status": "snapshot",
-                "fallback_to_candles": False,
-            }
-        if existing_valid:
-            return {
-                "chartImageUrl": existing_valid,
-                "status": "snapshot_failed",
                 "chart_status": "snapshot",
                 "fallback_to_candles": False,
             }
@@ -266,6 +266,10 @@ class ChartSnapshotService:
             "chart_status": "no_data",
             "fallback_to_candles": False,
         }
+
+    @staticmethod
+    def should_preserve_existing_chart(*, existing_chart: str | None, new_chart: str | None) -> bool:
+        return bool(existing_chart) and not bool(new_chart)
 
     def _draw_zones(self, *, ax: Any, zones: list[dict[str, Any]], candles_count: int, max_price: float) -> None:
         styles = {

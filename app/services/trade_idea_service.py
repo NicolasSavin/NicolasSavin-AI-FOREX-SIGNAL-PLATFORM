@@ -65,6 +65,7 @@ logger = logging.getLogger(__name__)
 
 class TradeIdeaService:
     MEANINGFUL_CONFIDENCE_DELTA = 5
+    NARRATIVE_REASONING_WORDS = ("потому", "поэтому", "значит", "реакция", "ликвидность")
 
     def __init__(self, signal_engine: SignalEngine, chart_data_service: ChartDataService | None = None) -> None:
         self.signal_engine = signal_engine
@@ -710,6 +711,15 @@ class TradeIdeaService:
         take_profit = signal.get("take_profit")
         idea_id = existing.get("idea_id") if existing else self._idea_id(symbol, timeframe, setup_type, created_at)
         status = self._status_from_signal(signal, existing=existing)
+        raw_analysis = self._extract_analysis_for_update(signal)
+        if existing is not None and self.isEmptyAnalysis(raw_analysis):
+            logger.info(
+                "idea_update_skipped_empty_analysis idea_id=%s symbol=%s timeframe=%s",
+                existing.get("idea_id"),
+                symbol,
+                timeframe,
+            )
+            return existing
         latest_close = self._extract_latest_close(signal)
         rationale = signal.get("reason_ru") or signal.get("description_ru") or "Структурное подтверждение сценария ограничено."
         summary_text = signal.get("description_ru") or f"{symbol} {timeframe}: торговая идея обновлена."
@@ -769,6 +779,16 @@ class TradeIdeaService:
             target_2=self._format_price(take_profit),
             trigger=trigger,
         )
+        if existing is not None:
+            existing_unified = str(existing.get("unified_narrative") or "").strip()
+            existing_full = str(existing.get("full_text") or "").strip()
+            existing_short = str(existing.get("short_text") or existing.get("summary") or "").strip()
+            if self.isWeakNarrative(unified_narrative_text) and existing_unified:
+                unified_narrative_text = existing_unified
+            if self.isWeakNarrative(full_text) and existing_full:
+                full_text = existing_full
+            if self.isWeakNarrative(short_scenario) and existing_short:
+                short_scenario = existing_short
         analysis_payload = self._build_structured_analysis(signal=signal, bias=bias, rationale=rationale)
         decision_payload = self._build_weighted_decision(signal=signal, analysis=analysis_payload, bias=bias)
         entry_explanation, stop_explanation, target_explanation = self._build_level_explanations(
@@ -879,6 +899,11 @@ class TradeIdeaService:
             existing_chart_url = existing.get("chartImageUrl") or existing.get("chart_image")
             if self.chart_snapshot_service.is_valid_snapshot_path(existing_chart_url):
                 resolved_chart_url = existing_chart_url
+        if not resolved_chart_url and existing:
+            resolved_chart_url = existing.get("chartImageUrl") or existing.get("chart_image")
+        idea_thesis_text = str(llm_result.data.get("idea_thesis") or unified_narrative_text or full_text).strip()
+        if existing is not None and self.isWeakNarrative(idea_thesis_text):
+            idea_thesis_text = str(existing.get("idea_thesis") or existing.get("unified_narrative") or existing.get("full_text") or "").strip()
 
         payload = {
             "idea_id": idea_id,
@@ -921,6 +946,7 @@ class TradeIdeaService:
             "short_scenario_ru": short_scenario,
             "short_text": short_scenario,
             "full_text": full_text,
+            "idea_thesis": idea_thesis_text,
             "unified_narrative": unified_narrative_text,
             "signal": str(llm_result.data.get("signal") or ("BUY" if action == "BUY" else "SELL" if action == "SELL" else "WAIT")).upper(),
             "risk_note": str(llm_result.data.get("risk_note") or llm_result.data.get("risk") or ""),
@@ -1036,52 +1062,18 @@ class TradeIdeaService:
         signal: dict[str, Any],
     ) -> list[str]:
         reasons: list[str] = []
-
-        if str(existing.get("status") or "").lower() != str(payload.get("status") or "").lower():
-            reasons.append("status_changed")
         if str(existing.get("signal") or "").upper() != str(payload.get("signal") or "").upper():
             reasons.append("signal_changed")
-        if str(existing.get("bias") or existing.get("direction") or "").lower() != str(payload.get("bias") or "").lower():
-            reasons.append("bias_changed")
-
-        previous_confidence = cls._extract_numeric(existing.get("confidence"))
-        next_confidence = cls._extract_numeric(payload.get("confidence"))
-        if (
-            previous_confidence is not None
-            and next_confidence is not None
-            and abs(previous_confidence - next_confidence) >= cls.MEANINGFUL_CONFIDENCE_DELTA
-        ):
-            reasons.append("confidence_changed")
-
-        for key, reason in (("entry", "entry_changed"), ("stop_loss", "stop_loss_changed"), ("take_profit", "take_profit_changed")):
-            if cls._extract_numeric(existing.get(key)) != cls._extract_numeric(payload.get(key)):
-                reasons.append(reason)
-
-        if cls._clean_text(existing.get("unified_narrative")) != cls._clean_text(payload.get("unified_narrative")):
-            reasons.append("unified_narrative_changed")
-        if cls._clean_text(existing.get("idea_thesis")) != cls._clean_text(payload.get("idea_thesis")):
-            reasons.append("idea_thesis_changed")
-
         if str(existing.get("chartImageUrl") or existing.get("chart_image") or "") != str(payload.get("chartImageUrl") or payload.get("chart_image") or ""):
             reasons.append("chart_image_changed")
-        if cls._overlay_signature(existing) != cls._overlay_signature(payload):
+        if cls._has_overlay_additions(existing=existing, payload=payload):
             reasons.append("chart_overlays_changed")
-
-        next_status = str(payload.get("status") or "").lower()
-        prev_status = str(existing.get("status") or "").lower()
-        if next_status == IDEA_STATUS_TRIGGERED and prev_status != IDEA_STATUS_TRIGGERED:
-            reasons.append("entry_triggered")
-        if next_status == IDEA_STATUS_TP_HIT and prev_status != IDEA_STATUS_TP_HIT:
-            reasons.append("tp_hit")
-        if next_status == IDEA_STATUS_SL_HIT and prev_status != IDEA_STATUS_SL_HIT:
-            reasons.append("sl_hit")
-
-        if bool(signal.get("bos_detected")) or bool(signal.get("structure_break")):
-            reasons.append("bos")
-        if bool(signal.get("choch_detected")):
-            reasons.append("choch")
-        if bool(signal.get("zone_reaction")) or bool(signal.get("major_zone_reaction")):
-            reasons.append("zone_reaction")
+        if cls._has_levels_change(existing=existing, payload=payload):
+            reasons.append("levels_changed")
+        if cls._is_significant_narrative_change(existing=existing, payload=payload):
+            reasons.append("unified_narrative_changed")
+            if cls._clean_text(existing.get("idea_thesis")) != cls._clean_text(payload.get("idea_thesis")):
+                reasons.append("idea_thesis_changed")
 
         return list(dict.fromkeys(reasons))
 
@@ -2138,26 +2130,84 @@ class TradeIdeaService:
 
     @staticmethod
     def _is_weak_narrative_text(value: Any) -> bool:
+        return TradeIdeaService.isWeakNarrative(value)
+
+    @classmethod
+    def isWeakNarrative(cls, value: Any) -> bool:
         text = str(value or "").strip().lower()
         if not text:
             return True
-        weak_tokens = (
-            "статус created",
-            "статус waiting",
-            "торговая идея обновлена",
-            "ждать подтверждение структуры",
-            "ситуация:",
-            "причина:",
-            "следствие:",
-            "действие:",
-            "none",
-            "fallback",
-            "idea_created",
-            "status created",
-            "debug",
+        has_reasoning = any(word in text for word in cls.NARRATIVE_REASONING_WORDS)
+        return "status created" in text or len(text) < 80 or not has_reasoning
+
+    @classmethod
+    def isEmptyAnalysis(cls, analysis: Any) -> bool:
+        if not isinstance(analysis, dict):
+            return True
+
+        def _items(key: str) -> list[Any]:
+            value = analysis.get(key)
+            return value if isinstance(value, list) else []
+
+        return (
+            not _items("order_blocks")
+            and not _items("liquidity")
+            and not _items("fvg")
+            and not _items("structure")
+            and not _items("patterns")
+            and not _items("chart_overlays")
         )
-        sentences = [chunk for chunk in re.split(r"[.!?]+", text) if chunk.strip()]
-        return any(token in text for token in weak_tokens) or len(text) < 40 or len(sentences) > 6 or len(sentences) < 2
+
+    @classmethod
+    def _extract_analysis_for_update(cls, signal: dict[str, Any]) -> dict[str, Any]:
+        chart_overlays = cls.normalize_chart_overlays(signal.get("chart_overlays"))
+        flattened_chart_overlays: list[Any] = []
+        for key in CHART_OVERLAY_KEYS:
+            flattened_chart_overlays.extend(chart_overlays.get(key) or [])
+        analysis = signal.get("analysis") if isinstance(signal.get("analysis"), dict) else {}
+        return {
+            "order_blocks": cls._normalize_any_list(analysis.get("order_blocks") or chart_overlays.get("order_blocks")),
+            "liquidity": cls._normalize_any_list(analysis.get("liquidity") or chart_overlays.get("liquidity")),
+            "fvg": cls._normalize_any_list(analysis.get("fvg") or chart_overlays.get("fvg")),
+            "structure": cls._normalize_any_list(analysis.get("structure") or chart_overlays.get("structure_levels")),
+            "patterns": cls._normalize_any_list(analysis.get("patterns") or chart_overlays.get("patterns")),
+            "chart_overlays": cls._normalize_any_list(analysis.get("chart_overlays") or flattened_chart_overlays),
+        }
+
+    @staticmethod
+    def _normalize_any_list(value: Any) -> list[Any]:
+        if isinstance(value, list):
+            return [item for item in value if item not in (None, "", [], {})]
+        return []
+
+    @classmethod
+    def _has_overlay_additions(cls, *, existing: dict[str, Any], payload: dict[str, Any]) -> bool:
+        existing_overlays = cls.normalize_chart_overlays(existing.get("chart_overlays"))
+        payload_overlays = cls.normalize_chart_overlays(payload.get("chart_overlays"))
+        for key in ("order_blocks", "liquidity"):
+            if len(payload_overlays.get(key) or []) > len(existing_overlays.get(key) or []):
+                return True
+        return False
+
+    @classmethod
+    def _has_levels_change(cls, *, existing: dict[str, Any], payload: dict[str, Any]) -> bool:
+        def _to_signature(values: Any) -> str:
+            items = values if isinstance(values, list) else []
+            return sha1(json.dumps(items, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+        return _to_signature(existing.get("levels")) != _to_signature(payload.get("levels"))
+
+    @classmethod
+    def _is_significant_narrative_change(cls, *, existing: dict[str, Any], payload: dict[str, Any]) -> bool:
+        previous = cls._clean_text(existing.get("unified_narrative"))
+        current = cls._clean_text(payload.get("unified_narrative"))
+        if not previous or not current:
+            return False
+        if cls.isWeakNarrative(current):
+            return False
+        if previous == current:
+            return False
+        return abs(len(current) - len(previous)) >= 20 or previous not in current
 
     @classmethod
     def _idea_row_to_signal_for_backfill(cls, idea: dict[str, Any]) -> dict[str, Any]:
