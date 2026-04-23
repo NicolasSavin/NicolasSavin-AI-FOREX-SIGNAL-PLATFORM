@@ -9,6 +9,7 @@ from typing import Any
 import requests
 
 from app.core.env import get_twelvedata_api_key
+from app.services.yahoo_market_data_service import YahooMarketDataService
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,14 @@ class ChartDataService:
         self.api_key = get_twelvedata_api_key() or ""
         self.timeout_seconds = float(os.getenv("TWELVEDATA_TIMEOUT", str(DEFAULT_CHART_TIMEOUT_SECONDS)))
         self.output_size = int(os.getenv("TWELVEDATA_OUTPUTSIZE", str(DEFAULT_CHART_LIMIT)))
+        self.yahoo_service = YahooMarketDataService()
+        self._last_market_health: dict[str, Any] = {
+            "provider": None,
+            "request_succeeded": False,
+            "candles_count": 0,
+            "error": "not_started",
+            "source_symbol": None,
+        }
 
     def get_chart(self, symbol: str, timeframe: str) -> dict[str, Any]:
         logger.info("chart_request_started symbol=%s tf=%s", symbol, timeframe)
@@ -50,20 +59,33 @@ class ChartDataService:
 
         if normalized_tf not in TIMEFRAME_MAPPING:
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=unsupported_timeframe", normalized_symbol, normalized_tf)
-            return self.build_unavailable_payload(
+            payload = self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
                 message_ru="Неподдерживаемый таймфрейм для свечного графика.",
                 reason="fetch_error",
             )
+            self._set_market_health(
+                provider="twelvedata",
+                request_succeeded=False,
+                candles_count=0,
+                error="unsupported_timeframe",
+                source_symbol=provider_symbol,
+            )
+            return payload
 
         if not self.api_key:
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=missing_api_key", normalized_symbol, normalized_tf)
-            return self.build_unavailable_payload(
+            return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
-                message_ru="Свечной API не настроен: отсутствует TWELVEDATA_API_KEY.",
-                reason="fetch_error",
+                twelvedata_error="missing_api_key",
+                twelvedata_payload=self.build_unavailable_payload(
+                    symbol=normalized_symbol,
+                    timeframe=normalized_tf,
+                    message_ru="Свечной API не настроен: отсутствует TWELVEDATA_API_KEY.",
+                    reason="fetch_error",
+                ),
             )
 
         params = {
@@ -80,19 +102,29 @@ class ChartDataService:
             payload = response.json()
         except requests.RequestException as exc:
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=request_exception error=%s", normalized_symbol, normalized_tf, exc)
-            return self.build_unavailable_payload(
+            return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
-                message_ru="Не удалось загрузить реальные свечные данные из Twelve Data.",
-                reason="fetch_error",
+                twelvedata_error="fetch_error",
+                twelvedata_payload=self.build_unavailable_payload(
+                    symbol=normalized_symbol,
+                    timeframe=normalized_tf,
+                    message_ru="Не удалось загрузить реальные свечные данные из Twelve Data.",
+                    reason="fetch_error",
+                ),
             )
         except ValueError:
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=invalid_json", normalized_symbol, normalized_tf)
-            return self.build_unavailable_payload(
+            return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
-                message_ru="Свечной API вернул некорректный ответ.",
-                reason="fetch_error",
+                twelvedata_error="fetch_error",
+                twelvedata_payload=self.build_unavailable_payload(
+                    symbol=normalized_symbol,
+                    timeframe=normalized_tf,
+                    message_ru="Свечной API вернул некорректный ответ.",
+                    reason="fetch_error",
+                ),
             )
 
         payload, candles = self.normalize_provider_payload(payload)
@@ -115,21 +147,38 @@ class ChartDataService:
                     payload.get("message"),
                 )
                 reason = "rate_limited" if str(payload.get("code")) == "429" else "fetch_error"
-                return self.build_unavailable_payload(
+                return self._fallback_to_yahoo(
                     symbol=normalized_symbol,
                     timeframe=normalized_tf,
-                    message_ru=f"Twelve Data недоступен: {payload.get('message') or 'неизвестная ошибка'}.",
-                    reason=reason,
+                    twelvedata_error=reason,
+                    twelvedata_payload=self.build_unavailable_payload(
+                        symbol=normalized_symbol,
+                        timeframe=normalized_tf,
+                        message_ru=f"Twelve Data недоступен: {payload.get('message') or 'неизвестная ошибка'}.",
+                        reason=reason,
+                    ),
                 )
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=empty_candles", normalized_symbol, normalized_tf)
-            return self.build_unavailable_payload(
+            return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
-                message_ru="Свечной API не вернул candles/values для выбранной идеи.",
-                reason="no_data",
+                twelvedata_error="no_data",
+                twelvedata_payload=self.build_unavailable_payload(
+                    symbol=normalized_symbol,
+                    timeframe=normalized_tf,
+                    message_ru="Свечной API не вернул candles/values для выбранной идеи.",
+                    reason="no_data",
+                ),
             )
 
         logger.info("twelvedata_success symbol=%s tf=%s candles=%s", normalized_symbol, normalized_tf, len(candles))
+        self._set_market_health(
+            provider="twelvedata",
+            request_succeeded=True,
+            candles_count=len(candles),
+            error=None,
+            source_symbol=provider_symbol,
+        )
 
         return {
             "symbol": normalized_symbol,
@@ -144,6 +193,85 @@ class ChartDataService:
                 "outputsize": len(candles),
             },
         }
+
+    def get_last_market_health(self) -> dict[str, Any]:
+        return dict(self._last_market_health)
+
+    def _fallback_to_yahoo(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        twelvedata_error: str,
+        twelvedata_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        logger.warning(
+            "twelvedata_failed_yahoo_fallback symbol=%s tf=%s twelvedata_error=%s",
+            symbol,
+            timeframe,
+            twelvedata_error,
+        )
+        yahoo = self.yahoo_service.get_candles(symbol, timeframe, self.output_size)
+        yahoo_candles = yahoo.get("candles") if isinstance(yahoo.get("candles"), list) else []
+        yahoo_error = yahoo.get("error")
+        if yahoo_candles:
+            logger.info("yahoo_fallback_success symbol=%s tf=%s candles=%s", symbol, timeframe, len(yahoo_candles))
+            self._set_market_health(
+                provider="yahoo_finance",
+                request_succeeded=True,
+                candles_count=len(yahoo_candles),
+                error=None,
+                source_symbol=str(yahoo.get("source_symbol") or symbol),
+            )
+            return {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "source": "yahoo_finance",
+                "status": "ok",
+                "message_ru": "Twelve Data недоступен, использован fallback Yahoo Finance.",
+                "candles": yahoo_candles,
+                "meta": {
+                    "provider": "Yahoo Finance",
+                    "interval": self.yahoo_service.map_timeframe(timeframe).get("interval") if self.yahoo_service.map_timeframe(timeframe) else None,
+                    "outputsize": len(yahoo_candles),
+                    "fallback_from": "twelvedata",
+                    "provider_error": twelvedata_error,
+                },
+            }
+        logger.warning("yahoo_fallback_failed symbol=%s tf=%s error=%s", symbol, timeframe, yahoo_error)
+        self._set_market_health(
+            provider="twelvedata",
+            request_succeeded=False,
+            candles_count=0,
+            error=f"twelvedata:{twelvedata_error};yahoo:{yahoo_error or 'unknown_error'}",
+            source_symbol=str(yahoo.get("source_symbol") or symbol),
+        )
+        return twelvedata_payload
+
+    def _set_market_health(
+        self,
+        *,
+        provider: str,
+        request_succeeded: bool,
+        candles_count: int,
+        error: str | None,
+        source_symbol: str | None,
+    ) -> None:
+        self._last_market_health = {
+            "provider": provider,
+            "request_succeeded": request_succeeded,
+            "candles_count": max(0, int(candles_count or 0)),
+            "error": error,
+            "source_symbol": source_symbol,
+        }
+        logger.info(
+            "market_provider_selected provider=%s request_succeeded=%s candles=%s error=%s source_symbol=%s",
+            provider,
+            request_succeeded,
+            candles_count,
+            error,
+            source_symbol,
+        )
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:

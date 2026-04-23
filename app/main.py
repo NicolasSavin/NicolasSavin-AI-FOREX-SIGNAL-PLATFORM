@@ -188,6 +188,30 @@ async def twelvedata_health_debug() -> dict:
     }
 
 
+@app.get("/api/debug/market-health")
+async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", limit: int = 120) -> dict:
+    payload = await asyncio.to_thread(chart_data_service.get_chart, symbol, timeframe)
+    candles = payload.get("candles") if isinstance(payload, dict) and isinstance(payload.get("candles"), list) else []
+    meta = payload.get("meta") if isinstance(payload, dict) and isinstance(payload.get("meta"), dict) else {}
+    health = chart_data_service.get_last_market_health()
+    provider_used = health.get("provider") or payload.get("source") or "unknown"
+    source_symbol = health.get("source_symbol")
+    if not source_symbol:
+        source_symbol = _td_symbol(str(symbol).upper().replace("/", "").strip()) if provider_used == "twelvedata" else str(symbol).upper().replace("/", "").strip()
+    return {
+        "provider_used": provider_used,
+        "request_succeeded": bool(health.get("request_succeeded") or len(candles) > 0),
+        "candles_count": int(health.get("candles_count") or len(candles)),
+        "error": health.get("error"),
+        "source_symbol": source_symbol,
+        "symbol": str(symbol).upper().replace("/", "").strip(),
+        "timeframe": str(timeframe or "H1").upper().strip(),
+        "requested_limit": max(1, int(limit or 1)),
+        "status": payload.get("status"),
+        "meta_provider": meta.get("provider"),
+    }
+
+
 @app.get("/signals/live", response_model=SignalsLiveResponse)
 async def signals_live() -> SignalsLiveResponse:
     return await signal_hub.get_live_response(pairs=DEFAULT_PAIRS)
