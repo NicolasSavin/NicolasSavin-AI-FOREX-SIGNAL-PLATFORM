@@ -594,22 +594,31 @@ function buildAggregatedIdea(groupedIdeas, symbol) {
 
 function shouldDisplayAggregatedIdea(idea) {
   if (!idea || !isVisibleIdea(idea)) return false;
-  if (!idea?.combined) return true;
-
-  const tfIdeas = idea?.timeframe_ideas && typeof idea.timeframe_ideas === "object"
-    ? Object.values(idea.timeframe_ideas)
-    : [];
-  const hasAnyTfData = tfIdeas.some((tfIdea) => hasMeaningfulNarrative(tfIdea));
-  if (!hasAnyTfData) return false;
-
-  const hasCandleData = hasRenderableCandles(idea)
-    || tfIdeas.some((tfIdea) => hasRenderableCandles(tfIdea));
-  if (!hasCandleData) return false;
-
   const signal = normalizeSignalValue(idea?.final_signal || idea?.signal || "");
-  const meaningfulNarrative = hasMeaningfulNarrative(idea);
-  if ((signal === "BUY" || signal === "SELL") && hasValidTradeLevels(idea)) return true;
-  if (signal === "WAIT" && meaningfulNarrative) return true;
+  const confidence = Number(idea?.final_confidence ?? idea?.confidence ?? 0);
+  const hasNarrative = [
+    idea?.full_text,
+    idea?.fullText,
+    idea?.idea_thesis,
+    idea?.unified_narrative,
+    idea?.summary,
+    idea?.summary_ru,
+  ].some((value) => {
+    const text = normalizeWhitespace(value);
+    return text && !isNoDataText(text);
+  });
+
+  const isStrongIdea = (signal === "BUY" || signal === "SELL")
+    && confidence >= 40
+    && hasValidTradeLevels(idea);
+  if (isStrongIdea) return true;
+
+  const isMeaningfulWait = signal === "WAIT"
+    && confidence >= 45
+    && hasNarrative;
+  if (isMeaningfulWait) return true;
+
+  if (!idea?.combined) return false;
   return false;
 }
 
@@ -622,7 +631,7 @@ function aggregateIdeasBySymbol(ideas) {
     grouped.get(symbol).push(idea);
   });
 
-  return Array.from(grouped.entries())
+  const candidates = Array.from(grouped.entries())
     .map(([symbol, symbolIdeas]) => {
       const alreadyCombined = symbolIdeas.find((idea) => idea?.combined);
       if (alreadyCombined) {
@@ -640,10 +649,33 @@ function aggregateIdeasBySymbol(ideas) {
         });
         return normalizedCombined;
       }
-      return buildAggregatedIdea(symbolIdeas, symbol);
+      const built = buildAggregatedIdea(symbolIdeas, symbol);
+      if (built) return built;
+      const fallbackIdea = symbolIdeas.find((idea) => isVisibleIdea(idea));
+      return fallbackIdea ? normalizeIdea(fallbackIdea) : null;
     })
-    .filter(Boolean)
-    .filter((idea) => shouldDisplayAggregatedIdea(idea));
+    .filter(Boolean);
+
+  const result = [];
+  const addedSymbols = new Set();
+  for (const idea of candidates) {
+    const symbol = normalizeWhitespace(idea?.symbol || idea?.pair).toUpperCase();
+    if (!symbol || addedSymbols.has(symbol)) continue;
+    if (shouldDisplayAggregatedIdea(idea)) {
+      result.push(idea);
+      addedSymbols.add(symbol);
+    }
+  }
+
+  for (const idea of candidates) {
+    const symbol = normalizeWhitespace(idea?.symbol || idea?.pair).toUpperCase();
+    if (!symbol || addedSymbols.has(symbol)) continue;
+    if (!isVisibleIdea(idea)) continue;
+    result.push(idea);
+    addedSymbols.add(symbol);
+  }
+
+  return result;
 }
 
 function registerChartPlugin(plugin) {
@@ -1852,6 +1884,7 @@ async function loadIdeasSnapshot() {
     const data = await res.json();
     const previousById = new Map(previousIdeasById);
     let normalizedIdeas = normalizeIdeas(data);
+    const totalIdeasReceived = normalizedIdeas.length;
     if (!normalizedIdeas.length && ENABLE_MOCK_IDEAS_ON_EMPTY) {
       console.warn("Используем временный mock идей: активирован ideas_mock=1.");
       normalizedIdeas = normalizeIdeas({ ideas: TEMP_MOCK_IDEAS });
@@ -1859,6 +1892,7 @@ async function loadIdeasSnapshot() {
 
     normalizedIdeas = aggregateIdeasBySymbol(normalizedIdeas);
     normalizedIdeas = dedupeIdeasById(normalizedIdeas);
+    console.debug(`[ideas] received=${totalIdeasReceived} after_filter=${normalizedIdeas.length}`);
 
     normalizedIdeas = normalizedIdeas.map((idea) => mergeWithPreviousIdeaState(idea, previousById.get(String(idea?.id))));
     const incomingById = new Map(normalizedIdeas.map((idea) => [String(idea.id), idea]));
