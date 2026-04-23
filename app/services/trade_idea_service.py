@@ -658,6 +658,11 @@ class TradeIdeaService:
         if generated:
             return generated
 
+        contextual_wait = self._build_contextual_wait_ideas(reason="no_active_ideas_after_refresh")
+        self._log_api_pipeline(contextual_wait, stage="contextual_wait_fallback")
+        if contextual_wait:
+            return contextual_wait
+
         logger.debug("ideas_pipeline_api_response stage=empty candles_count=0 features_built=False signal_created=False reason_if_skipped=no_active_ideas")
         return []
 
@@ -669,6 +674,27 @@ class TradeIdeaService:
         fallback: list[dict[str, Any]] = []
         for symbol in self.get_market_symbols():
             for timeframe in self.get_market_timeframes():
+                chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
+                candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
+                latest_close = self._extract_numeric((candles[-1] or {}).get("close")) if candles else None
+                candles_count = len(candles)
+                if candles_count > 0:
+                    wait_text = (
+                        f"{symbol} {timeframe}: Недостаточно подтверждений, ожидаем (WAIT). "
+                        f"Контекст {candles_count} свечей, текущая цена {self._format_price(latest_close)}."
+                    )
+                    full_text = (
+                        f"По {symbol} на {timeframe} рыночные свечи доступны ({candles_count}), "
+                        f"но confluence пока недостаточный. Сценарий остаётся в WAIT до подтверждения структуры."
+                    )
+                    current_reasoning = "Свечи доступны, но нет полного подтверждения сетапа: режим WAIT."
+                else:
+                    wait_text = f"{symbol} {timeframe}: генерация временно недоступна, ждём восстановление провайдера данных."
+                    full_text = (
+                        f"По {symbol} на {timeframe} генерация идей временно недоступна. "
+                        f"Причина: {reason}. Данные рынка и пайплайн останутся в проверке до восстановления источника."
+                    )
+                    current_reasoning = "Данные недоступны → причинно-следственный сценарий не может быть подтверждён."
                 fallback.append(
                     {
                         "id": f"{symbol.lower()}-{timeframe.lower()}-fallback",
@@ -679,26 +705,31 @@ class TradeIdeaService:
                         "direction": "neutral",
                         "bias": "neutral",
                         "confidence": 35,
-                        "summary": f"{symbol} {timeframe}: генерация временно недоступна, ждём восстановление провайдера данных.",
-                        "summary_ru": f"{symbol} {timeframe}: генерация временно недоступна, ждём восстановление провайдера данных.",
-                        "short_text": f"{symbol} {timeframe}: генерация временно недоступна, ждём восстановление провайдера данных.",
-                        "short_scenario_ru": f"{symbol} {timeframe}: генерация временно недоступна, ждём восстановление провайдера данных.",
-                        "full_text": (
-                            f"По {symbol} на {timeframe} генерация идей временно недоступна. "
-                            f"Причина: {reason}. Данные рынка и пайплайн останутся в проверке до восстановления источника."
-                        ),
+                        "summary": wait_text,
+                        "summary_ru": wait_text,
+                        "short_text": wait_text,
+                        "short_scenario_ru": wait_text,
+                        "full_text": full_text,
                         "entry": None,
                         "stopLoss": None,
                         "takeProfit": None,
+                        "signal": "WAIT",
                         "status": IDEA_STATUS_WAITING,
+                        "source_candle_count": candles_count,
+                        "current_price": latest_close,
                         "updates": [
                             {
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                                 "event_type": "created",
-                                "explanation": "Идея создана в режиме ожидания до восстановления рыночных данных.",
+                                "explanation": (
+                                    "Идея создана в режиме ожидания: данных достаточно для наблюдения,"
+                                    " но подтверждений для входа недостаточно."
+                                    if candles_count > 0
+                                    else "Идея создана в режиме ожидания до восстановления рыночных данных."
+                                ),
                             }
                         ],
-                        "current_reasoning": "Данные недоступны → причинно-следственный сценарий не может быть подтверждён.",
+                        "current_reasoning": current_reasoning,
                         "source": "fallback",
                         "is_fallback": True,
                         "meta": {"fallback_reason": reason},
@@ -706,6 +737,53 @@ class TradeIdeaService:
                 )
         logger.info("ideas_fallback_built count=%s reason=%s", len(fallback), reason)
         return fallback
+
+    def _build_contextual_wait_ideas(self, *, reason: str) -> list[dict[str, Any]]:
+        wait_ideas: list[dict[str, Any]] = []
+        for symbol in self.get_market_symbols():
+            for timeframe in self.get_market_timeframes():
+                chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
+                candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
+                if not candles:
+                    continue
+                latest = candles[-1] if isinstance(candles[-1], dict) else {}
+                latest_close = self._extract_numeric(latest.get("close"))
+                summary = (
+                    f"{symbol} {timeframe}: Недостаточно подтверждений, ожидаем (WAIT). "
+                    f"Рынок дал {len(candles)} свечей, нужна синхронизация структуры."
+                )
+                wait_ideas.append(
+                    {
+                        "id": f"{symbol.lower()}-{timeframe.lower()}-contextual-wait",
+                        "symbol": symbol,
+                        "pair": symbol,
+                        "timeframe": timeframe,
+                        "tf": timeframe,
+                        "direction": "neutral",
+                        "bias": "neutral",
+                        "signal": "WAIT",
+                        "confidence": 33,
+                        "summary": summary,
+                        "summary_ru": summary,
+                        "short_text": summary,
+                        "short_scenario_ru": summary,
+                        "full_text": (
+                            f"{symbol} {timeframe}: свечные данные доступны ({len(candles)}), "
+                            "но структура не даёт входа с приемлемым confluence. Сценарий остаётся в WAIT."
+                        ),
+                        "status": IDEA_STATUS_WAITING,
+                        "entry": None,
+                        "stopLoss": None,
+                        "takeProfit": None,
+                        "source_candle_count": len(candles),
+                        "current_price": latest_close,
+                        "current_reasoning": "Свечи есть, но подтверждения сетапа недостаточные. Наблюдаем.",
+                        "source": "contextual_wait_fallback",
+                        "is_fallback": True,
+                        "meta": {"fallback_reason": reason, "provider": chart_payload.get("source")},
+                    }
+                )
+        return wait_ideas
 
     def get_market_symbols(self) -> list[str]:
         return list(DEFAULT_MARKET_SYMBOLS)
@@ -879,6 +957,7 @@ class TradeIdeaService:
 
     def _apply_updates(self, generated: list[dict]) -> dict[str, Any]:
         symbols_with_candles: set[tuple[str, str]] = set()
+        symbols_with_any_candles: set[str] = set()
         symbols_with_idea: set[tuple[str, str]] = set()
         skipped_by_no_trade = 0
         skipped_reasons: dict[str, int] = {}
@@ -888,6 +967,7 @@ class TradeIdeaService:
             candles_count = int(signal.get("source_candle_count") or 0)
             if candles_count > 0:
                 symbols_with_candles.add((symbol, timeframe))
+                symbols_with_any_candles.add(symbol)
             action = signal.get("action", "NO_TRADE")
             pipeline_debug = signal.get("pipeline_debug", {}) if isinstance(signal.get("pipeline_debug"), dict) else {}
             logger.debug(
@@ -926,6 +1006,24 @@ class TradeIdeaService:
             self.upsert_trade_idea(signal)
             symbols_with_idea.add((symbol, timeframe))
         payload = self.refresh_market_ideas()
+        if symbols_with_any_candles:
+            existing_symbols = {
+                str(idea.get("symbol") or "").upper()
+                for idea in payload.get("ideas", [])
+                if str(idea.get("symbol") or "").strip()
+            }
+            missing_symbols = sorted(symbol for symbol in symbols_with_any_candles if symbol not in existing_symbols)
+            if missing_symbols:
+                contextual_wait = self._build_contextual_wait_ideas(reason="post_generation_empty_for_symbol")
+                contextual_by_symbol: dict[str, dict[str, Any]] = {}
+                for idea in contextual_wait:
+                    symbol = str(idea.get("symbol") or "").upper()
+                    if symbol and symbol in missing_symbols and symbol not in contextual_by_symbol:
+                        contextual_by_symbol[symbol] = idea
+                for symbol in missing_symbols:
+                    fallback_idea = contextual_by_symbol.get(symbol)
+                    if fallback_idea is not None:
+                        payload.setdefault("ideas", []).append(fallback_idea)
         logger.info(
             "ideas_pipeline_summary generated_count=%s candles_loaded_count=%s ideas_generated_count=%s ideas_filtered_count=%s final_payload_count=%s skipped_reasons=%s",
             len(generated),
@@ -1017,14 +1115,22 @@ class TradeIdeaService:
             rationale=rationale,
             existing=existing,
         )
-        if should_refresh_narrative:
-            llm_result = self.narrative_llm.generate(
-                event_type=narrative_reason,
-                facts=llm_facts,
-                previous_summary=previous_summary,
-                delta=delta_payload,
+        try:
+            if should_refresh_narrative:
+                llm_result = self.narrative_llm.generate(
+                    event_type=narrative_reason,
+                    facts=llm_facts,
+                    previous_summary=previous_summary,
+                    delta=delta_payload,
+                )
+            else:
+                llm_result = self._reuse_existing_narrative(existing=existing, fallback_summary=summary_text)
+        except Exception:
+            logger.exception(
+                "idea_narrative_generation_failed symbol=%s timeframe=%s reason=fallback_to_structural_summary",
+                symbol,
+                timeframe,
             )
-        else:
             llm_result = self._reuse_existing_narrative(existing=existing, fallback_summary=summary_text)
         narrative_structured = self._resolve_structured_narrative(
             llm_data=llm_result.data,
