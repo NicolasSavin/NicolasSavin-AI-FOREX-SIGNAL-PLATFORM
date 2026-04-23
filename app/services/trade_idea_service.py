@@ -58,7 +58,7 @@ LEVEL_TAKE_PROFIT_OFFSET = 0.0040
 CANDLE_CONTEXT_COUNT = 40
 MODEL_CANDLES_MIN = 50
 MODEL_CANDLES_MAX = 120
-CHART_OVERLAY_KEYS = ("order_blocks", "liquidity", "fvg", "structure_levels", "patterns", "zones", "levels")
+CHART_OVERLAY_KEYS = ("order_blocks", "liquidity", "fvg", "structure_levels", "patterns", "zones", "levels", "markers", "arrows")
 CHART_OVERLAY_ALIASES = {
     "order_blocks": ("order_blocks", "orderBlocks", "orderblock", "order_blocks_zones"),
     "liquidity": ("liquidity", "liquidity_levels", "liquidityLevels"),
@@ -168,7 +168,7 @@ class TradeIdeaService:
         active_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES]
         archived_ideas = [idea for idea in payload.get("ideas", []) if str(idea.get("status")).lower() in CLOSED_STATUSES]
         combined_active_ideas = self._combine_ideas_by_instrument(active_ideas)
-        if not combined_active_ideas:
+        if not combined_active_ideas and not archived_ideas:
             combined_active_ideas = self._build_contextual_wait_ideas(
                 reason="no_active_ideas_after_refresh",
                 symbols=None,
@@ -1182,6 +1182,7 @@ class TradeIdeaService:
             status=status,
             now=now,
         )
+        pipeline = self._build_unified_pipeline_context(signal=signal, symbol=symbol, timeframe=timeframe)
         llm_facts = self._build_narrative_facts(
             signal=signal,
             symbol=symbol,
@@ -1190,6 +1191,8 @@ class TradeIdeaService:
             status=status,
             rationale=rationale,
             existing=existing,
+            normalized_candles=pipeline["candles"],
+            chart_overlays=pipeline["chart_overlays"],
         )
         candles_count_sent = len(llm_facts.get("candles") or [])
         logger.info(
@@ -1224,7 +1227,7 @@ class TradeIdeaService:
             invalidation=invalidation,
             bias=bias,
         )
-        model_chart_overlays = self.normalize_chart_overlays(signal.get("chart_overlays"))
+        model_chart_overlays = pipeline["chart_overlays"]
         entry_value, stop_loss, take_profit, trigger = self._ensure_planned_levels(
             status=status,
             direction=bias,
@@ -1305,6 +1308,7 @@ class TradeIdeaService:
             trade_plan=trade_plan_payload,
             narrative_structured=narrative_structured,
         )
+        overlay_payload = self._build_overlay_payload(signal=signal, existing=existing, normalized_candles=pipeline["candles"])
         chart_snapshot = self._resolve_chart_snapshot(
             signal=signal,
             existing=existing,
@@ -1316,8 +1320,9 @@ class TradeIdeaService:
             bias=bias,
             confidence=int(signal.get("confidence_percent") or signal.get("probability_percent") or 0),
             status=status,
+            normalized_candles=pipeline["candles"],
+            resolved_chart_overlays=self._chart_overlays_from_legacy_overlay_payload(overlay_payload),
         )
-        overlay_payload = self._build_overlay_payload(signal=signal, existing=existing)
         chart_overlays = model_chart_overlays
         if not self.is_meaningful_overlay_payload(chart_overlays):
             chart_overlays = self._chart_overlays_from_legacy_overlay_payload(overlay_payload)
@@ -1460,6 +1465,7 @@ class TradeIdeaService:
             "llm_provider": "openrouter",
             "llm_model": get_openrouter_model(),
             "candles_count_sent": candles_count_sent,
+            "candles_count_used": len(pipeline["candles"]),
             "narrative_version": narrative_version,
             "narrative_update_reason": narrative_reason if should_refresh_narrative else "unchanged",
             "last_narrative_refresh_at": last_narrative_refresh_at,
@@ -1504,20 +1510,20 @@ class TradeIdeaService:
             "stop_explanation_ru": stop_explanation,
             "target_explanation_ru": target_explanation,
             "source_candle_count": signal.get("source_candle_count"),
-            "data_provider": signal.get("data_provider"),
-            "analysis_mode": signal.get("analysis_mode"),
-            "data_quality": signal.get("data_quality"),
-            "warning": signal.get("warning"),
-            "fallback_used": signal.get("fallback_used"),
+            "data_provider": pipeline["data_provider"],
+            "analysis_mode": pipeline["analysis_mode"],
+            "data_quality": pipeline["data_quality"],
+            "warning": pipeline["warning"],
+            "fallback_used": pipeline["fallback_used"],
             "pipeline_debug": signal.get("pipeline_debug") if isinstance(signal.get("pipeline_debug"), dict) else {},
             "meta": {
                 "pipeline_debug": signal.get("pipeline_debug") if isinstance(signal.get("pipeline_debug"), dict) else {},
                 "source_candle_count": signal.get("source_candle_count"),
-                "data_provider": signal.get("data_provider"),
-                "analysis_mode": signal.get("analysis_mode"),
-                "data_quality": signal.get("data_quality"),
-                "warning": signal.get("warning"),
-                "fallback_used": signal.get("fallback_used"),
+                "data_provider": pipeline["data_provider"],
+                "analysis_mode": pipeline["analysis_mode"],
+                "data_quality": pipeline["data_quality"],
+                "warning": pipeline["warning"],
+                "fallback_used": pipeline["fallback_used"],
             },
         }
         payload = self._apply_meaningful_update_metadata(
@@ -1904,6 +1910,8 @@ class TradeIdeaService:
         bias: str,
         confidence: int,
         status: str,
+        normalized_candles: list[dict[str, Any]] | None = None,
+        resolved_chart_overlays: dict[str, list[dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         existing_url = (existing or {}).get("chartImageUrl") or (existing or {}).get("chart_image")
         if not self.chart_snapshot_service.is_valid_snapshot_path(existing_url):
@@ -1913,6 +1921,9 @@ class TradeIdeaService:
         if not chart_data and isinstance(signal.get("chartData"), dict):
             chart_data = signal.get("chartData")
         normalized_chart_payload, candles = self.chart_data_service.normalize_provider_payload(chart_data)
+        if normalized_candles:
+            candles = list(normalized_candles)
+            normalized_chart_payload["status"] = normalized_chart_payload.get("status") or "ok"
         normalized_status = str(normalized_chart_payload.get("status") or "unknown").lower()
         chart_payload: dict[str, Any] = {
             "status": normalized_chart_payload.get("status") or "ok",
@@ -1983,7 +1994,7 @@ class TradeIdeaService:
 
         levels, zones, markers, patterns, arrows = self._extract_snapshot_overlays(signal=signal, chart_data=chart_data)
         take_profits = self._extract_take_profits(signal=signal, fallback_take_profit=take_profit)
-        resolved_chart_overlays = self.merge_preserving_last_good_overlays(
+        resolved_chart_overlays = resolved_chart_overlays or self.merge_preserving_last_good_overlays(
             existing.get("chart_overlays") if isinstance(existing, dict) else None,
             self.normalize_chart_overlays(signal.get("chart_overlays")),
         )
@@ -2167,7 +2178,13 @@ class TradeIdeaService:
             normalized_patterns.extend(self._normalize_pattern_overlay(item) for item in chart_overlays["patterns"])
         return normalized_levels, normalized_zones, normalized_markers, normalized_patterns, normalized_arrows
 
-    def _build_overlay_payload(self, *, signal: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, list[dict[str, Any]]]:
+    def _build_overlay_payload(
+        self,
+        *,
+        signal: dict[str, Any],
+        existing: dict[str, Any] | None = None,
+        normalized_candles: list[dict[str, Any]] | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
         chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
         if not chart_data and isinstance(signal.get("chartData"), dict):
             chart_data = signal.get("chartData")
@@ -2179,7 +2196,9 @@ class TradeIdeaService:
             "arrows": arrows,
             "patterns": patterns,
         }
-        candles = chart_data.get("candles") if isinstance(chart_data.get("candles"), list) else []
+        candles = list(normalized_candles or [])
+        if not candles:
+            candles = chart_data.get("candles") if isinstance(chart_data.get("candles"), list) else []
         if not candles:
             candles = signal.get("candles") if isinstance(signal.get("candles"), list) else []
         model_chart_overlays = self.normalize_chart_overlays(signal.get("chart_overlays"))
@@ -2218,6 +2237,48 @@ class TradeIdeaService:
             {k: len(payload.get(k) or []) for k in ("zones", "levels", "labels", "patterns", "arrows")},
         )
         return payload
+
+    def _build_unified_pipeline_context(self, *, signal: dict[str, Any], symbol: str, timeframe: str) -> dict[str, Any]:
+        automated_signal = bool(signal.get("signal_id")) or bool(
+            signal.get("pipeline_debug") if isinstance(signal.get("pipeline_debug"), dict) else {}
+        )
+        chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
+        if not chart_data and isinstance(signal.get("chartData"), dict):
+            chart_data = signal.get("chartData")
+        normalized_chart_payload, normalized_candles = self.chart_data_service.normalize_provider_payload(chart_data)
+        if not normalized_candles:
+            chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
+            _, normalized_candles = self.chart_data_service.normalize_provider_payload(chart_payload)
+            chart_data = chart_payload
+        if automated_signal:
+            signal["chart_data"] = chart_data
+            signal["chartData"] = chart_data
+            signal["candles"] = normalized_candles
+            signal["source_candle_count"] = len(normalized_candles)
+
+        provider = str(signal.get("data_provider") or chart_data.get("source") or "unknown").lower()
+        analysis_mode = str(signal.get("analysis_mode") or ("directional_fallback" if "yahoo" in provider else "professional"))
+        fallback_used = bool(signal.get("fallback_used") if signal.get("fallback_used") is not None else analysis_mode == "directional_fallback")
+        warning = str(signal.get("warning") or ("Идея построена в упрощённом режиме из fallback-данных Yahoo. Подтверждение слабее профессионального режима." if analysis_mode == "directional_fallback" else ""))
+        data_quality = str(signal.get("data_quality") or ("medium" if analysis_mode == "directional_fallback" else "high")).lower()
+        signal["data_provider"] = provider
+        signal["analysis_mode"] = analysis_mode
+        signal["fallback_used"] = fallback_used
+        signal["warning"] = warning
+        signal["data_quality"] = data_quality
+        model_chart_overlays = self.normalize_chart_overlays(signal.get("chart_overlays"))
+        if not self.is_meaningful_overlay_payload(model_chart_overlays):
+            model_chart_overlays = self._extract_conservative_chart_overlays(normalized_candles) if normalized_candles else model_chart_overlays
+        return {
+            "candles": normalized_candles,
+            "chart_payload_status": str(normalized_chart_payload.get("status") or "ok"),
+            "chart_overlays": model_chart_overlays,
+            "data_provider": provider,
+            "analysis_mode": analysis_mode,
+            "data_quality": data_quality,
+            "warning": warning,
+            "fallback_used": fallback_used,
+        }
 
     @classmethod
     def normalize_chart_overlays(cls, payload: Any) -> dict[str, list[dict[str, Any]]]:
@@ -3573,9 +3634,11 @@ class TradeIdeaService:
         status: str,
         rationale: str,
         existing: dict[str, Any] | None,
+        normalized_candles: list[dict[str, Any]] | None = None,
+        chart_overlays: dict[str, list[dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         chart_payload = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else signal.get("chartData") if isinstance(signal.get("chartData"), dict) else {}
-        raw_candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
+        raw_candles = normalized_candles if isinstance(normalized_candles, list) and normalized_candles else (chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else [])
         model_candles: list[dict[str, Any]] = []
         for index, candle in enumerate(raw_candles[-MODEL_CANDLES_MAX:]):
             if not isinstance(candle, dict):
@@ -3681,6 +3744,9 @@ class TradeIdeaService:
             "existing_idea_id": existing.get("idea_id") if existing else None,
             "candles": model_candles[-MODEL_CANDLES_MAX:],
             "candles_count_sent": len(model_candles[-MODEL_CANDLES_MAX:]),
+            "overlays": chart_overlays if isinstance(chart_overlays, dict) else {},
+            "analysis_mode": signal.get("analysis_mode"),
+            "data_provider": signal.get("data_provider"),
         }
 
     @staticmethod
@@ -4800,6 +4866,7 @@ class TradeIdeaService:
                         "llm_provider": str(row.get("llm_provider") or "openrouter"),
                         "llm_model": str(row.get("llm_model") or get_openrouter_model()),
                         "candles_count_sent": int(self._extract_numeric(row.get("candles_count_sent")) or 0),
+                        "candles_count_used": int(self._extract_numeric(row.get("candles_count_used") or row.get("source_candle_count")) or 0),
                         "narrative_source_legacy": row.get("narrative_source") or ("fallback" if row.get("is_fallback") else "llm"),
                         "has_meaningful_update": bool(row.get("has_meaningful_update", False)),
                         "meaningful_updated_at": row.get("meaningful_updated_at"),
