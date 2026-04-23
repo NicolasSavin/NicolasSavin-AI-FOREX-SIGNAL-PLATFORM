@@ -103,7 +103,7 @@ function getPercentValue(value) {
 }
 
 function getDataStatusLabel(signal) {
-  return signal.data_status === 'real' ? 'Реальные данные' : 'Fallback / mock';
+  return signal.data_status === 'real' ? 'Реальные данные' : 'Резервные данные';
 }
 
 function buildProgressBar(value, modifier = '') {
@@ -121,10 +121,10 @@ function buildProbabilityBlock(signal) {
     <section class="metric-card metric-card--probability">
       <div class="metric-card__header">
         <strong>Вероятность сигнала ${probability}%</strong>
-        <span>${signal.market_context?.is_mock ? 'proxy' : 'model'}</span>
+        <span>${signal.market_context?.is_mock ? 'прокси-метрика' : 'модель'}</span>
       </div>
       ${buildProgressBar(probability, 'progress-bar--probability')}
-      <p class="progress-caption">Анимированная шкала показывает текущую оценку confidence модели.</p>
+      <p class="progress-caption">Анимированная шкала показывает текущую оценку уверенности модели.</p>
     </section>
   `;
 }
@@ -143,17 +143,17 @@ function buildProgressBlock(signal) {
       </div>
       <div class="dual-progress">
         <div>
-          <div class="metric-card__row"><span>До Take Profit</span><strong>${getPercentValue(progressTp)}</strong></div>
+          <div class="metric-card__row"><span>До тейк-профита</span><strong>${getPercentValue(progressTp)}</strong></div>
           ${buildProgressBar(progressTp, 'progress-bar--tp')}
         </div>
         <div>
-          <div class="metric-card__row"><span>Риск до Stop Loss</span><strong>${getPercentValue(progressSl)}</strong></div>
+          <div class="metric-card__row"><span>Риск до стоп-лосса</span><strong>${getPercentValue(progressSl)}</strong></div>
           ${buildProgressBar(progressSl, 'progress-bar--sl')}
         </div>
       </div>
       <div class="progress-legend">
         <span>Текущая цена: <strong class="live-price-value" data-symbol="${escapeHtml(signal.symbol)}">${priceLabel}</strong></span>
-        <span>${escapeHtml(signal.progress?.zone || 'waiting')}</span>
+        <span>${escapeHtml(signal.progress?.zone || 'ожидание')}</span>
       </div>
     </section>
   `;
@@ -201,8 +201,8 @@ async function refreshLivePrices() {
     }
     warningPanel.hidden = false;
     warningPanel.innerHTML = `
-      <h3>⚠️ Предупреждение по market data</h3>
-      <p>Live-данные частично недоступны. Synthetic fallback отключён.</p>
+      <h3>⚠️ Предупреждение по рыночным данным</h3>
+      <p>Потоковые данные частично недоступны. Резервная симуляция отключена.</p>
       <p>${escapeHtml(unavailable.map((row) => `${row.symbol}: ${row.data_status}`).join(' • '))}</p>
     `;
   } catch {
@@ -210,8 +210,8 @@ async function refreshLivePrices() {
     if (!warningPanel) return;
     warningPanel.hidden = false;
     warningPanel.innerHTML = `
-      <h3>⚠️ Предупреждение по market data</h3>
-      <p>Не удалось обновить live-цены через /api/market.</p>
+      <h3>⚠️ Предупреждение по рыночным данным</h3>
+      <p>Не удалось обновить потоковые цены через /api/market.</p>
     `;
   }
 }
@@ -219,7 +219,7 @@ async function refreshLivePrices() {
 function buildChartSvg(signal) {
   const chartData = Array.isArray(signal.chartData) && signal.chartData.length ? signal.chartData : [];
   if (!chartData.length) {
-    return '<div class="signal-chart__empty">График недоступен, используется безопасный fallback без рыночной симуляции.</div>';
+    return '<div class="signal-chart__empty">График недоступен, используется безопасный резервный режим без рыночной симуляции.</div>';
   }
 
   const projected = Array.isArray(signal.projectedCandles) ? signal.projectedCandles : [];
@@ -343,7 +343,7 @@ function buildSignalCard(signal) {
         <div class="signal-card__subtitle">${escapeHtml(signal.timeframe)} • Дата/время выхода: ${formatUpdatedAt(signal.signal_datetime || signal.signal_time_utc)}</div>
       </div>
       <div class="signal-card__badges">
-        <span class="signal-chip signal-chip--${signal.action}">${escapeHtml(signal.action)}</span>
+        <span class="signal-chip signal-chip--${signal.action}">${escapeHtml(signal.action === 'BUY' ? 'ПОКУПКА' : signal.action === 'SELL' ? 'ПРОДАЖА' : signal.action === 'WAIT' || signal.action === 'NO_TRADE' ? 'ОЖИДАНИЕ' : signal.action)}</span>
         <span class="status-pill status-pill--${signal.state}">${escapeHtml(getLifecycleLabel(signal.state))}</span>
       </div>
     </div>
@@ -357,8 +357,8 @@ function buildSignalCard(signal) {
 
     <div class="signal-card__levels">
       <div class="level-box"><label>Точка входа</label><strong>${getSignalValue(signal.entry)}</strong></div>
-      <div class="level-box"><label>Stop Loss</label><strong>${getSignalValue(signal.stop_loss)}</strong></div>
-      <div class="level-box"><label>Take Profit</label><strong>${getSignalValue(signal.take_profit)}</strong></div>
+      <div class="level-box"><label>Стоп-лосс</label><strong>${getSignalValue(signal.stop_loss)}</strong></div>
+      <div class="level-box"><label>Тейк-профит</label><strong>${getSignalValue(signal.take_profit)}</strong></div>
       <div class="level-box"><label>Время сигнала</label><strong>${escapeHtml(signal.signal_time_label || '—')}</strong></div>
     </div>
 
@@ -368,7 +368,7 @@ function buildSignalCard(signal) {
     <section class="signal-chart">
       <div class="metric-card__header">
         <strong>График сигнала</strong>
-        <span>Order block • уровни • liquidity areas • projected candles</span>
+        <span>Ордер-блок • уровни • зоны ликвидности • прогнозные свечи</span>
       </div>
       ${buildChartSvg(signal)}
     </section>
