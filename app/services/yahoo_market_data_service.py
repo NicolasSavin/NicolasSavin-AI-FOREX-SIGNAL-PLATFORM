@@ -10,8 +10,8 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 _YAHOO_TIMEFRAME_CONFIG: dict[str, dict[str, str]] = {
-    "M15": {"interval": "15m", "period": "7d"},
-    "H1": {"interval": "60m", "period": "60d"},
+    "M15": {"interval": "15m", "period": "5d"},
+    "H1": {"interval": "60m", "period": "10d"},
     "H4": {"interval": "60m", "period": "60d"},
 }
 
@@ -57,14 +57,11 @@ class YahooMarketDataService:
             }
 
         try:
-            raw = yf.download(
-                tickers=source_symbol,
-                interval=mapped_tf["interval"],
-                period=mapped_tf["period"],
-                auto_adjust=False,
-                progress=False,
-                threads=False,
-            )
+            ticker = yf.Ticker(source_symbol)
+            raw = ticker.history(period=mapped_tf["period"], interval=mapped_tf["interval"])
+            if isinstance(raw, pd.DataFrame) and raw.empty:
+                raw = ticker.history(period="1mo", interval="60m")
+            print("Yahoo rows:", len(raw) if isinstance(raw, pd.DataFrame) else 0)
         except Exception as exc:
             logger.warning("yahoo_fetch_failed symbol=%s tf=%s error=%s", normalized_symbol, normalized_tf, exc)
             return {
