@@ -803,6 +803,10 @@ function snapshotStatusRu(status) {
   return "Chart unavailable (data temporarily missing)";
 }
 
+function hasCandles(payload) {
+  return Boolean(payload?.candles && Array.isArray(payload.candles) && payload.candles.length > 0);
+}
+
 function setChartMode(mode) {
   chartDisplayMode = mode;
   if (mode === "snapshot") {
@@ -829,7 +833,7 @@ function showSnapshotChart(imageUrl) {
 }
 
 function showLiveChart(payload) {
-  if (!payload?.candles?.length) return false;
+  if (!hasCandles(payload)) return false;
   setChartMode("live");
   ensureChart();
   currentChartPayload = payload;
@@ -1312,7 +1316,7 @@ async function openIdea(idea) {
   const payload = await resolveChartData(idea);
   if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
 
-  if (showLiveChart(payload)) {
+  if (showLiveChart(payload) || showLiveChart(idea.chartData)) {
     if (idea.status === "archived") {
       const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
       updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);

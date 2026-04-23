@@ -207,6 +207,43 @@ class ChartSnapshotService:
             return True
         return False
 
+    def resolve_snapshot_with_fallback(
+        self,
+        *,
+        existing_chart: str | None,
+        new_chart: str | None,
+        has_candles: bool,
+    ) -> dict[str, Any]:
+        existing_valid = existing_chart if self.is_valid_snapshot_path(existing_chart) else None
+        new_valid = new_chart if self.is_valid_snapshot_path(new_chart) else None
+        if new_valid:
+            return {
+                "chartImageUrl": new_valid,
+                "status": "ok",
+                "chart_status": "snapshot",
+                "fallback_to_candles": False,
+            }
+        if existing_valid:
+            return {
+                "chartImageUrl": existing_valid,
+                "status": "snapshot_failed",
+                "chart_status": "snapshot",
+                "fallback_to_candles": False,
+            }
+        if has_candles:
+            return {
+                "chartImageUrl": None,
+                "status": "snapshot_failed",
+                "chart_status": "fallback_candles",
+                "fallback_to_candles": True,
+            }
+        return {
+            "chartImageUrl": None,
+            "status": "no_data",
+            "chart_status": "no_data",
+            "fallback_to_candles": False,
+        }
+
     def _draw_zones(self, *, ax: Any, zones: list[dict[str, Any]], candles_count: int, max_price: float) -> None:
         styles = {
             "demand": {"face": "#22c55e", "label": "Demand"},
