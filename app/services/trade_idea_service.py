@@ -4645,6 +4645,31 @@ class TradeIdeaService:
             entry_value = self._extract_numeric_level(row, "entry", "entry_zone")
             stop_loss_value = self._extract_numeric_level(row, "stopLoss", "stop_loss")
             take_profit_value = self._extract_numeric_level(row, "takeProfit", "take_profit")
+            data_provider = str(
+                row.get("data_provider")
+                or market_context.get("data_provider")
+                or ("Yahoo fallback" if str(row.get("data_quality") or market_context.get("data_quality") or "").lower() == "fallback" else "TwelveData")
+            )
+            analysis_mode = str(
+                row.get("analysis_mode")
+                or market_context.get("analysis_mode")
+                or ("directional_fallback" if "yahoo" in data_provider.lower() else "professional")
+            )
+            warning = str(
+                row.get("warning")
+                or market_context.get("warning")
+                or (
+                    "Идея построена в упрощённом режиме из fallback-данных Yahoo. "
+                    "Подтверждение слабее профессионального режима."
+                    if analysis_mode == "directional_fallback"
+                    else ""
+                )
+            )
+            normalized_data_quality = str(
+                row.get("data_quality")
+                or market_context.get("data_quality")
+                or ("fallback" if analysis_mode == "directional_fallback" else "high")
+            )
 
             normalized.append(
                 self._decorate_api_idea(
@@ -4742,12 +4767,20 @@ class TradeIdeaService:
                         "levels_validated": row.get("levels_validated"),
                         "levels_source": row.get("levels_source"),
                         "validation_errors": row.get("validation_errors") or [],
+                        "data_provider": data_provider,
+                        "analysis_mode": analysis_mode,
+                        "data_quality": normalized_data_quality,
+                        "warning": warning,
                         "meta": row.get("meta")
                         or {
                             "latest_close": row.get("latest_close"),
                             "entry_deviation_pct": row.get("entry_deviation_pct"),
                             "levels_validated": row.get("levels_validated"),
                             "levels_source": row.get("levels_source"),
+                            "data_provider": data_provider,
+                            "analysis_mode": analysis_mode,
+                            "data_quality": normalized_data_quality,
+                            "warning": warning,
                         },
                     },
                     source=source,
@@ -4906,6 +4939,7 @@ class TradeIdeaService:
         )
 
     def _build_model_candles(self, candles: list[dict[str, Any]]) -> list[dict[str, float | int | str | None]]:
+        model_candles: list[dict[str, float | int | str | None]] = []
         for index, candle in enumerate(candles[-MODEL_CANDLES_MAX:]):
             if not isinstance(candle, dict):
                 continue

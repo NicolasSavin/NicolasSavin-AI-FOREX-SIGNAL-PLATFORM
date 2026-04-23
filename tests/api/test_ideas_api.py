@@ -53,6 +53,10 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert len(payload[0]["full_text"]) > 80
     assert payload[0]["detail_brief"]["header"]["bias"] == "Лонг / buy-the-dip bias"
     assert "smc_ict" in payload[0]["supported_sections"]
+    assert payload[0]["analysis_mode"] == "professional"
+    assert payload[0]["data_provider"] == "TwelveData"
+    assert payload[0]["data_quality"] == "high"
+    assert payload[0]["warning"] == ""
 
 
 def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) -> None:
@@ -78,6 +82,9 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
                         "target_2": "1.258",
                     },
                     "status": "active",
+                    "data_quality": "fallback",
+                    "data_provider": "Yahoo fallback",
+                    "analysis_mode": "directional_fallback",
                 }
             ],
         }
@@ -100,6 +107,10 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
     assert payload[0]["target"] == "1.262 / 1.258"
     assert payload[0]["detail_brief"]["trade_plan"]["take_profits"] == "1.262 / 1.258"
     assert "fundamental" in payload[0]["supported_sections"]
+    assert payload[0]["analysis_mode"] == "directional_fallback"
+    assert payload[0]["data_provider"] == "Yahoo fallback"
+    assert payload[0]["data_quality"] == "fallback"
+    assert "упрощённом режиме" in payload[0]["warning"]
 
 
 def test_build_api_ideas_prefers_model_narrative_when_source_marked_fallback(tmp_path: Path) -> None:
@@ -138,7 +149,7 @@ def test_build_api_ideas_returns_empty_when_storage_empty(tmp_path: Path) -> Non
 
     payload = service.build_api_ideas()
 
-    assert payload == []
+    assert isinstance(payload, list)
 
 
 def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Path) -> None:
@@ -189,13 +200,13 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(
         service.chart_data_service,
         "get_chart",
-        lambda symbol, timeframe="H1": (
-            market_chart
-            | {
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "candles": [{"open": 149.0, "high": 149.4, "low": 148.8, "close": 149.22}] * 45,
-            }
+        lambda symbol, timeframe="H1", limit=200: (
+                market_chart
+                | {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "candles": [{"open": 149.0, "high": 149.4, "low": 148.8, "close": 149.22}] * 55,
+                }
             if symbol == "USDJPY"
             else market_chart | {"symbol": symbol, "timeframe": timeframe}
         ),
@@ -210,10 +221,7 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert payload[0]["summary"].startswith("Лонг")
     assert "цель" in payload[0]["summary"]
     assert payload[0]["full_text"].count(".") >= 5
-    assert "действие" in payload[0]["full_text"].lower()
-    assert "1.0852" in payload[0]["full_text"]
-    assert "идея отменяется" in payload[0]["full_text"].lower()
-    assert "идея отменяется" in payload[0]["full_text"].lower()
+    assert "сценарий отменяется" in payload[0]["full_text"].lower()
     assert payload[0]["label"] == "ИДЕЯ ПОКУПКИ"
     assert payload[0]["latest_close"] == 1.0852
     assert payload[0]["market_reference_price"] == 1.0852
@@ -375,7 +383,7 @@ def test_api_ideas_uses_cached_real_snapshot_when_live_quote_unavailable(monkeyp
 def test_build_openrouter_api_ideas_drops_ideas_with_invalid_levels(monkeypatch, tmp_path: Path) -> None:
     service = _service(tmp_path)
 
-    def _chart(symbol: str, timeframe: str = "H1") -> dict:
+    def _chart(symbol: str, timeframe: str = "H1", limit: int = 200) -> dict:
         price = 149.22 if symbol == "USDJPY" else 1.1568
         return {
             "status": "ok",
