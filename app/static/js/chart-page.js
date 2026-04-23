@@ -365,6 +365,13 @@ function normalizeIdea(idea) {
 
   const normalizedChartImageUrl = normalizeChartImageUrl(idea?.chartImageUrl || idea?.chart_image || "");
   const normalizedChartData = idea?.chartData ?? idea?.chart_data ?? null;
+  const normalizedSnapshotStatus = normalizeSnapshotStatus(
+    idea?.chartSnapshotStatus || idea?.chart_snapshot_status || "",
+    {
+      hasImage: Boolean(normalizedChartImageUrl),
+      hasCandles: hasCandles(normalizedChartData),
+    },
+  );
   return {
     ...idea,
     id: idea?.id || idea?.idea_id || `${symbol}-${timeframe}-${direction}`,
@@ -400,8 +407,8 @@ function normalizeIdea(idea) {
     chartData: normalizedChartData,
     chartImageUrl: normalizedChartImageUrl,
     chart_image: normalizedChartImageUrl,
-    chartSnapshotStatus: idea?.chartSnapshotStatus || idea?.chart_snapshot_status || "",
-    chart_snapshot_status: idea?.chart_snapshot_status || idea?.chartSnapshotStatus || "",
+    chartSnapshotStatus: normalizedSnapshotStatus,
+    chart_snapshot_status: normalizedSnapshotStatus,
     chart_overlays: idea?.chart_overlays
       ?? idea?.chartOverlays
       ?? idea?.chart_data?.chart_overlays
@@ -1170,6 +1177,21 @@ function normalizeChartImageUrl(url) {
   return `/static/${raw.replace(/^\/+/, "")}`;
 }
 
+function hasValidSnapshotImage(idea) {
+  return Boolean(normalizeChartImageUrl(idea?.chartImageUrl || idea?.chart_image || ""));
+}
+
+function normalizeSnapshotStatus(rawStatus, { hasImage = false, hasCandles = false } = {}) {
+  const normalized = normalizeWhitespace(rawStatus).toLowerCase();
+  if (hasImage && normalized === "ok") return "ok";
+  if (normalized === "ok" && !hasImage) {
+    return hasCandles ? "snapshot_failed" : "no_data";
+  }
+  if (normalized) return normalized;
+  if (hasImage) return "ok";
+  return hasCandles ? "snapshot_failed" : "no_data";
+}
+
 function snapshotStatusRu(status) {
   const key = String(status || "").toLowerCase();
   const reason = {
@@ -1241,7 +1263,7 @@ function showSnapshotChart(imageUrl) {
 }
 
 function hasRenderableSnapshot(idea) {
-  return Boolean(normalizeChartImageUrl(idea?.chartImageUrl || idea?.chart_image || ""));
+  return hasValidSnapshotImage(idea);
 }
 
 function hasRenderableCandles(idea) {
@@ -1733,17 +1755,36 @@ async function resolveChartData(idea) {
 }
 
 function cacheIdeaChart(ideaId, chartRef) {
-  if (!ideaId || !chartRef) return;
-  lastValidChartByIdeaId.set(String(ideaId), chartRef);
+  if (!chartRef) return;
+  const cacheKeys = new Set();
+  if (ideaId) cacheKeys.add(String(ideaId));
+  if (activeIdea) cacheKeys.add(getIdeaChartCacheKey(activeIdea));
+  for (const cacheKey of cacheKeys) {
+    if (!cacheKey) continue;
+    lastValidChartByIdeaId.set(cacheKey, chartRef);
+  }
 }
 
-function readCachedIdeaChart(ideaId) {
-  if (!ideaId) return null;
-  return lastValidChartByIdeaId.get(String(ideaId)) || null;
+function getIdeaChartCacheKey(idea) {
+  if (!idea || typeof idea !== "object") return "";
+  const symbol = normalizeWhitespace(idea.symbol || idea.pair || idea.instrument).toUpperCase();
+  const timeframe = normalizeWhitespace(idea.timeframe || idea.tf || "H1").toUpperCase();
+  if (!symbol) return "";
+  return `${symbol}:${timeframe}`;
+}
+
+function readCachedIdeaChart(idea) {
+  const idKey = normalizeWhitespace(idea?.id);
+  const symbolKey = getIdeaChartCacheKey(idea);
+  return (
+    (idKey ? lastValidChartByIdeaId.get(idKey) : null)
+    || (symbolKey ? lastValidChartByIdeaId.get(symbolKey) : null)
+    || null
+  );
 }
 
 function showCachedChartIfAny(idea) {
-  const cached = readCachedIdeaChart(idea?.id);
+  const cached = readCachedIdeaChart(idea);
   if (!cached) return false;
   if (cached.type === "snapshot") return showSnapshotChart(cached.value);
   if (cached.type === "live") return showLiveChart(cached.value);
@@ -1781,7 +1822,13 @@ async function openIdea(idea) {
   renderCleanDetailStatus(idea);
   const rawSnapshotUrl = idea.chartImageUrl || idea.chart_image || "";
   const snapshotUrl = normalizeChartImageUrl(rawSnapshotUrl);
-  const snapshotStatus = idea.chartSnapshotStatus || idea.chart_snapshot_status || "";
+  const snapshotStatus = normalizeSnapshotStatus(
+    idea.chartSnapshotStatus || idea.chart_snapshot_status || "",
+    {
+      hasImage: Boolean(snapshotUrl),
+      hasCandles: hasRenderableCandles(idea),
+    },
+  );
   const liveFallbackMessage = snapshotStatusRu(snapshotStatus);
 
   resetChartState({ keepSnapshot: true });

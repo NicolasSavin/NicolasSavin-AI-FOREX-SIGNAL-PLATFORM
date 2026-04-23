@@ -290,6 +290,23 @@ class ChartSnapshotService:
             "fallback_to_candles": False,
         }
 
+    def normalize_snapshot_state(
+        self,
+        *,
+        chart_image_url: str | None,
+        status: str | None,
+        has_candles: bool,
+    ) -> str:
+        normalized_status = str(status or "").strip().lower()
+        has_image = bool(str(chart_image_url or "").strip())
+        if normalized_status == "ok" and not has_image:
+            return "snapshot_failed" if has_candles else "no_data"
+        if normalized_status:
+            return normalized_status
+        if has_image:
+            return "ok"
+        return "snapshot_failed" if has_candles else "no_data"
+
     def preserve_last_good_chart(self, *, existing_chart: str | None, incoming_chart: str | None) -> str | None:
         incoming_normalized = str(incoming_chart or "").strip()
         existing_normalized = str(existing_chart or "").strip()

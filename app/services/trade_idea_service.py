@@ -538,14 +538,21 @@ class TradeIdeaService:
                     status=str(current.get("status") or IDEA_STATUS_WAITING),
                 )
                 chart_url = chart_snapshot.get("chartImageUrl")
-                if chart_url:
-                    current["chart_image"] = chart_url
-                    current["chartImageUrl"] = chart_url
-                    current["chart_snapshot_status"] = chart_snapshot.get("status") or "ok"
-                    current["chartSnapshotStatus"] = chart_snapshot.get("status") or "ok"
-                    current["chart_status"] = chart_snapshot.get("chart_status") or "snapshot"
-                    current["chartStatus"] = chart_snapshot.get("chart_status") or "snapshot"
-                    current["fallback_to_candles"] = bool(chart_snapshot.get("fallback_to_candles"))
+                normalized_chart_state = self._normalize_chart_state(
+                    chart_image_url=chart_url,
+                    chart_snapshot_status=chart_snapshot.get("status"),
+                    chart_status=chart_snapshot.get("chart_status"),
+                    fallback_to_candles=chart_snapshot.get("fallback_to_candles"),
+                    has_candles=bool(chart_snapshot.get("candles")),
+                )
+                if normalized_chart_state["chart_image_url"]:
+                    current["chart_image"] = normalized_chart_state["chart_image_url"]
+                    current["chartImageUrl"] = normalized_chart_state["chart_image_url"]
+                    current["chart_snapshot_status"] = normalized_chart_state["chart_snapshot_status"]
+                    current["chartSnapshotStatus"] = normalized_chart_state["chart_snapshot_status"]
+                    current["chart_status"] = normalized_chart_state["chart_status"]
+                    current["chartStatus"] = normalized_chart_state["chart_status"]
+                    current["fallback_to_candles"] = normalized_chart_state["fallback_to_candles"]
                     current["last_chart_refresh_at"] = now_iso
                     previous_chart_url = str(idea.get("chartImageUrl") or idea.get("chart_image") or "")
                     if chart_url != previous_chart_url:
@@ -558,13 +565,11 @@ class TradeIdeaService:
                         current["update_reason"] = "Обновлён снимок графика и разметка сценария."
                     changed = True
                 else:
-                    current["chart_snapshot_status"] = chart_snapshot.get("status") or "snapshot_failed"
-                    current["chartSnapshotStatus"] = chart_snapshot.get("status") or "snapshot_failed"
-                    current["chart_status"] = chart_snapshot.get("chart_status") or (
-                        "fallback_candles" if chart_snapshot.get("fallback_to_candles") else "no_data"
-                    )
+                    current["chart_snapshot_status"] = normalized_chart_state["chart_snapshot_status"]
+                    current["chartSnapshotStatus"] = normalized_chart_state["chart_snapshot_status"]
+                    current["chart_status"] = normalized_chart_state["chart_status"]
                     current["chartStatus"] = current["chart_status"]
-                    current["fallback_to_candles"] = bool(chart_snapshot.get("fallback_to_candles"))
+                    current["fallback_to_candles"] = normalized_chart_state["fallback_to_candles"]
                     current["last_candle_fingerprint"] = candle_hash
                     changed = True
             current["internal_refresh_at"] = now_iso
@@ -827,9 +832,11 @@ class TradeIdeaService:
                         "source": "contextual_wait",
                         "is_fallback": False,
                         "data_status": data_status,
-                        "fallback_to_candles": False,
-                        "chart_snapshot_status": "ok",
-                        "chartSnapshotStatus": "ok",
+                        "fallback_to_candles": True,
+                        "chart_snapshot_status": "snapshot_failed",
+                        "chartSnapshotStatus": "snapshot_failed",
+                        "chart_status": "fallback_candles",
+                        "chartStatus": "fallback_candles",
                         "meta": {
                             "fallback_reason": reason,
                             "provider": chart_payload.get("source"),
@@ -1355,6 +1362,13 @@ class TradeIdeaService:
             existing_chart_url = existing.get("chartImageUrl") or existing.get("chart_image")
             if self.chart_snapshot_service.is_valid_snapshot_path(existing_chart_url):
                 resolved_chart_url = existing_chart_url
+        normalized_chart_state = self._normalize_chart_state(
+            chart_image_url=resolved_chart_url,
+            chart_snapshot_status=chart_snapshot.get("status"),
+            chart_status=chart_snapshot.get("chart_status"),
+            fallback_to_candles=chart_snapshot.get("fallback_to_candles"),
+            has_candles=bool(chart_snapshot.get("candles")),
+        )
 
         payload = {
             "idea_id": idea_id,
@@ -1431,13 +1445,13 @@ class TradeIdeaService:
             "trade_plan": trade_plan_payload,
             "detail_brief": detail_brief,
             "supported_sections": detail_brief.get("supported_sections", []),
-            "chart_image": resolved_chart_url,
-            "chartImageUrl": resolved_chart_url,
-            "chart_snapshot_status": chart_snapshot["status"],
-            "chartSnapshotStatus": chart_snapshot["status"],
-            "chart_status": chart_snapshot.get("chart_status") or ("snapshot" if resolved_chart_url else "no_data"),
-            "chartStatus": chart_snapshot.get("chart_status") or ("snapshot" if resolved_chart_url else "no_data"),
-            "fallback_to_candles": bool(chart_snapshot.get("fallback_to_candles")),
+            "chart_image": normalized_chart_state["chart_image_url"],
+            "chartImageUrl": normalized_chart_state["chart_image_url"],
+            "chart_snapshot_status": normalized_chart_state["chart_snapshot_status"],
+            "chartSnapshotStatus": normalized_chart_state["chart_snapshot_status"],
+            "chart_status": normalized_chart_state["chart_status"],
+            "chartStatus": normalized_chart_state["chart_status"],
+            "fallback_to_candles": normalized_chart_state["fallback_to_candles"],
             "last_price_update_at": now.isoformat(),
             "last_chart_refresh_at": now.isoformat() if resolved_chart_url else existing.get("last_chart_refresh_at") if existing else None,
             "chart_version": (int(existing.get("chart_version") or 0) + 1 if resolved_chart_url else int(existing.get("chart_version") or 0)) if existing else (1 if resolved_chart_url else 0),
@@ -1504,6 +1518,42 @@ class TradeIdeaService:
                 payload["take_profit"] = round(tp, 6)
                 payload["takeProfit"] = cls._format_price(payload["take_profit"])
         return payload
+
+    @classmethod
+    def _normalize_chart_state(
+        cls,
+        *,
+        chart_image_url: Any,
+        chart_snapshot_status: Any,
+        chart_status: Any,
+        fallback_to_candles: Any,
+        has_candles: bool = False,
+    ) -> dict[str, Any]:
+        normalized_chart_url = cls._clean_text(chart_image_url)
+        has_chart = bool(normalized_chart_url)
+        normalized_status = str(chart_snapshot_status or "").strip().lower()
+        fallback_flag = bool(fallback_to_candles)
+
+        if not normalized_status:
+            normalized_status = "ok" if has_chart else ("snapshot_failed" if has_candles or fallback_flag else "no_data")
+        if normalized_status == "ok" and not has_chart:
+            normalized_status = "snapshot_failed" if has_candles or fallback_flag else "no_data"
+
+        normalized_chart_status = str(chart_status or "").strip().lower()
+        if not normalized_chart_status:
+            if has_chart:
+                normalized_chart_status = "snapshot"
+            elif fallback_flag or has_candles:
+                normalized_chart_status = "fallback_candles"
+            else:
+                normalized_chart_status = "no_data"
+
+        return {
+            "chart_image_url": normalized_chart_url,
+            "chart_snapshot_status": normalized_status,
+            "chart_status": normalized_chart_status,
+            "fallback_to_candles": fallback_flag,
+        }
 
     @staticmethod
     def _meaningful_reason_from_status(status: str) -> str:
@@ -1934,7 +1984,11 @@ class TradeIdeaService:
             )
             return {
                 "chartImageUrl": resolved_snapshot.get("chartImageUrl"),
-                "status": resolved_snapshot.get("status") or "snapshot_failed",
+                "status": self.chart_snapshot_service.normalize_snapshot_state(
+                    chart_image_url=resolved_snapshot.get("chartImageUrl"),
+                    status=resolved_snapshot.get("status") or "snapshot_failed",
+                    has_candles=bool(candles),
+                ),
                 "candles": candles,
                 "chart_status": resolved_snapshot.get("chart_status"),
                 "fallback_to_candles": bool(resolved_snapshot.get("fallback_to_candles")),
@@ -1948,7 +2002,11 @@ class TradeIdeaService:
         )
         return {
             "chartImageUrl": resolved_snapshot.get("chartImageUrl"),
-            "status": resolved_snapshot.get("status") or "ok",
+            "status": self.chart_snapshot_service.normalize_snapshot_state(
+                chart_image_url=resolved_snapshot.get("chartImageUrl"),
+                status=resolved_snapshot.get("status") or "ok",
+                has_candles=bool(candles),
+            ),
             "candles": candles,
             "chart_status": resolved_snapshot.get("chart_status") or "snapshot",
             "fallback_to_candles": bool(resolved_snapshot.get("fallback_to_candles")),
@@ -2570,14 +2628,21 @@ class TradeIdeaService:
             if previous_retry_at != now_iso:
                 changed = True
 
-            if snapshot.get("chartImageUrl") and snapshot.get("status") == "ok":
-                current["chart_image"] = snapshot["chartImageUrl"]
-                current["chartImageUrl"] = snapshot["chartImageUrl"]
-                current["chart_snapshot_status"] = "ok"
-                current["chartSnapshotStatus"] = "ok"
-                current["chart_status"] = snapshot.get("chart_status") or "snapshot"
-                current["chartStatus"] = snapshot.get("chart_status") or "snapshot"
-                current["fallback_to_candles"] = bool(snapshot.get("fallback_to_candles"))
+            normalized_chart_state = self._normalize_chart_state(
+                chart_image_url=snapshot.get("chartImageUrl"),
+                chart_snapshot_status=snapshot.get("status"),
+                chart_status=snapshot.get("chart_status"),
+                fallback_to_candles=snapshot.get("fallback_to_candles"),
+                has_candles=bool(snapshot.get("candles")),
+            )
+            if normalized_chart_state["chart_image_url"] and normalized_chart_state["chart_snapshot_status"] == "ok":
+                current["chart_image"] = normalized_chart_state["chart_image_url"]
+                current["chartImageUrl"] = normalized_chart_state["chart_image_url"]
+                current["chart_snapshot_status"] = normalized_chart_state["chart_snapshot_status"]
+                current["chartSnapshotStatus"] = normalized_chart_state["chart_snapshot_status"]
+                current["chart_status"] = normalized_chart_state["chart_status"]
+                current["chartStatus"] = normalized_chart_state["chart_status"]
+                current["fallback_to_candles"] = normalized_chart_state["fallback_to_candles"]
                 current["last_chart_refresh_at"] = now_iso
                 current["chart_version"] = int(current.get("chart_version") or 0) + 1
                 current["updated_at"] = now_iso
@@ -2590,14 +2655,11 @@ class TradeIdeaService:
                     current.get("chartImageUrl"),
                 )
             else:
-                retry_status = str(snapshot.get("status") or "snapshot_failed").lower()
-                current["chart_snapshot_status"] = retry_status
-                current["chartSnapshotStatus"] = retry_status
-                current["chart_status"] = snapshot.get("chart_status") or (
-                    "fallback_candles" if snapshot.get("fallback_to_candles") else "no_data"
-                )
+                current["chart_snapshot_status"] = normalized_chart_state["chart_snapshot_status"]
+                current["chartSnapshotStatus"] = normalized_chart_state["chart_snapshot_status"]
+                current["chart_status"] = normalized_chart_state["chart_status"]
                 current["chartStatus"] = current["chart_status"]
-                current["fallback_to_candles"] = bool(snapshot.get("fallback_to_candles"))
+                current["fallback_to_candles"] = normalized_chart_state["fallback_to_candles"]
                 changed = True
                 logger.info(
                     "idea_snapshot_retry_finished_without_image idea_id=%s symbol=%s timeframe=%s status=%s final_chart_url=%s",
@@ -4466,8 +4528,16 @@ class TradeIdeaService:
             chart_overlays = self.normalize_chart_overlays(row.get("chart_overlays"))
             if not self.is_meaningful_overlay_payload(chart_overlays):
                 chart_overlays = self._chart_overlays_from_legacy_overlay_payload(overlay_payload)
-            chart_image_url = row.get("chartImageUrl") or row.get("chart_image")
-            chart_snapshot_status = row.get("chartSnapshotStatus") or row.get("chart_snapshot_status") or "ok"
+            normalized_chart_state = self._normalize_chart_state(
+                chart_image_url=row.get("chartImageUrl") or row.get("chart_image"),
+                chart_snapshot_status=row.get("chartSnapshotStatus") or row.get("chart_snapshot_status"),
+                chart_status=row.get("chart_status") or row.get("chartStatus"),
+                fallback_to_candles=row.get("fallback_to_candles"),
+                has_candles=False,
+            )
+            chart_image_url = normalized_chart_state["chart_image_url"]
+            chart_snapshot_status = normalized_chart_state["chart_snapshot_status"]
+            chart_status = normalized_chart_state["chart_status"]
             tags = row.get("tags")
             if not isinstance(tags, list) or not tags:
                 tags = [source, symbol, timeframe, direction]
@@ -4539,6 +4609,9 @@ class TradeIdeaService:
                         "chart_image": chart_image_url,
                         "chartSnapshotStatus": chart_snapshot_status,
                         "chart_snapshot_status": chart_snapshot_status,
+                        "chart_status": chart_status,
+                        "chartStatus": chart_status,
+                        "fallback_to_candles": normalized_chart_state["fallback_to_candles"],
                         "ideaContext": str(idea_context),
                         "trigger": str(trigger),
                         "invalidation": str(invalidation),
