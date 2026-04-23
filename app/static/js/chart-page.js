@@ -1264,7 +1264,15 @@ async function openIdea(idea) {
   const requestId = ++detailRequestId;
   modalTitle.textContent = `${idea.symbol} — ${getDirectionRu(idea.direction)}`;
   const supported = Array.isArray(idea?.detail_brief?.supported_sections) ? idea.detail_brief.supported_sections.length : 0;
-  modalSub.textContent = `${idea.timeframe} · Уверенность ${idea.confidence}% · аналитических секций: ${supported || "—"}`;
+  const compactMeta = [idea.timeframe];
+  const confidence = Number(idea?.confidence);
+  if (Number.isFinite(confidence) && confidence > 0) {
+    compactMeta.push(`Уверенность ${Math.round(confidence)}%`);
+  }
+  if (supported > 0) {
+    compactMeta.push(`Секций ${supported}`);
+  }
+  modalSub.textContent = compactMeta.join(" · ");
   modal.classList.add("open");
 
   renderDetailText(idea);
