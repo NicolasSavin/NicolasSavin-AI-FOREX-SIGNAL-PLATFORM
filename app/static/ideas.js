@@ -108,7 +108,7 @@ function isSystemLikeNarrative(value) {
 
 function resolveVisibleNarrative(idea) {
   const unified = String(idea?.unified_narrative || "").trim();
-  if (unified) return unified;
+  if (!isSystemLikeNarrative(unified)) return unified;
   const legacy = String(idea?.full_text || idea?.summary_ru || idea?.summary || "").trim();
   if (!isSystemLikeNarrative(legacy)) return legacy;
   return "Сценарий есть, но текст пояснения обновляется. Ориентируйтесь на структуру, уровни и подтверждение входа.";

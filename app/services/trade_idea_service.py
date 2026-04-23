@@ -136,8 +136,9 @@ class TradeIdeaService:
         ideas, live_refresh_changed = self._refresh_active_ideas(ideas)
         ideas, snapshot_recovered = self._recover_missing_chart_snapshots(ideas)
         ideas, description_recovered, _ = self._recover_missing_structured_descriptions(ideas)
+        ideas, overlay_recovered = self._recover_missing_overlay_payload(ideas)
         ideas, changed = self._ensure_statistics(ideas)
-        storage_changed = changed or snapshot_recovered or live_refresh_changed or description_recovered
+        storage_changed = changed or snapshot_recovered or live_refresh_changed or description_recovered or overlay_recovered
         if not ideas:
             payload = {
                 "updated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -793,6 +794,7 @@ class TradeIdeaService:
             confidence=int(signal.get("confidence_percent") or signal.get("probability_percent") or 0),
             status=status,
         )
+        overlay_payload = self._build_overlay_payload(signal=signal)
         initial_candle_fingerprint = self._candle_fingerprint(
             chart_snapshot.get("candles") if isinstance(chart_snapshot.get("candles"), list) else []
         )
@@ -899,6 +901,13 @@ class TradeIdeaService:
             "target": target,
             "chart_data": signal.get("chart_data") or signal.get("chartData"),
             "chartData": signal.get("chart_data") or signal.get("chartData"),
+            "overlay_data": overlay_payload,
+            "zones": overlay_payload.get("zones", []),
+            "levels": overlay_payload.get("levels", []),
+            "labels": overlay_payload.get("labels", []),
+            "markers": overlay_payload.get("labels", []),
+            "arrows": overlay_payload.get("arrows", []),
+            "patterns": overlay_payload.get("patterns", []),
             "news_title": "AI trade idea",
             "analysis": analysis_payload,
             "trade_plan": trade_plan_payload,
@@ -1212,7 +1221,16 @@ class TradeIdeaService:
         signal: dict[str, Any],
         chart_data: dict[str, Any],
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-        levels = self._pick_dict_list(signal, chart_data, "levels", "horizontal_levels", "key_levels", "liquidity_levels", "session_levels")
+        levels = self._pick_dict_list(
+            signal,
+            chart_data,
+            "levels",
+            "horizontal_levels",
+            "key_levels",
+            "liquidity_levels",
+            "session_levels",
+            "trigger_levels",
+        )
         zones = self._pick_dict_list(
             signal,
             chart_data,
@@ -1238,6 +1256,7 @@ class TradeIdeaService:
         arrows = self._pick_dict_list(signal, chart_data, "arrows", "directional_arrows", "narrative_arrows")
         patterns = self._pick_dict_list(signal, chart_data, "patterns", "chart_patterns", "harmonic_patterns")
 
+        normalized_levels = [self._normalize_level_overlay(item) for item in levels]
         normalized_zones = [self._normalize_zone_overlay(item) for item in zones]
         normalized_markers = [self._normalize_marker_overlay(item) for item in markers]
         normalized_arrows = [self._normalize_arrow_overlay(item) for item in arrows]
@@ -1246,7 +1265,52 @@ class TradeIdeaService:
         compact_pattern_text = signal.get("pattern_summary") or chart_data.get("pattern_summary")
         if compact_pattern_text and not normalized_patterns:
             normalized_patterns.append({"name": str(compact_pattern_text)})
-        return levels, normalized_zones, normalized_markers, normalized_patterns, normalized_arrows
+        return normalized_levels, normalized_zones, normalized_markers, normalized_patterns, normalized_arrows
+
+    def _build_overlay_payload(self, *, signal: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
+        if not chart_data and isinstance(signal.get("chartData"), dict):
+            chart_data = signal.get("chartData")
+        levels, zones, labels, patterns, arrows = self._extract_snapshot_overlays(signal=signal, chart_data=chart_data)
+        return {
+            "zones": zones,
+            "levels": levels,
+            "labels": labels,
+            "arrows": arrows,
+            "patterns": patterns,
+        }
+
+    @staticmethod
+    def _has_overlay_payload(payload: dict[str, Any] | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        return any(isinstance(payload.get(key), list) and payload.get(key) for key in ("zones", "levels", "labels", "arrows", "patterns"))
+
+    @staticmethod
+    def _merge_overlay_payload(idea: dict[str, Any], overlay_payload: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+        updated = dict(idea)
+        updated["overlay_data"] = overlay_payload
+        updated["zones"] = overlay_payload.get("zones", [])
+        updated["levels"] = overlay_payload.get("levels", [])
+        updated["labels"] = overlay_payload.get("labels", [])
+        updated["markers"] = overlay_payload.get("labels", [])
+        updated["arrows"] = overlay_payload.get("arrows", [])
+        updated["patterns"] = overlay_payload.get("patterns", [])
+        return updated
+
+    @classmethod
+    def _normalize_level_overlay(cls, level: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(level)
+        price = cls._extract_numeric(level.get("price") or level.get("value") or level.get("level"))
+        if price is not None:
+            normalized["price"] = price
+        label = str(level.get("label") or level.get("type") or level.get("name") or "Level").strip()
+        if label:
+            normalized["label"] = label
+        level_type = str(level.get("type") or label).strip().lower().replace(" ", "_")
+        if level_type:
+            normalized["type"] = level_type
+        return normalized
 
     @staticmethod
     def _pick_dict_list(signal: dict[str, Any], chart_data: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
@@ -1373,7 +1437,8 @@ class TradeIdeaService:
         ideas = payload.get("ideas") if isinstance(payload.get("ideas"), list) else []
         recovered_ideas, chart_changed = self._recover_missing_chart_snapshots(ideas, force=force)
         recovered_ideas, description_changed, description_rebuilt = self._recover_missing_structured_descriptions(recovered_ideas)
-        changed = chart_changed or description_changed
+        recovered_ideas, overlay_changed = self._recover_missing_overlay_payload(recovered_ideas, force=force)
+        changed = chart_changed or description_changed or overlay_changed
         if changed:
             self.idea_store.write({"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": recovered_ideas})
             self.refresh_market_ideas()
@@ -1402,6 +1467,51 @@ class TradeIdeaService:
             "descriptions_rebuilt": description_rebuilt,
             "missing_structured_after": missing_structured_count,
         }
+
+    def _recover_missing_overlay_payload(self, ideas: list[dict[str, Any]], *, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
+        rebuilt: list[dict[str, Any]] = []
+        changed = False
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for idea in ideas:
+            current = dict(idea)
+            existing_overlay = current.get("overlay_data") if isinstance(current.get("overlay_data"), dict) else {}
+            has_overlay = self._has_overlay_payload(existing_overlay) or any(
+                isinstance(current.get(key), list) and current.get(key) for key in ("zones", "levels", "labels", "markers", "arrows", "patterns")
+            )
+            if has_overlay and not force:
+                rebuilt.append(current)
+                continue
+            overlay_payload = self._build_overlay_payload(signal=current)
+            if not self._has_overlay_payload(overlay_payload):
+                rebuilt.append(current)
+                continue
+            updated = self._merge_overlay_payload(current, overlay_payload)
+            had_chart = bool(current.get("chartImageUrl") or current.get("chart_image"))
+            if had_chart or force:
+                snapshot = self._resolve_chart_snapshot(
+                    signal=updated,
+                    existing=current,
+                    symbol=str(current.get("symbol", "")).upper(),
+                    timeframe=str(current.get("timeframe", "H1")).upper(),
+                    entry=self._extract_numeric(current.get("entry")),
+                    stop_loss=self._extract_numeric(current.get("stop_loss") or current.get("stopLoss")),
+                    take_profit=self._extract_numeric(current.get("take_profit") or current.get("takeProfit")),
+                    bias=str(current.get("bias") or current.get("direction") or "neutral"),
+                    confidence=int(self._extract_numeric(current.get("confidence")) or 0),
+                    status=str(current.get("status") or IDEA_STATUS_WAITING),
+                )
+                if snapshot.get("chartImageUrl"):
+                    updated["chart_image"] = snapshot["chartImageUrl"]
+                    updated["chartImageUrl"] = snapshot["chartImageUrl"]
+                    updated["chart_snapshot_status"] = snapshot["status"]
+                    updated["chartSnapshotStatus"] = snapshot["status"]
+                    updated["last_chart_refresh_at"] = now_iso
+                    updated["chart_version"] = int(updated.get("chart_version") or 0) + 1
+            updated["updated_at"] = now_iso
+            if updated != current:
+                changed = True
+            rebuilt.append(updated)
+        return rebuilt, changed
 
     def _recover_missing_chart_snapshots(self, ideas: list[dict[str, Any]], *, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
         recovered_ideas: list[dict[str, Any]] = []
@@ -3203,6 +3313,7 @@ class TradeIdeaService:
                 ),
             )
             chart_data = row.get("chartData") or row.get("chart_data")
+            overlay_payload = self._build_overlay_payload(signal=row)
             chart_image_url = row.get("chartImageUrl") or row.get("chart_image")
             chart_snapshot_status = row.get("chartSnapshotStatus") or row.get("chart_snapshot_status") or "ok"
             tags = row.get("tags")
@@ -3256,6 +3367,13 @@ class TradeIdeaService:
                         "stopLoss": stop_loss,
                         "takeProfit": take_profit,
                         "chartData": chart_data,
+                        "overlay_data": overlay_payload,
+                        "zones": overlay_payload.get("zones", []),
+                        "levels": overlay_payload.get("levels", []),
+                        "labels": overlay_payload.get("labels", []),
+                        "markers": overlay_payload.get("labels", []),
+                        "arrows": overlay_payload.get("arrows", []),
+                        "patterns": overlay_payload.get("patterns", []),
                         "chartImageUrl": chart_image_url,
                         "chart_image": chart_image_url,
                         "chartSnapshotStatus": chart_snapshot_status,
