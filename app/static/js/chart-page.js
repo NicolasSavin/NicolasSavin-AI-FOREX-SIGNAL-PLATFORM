@@ -490,6 +490,162 @@ function isVisibleIdea(idea) {
   return Boolean(symbol) && hasText && hasValidSignal;
 }
 
+function isNoDataText(value) {
+  const text = normalizeWhitespace(value).toLowerCase();
+  if (!text) return true;
+  return [
+    "нет данных",
+    "no data",
+    "n/a",
+    "—",
+    "-",
+    "none",
+    "null",
+  ].includes(text);
+}
+
+function hasMeaningfulNarrative(idea) {
+  const narrativeCandidates = [
+    idea?.summary,
+    idea?.summary_ru,
+    idea?.short_text,
+    idea?.idea_thesis,
+    idea?.unified_narrative,
+    idea?.htf_bias_summary,
+    idea?.mtf_structure_summary,
+    idea?.ltf_trigger_summary,
+  ];
+  return narrativeCandidates.some((value) => {
+    const text = normalizeWhitespace(value);
+    return text && !isNoDataText(text) && isRenderableNarrative(text);
+  });
+}
+
+function hasValidTradeLevels(idea) {
+  return normalizeLevel(idea?.entry) != null
+    && normalizeLevel(idea?.stopLoss) != null
+    && normalizeLevel(idea?.takeProfit) != null;
+}
+
+function normalizeTimeframe(value) {
+  const tf = normalizeWhitespace(value).toUpperCase();
+  if (["H4", "H1", "M15"].includes(tf)) return tf;
+  return tf || "H1";
+}
+
+function buildAggregatedIdea(groupedIdeas, symbol) {
+  const byTf = new Map();
+  groupedIdeas.forEach((idea) => {
+    const tf = normalizeTimeframe(idea?.timeframe || idea?.tf);
+    if (!byTf.has(tf)) {
+      byTf.set(tf, idea);
+      return;
+    }
+    const prev = byTf.get(tf);
+    if (Number(idea?.confidence ?? 0) >= Number(prev?.confidence ?? 0)) {
+      byTf.set(tf, idea);
+    }
+  });
+
+  const h4 = byTf.get("H4");
+  const h1 = byTf.get("H1");
+  const m15 = byTf.get("M15");
+  const ordered = [h4, h1, m15].filter(Boolean);
+  if (!ordered.length) return null;
+
+  const bestSignalIdea = ordered.find((idea) => {
+    const signal = normalizeSignalValue(idea?.final_signal || idea?.signal || "");
+    return signal === "BUY" || signal === "SELL";
+  }) || ordered[0];
+
+  const fallbackSignal = normalizeSignalValue(bestSignalIdea?.final_signal || bestSignalIdea?.signal || "");
+  const finalSignal = ["BUY", "SELL"].includes(fallbackSignal) ? fallbackSignal : "WAIT";
+  const narrativeSource = bestSignalIdea || h1 || h4 || m15;
+
+  const aggregated = {
+    ...narrativeSource,
+    id: `combined-${symbol}`,
+    symbol,
+    pair: symbol,
+    timeframe: "MTF",
+    tf: "MTF",
+    combined: true,
+    timeframes_available: Array.from(byTf.keys()).filter(Boolean),
+    timeframe_ideas: Object.fromEntries(Array.from(byTf.entries())),
+    htf_bias_summary: normalizeWhitespace(h4?.summary_ru || h4?.summary || h4?.short_text || h4?.idea_thesis || ""),
+    mtf_structure_summary: normalizeWhitespace(h1?.summary_ru || h1?.summary || h1?.short_text || h1?.idea_thesis || ""),
+    ltf_trigger_summary: normalizeWhitespace(m15?.summary_ru || m15?.summary || m15?.short_text || m15?.idea_thesis || ""),
+    final_signal: finalSignal,
+    signal: finalSignal,
+    direction: finalSignal === "BUY" ? "bullish" : finalSignal === "SELL" ? "bearish" : "neutral",
+    bias: finalSignal === "BUY" ? "bullish" : finalSignal === "SELL" ? "bearish" : "neutral",
+    confidence: Math.max(...ordered.map((idea) => Number(idea?.confidence ?? 0))),
+    entry: narrativeSource?.entry ?? "—",
+    stopLoss: narrativeSource?.stopLoss ?? "—",
+    takeProfit: narrativeSource?.takeProfit ?? "—",
+    chartData: narrativeSource?.chartData ?? narrativeSource?.chart_data ?? null,
+    chart_data: narrativeSource?.chart_data ?? narrativeSource?.chartData ?? null,
+    chartImageUrl: narrativeSource?.chartImageUrl || narrativeSource?.chart_image || "",
+    chart_image: narrativeSource?.chart_image || narrativeSource?.chartImageUrl || "",
+  };
+
+  return normalizeIdea(aggregated);
+}
+
+function shouldDisplayAggregatedIdea(idea) {
+  if (!idea || !isVisibleIdea(idea)) return false;
+  if (!idea?.combined) return true;
+
+  const tfIdeas = idea?.timeframe_ideas && typeof idea.timeframe_ideas === "object"
+    ? Object.values(idea.timeframe_ideas)
+    : [];
+  const hasAnyTfData = tfIdeas.some((tfIdea) => hasMeaningfulNarrative(tfIdea));
+  if (!hasAnyTfData) return false;
+
+  const hasCandleData = hasRenderableCandles(idea)
+    || tfIdeas.some((tfIdea) => hasRenderableCandles(tfIdea));
+  if (!hasCandleData) return false;
+
+  const signal = normalizeSignalValue(idea?.final_signal || idea?.signal || "");
+  const meaningfulNarrative = hasMeaningfulNarrative(idea);
+  if ((signal === "BUY" || signal === "SELL") && hasValidTradeLevels(idea)) return true;
+  if (signal === "WAIT" && meaningfulNarrative) return true;
+  return false;
+}
+
+function aggregateIdeasBySymbol(ideas) {
+  const grouped = new Map();
+  ideas.forEach((idea) => {
+    const symbol = normalizeWhitespace(idea?.symbol || idea?.pair).toUpperCase();
+    if (!symbol) return;
+    if (!grouped.has(symbol)) grouped.set(symbol, []);
+    grouped.get(symbol).push(idea);
+  });
+
+  return Array.from(grouped.entries())
+    .map(([symbol, symbolIdeas]) => {
+      const alreadyCombined = symbolIdeas.find((idea) => idea?.combined);
+      if (alreadyCombined) {
+        const normalizedCombined = normalizeIdea({
+          ...alreadyCombined,
+          id: alreadyCombined?.id || `combined-${symbol}`,
+          symbol,
+          pair: symbol,
+          timeframe: "MTF",
+          tf: "MTF",
+          combined: true,
+          timeframes_available: Array.isArray(alreadyCombined?.timeframes_available)
+            ? alreadyCombined.timeframes_available
+            : ["H4", "H1", "M15"],
+        });
+        return normalizedCombined;
+      }
+      return buildAggregatedIdea(symbolIdeas, symbol);
+    })
+    .filter(Boolean)
+    .filter((idea) => shouldDisplayAggregatedIdea(idea));
+}
+
 function registerChartPlugin(plugin) {
   if (!plugin?.id || typeof plugin?.afterDraw !== "function") return;
   const exists = registeredChartPlugins.some(item => item.id === plugin.id);
@@ -550,7 +706,13 @@ function renderStats(ideas, payloadStats) {
 
 function populateFilters(ideas) {
   const symbols = [...new Set(ideas.map(x => x.symbol).filter(Boolean))];
-  const timeframes = [...new Set(ideas.map(x => x.timeframe).filter(Boolean))];
+  const timeframes = [...new Set(
+    ideas.flatMap((idea) => (
+      Array.isArray(idea?.timeframes_available) && idea.timeframes_available.length
+        ? idea.timeframes_available
+        : ["H4", "H1", "M15"]
+    ))
+  )];
   const symbolOptions = symbols.length ? symbols : DEFAULT_PAIR_OPTIONS;
   const timeframeOptions = timeframes.length ? timeframes : DEFAULT_TIMEFRAME_OPTIONS;
   const prevSymbol = String(symbolFilter.value || "ALL").toUpperCase();
@@ -572,9 +734,11 @@ function getFilteredIdeas() {
 
   return allIdeas.filter((idea) => {
     const currentSymbol = String(idea.symbol || idea.pair || "").trim().toUpperCase();
-    const currentTf = String(idea.timeframe || idea.tf || "").trim().toUpperCase();
+    const availableTfs = Array.isArray(idea?.timeframes_available) && idea.timeframes_available.length
+      ? idea.timeframes_available.map((tf) => String(tf).trim().toUpperCase())
+      : [String(idea.timeframe || idea.tf || "").trim().toUpperCase()];
     const symbolOk = symbol === "ALL" || currentSymbol === symbol;
-    const tfOk = timeframe === "ALL" || currentTf === timeframe;
+    const tfOk = timeframe === "ALL" || availableTfs.includes(timeframe);
     return symbolOk && tfOk;
   });
 }
@@ -1661,8 +1825,8 @@ async function loadIdeasSnapshot() {
       normalizedIdeas = normalizeIdeas({ ideas: TEMP_MOCK_IDEAS });
     }
 
+    normalizedIdeas = aggregateIdeasBySymbol(normalizedIdeas);
     normalizedIdeas = dedupeIdeasById(normalizedIdeas);
-    normalizedIdeas = normalizedIdeas.filter((idea) => isVisibleIdea(idea));
 
     normalizedIdeas = normalizedIdeas.map((idea) => mergeWithPreviousIdeaState(idea, previousById.get(String(idea?.id))));
     const incomingById = new Map(normalizedIdeas.map((idea) => [String(idea.id), idea]));
