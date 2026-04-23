@@ -159,6 +159,15 @@ function getStructuredNarrativeBlocks(idea) {
 }
 
 function buildShortText(idea) {
+  if (idea?.combined) {
+    const htf = normalizeWhitespace(idea?.htf_bias_summary);
+    const mtf = normalizeWhitespace(idea?.mtf_structure_summary);
+    const ltf = normalizeWhitespace(idea?.ltf_trigger_summary);
+    const finalSignal = String(idea?.final_signal || idea?.signal || "wait").toUpperCase();
+    const lines = [htf, mtf, ltf].filter(Boolean);
+    const combinedText = lines.length ? `${lines.join(" · ")} · Итог: ${finalSignal}` : "";
+    if (combinedText) return truncateText(combinedText, 140);
+  }
   const { summaryStructured } = getStructuredNarrativeBlocks(idea);
   const structuredShort = normalizeWhitespace(summaryStructured?.signal || summaryStructured?.action);
   if (structuredShort) return truncateText(structuredShort, 140);
@@ -258,6 +267,22 @@ function buildDetailBrief(idea) {
   }
 
   const marketUnavailable = idea?.current_price == null || String(idea?.data_status || "").toLowerCase() === "unavailable";
+  const timeframeSections = [];
+  if (idea?.combined && idea?.timeframe_ideas && typeof idea.timeframe_ideas === "object") {
+    const tfOrder = ["H4", "H1", "M15"];
+    tfOrder.forEach((tf) => {
+      const tfIdea = idea.timeframe_ideas?.[tf];
+      if (!tfIdea || typeof tfIdea !== "object") return;
+      const tfSummary = normalizeWhitespace(tfIdea?.short_text || tfIdea?.summary_ru || tfIdea?.summary);
+      if (!tfSummary) return;
+      timeframeSections.push({
+        key: `tf_${tf.toLowerCase()}`,
+        title: `${tf} блок`,
+        content: tfSummary,
+        is_proxy: false,
+      });
+    });
+  }
   return {
     header: {
       market_price: marketUnavailable ? "" : formatLevel(idea.current_price),
@@ -266,6 +291,9 @@ function buildDetailBrief(idea) {
       bias: getDirectionRu(idea?.direction || idea?.bias),
       confidence: Number(idea?.confidence ?? 0),
       confluence_rating: Number(idea?.confidence ?? 0),
+      htf: normalizeWhitespace(idea?.htf_bias_summary),
+      mtf: normalizeWhitespace(idea?.mtf_structure_summary),
+      ltf: normalizeWhitespace(idea?.ltf_trigger_summary),
     },
     summary_narrative: buildFullText(idea) || normalizeWhitespace(summaryStructured?.situation),
     scenarios: {
@@ -273,7 +301,7 @@ function buildDetailBrief(idea) {
       swing: normalizeWhitespace(summaryStructured?.effect),
       invalidation: normalizeWhitespace(summaryStructured?.risk_note || tradePlanStructured?.invalidation || idea?.invalidation),
     },
-    sections,
+    sections: timeframeSections.length ? [...timeframeSections, ...sections] : sections,
     trade_plan: {
       entry_zone: normalizeWhitespace(tradePlanStructured?.entry_zone) || entry,
       stop: normalizeWhitespace(tradePlanStructured?.stop_loss) || stop,
@@ -455,6 +483,7 @@ function buildIdeaCardMarkup(idea) {
   const symbol = idea.symbol || "";
   const direction = getDirectionRu(idea.direction || "NEUTRAL");
   const timeframe = idea.timeframe || "";
+  const timeframesAvailable = Array.isArray(idea?.timeframes_available) ? idea.timeframes_available : [];
   const confidence = idea.confidence ?? "-";
   const summary = buildShortText(idea);
   const updateSummary = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
@@ -469,6 +498,7 @@ function buildIdeaCardMarkup(idea) {
       <div>
         <div class="symbol">${escapeHtml(symbol)}</div>
         <div class="meta">${escapeHtml(direction)} · ${escapeHtml(timeframe)} · ${escapeHtml(String(confidence))}%</div>
+        ${idea?.combined ? `<div class="symbol">TF: ${escapeHtml(timeframesAvailable.join(" / ") || "H4 / H1 / M15")}</div>` : ""}
         <div class="symbol">Статус: ${escapeHtml(statusLabel)} · Обновлено: ${escapeHtml(updatedLabel)}</div>
         ${archivedStats}
       </div>
@@ -676,6 +706,9 @@ function renderMetricChips(detailBrief) {
   if (header.confidence != null && header.confidence !== "") metrics.push(["Confidence", `${header.confidence}%`]);
   if (header.confluence_rating != null && header.confluence_rating !== "") metrics.push(["Confluence", `${header.confluence_rating}%`]);
   if (header.market_context) metrics.push(["Контекст", header.market_context]);
+  if (header.htf) metrics.push(["HTF", header.htf]);
+  if (header.mtf) metrics.push(["MTF", header.mtf]);
+  if (header.ltf) metrics.push(["LTF", header.ltf]);
   if (!metrics.length) {
     detailMetrics.innerHTML = "";
     return;
@@ -726,9 +759,18 @@ function renderDetailText(idea) {
   setTextContent(levelTp, formatLevel(idea.takeProfit));
   setTextContent(levelRr, calculateRiskReward(idea));
   renderMetricChips(detailBrief);
-  setTextContent(scenarioPrimary, detailBrief?.scenarios?.primary, "");
-  setTextContent(scenarioSwing, detailBrief?.scenarios?.swing, "");
-  setTextContent(scenarioInvalidation, detailBrief?.scenarios?.invalidation, "");
+  const primaryScenario = idea?.combined
+    ? normalizeWhitespace(idea?.htf_bias_summary) || detailBrief?.scenarios?.primary
+    : detailBrief?.scenarios?.primary;
+  const swingScenario = idea?.combined
+    ? normalizeWhitespace(idea?.mtf_structure_summary) || detailBrief?.scenarios?.swing
+    : detailBrief?.scenarios?.swing;
+  const invalidationScenario = idea?.combined
+    ? normalizeWhitespace(idea?.ltf_trigger_summary) || detailBrief?.scenarios?.invalidation
+    : detailBrief?.scenarios?.invalidation;
+  setTextContent(scenarioPrimary, primaryScenario, "");
+  setTextContent(scenarioSwing, swingScenario, "");
+  setTextContent(scenarioInvalidation, invalidationScenario, "");
   document.querySelectorAll(".scenario-card").forEach((card) => {
     const paragraph = card.querySelector("p");
     card.style.display = normalizeWhitespace(paragraph?.textContent) ? "" : "none";
@@ -1263,6 +1305,12 @@ function drawOverlay() {
 }
 
 async function resolveChartData(idea) {
+  if (idea?.combined && idea?.timeframe_ideas && typeof idea.timeframe_ideas === "object") {
+    const preferred = idea.timeframe_ideas?.M15 || idea.timeframe_ideas?.H1 || idea.timeframe_ideas?.H4;
+    if (preferred) {
+      return resolveChartData(preferred);
+    }
+  }
   const localChartData = idea.chartData;
   if (localChartData?.candles?.length) {
     if (idea?.chart_overlays && !localChartData.chart_overlays) {
@@ -1305,6 +1353,9 @@ async function openIdea(idea) {
   modalTitle.textContent = `${idea.symbol} — ${getDirectionRu(idea.direction)}`;
   const supported = Array.isArray(idea?.detail_brief?.supported_sections) ? idea.detail_brief.supported_sections.length : 0;
   const compactMeta = [idea.timeframe];
+  if (idea?.combined && Array.isArray(idea?.timeframes_available)) {
+    compactMeta.push(`TF: ${idea.timeframes_available.join("/")}`);
+  }
   const confidence = Number(idea?.confidence);
   if (Number.isFinite(confidence) && confidence > 0) {
     compactMeta.push(`Уверенность ${Math.round(confidence)}%`);
