@@ -603,6 +603,12 @@ function shouldDisplayAggregatedIdea(idea) {
     idea?.unified_narrative,
     idea?.summary,
     idea?.summary_ru,
+    idea?.htf_bias_summary,
+    idea?.mtf_structure_summary,
+    idea?.ltf_trigger_summary,
+    idea?.short_text,
+    idea?.shortScenarioRu,
+    idea?.short_scenario_ru,
   ].some((value) => {
     const text = normalizeWhitespace(value);
     return text && !isNoDataText(text);
@@ -613,6 +619,7 @@ function shouldDisplayAggregatedIdea(idea) {
     && hasValidTradeLevels(idea);
   if (isStrongIdea) return true;
 
+  // Для WAIT-идей достаточно содержательного нарратива без порога по confidence.
   const isMeaningfulWait = signal === "WAIT" && hasNarrative;
   if (isMeaningfulWait) return true;
 
