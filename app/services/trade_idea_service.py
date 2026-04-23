@@ -253,8 +253,10 @@ class TradeIdeaService:
             h4_structure = str((h4 or {}).get("summary_ru") or (h4 or {}).get("summary") or "").strip()
             h1_structure = str((h1 or {}).get("summary_ru") or (h1 or {}).get("summary") or "").strip()
             m15_trigger = str((m15 or {}).get("summary_ru") or (m15 or {}).get("summary") or "").strip()
-            if final_signal == "wait":
-                idea_thesis = self._build_wait_thesis(
+            narrative_source_idea = m15 or h1 or h4 or symbol_ideas[0]
+            idea_thesis_raw, unified_narrative_raw, full_text_raw = self._pick_primary_narrative_fields(narrative_source_idea)
+            fallback_narrative = (
+                self._build_wait_thesis(
                     symbol=symbol,
                     h4=h4,
                     h1=h1,
@@ -265,9 +267,8 @@ class TradeIdeaService:
                     wait_conflict=wait_conflict,
                     final_reason=final_reason,
                 )
-                unified_narrative = idea_thesis
-            else:
-                idea_thesis = self._build_directional_thesis(
+                if final_signal == "wait"
+                else self._build_directional_thesis(
                     symbol=symbol,
                     signal=final_signal,
                     final_reason=final_reason,
@@ -278,7 +279,20 @@ class TradeIdeaService:
                     h1_structure=h1_structure,
                     m15_trigger=m15_trigger,
                 )
-                unified_narrative = idea_thesis
+            )
+            primary_narrative = idea_thesis_raw or unified_narrative_raw or full_text_raw
+            idea_thesis = idea_thesis_raw or primary_narrative or fallback_narrative
+            unified_narrative = unified_narrative_raw or full_text_raw or primary_narrative or fallback_narrative
+            combined_is_fallback = not bool(primary_narrative)
+            if combined_is_fallback:
+                idea_thesis = ""
+                unified_narrative = ""
+            full_text = full_text_raw or (unified_narrative if not combined_is_fallback else "")
+            combined_narrative_source = self._resolve_narrative_source_label(
+                (narrative_source_idea or {}).get("narrative_source"),
+                is_fallback=combined_is_fallback,
+                combined=False,
+            )
             compact_summary = (
                 f"{symbol}: H4={h4_dir if h4 else 'нет данных'}; H1={h1_dir if h1 else 'нет данных'}; "
                 f"M15={m15_dir if m15 else 'нет данных'}. Итог: {final_signal.upper()}."
@@ -309,13 +323,16 @@ class TradeIdeaService:
                     "confidence": final_confidence,
                     "idea_thesis": idea_thesis,
                     "unified_narrative": unified_narrative,
+                    "full_text": full_text,
+                    "fallback_narrative": fallback_narrative,
                     "legacy_narrative": legacy_narrative,
                     "summary": final_reason,
                     "summary_ru": final_reason,
                     "short_text": final_reason,
                     "compact_summary": compact_summary,
-                    "narrative_source": "combined_model",
+                    "narrative_source": combined_narrative_source,
                     "combined": True,
+                    "is_fallback": combined_is_fallback,
                     "final_signal": final_signal,
                     "final_confidence": final_confidence,
                     "htf_bias_summary": f"H4: {h4_dir if h4 else 'нет данных'}",
@@ -356,6 +373,15 @@ class TradeIdeaService:
             if text:
                 return text
         return ""
+
+    @classmethod
+    def _pick_primary_narrative_fields(cls, idea: dict[str, Any] | None) -> tuple[str, str, str]:
+        if not isinstance(idea, dict):
+            return "", "", ""
+        idea_thesis = str(idea.get("idea_thesis") or "").strip()
+        unified_narrative = str(idea.get("unified_narrative") or "").strip()
+        full_text = str(idea.get("full_text") or idea.get("fullText") or "").strip()
+        return idea_thesis, unified_narrative, full_text
 
     @staticmethod
     def _build_wait_thesis(
@@ -3421,18 +3447,18 @@ class TradeIdeaService:
 
     @staticmethod
     def _resolve_narrative_source_label(value: Any, *, is_fallback: bool = False, combined: bool = False) -> str:
-        if combined:
-            return "combined_model"
         if is_fallback:
-            return "template_fallback"
+            return "fallback_template"
         raw = str(value or "").strip().lower()
-        if raw in {"grok", "llm"}:
+        if raw == "grok":
             return "grok"
-        if raw in {"fallback", "template_fallback"}:
-            return "template_fallback"
-        if raw == "combined_model":
-            return "combined_model"
-        return "template_fallback"
+        if raw in {"llm", "model"}:
+            return "model"
+        if raw in {"fallback", "template_fallback", "fallback_template"}:
+            return "fallback_template"
+        if combined:
+            return "model"
+        return "model"
 
     @classmethod
     def _build_full_text(
@@ -4273,11 +4299,7 @@ class TradeIdeaService:
             timeframe = self._extract_timeframe(row)
             direction = self._extract_direction(row)
             summary = (
-                row.get("idea_thesis")
-                or row.get("unified_narrative")
-                or row.get("summary")
-                or row.get("full_text")
-                or row.get("fullText")
+                row.get("summary")
                 or row.get("summary_ru")
                 or row.get("description_ru")
                 or row.get("rationale")
@@ -4318,26 +4340,36 @@ class TradeIdeaService:
                 or self._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2"))
                 or (f"Ближайшая цель: {take_profit}." if take_profit != "—" else "Цель будет уточняться после появления подтверждения.")
             )
-            idea_thesis = str(
-                row.get("idea_thesis")
-                or row.get("unified_narrative")
-                or row.get("full_text")
-                or row.get("fullText")
-                or ""
-            ).strip()
-            unified_narrative = str(row.get("unified_narrative") or idea_thesis).strip()
-            full_text = self._build_full_text(
-                row,
-                summary=str(summary),
-                idea_context=str(idea_context),
-                trigger=str(trigger),
-                invalidation=str(invalidation),
-                target=str(target),
+            idea_thesis = str(row.get("idea_thesis") or "").strip()
+            unified_narrative = str(row.get("unified_narrative") or "").strip()
+            full_text = str(row.get("full_text") or row.get("fullText") or "").strip()
+            resolved_source = self._resolve_narrative_source_label(
+                row.get("narrative_source"),
+                is_fallback=bool(row.get("is_fallback")),
+                combined=bool(row.get("combined")),
             )
+            is_fallback_narrative = resolved_source == "fallback_template"
+            has_model_narrative = bool(idea_thesis or unified_narrative or full_text) and not is_fallback_narrative
+            if not has_model_narrative:
+                full_text = self._build_full_text(
+                    row,
+                    summary=str(summary),
+                    idea_context=str(idea_context),
+                    trigger=str(trigger),
+                    invalidation=str(invalidation),
+                    target=str(target),
+                )
             if not unified_narrative:
                 unified_narrative = full_text
             if not idea_thesis:
                 idea_thesis = unified_narrative or full_text
+            fallback_narrative = ""
+            if is_fallback_narrative or not has_model_narrative:
+                fallback_narrative = full_text
+                if is_fallback_narrative:
+                    idea_thesis = ""
+                    unified_narrative = ""
+                    full_text = ""
             short_text = self._build_short_text(
                 row,
                 direction=direction,
@@ -4436,6 +4468,7 @@ class TradeIdeaService:
                         "idea_thesis": idea_thesis,
                         "full_text": full_text,
                         "unified_narrative": unified_narrative,
+                        "fallback_narrative": fallback_narrative,
                         "signal": str(
                             row.get("signal")
                             or ("BUY" if direction == "bullish" else "SELL" if direction == "bearish" else "WAIT")
@@ -4447,11 +4480,7 @@ class TradeIdeaService:
                         "narrative_structured": row.get("narrative_structured") or detail_brief.get("narrative_structured"),
                         "update_explanation": row.get("update_explanation") or row.get("update_summary") or "",
                         "update_reason": row.get("update_reason") or "",
-                        "narrative_source": self._resolve_narrative_source_label(
-                            row.get("narrative_source"),
-                            is_fallback=bool(row.get("is_fallback")),
-                            combined=bool(row.get("combined")),
-                        ),
+                        "narrative_source": resolved_source,
                         "narrative_source_legacy": row.get("narrative_source") or ("fallback" if row.get("is_fallback") else "llm"),
                         "has_meaningful_update": bool(row.get("has_meaningful_update", False)),
                         "meaningful_updated_at": row.get("meaningful_updated_at"),

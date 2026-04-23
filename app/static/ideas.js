@@ -100,23 +100,16 @@ function renderIdeaCard(idea) {
   `;
 }
 
-function isSystemLikeNarrative(value) {
-  const text = String(value || "").trim().toLowerCase();
-  if (!text) return true;
-  const blockedTokens = ["none", "fallback", "idea_created", "status created", "debug", "payload", "schema"];
-  if (blockedTokens.some((token) => text.includes(token))) return true;
-  if (text.includes("ситуация:") && text.includes("причина:") && text.includes("следствие:") && text.includes("действие:")) return true;
-  return false;
-}
-
 function resolveVisibleNarrative(idea) {
   const thesis = String(idea?.idea_thesis || "").trim();
-  if (!isSystemLikeNarrative(thesis)) return thesis;
+  if (thesis) return thesis;
   const unified = String(idea?.unified_narrative || "").trim();
-  if (!isSystemLikeNarrative(unified)) return unified;
-  const legacy = String(idea?.full_text || idea?.summary || idea?.summary_ru || "").trim();
-  if (!isSystemLikeNarrative(legacy)) return legacy;
-  return "Сценарий есть, но текст пояснения обновляется. Ориентируйтесь на структуру, уровни и подтверждение входа.";
+  if (unified) return unified;
+  const fullText = String(idea?.full_text || "").trim();
+  if (fullText) return fullText;
+  const fallbackNarrative = String(idea?.fallback_narrative || "").trim();
+  if (fallbackNarrative) return fallbackNarrative;
+  return "Сценарий в режиме fallback: модельный нарратив временно недоступен.";
 }
 
 function renderIdeas(payload) {
