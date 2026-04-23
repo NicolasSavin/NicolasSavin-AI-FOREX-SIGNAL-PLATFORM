@@ -33,8 +33,19 @@ function labelClass(label) {
   return "idea-label-watch";
 }
 
+function normalizeChartImageUrl(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
+  if (raw.startsWith("static/")) return `/${raw}`;
+  if (raw.startsWith("./")) return `/${raw.slice(2)}`;
+  return `/static/${raw.replace(/^\/+/, "")}`;
+}
+
 function renderIdeaCard(idea) {
-  const chartImageUrl = idea.chartImageUrl || idea.chart_image || null;
+  const chartImageUrl = normalizeChartImageUrl(idea.chartImageUrl || idea.chart_image || "");
+  console.log("chart_image:", chartImageUrl || null);
+  console.log("snapshot_status:", idea.chartSnapshotStatus || idea.chart_snapshot_status || "");
   const tradePlan = idea.trade_plan || {};
   const updates = Array.isArray(idea.updates) ? idea.updates.slice(-5).reverse() : [];
   const reasoning = resolveVisibleNarrative(idea);

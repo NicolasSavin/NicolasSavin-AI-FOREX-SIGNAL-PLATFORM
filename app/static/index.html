@@ -508,8 +508,14 @@
     function getChartImageUrl(idea) {
       const raw = idea?.chartImageUrl || idea?.chart_image || "";
       if (!raw) return "";
-      const separator = raw.includes("?") ? "&" : "?";
-      return `${raw}${separator}t=${Date.now()}`;
+      let normalized = String(raw).trim();
+      if (normalized.startsWith("static/")) normalized = `/${normalized}`;
+      else if (normalized.startsWith("./")) normalized = `/${normalized.slice(2)}`;
+      else if (!/^https?:\/\//i.test(normalized) && !normalized.startsWith("/")) normalized = `/static/${normalized.replace(/^\/+/, "")}`;
+      console.log("chart_image:", normalized);
+      console.log("snapshot_status:", idea?.chartSnapshotStatus || idea?.chart_snapshot_status || "");
+      const separator = normalized.includes("?") ? "&" : "?";
+      return `${normalized}${separator}t=${Date.now()}`;
     }
 
     function buildChartPreviewMarkup(idea, className = "preview-image") {
