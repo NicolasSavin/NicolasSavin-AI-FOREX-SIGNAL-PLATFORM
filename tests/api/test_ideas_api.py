@@ -102,6 +102,37 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
     assert "fundamental" in payload[0]["supported_sections"]
 
 
+def test_build_api_ideas_prefers_model_narrative_when_source_marked_fallback(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.idea_store.write(
+        {
+            "updated_at_utc": "2026-03-20T00:00:00+00:00",
+            "ideas": [
+                {
+                    "idea_id": "idea-3",
+                    "symbol": "USDJPY",
+                    "timeframe": "H1",
+                    "bias": "bullish",
+                    "confidence": 71,
+                    "summary_ru": "Fallback summary не должен стать главным текстом.",
+                    "idea_thesis": "USDJPY удержал bullish BOS и после снятия sell-side ликвидности вернулся выше OB, поэтому приоритет остаётся за continuation вверх.",
+                    "full_text": "Модельный full_text, который тоже допустим для отображения.",
+                    "narrative_source": "fallback_template",
+                    "is_fallback": True,
+                    "status": "active",
+                }
+            ],
+        }
+    )
+
+    payload = service.build_api_ideas()
+
+    assert payload[0]["idea_thesis"].startswith("USDJPY удержал bullish BOS")
+    assert payload[0]["full_text"].startswith("Модельный full_text")
+    assert payload[0]["fallback_narrative"] == ""
+    assert payload[0]["narrative_source"] == "model"
+
+
 def test_build_api_ideas_returns_empty_when_storage_empty(tmp_path: Path) -> None:
     service = _service(tmp_path)
 

@@ -3468,9 +3468,9 @@ class TradeIdeaService:
 
     @staticmethod
     def _resolve_narrative_source_label(value: Any, *, is_fallback: bool = False, combined: bool = False) -> str:
-        if is_fallback:
-            return "fallback_template"
         raw = str(value or "").strip().lower()
+        if is_fallback and raw not in {"grok", "llm", "model"}:
+            return "fallback_template"
         if raw == "grok":
             return "grok"
         if raw in {"llm", "model"}:
@@ -4364,13 +4364,21 @@ class TradeIdeaService:
             idea_thesis = str(row.get("idea_thesis") or "").strip()
             unified_narrative = str(row.get("unified_narrative") or "").strip()
             full_text = str(row.get("full_text") or row.get("fullText") or "").strip()
+            raw_narrative_source = row.get("narrative_source")
             resolved_source = self._resolve_narrative_source_label(
-                row.get("narrative_source"),
+                raw_narrative_source,
                 is_fallback=bool(row.get("is_fallback")),
                 combined=bool(row.get("combined")),
             )
+            has_model_narrative = any(
+                str(value or "").strip()
+                and not re.search(r"\b(status\s+created|idea_created|debug|schema|payload)\b", str(value), re.IGNORECASE)
+                for value in (idea_thesis, unified_narrative, full_text)
+            )
+            if resolved_source == "fallback_template" and has_model_narrative:
+                raw_source = str(raw_narrative_source or "").strip().lower()
+                resolved_source = "grok" if raw_source == "grok" else "model"
             is_fallback_narrative = resolved_source == "fallback_template"
-            has_model_narrative = bool(idea_thesis or unified_narrative or full_text) and not is_fallback_narrative
             if not has_model_narrative:
                 full_text = self._build_full_text(
                     row,
@@ -4385,12 +4393,10 @@ class TradeIdeaService:
             if not idea_thesis:
                 idea_thesis = unified_narrative or full_text
             fallback_narrative = ""
-            if is_fallback_narrative or not has_model_narrative:
+            if not has_model_narrative:
                 fallback_narrative = full_text
-                if is_fallback_narrative:
-                    idea_thesis = ""
-                    unified_narrative = ""
-                    full_text = ""
+            elif is_fallback_narrative:
+                fallback_narrative = full_text
             short_text = self._build_short_text(
                 row,
                 direction=direction,
