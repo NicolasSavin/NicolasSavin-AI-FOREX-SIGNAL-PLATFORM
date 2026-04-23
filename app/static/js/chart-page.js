@@ -43,6 +43,11 @@ let ideasPollInFlight = false;
 let lastNotificationAt = 0;
 const previousIdeasById = new Map();
 const renderedIdeaSignatureById = new Map();
+const IDEA_CHANGE_EVENT = Object.freeze({
+  NEW_IDEA: "NEW_IDEA",
+  UPDATED_IDEA: "UPDATED_IDEA",
+  NO_CHANGE: "NO_CHANGE",
+});
 const IDEAS_POLL_INTERVAL_MS = 15000;
 const NOTIFICATION_COOLDOWN_MS = 1500;
 const CHART_REQUEST_TIMEOUT_MS = 5000;
@@ -448,20 +453,25 @@ function buildIdeaCardMarkup(idea) {
 }
 
 function getIdeaDiffSignature(idea) {
+  const normalizeNullableText = (value) => {
+    const text = normalizeWhitespace(value);
+    return text || null;
+  };
   return JSON.stringify({
+    idea_id: String(idea?.id || ""),
     updated_at: idea?.updated_at || null,
     status: idea?.status || null,
     final_status: idea?.final_status || null,
     chartImageUrl: idea?.chartImageUrl || idea?.chart_image || null,
-    unified_narrative: normalizeWhitespace(idea?.unified_narrative),
-    idea_thesis: normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis),
+    unified_narrative: normalizeNullableText(idea?.unified_narrative),
+    idea_thesis: normalizeNullableText(idea?.idea_thesis || idea?.ideaThesis),
     confidence: Number(idea?.confidence ?? 0),
     entry: formatLevel(idea?.entry),
     stopLoss: formatLevel(idea?.stopLoss),
     takeProfit: formatLevel(idea?.takeProfit),
-    signal: normalizeWhitespace(idea?.signal || idea?.direction || idea?.bias),
-    risk_note: normalizeWhitespace(idea?.risk_note || idea?.invalidation || idea?.trade_plan?.invalidation),
-    update_summary: normalizeWhitespace(idea?.update_summary || idea?.change_summary),
+    signal: normalizeNullableText(idea?.signal || idea?.direction || idea?.bias),
+    risk_note: normalizeNullableText(idea?.risk_note || idea?.invalidation || idea?.trade_plan?.invalidation),
+    update_summary: normalizeNullableText(idea?.update_summary || idea?.change_summary),
   });
 }
 
@@ -501,14 +511,17 @@ function playIdeaNotification() {
   }
 }
 
-function flashIdeaCard(card) {
+function flashIdeaCard(card, eventType = IDEA_CHANGE_EVENT.UPDATED_IDEA) {
   if (!card) return;
-  card.classList.remove("idea-card-flash");
+  const highlightClass = eventType === IDEA_CHANGE_EVENT.NEW_IDEA
+    ? "idea-card-flash-new"
+    : "idea-card-flash-update";
+  card.classList.remove("idea-card-flash-new", "idea-card-flash-update");
   void card.offsetWidth;
-  card.classList.add("idea-card-flash");
+  card.classList.add(highlightClass);
 }
 
-function renderIdeas(ideas, notice = "") {
+function renderIdeas(ideas, notice = "", changeEventsById = null) {
   const existingCards = new Map(
     Array.from(ideasRoot.querySelectorAll(".card[data-idea-id]"))
       .map((card) => [card.dataset.ideaId, card])
@@ -558,6 +571,10 @@ function renderIdeas(ideas, notice = "") {
       card.innerHTML = buildIdeaCardMarkup(idea);
       renderedIdeaSignatureById.set(ideaId, signature);
     }
+    const eventType = changeEventsById?.get(ideaId) || IDEA_CHANGE_EVENT.NO_CHANGE;
+    if (eventType !== IDEA_CHANGE_EVENT.NO_CHANGE) {
+      flashIdeaCard(card, eventType);
+    }
 
     const targetPosition = insertionPoint ? insertionPoint.nextSibling : ideasRoot.firstChild;
     if (card !== targetPosition) {
@@ -574,12 +591,12 @@ function renderIdeas(ideas, notice = "") {
   }
 }
 
-function applyFilters() {
+function applyFilters(changeEventsById = null) {
   const filteredIdeas = getFilteredIdeas();
   const emptyMessage = allIdeas.length
     ? "По выбранным фильтрам идеи не найдены."
     : "Идеи пока не сгенерированы.";
-  renderIdeas(filteredIdeas, filteredIdeas.length ? "" : emptyMessage);
+  renderIdeas(filteredIdeas, filteredIdeas.length ? "" : emptyMessage, changeEventsById);
 }
 
 function normalizeLevel(value) {
@@ -1166,12 +1183,42 @@ function dedupeIdeasById(ideas) {
   return Array.from(unique.values());
 }
 
-function refreshOpenModalIfNeeded() {
+function flashModalOnUpdate() {
+  if (!modal) return;
+  modal.classList.remove("modal-idea-updated");
+  void modal.offsetWidth;
+  modal.classList.add("modal-idea-updated");
+}
+
+function refreshOpenModalIfNeeded(changeEventsById) {
   if (!activeIdea) return;
-  const fresh = allIdeas.find((idea) => String(idea?.id) === String(activeIdea?.id));
+  const activeIdeaId = String(activeIdea?.id || "");
+  const fresh = allIdeas.find((idea) => String(idea?.id) === activeIdeaId);
   if (!fresh) return;
-  if (!hasMeaningfulIdeaChange(activeIdea, fresh)) return;
-  openIdea(fresh);
+  const eventType = changeEventsById?.get(activeIdeaId) || IDEA_CHANGE_EVENT.NO_CHANGE;
+  if (eventType === IDEA_CHANGE_EVENT.NO_CHANGE) return;
+  activeIdea = fresh;
+  renderDetailText(fresh);
+  modalTitle.textContent = `${fresh.symbol} — ${getDirectionRu(fresh.direction)}`;
+  const supported = Array.isArray(fresh?.detail_brief?.supported_sections) ? fresh.detail_brief.supported_sections.length : 0;
+  modalSub.textContent = `${fresh.timeframe} · Уверенность ${fresh.confidence}% · аналитических секций: ${supported || "—"}`;
+  flashModalOnUpdate();
+}
+
+function classifyIdeaChanges(incomingById, previousById) {
+  const changeEventsById = new Map();
+  for (const [ideaId, idea] of incomingById.entries()) {
+    const prev = previousById.get(ideaId);
+    if (!prev) {
+      changeEventsById.set(ideaId, IDEA_CHANGE_EVENT.NEW_IDEA);
+      continue;
+    }
+    changeEventsById.set(
+      ideaId,
+      hasMeaningfulIdeaChange(prev, idea) ? IDEA_CHANGE_EVENT.UPDATED_IDEA : IDEA_CHANGE_EVENT.NO_CHANGE,
+    );
+  }
+  return changeEventsById;
 }
 
 async function loadIdeasSnapshot() {
@@ -1192,18 +1239,13 @@ async function loadIdeasSnapshot() {
 
     const incomingById = new Map(normalizedIdeas.map((idea) => [String(idea.id), idea]));
     const previousById = new Map(previousIdeasById);
-
-    let hasRealtimeChanges = false;
-    for (const [ideaId, idea] of incomingById.entries()) {
-      const prev = previousById.get(ideaId);
-      if (!prev) {
-        hasRealtimeChanges = initialIdeasSyncCompleted || hasRealtimeChanges;
-        continue;
-      }
-      if (hasMeaningfulIdeaChange(prev, idea)) {
-        hasRealtimeChanges = initialIdeasSyncCompleted || hasRealtimeChanges;
-      }
-    }
+    const rawEventsById = classifyIdeaChanges(incomingById, previousById);
+    const shouldEmitRealtimeEffects = initialIdeasSyncCompleted;
+    const appliedEventsById = shouldEmitRealtimeEffects
+      ? rawEventsById
+      : new Map(Array.from(rawEventsById.keys(), (ideaId) => [ideaId, IDEA_CHANGE_EVENT.NO_CHANGE]));
+    const hasRealtimeChanges = shouldEmitRealtimeEffects
+      && Array.from(rawEventsById.values()).some((eventType) => eventType !== IDEA_CHANGE_EVENT.NO_CHANGE);
 
     allIdeas = normalizedIdeas;
     previousIdeasById.clear();
@@ -1212,21 +1254,12 @@ async function loadIdeasSnapshot() {
     }
 
     populateFilters(allIdeas);
-    applyFilters();
+    applyFilters(appliedEventsById);
     renderStats(allIdeas, data?.statistics);
-    refreshOpenModalIfNeeded();
+    refreshOpenModalIfNeeded(appliedEventsById);
 
     if (hasRealtimeChanges) {
       playIdeaNotification();
-      const visibleIds = new Set(getFilteredIdeas().map((idea) => String(idea.id)));
-      for (const ideaId of visibleIds) {
-        const prev = previousById.get(ideaId);
-        const next = incomingById.get(ideaId);
-        if (!next || (prev && !hasMeaningfulIdeaChange(prev, next))) continue;
-        const card = Array.from(ideasRoot.querySelectorAll(".card[data-idea-id]"))
-          .find((node) => node.dataset.ideaId === ideaId);
-        flashIdeaCard(card);
-      }
     }
 
     initialIdeasSyncCompleted = true;

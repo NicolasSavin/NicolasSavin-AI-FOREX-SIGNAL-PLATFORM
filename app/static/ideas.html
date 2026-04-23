@@ -125,11 +125,15 @@
       transition: transform 0.15s ease, border-color 0.15s ease;
     }
 
-    .card.idea-card-flash {
-      animation: ideaFlash 2.4s ease;
+    .card.idea-card-flash-new {
+      animation: ideaFlashNew 2.4s ease;
     }
 
-    @keyframes ideaFlash {
+    .card.idea-card-flash-update {
+      animation: ideaFlashUpdate 1.7s ease;
+    }
+
+    @keyframes ideaFlashNew {
       0% {
         border-color: #facc15;
         box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.52);
@@ -137,6 +141,17 @@
       100% {
         border-color: var(--border);
         box-shadow: 0 0 0 14px rgba(250, 204, 21, 0);
+      }
+    }
+
+    @keyframes ideaFlashUpdate {
+      0% {
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.48);
+      }
+      100% {
+        border-color: var(--border);
+        box-shadow: 0 0 0 10px rgba(56, 189, 248, 0);
       }
     }
 
@@ -217,6 +232,21 @@
 
     .modal.open {
       display: flex;
+    }
+
+    .modal.modal-idea-updated .modal-card {
+      animation: modalIdeaPulse 0.8s ease;
+    }
+
+    @keyframes modalIdeaPulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.24);
+        border-color: #38bdf8;
+      }
+      100% {
+        box-shadow: 0 0 0 10px rgba(56, 189, 248, 0);
+        border-color: var(--border);
+      }
     }
 
     .modal-card {
