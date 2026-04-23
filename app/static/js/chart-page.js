@@ -44,6 +44,8 @@ const previousIdeaSignatures = new Map();
 const pendingCardHighlights = new Map();
 const cardHighlightTimers = new Map();
 let modalHighlightTimerId = null;
+let loadInFlight = null;
+let ideasRefreshTimerId = null;
 const CHART_REQUEST_TIMEOUT_MS = 5000;
 const IDEAS_REFRESH_INTERVAL_MS = 60000;
 const CARD_HIGHLIGHT_DURATION_MS = 2400;
@@ -1142,42 +1144,67 @@ function highlightUpdatedModalIfNeeded(ideaId, events) {
 }
 
 async function load() {
+  if (loadInFlight) return loadInFlight;
+
+  const request = (async () => {
+    try {
+      const res = await fetch("/ideas/market", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const normalizedIdeas = normalizeIdeas(data);
+      if (!normalizedIdeas.length && ENABLE_MOCK_IDEAS_ON_EMPTY) {
+        console.warn("Используем временный mock идей: активирован ideas_mock=1.");
+        allIdeas = normalizeIdeas({ ideas: TEMP_MOCK_IDEAS });
+      } else {
+        allIdeas = normalizedIdeas;
+      }
+      const highlightEvents = syncIdeaDiffState(allIdeas);
+      if (initialIdeasLoaded) {
+        highlightEvents.forEach((event) => {
+          pendingCardHighlights.set(event.id, event.kind);
+        });
+      }
+
+      populateFilters(allIdeas);
+      applyFilters();
+      renderStats(allIdeas, data?.statistics);
+
+      const nextActiveIdea = activeIdea ? allIdeas.find((idea) => ideaIdentity(idea) === ideaIdentity(activeIdea)) : null;
+      if (nextActiveIdea && nextActiveIdea !== activeIdea) {
+        activeIdea = nextActiveIdea;
+        renderDetailText(nextActiveIdea);
+        highlightUpdatedModalIfNeeded(ideaIdentity(nextActiveIdea), highlightEvents);
+      }
+      initialIdeasLoaded = true;
+    } catch (error) {
+      console.warn("Не удалось загрузить /ideas/market, synthetic fallback отключён.", error);
+      allIdeas = [];
+      populateFilters(allIdeas);
+      renderIdeas(allIdeas, "Источник идей временно недоступен. Нет актуальных рыночных данных.");
+      renderStats(allIdeas, null);
+    }
+  })();
+
+  loadInFlight = request;
   try {
-    const res = await fetch("/ideas/market", { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const normalizedIdeas = normalizeIdeas(data);
-    if (!normalizedIdeas.length && ENABLE_MOCK_IDEAS_ON_EMPTY) {
-      console.warn("Используем временный mock идей: активирован ideas_mock=1.");
-      allIdeas = normalizeIdeas({ ideas: TEMP_MOCK_IDEAS });
-    } else {
-      allIdeas = normalizedIdeas;
+    await request;
+  } finally {
+    if (loadInFlight === request) {
+      loadInFlight = null;
     }
-    const highlightEvents = syncIdeaDiffState(allIdeas);
-    if (initialIdeasLoaded) {
-      highlightEvents.forEach((event) => {
-        pendingCardHighlights.set(event.id, event.kind);
-      });
-    }
-
-    populateFilters(allIdeas);
-    applyFilters();
-    renderStats(allIdeas, data?.statistics);
-
-    const nextActiveIdea = activeIdea ? allIdeas.find((idea) => ideaIdentity(idea) === ideaIdentity(activeIdea)) : null;
-    if (nextActiveIdea && nextActiveIdea !== activeIdea) {
-      activeIdea = nextActiveIdea;
-      renderDetailText(nextActiveIdea);
-      highlightUpdatedModalIfNeeded(ideaIdentity(nextActiveIdea), highlightEvents);
-    }
-    initialIdeasLoaded = true;
-  } catch (error) {
-    console.warn("Не удалось загрузить /ideas/market, synthetic fallback отключён.", error);
-    allIdeas = [];
-    populateFilters(allIdeas);
-    renderIdeas(allIdeas, "Источник идей временно недоступен. Нет актуальных рыночных данных.");
-    renderStats(allIdeas, null);
   }
+  return request;
+}
+
+function scheduleIdeasRefresh() {
+  if (ideasRefreshTimerId) window.clearTimeout(ideasRefreshTimerId);
+  ideasRefreshTimerId = window.setTimeout(async () => {
+    try {
+      await load();
+    } finally {
+      scheduleIdeasRefresh();
+    }
+  }, IDEAS_REFRESH_INTERVAL_MS);
 }
 
 symbolFilter.addEventListener("change", applyFilters);
@@ -1196,5 +1223,4 @@ window.addEventListener("resize", () => {
   resizeChart();
 });
 
-load();
-window.setInterval(load, IDEAS_REFRESH_INTERVAL_MS);
+load().finally(scheduleIdeasRefresh);
