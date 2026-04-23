@@ -63,3 +63,22 @@ def test_trade_idea_explanation_prompt_contains_json_contract() -> None:
     assert "\"response_format\"" in prompt
     assert "\"headline\"" in prompt
     assert "\"target_logic\"" in prompt
+
+
+def test_smc_overlay_mode_detected_by_message_keywords() -> None:
+    assert ForexChatService._is_smc_overlay_request(
+        message="Проанализируй массив свечей SMC/ICT и верни JSON с order_blocks, liquidity и fvg.",
+        context={},
+    )
+
+
+def test_smc_overlay_prompt_contains_required_overlay_keys() -> None:
+    prompt = ForexChatService._build_smc_overlay_prompt(
+        message="Сделай разметку по свечам",
+        context={"candles": [{"i": 0, "o": 1.1, "h": 1.2, "l": 1.0, "c": 1.15}]},
+    )
+
+    assert "\"response_format\"" in prompt
+    assert "\"order_blocks\"" in prompt
+    assert "\"liquidity\"" in prompt
+    assert "\"structure_levels\"" in prompt
