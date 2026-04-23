@@ -223,33 +223,19 @@ function buildShortText(idea) {
 }
 
 function buildFullText(idea) {
-  const thesis = normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis);
-  if (isRenderableNarrative(thesis) && !isCompactTechnicalSummary(thesis)) return thesis;
-  const unified = normalizeWhitespace(idea?.unified_narrative);
-  if (isRenderableNarrative(unified) && !isCompactTechnicalSummary(unified)) return unified;
-  const legacyNarrative = normalizeWhitespace(idea?.legacy_narrative || idea?.legacyNarrative);
-  if (isRenderableNarrative(legacyNarrative) && !isCompactTechnicalSummary(legacyNarrative)) return legacyNarrative;
-  const legacyNarrativeCandidates = [
-    idea?.full_text,
-    idea?.fullText,
-    idea?.narrative,
-    idea?.description_ru,
-    idea?.reason_ru,
-    idea?.rationale,
-    idea?.idea_context_ru,
-    idea?.ideaContext,
+  const modelNarrativeCandidates = [
+    idea?.idea_thesis || idea?.ideaThesis,
+    idea?.unified_narrative,
+    idea?.full_text || idea?.fullText,
   ];
-  for (const candidate of legacyNarrativeCandidates) {
+  for (const candidate of modelNarrativeCandidates) {
     const text = normalizeWhitespace(candidate);
     if (isRenderableNarrative(text) && !isCompactTechnicalSummary(text)) return text;
   }
-  const { summaryStructured, tradePlanStructured } = getStructuredNarrativeBlocks(idea);
-  const structuredText = normalizeWhitespace(summaryStructured?.situation) || normalizeWhitespace(tradePlanStructured?.entry_trigger);
-  if (isRenderableNarrative(structuredText) && !isCompactTechnicalSummary(structuredText)) return structuredText;
-  const detailSummary = normalizeWhitespace(idea?.detail_brief?.summary_narrative);
-  if (isRenderableNarrative(detailSummary) && !isCompactTechnicalSummary(detailSummary)) return detailSummary;
-  const legacySummary = normalizeWhitespace(idea?.summary || idea?.summary_ru);
-  if (isRenderableNarrative(legacySummary)) return legacySummary;
+
+  const fallbackNarrative = normalizeWhitespace(idea?.fallback_narrative);
+  if (isRenderableNarrative(fallbackNarrative) && !isCompactTechnicalSummary(fallbackNarrative)) return fallbackNarrative;
+
   return "Подробное описание пока не получено. Дождитесь обновления идеи перед входом в сделку.";
 }
 
@@ -367,6 +353,9 @@ function normalizeIdea(idea) {
     summary,
     summary_ru: summary,
   });
+  const thesis = normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis);
+  const unifiedNarrative = normalizeWhitespace(idea?.unified_narrative);
+  const fallbackNarrative = normalizeWhitespace(idea?.fallback_narrative);
   const shortText = buildShortText({
     ...idea,
     summary,
@@ -390,8 +379,10 @@ function normalizeIdea(idea) {
     summary_ru: shortText,
     short_text: shortText,
     full_text: fullText,
-    idea_thesis: normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis) || fullText,
-    unified_narrative: normalizeWhitespace(idea?.unified_narrative) || fullText,
+    idea_thesis: thesis,
+    unified_narrative: unifiedNarrative,
+    fallback_narrative: fallbackNarrative,
+    narrative_source: normalizeWhitespace(idea?.narrative_source || idea?.narrativeSource || "fallback_template").toLowerCase(),
     detail_brief: buildDetailBrief({
       ...idea,
       summary,
