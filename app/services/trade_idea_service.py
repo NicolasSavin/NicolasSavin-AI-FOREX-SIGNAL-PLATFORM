@@ -2155,7 +2155,10 @@ class TradeIdeaService:
             candles = signal.get("candles") if isinstance(signal.get("candles"), list) else []
         model_chart_overlays = self.normalize_chart_overlays(signal.get("chart_overlays"))
         model_overlays_meaningful = self.is_meaningful_overlay_payload(model_chart_overlays)
-        fallback_chart_overlays = self._extract_conservative_chart_overlays(candles)
+        fallback_chart_overlays = self._extract_conservative_chart_overlays(
+            candles,
+            entry=self._extract_numeric(signal.get("entry") or signal.get("entry_zone") or signal.get("entry_price")),
+        )
         fallback_used = False
         if candles and not model_overlays_meaningful and self.is_meaningful_overlay_payload(fallback_chart_overlays):
             model_chart_overlays = fallback_chart_overlays
@@ -2357,7 +2360,12 @@ class TradeIdeaService:
             return normalized_new
         return _normalize(existing)
 
-    def _extract_conservative_chart_overlays(self, candles: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    def _extract_conservative_chart_overlays(
+        self,
+        candles: list[dict[str, Any]],
+        *,
+        entry: float | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
         overlays = self.normalize_chart_overlays({})
         if len(candles) < 6:
             return overlays
@@ -2374,9 +2382,12 @@ class TradeIdeaService:
             return overlays
         range_high = max(highs)
         range_low = min(lows)
+        end_index = max(len(candles) - 1, 0)
+        start_index = max(0, end_index - min(18, len(candles) - 1))
+        range_span = max(range_high - range_low, abs(range_high) * 0.0006)
         overlays["structure_levels"] = [
-            {"type": "range_high", "price": range_high, "label": "Range High"},
-            {"type": "range_low", "price": range_low, "label": "Range Low"},
+            {"type": "resistance", "price": range_high, "label": "Resistance"},
+            {"type": "support", "price": range_low, "label": "Support"},
         ]
         current_price = self._extract_numeric(candles[-1].get("close")) or range_high
         tolerance = max((range_high - range_low) * 0.0015, abs(current_price) * 0.00025)
@@ -2386,6 +2397,29 @@ class TradeIdeaService:
             overlays["liquidity"].append({"type": "buy_side", "price": range_high, "label": "Buy-side liquidity"})
         if eq_low >= 1:
             overlays["liquidity"].append({"type": "sell_side", "price": range_low, "label": "Sell-side liquidity"})
+        overlays["zones"].append(
+            {
+                "type": "working_zone",
+                "label": "Working zone",
+                "low": range_low + range_span * 0.35,
+                "high": range_low + range_span * 0.55,
+                "start_index": start_index,
+                "end_index": end_index,
+            }
+        )
+        if entry is not None:
+            entry_padding = max(abs(entry) * 0.0006, range_span * 0.04)
+            overlays["zones"].append(
+                {
+                    "type": "entry_zone",
+                    "label": "Entry zone",
+                    "low": entry - entry_padding,
+                    "high": entry + entry_padding,
+                    "start_index": max(0, end_index - 8),
+                    "end_index": end_index,
+                }
+            )
+        overlays["levels"] = list(overlays.get("structure_levels") or []) + list(overlays.get("liquidity") or [])
         return overlays
 
     @classmethod
@@ -2401,8 +2435,15 @@ class TradeIdeaService:
                 normalized["fvg"].append(zone)
             elif "liquidity" in zone_type:
                 normalized["liquidity"].append(zone)
+            else:
+                normalized["zones"].append(zone)
+                normalized["order_blocks"].append(zone)
         for level in payload.get("levels") if isinstance(payload.get("levels"), list) else []:
-            normalized["structure_levels"].append(level)
+            level_type = str(level.get("type") or level.get("label") or "").lower()
+            if "liq" in level_type or "bsl" in level_type or "ssl" in level_type:
+                normalized["liquidity"].append(level)
+            else:
+                normalized["structure_levels"].append(level)
         for pattern in payload.get("patterns") if isinstance(payload.get("patterns"), list) else []:
             normalized["patterns"].append(pattern)
         return normalized

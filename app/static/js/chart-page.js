@@ -224,6 +224,13 @@ function buildShortText(idea) {
 }
 
 function buildFullText(idea) {
+  const isPlaceholderNarrative = (value) => {
+    const text = normalizeWhitespace(value).toLowerCase();
+    if (!text) return false;
+    return text.includes("подробное описание пока не получено")
+      || text.includes("дождитесь обновления идеи")
+      || text.includes("описание пока не получено");
+  };
   const modelNarrativeCandidates = [
     idea?.idea_thesis || idea?.ideaThesis,
     idea?.unified_narrative,
@@ -231,11 +238,17 @@ function buildFullText(idea) {
   ];
   for (const candidate of modelNarrativeCandidates) {
     const text = normalizeWhitespace(candidate);
+    if (!text || isPlaceholderNarrative(text)) continue;
     if (isRenderableNarrative(text) && !isCompactTechnicalSummary(text)) return text;
   }
 
   const fallbackNarrative = normalizeWhitespace(idea?.fallback_narrative);
-  if (isRenderableNarrative(fallbackNarrative) && !isCompactTechnicalSummary(fallbackNarrative)) return fallbackNarrative;
+  if (
+    fallbackNarrative
+    && !isPlaceholderNarrative(fallbackNarrative)
+    && isRenderableNarrative(fallbackNarrative)
+    && !isCompactTechnicalSummary(fallbackNarrative)
+  ) return fallbackNarrative;
 
   return "Подробное описание пока не получено. Дождитесь обновления идеи перед входом в сделку.";
 }
@@ -1769,6 +1782,48 @@ function normalizeSmcOverlays(payload) {
       };
     })
     .filter(Boolean);
+
+  const hasAdvancedOverlays = orderBlocks.length || fvg.length || liquidity.length || structure.length || patterns.length;
+  if (!hasAdvancedOverlays && Array.isArray(payload?.candles) && payload.candles.length >= 6) {
+    const recentCandles = payload.candles.slice(-30);
+    const highs = recentCandles.map((c) => toFiniteNumber(c?.high)).filter((v) => v != null);
+    const lows = recentCandles.map((c) => toFiniteNumber(c?.low)).filter((v) => v != null);
+    if (highs.length && lows.length) {
+      const rangeHigh = Math.max(...highs);
+      const rangeLow = Math.min(...lows);
+      const mid = (rangeHigh + rangeLow) / 2;
+      const endIndex = payload.candles.length - 1;
+      const startIndex = Math.max(0, endIndex - Math.min(18, recentCandles.length - 1));
+      structure.push(
+        { level: rangeHigh, type: "resistance", label: "Resistance" },
+        { level: rangeLow, type: "support", label: "Support" },
+      );
+      liquidity.push(
+        { level: rangeHigh, label: "BSL" },
+        { level: rangeLow, label: "SSL" },
+      );
+      orderBlocks.push({
+        from: Math.min(mid, rangeLow + (rangeHigh - rangeLow) * 0.35),
+        to: Math.max(mid, rangeLow + (rangeHigh - rangeLow) * 0.55),
+        type: "working_zone",
+        label: "Working zone",
+        from_index: startIndex,
+        to_index: endIndex,
+      });
+      const entry = toFiniteNumber(payload?.entry ?? payload?.entry_price ?? payload?.trade?.entry);
+      if (entry != null) {
+        const zonePad = Math.max(Math.abs(entry) * 0.0006, (rangeHigh - rangeLow) * 0.04);
+        orderBlocks.push({
+          from: entry - zonePad,
+          to: entry + zonePad,
+          type: "entry_zone",
+          label: "Entry zone",
+          from_index: Math.max(0, endIndex - 8),
+          to_index: endIndex,
+        });
+      }
+    }
+  }
 
   return {
     order_blocks: orderBlocks,
