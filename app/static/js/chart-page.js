@@ -1296,6 +1296,14 @@ function mergeWithPreviousIdeaState(nextIdea, prevIdea) {
   };
 }
 
+
+function mergeChartPayloadWithIdeaOverlays(payload, idea) {
+  if (!payload || typeof payload !== "object") return payload;
+  const ideaOverlays = idea?.chart_overlays;
+  if (!ideaOverlays || payload.chart_overlays) return payload;
+  return { ...payload, chart_overlays: ideaOverlays };
+}
+
 function showLiveChart(payload) {
   const normalizedPayload = normalizeChartPayload(payload);
   if (!hasCandles(normalizedPayload)) return false;
@@ -1437,6 +1445,34 @@ function toFiniteNumber(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+
+function toFiniteIndex(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.round(numeric)) : null;
+}
+
+function clampIndex(index, maxIndex) {
+  if (!Number.isFinite(index) || maxIndex < 0) return 0;
+  return Math.max(0, Math.min(Math.round(index), maxIndex));
+}
+
+function buildPatternAnchor(candles, pattern) {
+  if (!Array.isArray(candles) || !candles.length || !pattern) return null;
+  const maxIndex = candles.length - 1;
+  const fromIndex = clampIndex(pattern.from_index ?? pattern.start_index ?? pattern.index ?? maxIndex, maxIndex);
+  const toIndex = clampIndex(pattern.to_index ?? pattern.end_index ?? pattern.index ?? fromIndex, maxIndex);
+  const anchorIndex = clampIndex(Math.round((fromIndex + toIndex) / 2), maxIndex);
+  const explicitPrice = toFiniteNumber(pattern.level ?? pattern.price ?? pattern.y ?? pattern.high ?? pattern.low);
+  const candle = candles[toIndex] || candles[anchorIndex] || candles[maxIndex];
+  const fallbackPrice = candle ? Math.max(candle.high, candle.close) : null;
+  return {
+    from_index: fromIndex,
+    to_index: Math.max(fromIndex, toIndex),
+    anchor_index: anchorIndex,
+    anchor_price: explicitPrice ?? fallbackPrice,
+  };
+}
+
 function normalizeSmcOverlays(payload) {
   const base = payload?.chart_overlays
     ?? payload?.chartOverlays
@@ -1444,16 +1480,18 @@ function normalizeSmcOverlays(payload) {
     ?? {};
 
   const asZone = (item, fallbackLabel = "Zone") => {
-    const from = toFiniteNumber(item?.from ?? item?.low);
-    const to = toFiniteNumber(item?.to ?? item?.high);
-    if (from == null || to == null) return null;
+    const top = toFiniteNumber(item?.top ?? item?.high ?? item?.to ?? item?.price_to ?? item?.priceTo);
+    const bottom = toFiniteNumber(item?.bottom ?? item?.low ?? item?.from ?? item?.price_from ?? item?.priceFrom);
+    if (top == null || bottom == null) return null;
+    const startIndex = toFiniteIndex(item?.from_index ?? item?.start_index ?? item?.startIndex ?? item?.start);
+    const endIndex = toFiniteIndex(item?.to_index ?? item?.end_index ?? item?.endIndex ?? item?.end);
     return {
-      from: Math.min(from, to),
-      to: Math.max(from, to),
+      from: Math.min(top, bottom),
+      to: Math.max(top, bottom),
       type: String(item?.type || "").toLowerCase(),
       label: normalizeWhitespace(item?.label || fallbackLabel),
-      start_index: Number.isFinite(Number(item?.start_index)) ? Number(item.start_index) : null,
-      end_index: Number.isFinite(Number(item?.end_index)) ? Number(item.end_index) : null,
+      from_index: startIndex,
+      to_index: endIndex,
     };
   };
 
@@ -1462,41 +1500,41 @@ function normalizeSmcOverlays(payload) {
   const liquidityRaw = Array.isArray(base?.liquidity) ? base.liquidity : [];
   const structureRaw = Array.isArray(base?.structure_levels) ? base.structure_levels : Array.isArray(base?.structure) ? base.structure : [];
   const patternsRaw = Array.isArray(base?.patterns) ? base.patterns : [];
-  const genericZones = Array.isArray(base?.zones) ? base.zones : [];
-  const genericLevels = Array.isArray(base?.levels) ? base.levels : [];
 
   const orderBlocks = orderBlocksRaw.map((item) => asZone(item, "Order Block")).filter(Boolean);
   const fvg = fvgRaw.map((item) => asZone(item, "FVG")).filter(Boolean);
 
-  genericZones.forEach((item) => {
-    const normalized = asZone(item, "Zone");
-    if (!normalized) return;
-    const t = String(item?.type || item?.label || "").toLowerCase();
-    if (t.includes("fvg") || t.includes("imbalance")) {
-      fvg.push(normalized);
-    } else if (t.includes("liquidity")) {
-      liquidityRaw.push(item);
-    } else {
-      orderBlocks.push(normalized);
-    }
-  });
-
   const liquidity = liquidityRaw
     .map((item) => {
-      const level = toFiniteNumber(item?.level ?? item?.price);
+      const level = toFiniteNumber(item?.price ?? item?.level ?? item?.value);
       if (level == null) return null;
-      return { level, label: normalizeWhitespace(item?.label || "Liquidity") };
+      const type = String(item?.type || "").toLowerCase();
+      const fallbackLabel = type.includes("buy") || type.includes("bsl") ? "BSL" : type.includes("sell") || type.includes("ssl") ? "SSL" : "Liquidity";
+      return {
+        level,
+        label: normalizeWhitespace(item?.label || fallbackLabel),
+      };
     })
     .filter(Boolean);
 
-  const structure = [...structureRaw, ...genericLevels]
+  const structure = structureRaw
     .map((item) => {
-      const level = toFiniteNumber(item?.level ?? item?.price);
+      const level = toFiniteNumber(item?.price ?? item?.level ?? item?.value);
       if (level == null) return null;
+      const type = normalizeWhitespace(item?.type || item?.kind || "structure").toLowerCase();
+      const fallbackLabel = type.includes("bos")
+        ? "BOS"
+        : type.includes("choch")
+          ? "CHoCH"
+          : type.includes("support")
+            ? "support"
+            : type.includes("resistance")
+              ? "resistance"
+              : "Structure";
       return {
         level,
-        type: normalizeWhitespace(item?.type || "structure"),
-        label: normalizeWhitespace(item?.label || item?.type || "Level"),
+        type,
+        label: normalizeWhitespace(item?.label || fallbackLabel),
       };
     })
     .filter(Boolean);
@@ -1505,8 +1543,12 @@ function normalizeSmcOverlays(payload) {
     .map((item) => {
       const label = normalizeWhitespace(item?.label || item?.name || item?.type || item?.pattern || "");
       if (!label) return null;
-      const level = toFiniteNumber(item?.level ?? item?.price ?? item?.y ?? item?.high ?? item?.low);
-      return { label, level };
+      const anchor = buildPatternAnchor(payload?.candles || [], item);
+      if (!anchor) return null;
+      return {
+        label,
+        ...anchor,
+      };
     })
     .filter(Boolean);
 
@@ -1538,35 +1580,53 @@ const overlayPlugin = {
     const rightX = Math.max(startX, endX);
     const lineWidth = Math.max(1, rightX - leftX);
 
+    const maxIndex = candles.length - 1;
+
     smcOverlays.order_blocks.forEach((zone) => {
       const yTop = candleSeries.priceToCoordinate(zone.to);
       const yBottom = candleSeries.priceToCoordinate(zone.from);
       if (yTop == null || yBottom == null) return;
+      const fromIdx = clampIndex(zone.from_index ?? 0, maxIndex);
+      const toIdx = clampIndex(zone.to_index ?? maxIndex, maxIndex);
+      const x1 = timeScale.timeToCoordinate(candles[fromIdx]?.time) ?? leftX;
+      const x2 = timeScale.timeToCoordinate(candles[toIdx]?.time) ?? rightX;
+      const zoneLeft = Math.min(x1, x2);
+      const zoneWidth = Math.max(8, Math.abs(x2 - x1));
       const top = Math.min(yTop, yBottom);
       const height = Math.max(4, Math.abs(yBottom - yTop));
       const isBearish = ["bearish", "supply", "sell", "short"].includes(zone.type);
+      const label = normalizeWhitespace(zone.label || (isBearish ? "Bearish OB" : "Bullish OB"));
       ctx.save();
-      ctx.fillStyle = isBearish ? "rgba(239, 68, 68, 0.16)" : "rgba(34, 197, 94, 0.16)";
-      ctx.strokeStyle = isBearish ? "rgba(239, 68, 68, 0.5)" : "rgba(34, 197, 94, 0.5)";
+      ctx.fillStyle = isBearish ? "rgba(239, 68, 68, 0.18)" : "rgba(34, 197, 94, 0.18)";
+      ctx.strokeStyle = isBearish ? "rgba(239, 68, 68, 0.55)" : "rgba(34, 197, 94, 0.55)";
       ctx.lineWidth = 1;
-      ctx.fillRect(leftX, top, lineWidth, height);
-      ctx.strokeRect(leftX, top, lineWidth, height);
+      ctx.fillRect(zoneLeft, top, zoneWidth, height);
+      ctx.strokeRect(zoneLeft, top, zoneWidth, height);
       ctx.restore();
+      drawLabel(ctx, zoneLeft + 6, top + 18, label, isBearish ? "#fca5a5" : "#86efac");
     });
 
     smcOverlays.fvg.forEach((gap) => {
       const yTop = candleSeries.priceToCoordinate(gap.to);
       const yBottom = candleSeries.priceToCoordinate(gap.from);
       if (yTop == null || yBottom == null) return;
+      const fromIdx = clampIndex(gap.from_index ?? 0, maxIndex);
+      const toIdx = clampIndex(gap.to_index ?? maxIndex, maxIndex);
+      const x1 = timeScale.timeToCoordinate(candles[fromIdx]?.time) ?? leftX;
+      const x2 = timeScale.timeToCoordinate(candles[toIdx]?.time) ?? rightX;
+      const zoneLeft = Math.min(x1, x2);
+      const zoneWidth = Math.max(8, Math.abs(x2 - x1));
       const top = Math.min(yTop, yBottom);
       const height = Math.max(3, Math.abs(yBottom - yTop));
       ctx.save();
-      ctx.fillStyle = "rgba(59, 130, 246, 0.16)";
-      ctx.strokeStyle = "rgba(96, 165, 250, 0.45)";
+      ctx.fillStyle = "rgba(147, 51, 234, 0.13)";
+      ctx.strokeStyle = "rgba(167, 139, 250, 0.7)";
+      ctx.setLineDash([4, 3]);
       ctx.lineWidth = 1;
-      ctx.fillRect(leftX, top, lineWidth, height);
-      ctx.strokeRect(leftX, top, lineWidth, height);
+      ctx.fillRect(zoneLeft, top, zoneWidth, height);
+      ctx.strokeRect(zoneLeft, top, zoneWidth, height);
       ctx.restore();
+      drawLabel(ctx, zoneLeft + 6, top + 16, normalizeWhitespace(gap.label || "FVG"), "#c4b5fd", "rgba(30, 12, 54, 0.88)");
     });
 
     smcOverlays.liquidity.forEach((item) => {
@@ -1581,7 +1641,7 @@ const overlayPlugin = {
       ctx.lineTo(rightX, y);
       ctx.stroke();
       ctx.restore();
-      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, item.label || "Liquidity", "#38bdf8");
+      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, item.label || "SSL/BSL", "#38bdf8");
     });
 
     smcOverlays.structure.forEach((item) => {
@@ -1595,14 +1655,16 @@ const overlayPlugin = {
       ctx.lineTo(rightX, y);
       ctx.stroke();
       ctx.restore();
-      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, item.label || `Structure: ${item.type}`, "#fbbf24");
+      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, item.label || "BOS/CHoCH", "#fbbf24");
     });
 
-    smcOverlays.patterns.forEach((item, index) => {
-      const y = candleSeries.priceToCoordinate(item.level);
+    smcOverlays.patterns.forEach((item) => {
+      const y = candleSeries.priceToCoordinate(item.anchor_price);
       if (y == null) return;
-      const x = Math.max(leftX + 12, rightX - 220 + (index % 2) * 110);
-      drawLabel(ctx, x, y - 4, item.label || "Pattern", "#f9a8d4", "rgba(38, 12, 30, 0.86)");
+      const anchorIdx = clampIndex(item.anchor_index ?? item.to_index ?? item.from_index ?? maxIndex, maxIndex);
+      const x = timeScale.timeToCoordinate(candles[anchorIdx]?.time);
+      if (x == null) return;
+      drawLabel(ctx, x + 8, y - 8, item.label || "Pattern", "#f9a8d4", "rgba(38, 12, 30, 0.86)");
     });
   },
 };
@@ -1863,13 +1925,13 @@ async function openIdea(idea) {
 
   let payload = null;
   if (hasRenderableCandles(idea)) {
-    payload = idea.chartData || idea.chart_data;
+    payload = mergeChartPayloadWithIdeaOverlays(idea.chartData || idea.chart_data, idea);
   } else {
-    payload = await resolveChartData(idea);
+    payload = mergeChartPayloadWithIdeaOverlays(await resolveChartData(idea), idea);
   }
   if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
 
-  if (showLiveChart(payload) || showLiveChart(idea.chartData)) {
+  if (showLiveChart(payload) || showLiveChart(mergeChartPayloadWithIdeaOverlays(idea.chartData, idea))) {
     const livePayload = hasCandles(payload) ? payload : idea.chartData;
     if (hasCandles(livePayload)) {
       cacheIdeaChart(idea.id, { type: "live", value: livePayload });
