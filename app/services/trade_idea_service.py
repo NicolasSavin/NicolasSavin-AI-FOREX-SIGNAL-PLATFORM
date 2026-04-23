@@ -2256,7 +2256,7 @@ class TradeIdeaService:
         invalidation: str,
         target: str,
     ) -> str:
-        direct_text = row.get("full_text") or row.get("fullText")
+        direct_text = row.get("idea_thesis") or row.get("unified_narrative") or row.get("full_text") or row.get("fullText")
         direct_clean = re.sub(r"\s+", " ", str(direct_text or "")).strip()
         generated = generate_signal_text(cls._build_signal_data(row, trigger=trigger, invalidation=invalidation))
         if generated:
@@ -3083,8 +3083,9 @@ class TradeIdeaService:
             timeframe = self._extract_timeframe(row)
             direction = self._extract_direction(row)
             summary = (
-                row.get("summary")
+                row.get("idea_thesis")
                 or row.get("unified_narrative")
+                or row.get("summary")
                 or row.get("full_text")
                 or row.get("fullText")
                 or row.get("summary_ru")
@@ -3127,7 +3128,14 @@ class TradeIdeaService:
                 or self._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2"))
                 or (f"Ближайшая цель: {take_profit}." if take_profit != "—" else "Цель будет уточняться после появления подтверждения.")
             )
-            unified_narrative = str(row.get("unified_narrative") or row.get("full_text") or row.get("fullText") or "").strip()
+            idea_thesis = str(
+                row.get("idea_thesis")
+                or row.get("unified_narrative")
+                or row.get("full_text")
+                or row.get("fullText")
+                or ""
+            ).strip()
+            unified_narrative = str(row.get("unified_narrative") or idea_thesis).strip()
             full_text = self._build_full_text(
                 row,
                 summary=str(summary),
@@ -3138,6 +3146,8 @@ class TradeIdeaService:
             )
             if not unified_narrative:
                 unified_narrative = full_text
+            if not idea_thesis:
+                idea_thesis = unified_narrative or full_text
             short_text = self._build_short_text(
                 row,
                 direction=direction,
@@ -3229,6 +3239,7 @@ class TradeIdeaService:
                         "summary_ru": short_text,
                         "short_text": short_text,
                         "short_scenario_ru": short_text,
+                        "idea_thesis": idea_thesis,
                         "full_text": full_text,
                         "unified_narrative": unified_narrative,
                         "signal": str(
@@ -3374,14 +3385,14 @@ class TradeIdeaService:
         return (
             "Сгенерируй 6 торговых идей строго по переданным market contexts.\n\n"
             "Каждая идея должна соответствовать ОДНОЙ записи из списка contexts и содержать:\n"
-            "- id\n- symbol\n- timeframe\n- direction (bullish/bearish/neutral)\n- confidence (60-80)\n- unified_narrative\n- short_text\n- full_text\n- signal\n- risk_note\n- entry\n- stopLoss\n- takeProfit\n- tags (массив)\n\n"
+            "- id\n- symbol\n- timeframe\n- direction (bullish/bearish/neutral)\n- confidence (60-80)\n- idea_thesis\n- unified_narrative\n- short_text\n- full_text\n- signal\n- risk_note\n- entry\n- stopLoss\n- takeProfit\n- tags (массив)\n\n"
             "Обязательно добавь структурированные narrative-блоки (Grok пишет текст сам, без шаблонов):\n"
             "- summary_structured: signal, situation, cause, effect, action, risk_note\n"
             "- trade_plan_structured: entry_trigger, entry_zone, stop_loss, take_profit, invalidation\n"
             "- market_structure_structured: bias, structure, liquidity, zone, confluence\n"
             "Правила для structured-текста: простой язык, короткие предложения, cause->effect->action явный, без длинных эссе и без повторов symbol/timeframe в каждом поле.\n"
-            "unified_narrative — это главный связный текст объяснения (3-6 коротких предложений, без секций).\n"
-            "full_text и short_text оставь для обратной совместимости, но structured-поля обязательны.\n"
+            "idea_thesis — главный связный текст объяснения (3-6 коротких предложений, без секций), именно его покажет UI в приоритете.\n"
+            "unified_narrative, full_text и short_text оставь для обратной совместимости, но structured-поля обязательны.\n"
             "signal верни строго BUY / SELL / WAIT.\n"
             "risk_note верни короткой фразой про ключевой риск/invalidation.\n"
             "Если данных мало, не выдумывай: честно укажи ограниченность подтверждений в risk_note/confluence.\n\n"

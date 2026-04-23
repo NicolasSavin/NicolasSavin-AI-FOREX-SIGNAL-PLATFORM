@@ -357,37 +357,41 @@
     }
 
     .detail-summary-strong {
-      font-size: 16px;
-      line-height: 1.8;
+      font-size: 17px;
+      line-height: 1.85;
+      letter-spacing: 0.01em;
     }
 
     .detail-metrics {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
       margin-top: 14px;
     }
 
     .metric-chip {
-      border-radius: 14px;
+      border-radius: 999px;
       border: 1px solid #1d2c47;
       background: rgba(255, 255, 255, 0.03);
-      padding: 12px;
+      padding: 6px 10px;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
     }
 
     .metric-chip-label {
       color: var(--muted);
-      font-size: 11px;
+      font-size: 10px;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 6px;
+      letter-spacing: 0.05em;
+      margin-bottom: 0;
     }
 
     .metric-chip-value {
       color: #eef4ff;
-      font-size: 15px;
-      line-height: 1.45;
-      font-weight: 700;
+      font-size: 12px;
+      line-height: 1.2;
+      font-weight: 600;
     }
 
     .levels-list {
@@ -554,7 +558,7 @@
 
       <div class="detail-grid">
         <section class="detail-card">
-          <h3>Summary / Narrative</h3>
+          <h3>Основная идея (Grok)</h3>
           <p id="idea-summary" class="detail-summary detail-summary-strong"></p>
           <div id="detail-metrics" class="detail-metrics"></div>
         </section>
@@ -601,7 +605,7 @@
         </div>
       </div>
 
-      <div class="analysis-grid">
+      <div class="analysis-grid" style="display:none;">
         <div class="analysis-block">
           <div class="analysis-title">Desk Narrative</div>
           <p id="analysis-text" class="analysis-text"></p>
