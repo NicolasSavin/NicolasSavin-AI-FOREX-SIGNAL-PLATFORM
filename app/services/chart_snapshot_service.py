@@ -363,12 +363,12 @@ class ChartSnapshotService:
         for zone in zones[:10]:
             zone_type_raw = str(zone.get("type") or zone.get("kind") or zone.get("label") or "").lower().replace(" ", "_")
             style = styles.get(zone_type_raw, {"face": "#38bdf8", "edge": "#38bdf8", "label": "Zone"})
-            price_from = self._to_float(zone.get("from") or zone.get("priceFrom") or zone.get("low"))
-            price_to = self._to_float(zone.get("to") or zone.get("priceTo") or zone.get("high"))
+            price_from = self._to_float(zone.get("bottom") or zone.get("from") or zone.get("priceFrom") or zone.get("price_from") or zone.get("low"))
+            price_to = self._to_float(zone.get("top") or zone.get("to") or zone.get("priceTo") or zone.get("price_to") or zone.get("high"))
             if price_from is None or price_to is None:
                 continue
-            start_idx = int(zone.get("start_index") or zone.get("startIndex") or zone.get("start") or max(candles_count - 25, 0))
-            end_idx = int(zone.get("end_index") or zone.get("endIndex") or zone.get("end") or candles_count - 1)
+            start_idx = int(zone.get("from_index") or zone.get("start_index") or zone.get("startIndex") or zone.get("start") or max(candles_count - 25, 0))
+            end_idx = int(zone.get("to_index") or zone.get("end_index") or zone.get("endIndex") or zone.get("end") or candles_count - 1)
             start_idx = max(-1, min(start_idx, candles_count - 1))
             end_idx = max(start_idx + 1, min(end_idx, candles_count))
             bottom = min(price_from, price_to)
@@ -504,8 +504,8 @@ class ChartSnapshotService:
                 continue
             low = self._to_float(pattern.get("low") or pattern.get("price_from"))
             high = self._to_float(pattern.get("high") or pattern.get("price_to"))
-            start_idx_raw = self._to_float(pattern.get("start_index") or pattern.get("startIndex") or pattern.get("x1"))
-            end_idx_raw = self._to_float(pattern.get("end_index") or pattern.get("endIndex") or pattern.get("x2"))
+            start_idx_raw = self._to_float(pattern.get("from_index") or pattern.get("start_index") or pattern.get("startIndex") or pattern.get("x1"))
+            end_idx_raw = self._to_float(pattern.get("to_index") or pattern.get("end_index") or pattern.get("endIndex") or pattern.get("x2"))
             if None not in (low, high, start_idx_raw, end_idx_raw):
                 start_idx = max(0, min(start_idx_raw, candles_count - 1))
                 end_idx = max(start_idx + 1, min(end_idx_raw, candles_count - 1))
