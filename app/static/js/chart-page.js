@@ -19,6 +19,7 @@ const chartHost = document.getElementById("chart-host");
 const overlayCanvas = document.getElementById("chart-overlay");
 const chartPlaceholder = document.getElementById("chart-placeholder");
 const chartPlaceholderText = document.getElementById("chart-placeholder-text");
+const modalCard = modal?.querySelector(".modal-card");
 
 const ideaSummary = document.getElementById("idea-summary");
 const levelEntry = document.getElementById("level-entry");
@@ -33,12 +34,19 @@ const scenarioInvalidation = document.getElementById("scenario-invalidation");
 
 let allIdeas = [];
 let activeIdea = null;
+let initialIdeasLoaded = false;
 let chart = null;
 let candleSeries = null;
 let currentChartPayload = null;
 let detailRequestId = 0;
 let chartDisplayMode = "unavailable";
+const previousIdeaSignatures = new Map();
+const pendingCardHighlights = new Map();
+const cardHighlightTimers = new Map();
+let modalHighlightTimerId = null;
 const CHART_REQUEST_TIMEOUT_MS = 5000;
+const IDEAS_REFRESH_INTERVAL_MS = 60000;
+const CARD_HIGHLIGHT_DURATION_MS = 2400;
 const DEFAULT_PAIR_OPTIONS = ["EURUSD", "GBPUSD", "USDJPY"];
 const DEFAULT_TIMEFRAME_OPTIONS = ["M15", "H1", "H4"];
 const ENABLE_MOCK_IDEAS_ON_EMPTY = new URLSearchParams(window.location.search).get("ideas_mock") === "1";
@@ -90,6 +98,30 @@ function getDirectionLabel(value) {
 
 function normalizeWhitespace(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function ideaIdentity(idea) {
+  return String(idea?.id || `${idea?.symbol || ""}-${idea?.timeframe || ""}`).trim();
+}
+
+function buildMeaningfulSignature(idea) {
+  return JSON.stringify({
+    status: normalizeWhitespace(idea?.status),
+    updated_at: normalizeWhitespace(idea?.updated_at),
+    chartImageUrl: normalizeWhitespace(idea?.chartImageUrl || idea?.chart_image),
+    unified_narrative: normalizeWhitespace(idea?.unified_narrative),
+    idea_thesis: normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis),
+    signal: normalizeWhitespace(idea?.signal || idea?.direction || idea?.bias),
+    confidence: Number(idea?.confidence ?? ""),
+    entry: formatLevel(idea?.entry),
+    sl: formatLevel(idea?.stopLoss),
+    tp: formatLevel(idea?.takeProfit),
+  });
+}
+
+function escapeSelectorValue(value) {
+  if (window.CSS?.escape) return window.CSS.escape(value);
+  return String(value).replace(/["\\]/g, "\\$&");
 }
 
 function formatDateTime(value) {
@@ -430,7 +462,7 @@ function renderIdeas(ideas, notice = "") {
       : "";
 
     return `
-      <div class="card" data-index="${idx}">
+      <div class="card" data-index="${idx}" data-idea-id="${escapeHtml(ideaIdentity(idea))}">
         <div class="card-head">
           <div>
             <div class="symbol">${escapeHtml(symbol)}</div>
@@ -453,6 +485,32 @@ function renderIdeas(ideas, notice = "") {
   document.querySelectorAll(".card").forEach((card, idx) => {
     card.addEventListener("click", () => openIdea(ideas[idx]));
   });
+  applyPendingCardHighlights();
+}
+
+function applyHighlightClassTemporary(node, className) {
+  if (!node) return;
+  const existingTimer = cardHighlightTimers.get(node);
+  if (existingTimer) window.clearTimeout(existingTimer);
+  node.classList.remove("is-new-idea", "is-updated-idea");
+  // Force reflow so repeated meaningful updates can retrigger the subtle animation.
+  void node.offsetWidth;
+  node.classList.add(className);
+  const timeoutId = window.setTimeout(() => {
+    node.classList.remove(className);
+    cardHighlightTimers.delete(node);
+  }, CARD_HIGHLIGHT_DURATION_MS);
+  cardHighlightTimers.set(node, timeoutId);
+}
+
+function applyPendingCardHighlights() {
+  if (!pendingCardHighlights.size) return;
+  pendingCardHighlights.forEach((kind, ideaId) => {
+    const card = ideasRoot.querySelector(`.card[data-idea-id="${escapeSelectorValue(ideaId)}"]`);
+    if (!card) return;
+    applyHighlightClassTemporary(card, kind === "new" ? "is-new-idea" : "is-updated-idea");
+  });
+  pendingCardHighlights.clear();
 }
 
 function applyFilters() {
@@ -1032,9 +1090,55 @@ async function openIdea(idea) {
 
 function closeModal() {
   modal.classList.remove("open");
+  modalCard?.classList.remove("is-updated-idea-modal");
+  if (modalHighlightTimerId) {
+    window.clearTimeout(modalHighlightTimerId);
+    modalHighlightTimerId = null;
+  }
   activeIdea = null;
   detailRequestId += 1;
   showUnavailableChart("Chart unavailable (data temporarily missing)");
+}
+
+function syncIdeaDiffState(nextIdeas) {
+  const nextSignatures = new Map();
+  const highlightEvents = [];
+
+  nextIdeas.forEach((idea) => {
+    const ideaId = ideaIdentity(idea);
+    if (!ideaId) return;
+    const signature = buildMeaningfulSignature(idea);
+    nextSignatures.set(ideaId, signature);
+
+    if (!initialIdeasLoaded) return;
+    if (!previousIdeaSignatures.has(ideaId)) {
+      highlightEvents.push({ id: ideaId, kind: "new" });
+      return;
+    }
+    if (previousIdeaSignatures.get(ideaId) !== signature) {
+      highlightEvents.push({ id: ideaId, kind: "updated" });
+    }
+  });
+
+  previousIdeaSignatures.clear();
+  nextSignatures.forEach((value, key) => previousIdeaSignatures.set(key, value));
+  return highlightEvents;
+}
+
+function highlightUpdatedModalIfNeeded(ideaId, events) {
+  if (!activeIdea || !modal.classList.contains("open")) return;
+  const activeIdeaId = ideaIdentity(activeIdea);
+  if (!activeIdeaId || activeIdeaId !== ideaId) return;
+  const wasUpdated = events.some((event) => event.id === ideaId && event.kind === "updated");
+  if (!wasUpdated) return;
+  modalCard?.classList.remove("is-updated-idea-modal");
+  void modalCard?.offsetWidth;
+  modalCard?.classList.add("is-updated-idea-modal");
+  if (modalHighlightTimerId) window.clearTimeout(modalHighlightTimerId);
+  modalHighlightTimerId = window.setTimeout(() => {
+    modalCard?.classList.remove("is-updated-idea-modal");
+    modalHighlightTimerId = null;
+  }, CARD_HIGHLIGHT_DURATION_MS);
 }
 
 async function load() {
@@ -1049,9 +1153,24 @@ async function load() {
     } else {
       allIdeas = normalizedIdeas;
     }
+    const highlightEvents = syncIdeaDiffState(allIdeas);
+    if (initialIdeasLoaded) {
+      highlightEvents.forEach((event) => {
+        pendingCardHighlights.set(event.id, event.kind);
+      });
+    }
+
     populateFilters(allIdeas);
     applyFilters();
     renderStats(allIdeas, data?.statistics);
+
+    const nextActiveIdea = activeIdea ? allIdeas.find((idea) => ideaIdentity(idea) === ideaIdentity(activeIdea)) : null;
+    if (nextActiveIdea && nextActiveIdea !== activeIdea) {
+      activeIdea = nextActiveIdea;
+      renderDetailText(nextActiveIdea);
+      highlightUpdatedModalIfNeeded(ideaIdentity(nextActiveIdea), highlightEvents);
+    }
+    initialIdeasLoaded = true;
   } catch (error) {
     console.warn("Не удалось загрузить /ideas/market, synthetic fallback отключён.", error);
     allIdeas = [];
@@ -1078,3 +1197,4 @@ window.addEventListener("resize", () => {
 });
 
 load();
+window.setInterval(load, IDEAS_REFRESH_INTERVAL_MS);
