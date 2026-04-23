@@ -57,6 +57,13 @@ LEVEL_STOP_LOSS_OFFSET = 0.0020
 LEVEL_TAKE_PROFIT_OFFSET = 0.0040
 CANDLE_CONTEXT_COUNT = 40
 CHART_OVERLAY_KEYS = ("order_blocks", "liquidity", "fvg", "structure_levels", "patterns")
+CHART_OVERLAY_ALIASES = {
+    "order_blocks": ("order_blocks", "orderBlocks", "orderblock", "order_blocks_zones"),
+    "liquidity": ("liquidity", "liquidity_levels", "liquidityLevels"),
+    "fvg": ("fvg", "imbalances", "imbalance", "fair_value_gap"),
+    "structure_levels": ("structure_levels", "structure", "structureLevels"),
+    "patterns": ("patterns", "chart_patterns", "pattern_overlays"),
+}
 SNAPSHOT_RETRY_INTERVAL_SECONDS = int(os.getenv("IDEAS_SNAPSHOT_RETRY_INTERVAL_SECONDS", "1800"))
 NARRATIVE_REFRESH_COOLDOWN_SECONDS = int(os.getenv("IDEAS_NARRATIVE_REFRESH_COOLDOWN_SECONDS", "300"))
 logger = logging.getLogger(__name__)
@@ -848,7 +855,7 @@ class TradeIdeaService:
             idea_thesis=idea_thesis_text,
             unified_narrative=unified_narrative_text,
             chart_overlays=chart_overlays,
-        ):
+        ) and not self._has_material_trade_delta(existing=existing, signal=signal, status=status):
             logger.info(
                 "idea_refresh_skipped_empty_analysis idea_id=%s symbol=%s timeframe=%s",
                 existing.get("idea_id"),
@@ -875,7 +882,15 @@ class TradeIdeaService:
             else existing.get("close_explanation") if existing else None
         )
         if is_terminal and (unified_narrative_text or full_text):
-            close_explanation = unified_narrative_text or full_text
+            terminal_summary = self._build_close_explanation(
+                status=status,
+                symbol=symbol,
+                direction=bias,
+                target=self._format_price(take_profit),
+                invalidation=invalidation,
+            )
+            narrative_tail = unified_narrative_text or full_text
+            close_explanation = f"{terminal_summary} {narrative_tail}".strip()
         history = self._build_history(
             existing=existing,
             status=status,
@@ -1394,6 +1409,10 @@ class TradeIdeaService:
 
         levels, zones, markers, patterns, arrows = self._extract_snapshot_overlays(signal=signal, chart_data=chart_data)
         take_profits = self._extract_take_profits(signal=signal, fallback_take_profit=take_profit)
+        resolved_chart_overlays = self.merge_preserving_last_good_overlays(
+            existing.get("chart_overlays") if isinstance(existing, dict) else None,
+            self.normalize_chart_overlays(signal.get("chart_overlays")),
+        )
         logger.info(
             "snapshot_start symbol=%s timeframe=%s candles=%s has_existing=%s",
             symbol,
@@ -1416,7 +1435,7 @@ class TradeIdeaService:
             markers=markers,
             patterns=patterns,
             arrows=arrows,
-            chart_overlays=self.normalize_chart_overlays(signal.get("chart_overlays")),
+            chart_overlays=resolved_chart_overlays,
             setup_text=signal.get("short_scenario_ru") or signal.get("short_text") or signal.get("summary_ru"),
         )
         resolved_snapshot = self.chart_snapshot_service.resolve_snapshot_with_fallback(
@@ -1605,16 +1624,77 @@ class TradeIdeaService:
         if not isinstance(payload, dict):
             return normalized
         for key in CHART_OVERLAY_KEYS:
-            values = payload.get(key)
-            if isinstance(values, list):
-                normalized[key] = [item for item in values if isinstance(item, dict)]
+            values: list[Any] = []
+            for alias in CHART_OVERLAY_ALIASES.get(key, (key,)):
+                candidate = payload.get(alias)
+                if isinstance(candidate, list):
+                    values.extend(candidate)
+            normalized[key] = cls._normalize_overlay_items(key=key, items=values)
         return normalized
 
     @classmethod
     def is_meaningful_overlay_payload(cls, payload: dict[str, Any] | None) -> bool:
         if not isinstance(payload, dict):
             return False
-        return any(isinstance(payload.get(key), list) and payload.get(key) for key in CHART_OVERLAY_KEYS)
+        normalized = cls.normalize_chart_overlays(payload)
+        for key in CHART_OVERLAY_KEYS:
+            for item in normalized.get(key) or []:
+                if cls._overlay_item_has_coordinates(key=key, item=item):
+                    return True
+        return False
+
+    @classmethod
+    def _normalize_overlay_items(cls, *, key: str, items: list[Any]) -> list[dict[str, Any]]:
+        normalized_items: list[dict[str, Any]] = []
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            if key in {"order_blocks", "fvg", "patterns"}:
+                low = cls._extract_numeric(item.get("low") if item.get("low") is not None else item.get("from"))
+                high = cls._extract_numeric(item.get("high") if item.get("high") is not None else item.get("to"))
+                if low is not None:
+                    item["low"] = low
+                if high is not None:
+                    item["high"] = high
+                start_index = cls._extract_numeric(item.get("start_index") if item.get("start_index") is not None else item.get("start"))
+                end_index = cls._extract_numeric(item.get("end_index") if item.get("end_index") is not None else item.get("end"))
+                if start_index is not None:
+                    item["start_index"] = int(start_index)
+                if end_index is not None:
+                    item["end_index"] = int(end_index)
+            elif key in {"liquidity", "structure_levels"}:
+                level = cls._extract_numeric(
+                    item.get("level")
+                    if item.get("level") is not None
+                    else item.get("price")
+                    if item.get("price") is not None
+                    else item.get("value")
+                )
+                if level is not None:
+                    item["level"] = level
+                    if item.get("price") is None:
+                        item["price"] = level
+                index = cls._extract_numeric(item.get("index"))
+                if index is not None:
+                    item["index"] = int(index)
+            normalized_items.append(item)
+        return normalized_items
+
+    @classmethod
+    def _overlay_item_has_coordinates(cls, *, key: str, item: dict[str, Any]) -> bool:
+        if key in {"order_blocks", "fvg", "patterns"}:
+            low = cls._extract_numeric(item.get("low") if item.get("low") is not None else item.get("from"))
+            high = cls._extract_numeric(item.get("high") if item.get("high") is not None else item.get("to"))
+            return low is not None and high is not None
+        level = cls._extract_numeric(
+            item.get("level")
+            if item.get("level") is not None
+            else item.get("price")
+            if item.get("price") is not None
+            else item.get("value")
+        )
+        return level is not None
 
     @classmethod
     def merge_preserving_last_good_overlays(
@@ -2220,6 +2300,10 @@ class TradeIdeaService:
         return not any(token in normalized for token in reasoning_tokens)
 
     @classmethod
+    def is_weak_narrative(cls, value: Any) -> bool:
+        return cls._is_weak_narrative_text(value)
+
+    @classmethod
     def isWeakNarrative(cls, value: Any) -> bool:
         return cls._is_weak_narrative_text(value)
 
@@ -2250,6 +2334,35 @@ class TradeIdeaService:
         has_idea_thesis = not cls.isWeakNarrative(idea_thesis)
         has_unified_narrative = not cls.isWeakNarrative(unified_narrative)
         return not any((has_analysis_blocks, has_meaningful_overlays, has_chart, has_idea_thesis, has_unified_narrative))
+
+    @classmethod
+    def _has_material_trade_delta(cls, *, existing: dict[str, Any], signal: dict[str, Any], status: str) -> bool:
+        signal_action = str(signal.get("action") or "").upper()
+        expected_signal = signal.get("signal")
+        if expected_signal is None:
+            expected_signal = "BUY" if signal_action == "BUY" else "SELL" if signal_action == "SELL" else "WAIT"
+        if str(existing.get("signal") or "").upper() != str(expected_signal or "").upper():
+            return True
+        for key, aliases in {
+            "entry": ("entry",),
+            "stop_loss": ("stop_loss", "stopLoss"),
+            "take_profit": ("take_profit", "takeProfit"),
+        }.items():
+            existing_value = cls._extract_numeric(existing.get(key))
+            incoming_value: float | None = None
+            for alias in aliases:
+                incoming_value = cls._extract_numeric(signal.get(alias))
+                if incoming_value is not None:
+                    break
+            if existing_value != incoming_value:
+                return True
+        existing_confidence = cls._extract_numeric(existing.get("confidence"))
+        incoming_confidence = cls._extract_numeric(signal.get("confidence_percent") or signal.get("probability_percent"))
+        if existing_confidence is not None and incoming_confidence is not None and abs(existing_confidence - incoming_confidence) >= cls.MEANINGFUL_CONFIDENCE_DELTA:
+            return True
+        if str(existing.get("status") or "").lower() != str(status or "").lower():
+            return True
+        return False
 
     @classmethod
     def _idea_row_to_signal_for_backfill(cls, idea: dict[str, Any]) -> dict[str, Any]:
@@ -2575,12 +2688,12 @@ class TradeIdeaService:
     def _build_close_explanation(*, status: str, symbol: str, direction: str, target: str, invalidation: str) -> str:
         if status == IDEA_STATUS_TP_HIT:
             return (
-                f"Идея по {symbol} отработала по take profit. Цена подтвердила {direction} сценарий и дошла до целевой ликвидности {target}. "
+                f"Идея по {symbol} отработала по take profit (tp_hit). Цена подтвердила {direction} сценарий и дошла до целевой ликвидности {target}. "
                 "Сценарий завершён и переведён в архив."
             )
         if status == IDEA_STATUS_SL_HIT:
             return (
-                f"Идея по {symbol} закрыта по stop loss. После теста зоны рынок не подтвердил сценарий и нарушил структуру. "
+                f"Идея по {symbol} закрыта по stop loss (sl_hit). После теста зоны рынок не подтвердил сценарий и нарушил структуру. "
                 "Идея переведена в архив."
             )
         return f"Сценарий по {symbol} отменён. {invalidation} Карточка переведена в архив."
@@ -4067,8 +4180,7 @@ class TradeIdeaService:
             if validated_row.get("_invalid_levels"):
                 continue
             normalized_overlays = self.normalize_chart_overlays(validated_row.get("chart_overlays"))
-            if self.is_meaningful_overlay_payload(normalized_overlays):
-                validated_row["chart_overlays"] = normalized_overlays
+            validated_row["chart_overlays"] = normalized_overlays
             logger.info(
                 "openrouter_overlay_parse symbol=%s timeframe=%s candles_present=%s model_overlays=%s categories=%s",
                 symbol,

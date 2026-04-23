@@ -68,7 +68,7 @@ class ChartSnapshotService:
                     "patterns": len(overlay_patterns),
                 },
             )
-        zones = list(zones) + list(overlay_order_blocks) + list(overlay_fvg) + list(overlay_liquidity)
+        zones = list(zones) + list(overlay_order_blocks) + list(overlay_fvg)
         levels = list(levels) + list(overlay_structure) + list(overlay_liquidity)
         patterns = list(patterns) + list(overlay_patterns)
         take_profits = [value for value in (take_profits or []) if value is not None]
@@ -123,6 +123,7 @@ class ChartSnapshotService:
 
             self._draw_zones(ax=ax, zones=zones, candles_count=len(candles), max_price=max_price)
             self._draw_horizontal_levels(ax=ax, levels=levels, candles_count=len(candles))
+            self._draw_structure_markers(ax=ax, levels=levels, candles_count=len(candles))
             self._draw_trade_levels(
                 ax=ax,
                 candles_count=len(candles),
@@ -276,18 +277,18 @@ class ChartSnapshotService:
 
     def _draw_zones(self, *, ax: Any, zones: list[dict[str, Any]], candles_count: int, max_price: float) -> None:
         styles = {
-            "demand": {"face": "#22c55e", "label": "Demand"},
-            "supply": {"face": "#ef4444", "label": "Supply"},
-            "fvg": {"face": "#8b5cf6", "label": "FVG"},
-            "imbalance": {"face": "#a855f7", "label": "Imbalance"},
-            "order_block": {"face": "#f59e0b", "label": "OB"},
-            "ob": {"face": "#f59e0b", "label": "OB"},
-            "liquidity": {"face": "#06b6d4", "label": "Liquidity"},
-            "mitigation": {"face": "#14b8a6", "label": "Mitigation"},
+            "demand": {"face": "#22c55e", "edge": "#22c55e", "label": "Demand"},
+            "supply": {"face": "#ef4444", "edge": "#ef4444", "label": "Supply"},
+            "fvg": {"face": "#8b5cf6", "edge": "#8b5cf6", "label": "FVG"},
+            "imbalance": {"face": "#a855f7", "edge": "#a855f7", "label": "Imbalance"},
+            "order_block": {"face": "#f59e0b", "edge": "#f59e0b", "label": "OB"},
+            "ob": {"face": "#f59e0b", "edge": "#f59e0b", "label": "OB"},
+            "liquidity": {"face": "#06b6d4", "edge": "#06b6d4", "label": "Liquidity"},
+            "mitigation": {"face": "#14b8a6", "edge": "#14b8a6", "label": "Mitigation"},
         }
         for zone in zones[:10]:
             zone_type_raw = str(zone.get("type") or zone.get("kind") or zone.get("label") or "").lower().replace(" ", "_")
-            style = styles.get(zone_type_raw, {"face": "#38bdf8", "label": "Zone"})
+            style = styles.get(zone_type_raw, {"face": "#38bdf8", "edge": "#38bdf8", "label": "Zone"})
             price_from = self._to_float(zone.get("from") or zone.get("priceFrom") or zone.get("low"))
             price_to = self._to_float(zone.get("to") or zone.get("priceTo") or zone.get("high"))
             if price_from is None or price_to is None:
@@ -304,23 +305,23 @@ class ChartSnapshotService:
                     end_idx - start_idx,
                     height,
                     facecolor=style["face"],
-                    edgecolor=style["face"],
+                    edgecolor=style["edge"],
                     alpha=0.18,
-                    linewidth=1.2,
+                    linewidth=1.4,
                     zorder=1,
                 )
             )
             zone_label = str(zone.get("label") or style["label"])
             ax.text(
-                start_idx,
-                bottom + height / 2,
+                start_idx + 0.2,
+                bottom + height * 0.88,
                 self._shorten_text(zone_label, limit=14),
                 color="#e5e7eb",
                 fontsize=8,
                 alpha=0.9,
-                va="center",
+                va="top",
                 zorder=5,
-                bbox={"boxstyle": "round,pad=0.2", "facecolor": "#0f172a", "edgecolor": style["face"], "alpha": 0.55},
+                bbox={"boxstyle": "round,pad=0.2", "facecolor": "#0f172a", "edgecolor": style["edge"], "alpha": 0.55},
             )
 
     def _draw_horizontal_levels(self, *, ax: Any, levels: list[dict[str, Any]], candles_count: int) -> None:
@@ -330,19 +331,50 @@ class ChartSnapshotService:
                 continue
             level_type = str(level.get("label") or level.get("type") or "Level")
             lowered = level_type.lower()
-            style = ":" if "liq" in lowered or "session" in lowered else "--"
-            ax.axhline(price, color="#60a5fa", linewidth=0.9, linestyle=style, alpha=0.8)
+            is_liquidity = "liq" in lowered or "session" in lowered
+            is_structure = any(token in lowered for token in ("support", "resistance", "bos", "choch"))
+            style = ":" if is_liquidity else "--"
+            line_color = "#22d3ee" if is_liquidity else "#f59e0b" if is_structure else "#60a5fa"
+            label_color = "#67e8f9" if is_liquidity else "#fcd34d" if is_structure else "#93c5fd"
+            edge_color = "#0891b2" if is_liquidity else "#d97706" if is_structure else "#1d4ed8"
+            ax.axhline(price, color=line_color, linewidth=1.0, linestyle=style, alpha=0.88)
             ax.text(
                 candles_count + 0.55,
                 price,
                 level_type[:20],
-                color="#93c5fd",
+                color=label_color,
                 fontsize=8,
                 ha="right",
                 va="center",
                 alpha=0.95,
-                bbox={"boxstyle": "round,pad=0.16", "facecolor": "#0f172a", "edgecolor": "#1d4ed8", "alpha": 0.55},
+                bbox={"boxstyle": "round,pad=0.16", "facecolor": "#0f172a", "edgecolor": edge_color, "alpha": 0.55},
             )
+
+    def _draw_structure_markers(self, *, ax: Any, levels: list[dict[str, Any]], candles_count: int) -> None:
+        rendered = 0
+        for level in levels:
+            level_type = str(level.get("type") or "").lower()
+            if level_type not in {"bos", "choch"}:
+                continue
+            price = self._to_float(level.get("level") or level.get("price") or level.get("value"))
+            index = self._to_float(level.get("index"))
+            if price is None or index is None:
+                continue
+            x_pos = max(0, min(index, candles_count - 1))
+            color = "#38bdf8" if level_type == "bos" else "#f97316"
+            ax.scatter([x_pos], [price], color=color, s=26, zorder=7, edgecolors="#e2e8f0", linewidths=0.4)
+            ax.text(
+                x_pos + 0.25,
+                price,
+                level_type.upper(),
+                color="#e2e8f0",
+                fontsize=7,
+                zorder=8,
+                bbox={"boxstyle": "round,pad=0.14", "facecolor": "#0f172a", "edgecolor": color, "alpha": 0.66},
+            )
+            rendered += 1
+            if rendered >= 8:
+                break
 
     def _draw_trade_levels(
         self,
