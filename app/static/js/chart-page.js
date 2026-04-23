@@ -389,7 +389,20 @@ function normalizeIdea(idea) {
     idea_thesis: thesis,
     unified_narrative: unifiedNarrative,
     fallback_narrative: fallbackNarrative,
-    narrative_source: normalizeWhitespace(idea?.narrative_source || idea?.narrativeSource || "fallback_template").toLowerCase(),
+    narrative_source: normalizeWhitespace(idea?.narrative_source || idea?.narrativeSource || "model").toLowerCase(),
+    llm_provider: normalizeWhitespace(idea?.llm_provider || "openrouter").toLowerCase(),
+    llm_model: normalizeWhitespace(idea?.llm_model || ""),
+    candles_count_sent: Number(idea?.candles_count_sent ?? 0),
+    chart_overlays_present: Boolean(
+      idea?.chart_overlays_present
+      ?? hasMeaningfulChartOverlays(
+        idea?.chart_overlays
+        ?? idea?.chartOverlays
+        ?? idea?.chart_data?.chart_overlays
+        ?? idea?.chartData?.chart_overlays
+        ?? null,
+      )
+    ),
     detail_brief: buildDetailBrief({
       ...idea,
       summary,
