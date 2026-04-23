@@ -63,6 +63,8 @@ logger = logging.getLogger(__name__)
 
 
 class TradeIdeaService:
+    MEANINGFUL_CONFIDENCE_DELTA = 5
+
     def __init__(self, signal_engine: SignalEngine, chart_data_service: ChartDataService | None = None) -> None:
         self.signal_engine = signal_engine
         self.data_provider = DataProvider()
@@ -199,6 +201,10 @@ class TradeIdeaService:
                 current["status"] = new_status
                 current["updated_at"] = now_iso
                 current["update_summary"] = self._status_update_summary(new_status, symbol=symbol)
+                current["update_reason"] = current["update_summary"]
+                current["meaningful_updated_at"] = now_iso
+                current["meaningful_update_reason"] = self._meaningful_reason_from_status(new_status)
+                current["has_meaningful_update"] = True
                 current["history"] = self._append_history_event(
                     current.get("history"),
                     event_type=self._history_event_from_status(new_status),
@@ -242,10 +248,16 @@ class TradeIdeaService:
                     current["last_chart_refresh_at"] = now_iso
                     current["chart_version"] = int(current.get("chart_version") or 0) + 1
                     current["last_candle_fingerprint"] = candle_hash
+                    if chart_snapshot["chartImageUrl"] != str(idea.get("chartImageUrl") or idea.get("chart_image") or ""):
+                        current["meaningful_updated_at"] = now_iso
+                        current["meaningful_update_reason"] = "chart_image_changed"
+                        current["has_meaningful_update"] = True
+                        current["update_reason"] = "Обновлён снимок графика и разметка сценария."
                     changed = True
                 else:
                     current["chart_snapshot_status"] = chart_snapshot.get("status") or "snapshot_failed"
                     current["chartSnapshotStatus"] = chart_snapshot.get("status") or "snapshot_failed"
+            current["internal_refresh_at"] = now_iso
             refreshed.append(current)
         return refreshed, changed
 
@@ -867,12 +879,14 @@ class TradeIdeaService:
             "rationale": rationale,
             "created_at": created_at,
             "updated_at": now.isoformat(),
+            "internal_refresh_at": now.isoformat(),
             "closed_at": closed_at,
             "close_reason": close_reason,
             "close_explanation": close_explanation,
             "version": version,
             "change_summary": self._change_summary(signal, existing),
             "update_summary": llm_result.data.get("update_explanation") or self._build_update_summary(signal=signal, existing=existing, bias=bias),
+            "update_reason": "",
             "title": f"{symbol} {timeframe}: {action} idea",
             "label": "BUY IDEA" if action == "BUY" else "SELL IDEA" if action == "SELL" else "WATCH",
             "headline": llm_result.data.get("headline") or f"{symbol} {timeframe}",
@@ -935,7 +949,145 @@ class TradeIdeaService:
                 "source_candle_count": signal.get("source_candle_count"),
             },
         }
+        payload = self._apply_meaningful_update_metadata(
+            existing=existing,
+            signal=signal,
+            payload=payload,
+            now_iso=now.isoformat(),
+        )
         return self._attach_trade_result_metrics(payload)
+
+    @staticmethod
+    def _meaningful_reason_from_status(status: str) -> str:
+        return {
+            IDEA_STATUS_TRIGGERED: "entry_triggered",
+            IDEA_STATUS_ACTIVE: "status_changed",
+            IDEA_STATUS_TP_HIT: "tp_hit",
+            IDEA_STATUS_SL_HIT: "sl_hit",
+            IDEA_STATUS_ARCHIVED: "status_changed",
+        }.get(status, "status_changed")
+
+    @classmethod
+    def _apply_meaningful_update_metadata(
+        cls,
+        *,
+        existing: dict[str, Any] | None,
+        signal: dict[str, Any],
+        payload: dict[str, Any],
+        now_iso: str,
+    ) -> dict[str, Any]:
+        if existing is None:
+            payload["has_meaningful_update"] = True
+            payload["meaningful_updated_at"] = now_iso
+            payload["meaningful_update_reason"] = "idea_created"
+            payload["update_reason"] = payload.get("update_summary") or "Создана новая идея."
+            return payload
+
+        reasons = cls._collect_meaningful_reasons(existing=existing, payload=payload, signal=signal)
+        if reasons:
+            payload["has_meaningful_update"] = True
+            payload["meaningful_updated_at"] = now_iso
+            payload["meaningful_update_reason"] = reasons[0]
+            payload["update_reason"] = payload.get("update_summary") or cls._reason_to_text(reasons[0])
+            return payload
+
+        payload["has_meaningful_update"] = False
+        payload["meaningful_updated_at"] = existing.get("meaningful_updated_at")
+        payload["meaningful_update_reason"] = str(existing.get("meaningful_update_reason") or "")
+        payload["update_reason"] = ""
+        return payload
+
+    @classmethod
+    def _collect_meaningful_reasons(
+        cls,
+        *,
+        existing: dict[str, Any],
+        payload: dict[str, Any],
+        signal: dict[str, Any],
+    ) -> list[str]:
+        reasons: list[str] = []
+
+        if str(existing.get("status") or "").lower() != str(payload.get("status") or "").lower():
+            reasons.append("status_changed")
+        if str(existing.get("signal") or "").upper() != str(payload.get("signal") or "").upper():
+            reasons.append("signal_changed")
+        if str(existing.get("bias") or existing.get("direction") or "").lower() != str(payload.get("bias") or "").lower():
+            reasons.append("bias_changed")
+
+        previous_confidence = cls._extract_numeric(existing.get("confidence"))
+        next_confidence = cls._extract_numeric(payload.get("confidence"))
+        if (
+            previous_confidence is not None
+            and next_confidence is not None
+            and abs(previous_confidence - next_confidence) >= cls.MEANINGFUL_CONFIDENCE_DELTA
+        ):
+            reasons.append("confidence_changed")
+
+        for key, reason in (("entry", "entry_changed"), ("stop_loss", "stop_loss_changed"), ("take_profit", "take_profit_changed")):
+            if cls._extract_numeric(existing.get(key)) != cls._extract_numeric(payload.get(key)):
+                reasons.append(reason)
+
+        if cls._clean_text(existing.get("unified_narrative")) != cls._clean_text(payload.get("unified_narrative")):
+            reasons.append("unified_narrative_changed")
+        if cls._clean_text(existing.get("idea_thesis")) != cls._clean_text(payload.get("idea_thesis")):
+            reasons.append("idea_thesis_changed")
+
+        if str(existing.get("chartImageUrl") or existing.get("chart_image") or "") != str(payload.get("chartImageUrl") or payload.get("chart_image") or ""):
+            reasons.append("chart_image_changed")
+        if cls._overlay_signature(existing) != cls._overlay_signature(payload):
+            reasons.append("chart_overlays_changed")
+
+        next_status = str(payload.get("status") or "").lower()
+        prev_status = str(existing.get("status") or "").lower()
+        if next_status == IDEA_STATUS_TRIGGERED and prev_status != IDEA_STATUS_TRIGGERED:
+            reasons.append("entry_triggered")
+        if next_status == IDEA_STATUS_TP_HIT and prev_status != IDEA_STATUS_TP_HIT:
+            reasons.append("tp_hit")
+        if next_status == IDEA_STATUS_SL_HIT and prev_status != IDEA_STATUS_SL_HIT:
+            reasons.append("sl_hit")
+
+        if bool(signal.get("bos_detected")) or bool(signal.get("structure_break")):
+            reasons.append("bos")
+        if bool(signal.get("choch_detected")):
+            reasons.append("choch")
+        if bool(signal.get("zone_reaction")) or bool(signal.get("major_zone_reaction")):
+            reasons.append("zone_reaction")
+
+        return list(dict.fromkeys(reasons))
+
+    @staticmethod
+    def _clean_text(value: Any) -> str:
+        return " ".join(str(value or "").split())
+
+    @staticmethod
+    def _overlay_signature(payload: dict[str, Any]) -> str:
+        overlay = payload.get("overlay_data")
+        if not isinstance(overlay, dict):
+            return ""
+        return sha1(json.dumps(overlay, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _reason_to_text(reason: str) -> str:
+        return {
+            "status_changed": "Изменился статус идеи.",
+            "signal_changed": "Изменился торговый сигнал.",
+            "bias_changed": "Изменился bias сценария.",
+            "confidence_changed": "Существенно изменилась уверенность сценария.",
+            "entry_changed": "Изменился уровень входа.",
+            "stop_loss_changed": "Изменился уровень стоп-лосса.",
+            "take_profit_changed": "Изменился уровень тейк-профита.",
+            "unified_narrative_changed": "Существенно изменён текст сценария.",
+            "idea_thesis_changed": "Существенно изменён тезис идеи.",
+            "chart_image_changed": "Обновлён снимок графика.",
+            "chart_overlays_changed": "Изменилась разметка графика.",
+            "entry_triggered": "Цена подтвердила вход в сценарий.",
+            "tp_hit": "Достигнут тейк-профит.",
+            "sl_hit": "Сработал стоп-лосс.",
+            "bos": "Произошёл Break of Structure.",
+            "choch": "Произошёл CHoCH.",
+            "zone_reaction": "Цена дала реакцию в ключевой зоне.",
+            "idea_created": "Создана новая идея.",
+        }.get(reason, "Идея обновлена.")
 
     def _should_refresh_narrative(
         self,
@@ -3374,7 +3526,12 @@ class TradeIdeaService:
                         "market_structure_structured": row.get("market_structure_structured") or (detail_brief.get("narrative_structured") or {}).get("market_structure_structured"),
                         "narrative_structured": row.get("narrative_structured") or detail_brief.get("narrative_structured"),
                         "update_explanation": row.get("update_explanation") or row.get("update_summary") or "",
+                        "update_reason": row.get("update_reason") or "",
                         "narrative_source": row.get("narrative_source") or ("fallback" if row.get("is_fallback") else "llm"),
+                        "has_meaningful_update": bool(row.get("has_meaningful_update", False)),
+                        "meaningful_updated_at": row.get("meaningful_updated_at"),
+                        "meaningful_update_reason": row.get("meaningful_update_reason") or "",
+                        "internal_refresh_at": row.get("internal_refresh_at"),
                         "status": str(row.get("status") or IDEA_STATUS_WAITING),
                         "updates": row.get("updates") if isinstance(row.get("updates"), list) else self._history_to_updates(row.get("history")),
                         "current_reasoning": str(

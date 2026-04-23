@@ -336,7 +336,12 @@ function normalizeIdea(idea) {
     status: idea?.status || "active",
     final_status: idea?.final_status || null,
     update_summary: idea?.update_summary || idea?.change_summary || "",
+    update_reason: idea?.update_reason || "",
     updated_at: idea?.updated_at || null,
+    meaningful_updated_at: idea?.meaningful_updated_at || idea?.updated_at || null,
+    meaningful_update_reason: idea?.meaningful_update_reason || "",
+    has_meaningful_update: Boolean(idea?.has_meaningful_update),
+    internal_refresh_at: idea?.internal_refresh_at || null,
     closed_at: idea?.closed_at || null,
     close_explanation: idea?.close_explanation || "",
     close_reason: idea?.close_reason || "",
@@ -435,9 +440,9 @@ function buildIdeaCardMarkup(idea) {
   const timeframe = idea.timeframe || "";
   const confidence = idea.confidence ?? "-";
   const summary = buildShortText(idea);
-  const updateSummary = normalizeWhitespace(idea.update_summary);
+  const updateSummary = normalizeWhitespace(idea.update_reason || idea.update_summary);
   const statusLabel = idea.status === "archived" ? statusRu(idea.final_status || idea.status) : statusRu(idea.status);
-  const updatedLabel = formatDateTime(idea.updated_at);
+  const updatedLabel = formatDateTime(idea.meaningful_updated_at);
   const archivedStats = idea.status === "archived"
     ? `<div class="symbol">Результат: ${escapeHtml(String(idea.result || "—").toUpperCase())} · PnL: ${escapeHtml(formatSignedPercent(idea.pnl_percent))} · RR: ${escapeHtml(idea.rr != null ? Number(idea.rr).toFixed(2) : "—")} · Длительность: ${escapeHtml(idea.duration || "—")}</div>`
     : "";
@@ -461,10 +466,12 @@ function buildIdeaCardMarkup(idea) {
 
 function getIdeaDiffSignature(idea) {
   return JSON.stringify({
-    updated_at: idea?.updated_at || null,
+    meaningful_updated_at: idea?.meaningful_updated_at || null,
+    meaningful_update_reason: idea?.meaningful_update_reason || "",
     status: idea?.status || null,
     final_status: idea?.final_status || null,
     chartImageUrl: idea?.chartImageUrl || idea?.chart_image || null,
+    chart_overlays: idea?.chart_overlays || null,
     unified_narrative: normalizeWhitespace(idea?.unified_narrative),
     idea_thesis: normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis),
     confidence: Number(idea?.confidence ?? 0),
@@ -473,7 +480,7 @@ function getIdeaDiffSignature(idea) {
     takeProfit: formatLevel(idea?.takeProfit),
     signal: normalizeWhitespace(idea?.signal || idea?.direction || idea?.bias),
     risk_note: normalizeWhitespace(idea?.risk_note || idea?.invalidation || idea?.trade_plan?.invalidation),
-    update_summary: normalizeWhitespace(idea?.update_summary || idea?.change_summary),
+    update_reason: normalizeWhitespace(idea?.update_reason || idea?.update_summary || idea?.change_summary),
   });
 }
 
@@ -708,9 +715,9 @@ function renderDetailText(idea) {
     updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
     return;
   }
-  const updateText = normalizeWhitespace(idea.update_summary);
+  const updateText = normalizeWhitespace(idea.update_reason || idea.update_summary);
   if (updateText) {
-    updateDetailStatus(`Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`);
+    updateDetailStatus(`Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`);
   }
 }
 
@@ -1291,10 +1298,10 @@ async function openIdea(idea) {
         const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
         updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
       } else {
-        const updateText = normalizeWhitespace(idea.update_summary);
+        const updateText = normalizeWhitespace(idea.update_reason || idea.update_summary);
         updateDetailStatus(
           updateText
-            ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`
+            ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`
             : "Detail-view заполнен: narrative, сценарии, trading plan и snapshot графика доступны."
         );
       }
@@ -1310,10 +1317,10 @@ async function openIdea(idea) {
       const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
       updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
     } else {
-      const updateText = normalizeWhitespace(idea.update_summary);
+      const updateText = normalizeWhitespace(idea.update_reason || idea.update_summary);
       updateDetailStatus(
         updateText
-          ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`
+          ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`
           : "Detail-view заполнен: narrative, сценарии, trading plan и график доступны."
       );
     }
@@ -1325,10 +1332,10 @@ async function openIdea(idea) {
     const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
     updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
   } else {
-    const updateText = normalizeWhitespace(idea.update_summary);
+    const updateText = normalizeWhitespace(idea.update_reason || idea.update_summary);
     updateDetailStatus(
       updateText
-        ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.updated_at)} · ${updateText}`
+        ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`
         : "График недоступен, но detail-view завершил загрузку: narrative, сценарии и trading plan показаны без чарта."
     );
   }
