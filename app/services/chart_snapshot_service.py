@@ -59,6 +59,24 @@ class ChartSnapshotService:
         overlay_fvg = chart_overlays.get("fvg") if isinstance(chart_overlays.get("fvg"), list) else []
         overlay_structure = chart_overlays.get("structure_levels") if isinstance(chart_overlays.get("structure_levels"), list) else []
         overlay_patterns = chart_overlays.get("patterns") if isinstance(chart_overlays.get("patterns"), list) else []
+        generic_zones = chart_overlays.get("zones") if isinstance(chart_overlays.get("zones"), list) else []
+        generic_levels = chart_overlays.get("levels") if isinstance(chart_overlays.get("levels"), list) else []
+        if generic_zones:
+            for zone in generic_zones:
+                zone_type = str(zone.get("type") or zone.get("label") or "").lower()
+                if any(token in zone_type for token in ("fvg", "imbalance", "imb")):
+                    overlay_fvg.append(zone)
+                elif "liquidity" in zone_type:
+                    overlay_liquidity.append(zone)
+                else:
+                    overlay_order_blocks.append(zone)
+        if generic_levels:
+            for level in generic_levels:
+                level_type = str(level.get("type") or level.get("label") or "").lower()
+                if "liq" in level_type:
+                    overlay_liquidity.append(level)
+                else:
+                    overlay_structure.append(level)
         if overlay_order_blocks or overlay_liquidity or overlay_fvg or overlay_structure or overlay_patterns:
             logger.info(
                 "snapshot_chart_overlays_applied symbol=%s timeframe=%s counts=%s",

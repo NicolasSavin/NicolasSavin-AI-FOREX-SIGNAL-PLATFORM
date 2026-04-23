@@ -61,7 +61,7 @@ CHART_OVERLAY_ALIASES = {
     "order_blocks": ("order_blocks", "orderBlocks", "orderblock", "order_blocks_zones"),
     "liquidity": ("liquidity", "liquidity_levels", "liquidityLevels"),
     "fvg": ("fvg", "imbalances", "imbalance", "fair_value_gap"),
-    "structure_levels": ("structure_levels", "structure", "structureLevels"),
+    "structure_levels": ("structure_levels", "structure", "structureLevels", "levels"),
     "patterns": ("patterns", "chart_patterns", "pattern_overlays"),
 }
 SNAPSHOT_RETRY_INTERVAL_SECONDS = int(os.getenv("IDEAS_SNAPSHOT_RETRY_INTERVAL_SECONDS", "1800"))
@@ -2104,7 +2104,28 @@ class TradeIdeaService:
                 if isinstance(candidate, list):
                     values.extend(candidate)
             normalized[key] = cls._normalize_overlay_items(key=key, items=values)
-        return normalized
+
+        generic_zones = payload.get("zones")
+        if isinstance(generic_zones, list):
+            for zone in cls._normalize_overlay_items(key="order_blocks", items=generic_zones):
+                zone_type = str(zone.get("type") or zone.get("label") or "").lower()
+                if any(token in zone_type for token in ("fvg", "imbalance", "imb")):
+                    normalized["fvg"].append(zone)
+                elif "liquidity" in zone_type:
+                    normalized["liquidity"].append(zone)
+                else:
+                    normalized["order_blocks"].append(zone)
+
+        generic_levels = payload.get("levels")
+        if isinstance(generic_levels, list):
+            for level in cls._normalize_overlay_items(key="structure_levels", items=generic_levels):
+                level_type = str(level.get("type") or level.get("label") or "").lower()
+                if "liq" in level_type:
+                    normalized["liquidity"].append(level)
+                else:
+                    normalized["structure_levels"].append(level)
+
+        return {k: cls._normalize_overlay_items(key=k, items=v) for k, v in normalized.items()}
 
     @classmethod
     def is_meaningful_overlay_payload(cls, payload: dict[str, Any] | None) -> bool:

@@ -944,9 +944,9 @@ function ensureChart() {
   });
 }
 
-function resetChartState() {
+function resetChartState({ keepSnapshot = true } = {}) {
   currentChartPayload = null;
-  if (chartSnapshotImage) {
+  if (chartSnapshotImage && !keepSnapshot) {
     chartSnapshotImage.removeAttribute("src");
   }
   if (chart) {
@@ -1056,6 +1056,12 @@ function hasRenderableCandles(idea) {
   return hasCandles(idea?.chartData) || hasCandles(idea?.chart_data);
 }
 
+function hasMeaningfulChartOverlays(overlays) {
+  if (!overlays || typeof overlays !== "object") return false;
+  const keys = ["order_blocks", "liquidity", "fvg", "structure_levels", "patterns", "zones", "levels"];
+  return keys.some((key) => Array.isArray(overlays[key]) && overlays[key].length > 0);
+}
+
 function mergeWithPreviousIdeaState(nextIdea, prevIdea) {
   if (!prevIdea || typeof prevIdea !== "object") return nextIdea;
   const nextSnapshot = normalizeChartImageUrl(nextIdea?.chartImageUrl || nextIdea?.chart_image || "");
@@ -1063,11 +1069,16 @@ function mergeWithPreviousIdeaState(nextIdea, prevIdea) {
   const mergedSnapshot = nextSnapshot || prevSnapshot;
   const nextChartData = hasRenderableCandles(nextIdea) ? (nextIdea.chartData || nextIdea.chart_data) : null;
   const prevChartData = hasRenderableCandles(prevIdea) ? (prevIdea.chartData || prevIdea.chart_data) : null;
+  const nextOverlays = nextIdea?.chart_overlays;
+  const prevOverlays = prevIdea?.chart_overlays;
+  const mergedOverlays = hasMeaningfulChartOverlays(nextOverlays) ? nextOverlays : prevOverlays || nextOverlays || null;
+
   return {
     ...nextIdea,
     chartImageUrl: mergedSnapshot,
     chart_image: mergedSnapshot,
     chartData: nextChartData || prevChartData || nextIdea.chartData || null,
+    chart_overlays: mergedOverlays,
   };
 }
 
@@ -1218,67 +1229,79 @@ function normalizeSmcOverlays(payload) {
     ?? payload?.overlays?.chart_overlays
     ?? {};
 
-  const orderBlocks = Array.isArray(base?.order_blocks)
-    ? base.order_blocks
-      .map((item) => {
-        const from = toFiniteNumber(item?.from ?? item?.low);
-        const to = toFiniteNumber(item?.to ?? item?.high);
-        if (from == null || to == null) return null;
-        return {
-          from: Math.min(from, to),
-          to: Math.max(from, to),
-          type: String(item?.type || "").toLowerCase(),
-          label: normalizeWhitespace(item?.label || ""),
-        };
-      })
-      .filter(Boolean)
-    : [];
+  const asZone = (item, fallbackLabel = "Zone") => {
+    const from = toFiniteNumber(item?.from ?? item?.low);
+    const to = toFiniteNumber(item?.to ?? item?.high);
+    if (from == null || to == null) return null;
+    return {
+      from: Math.min(from, to),
+      to: Math.max(from, to),
+      type: String(item?.type || "").toLowerCase(),
+      label: normalizeWhitespace(item?.label || fallbackLabel),
+      start_index: Number.isFinite(Number(item?.start_index)) ? Number(item.start_index) : null,
+      end_index: Number.isFinite(Number(item?.end_index)) ? Number(item.end_index) : null,
+    };
+  };
 
-  const fvg = Array.isArray(base?.fvg)
-    ? base.fvg
-      .map((item) => {
-        const from = toFiniteNumber(item?.from ?? item?.low);
-        const to = toFiniteNumber(item?.to ?? item?.high);
-        if (from == null || to == null) return null;
-        return {
-          from: Math.min(from, to),
-          to: Math.max(from, to),
-          label: normalizeWhitespace(item?.label || "FVG"),
-        };
-      })
-      .filter(Boolean)
-    : [];
+  const orderBlocksRaw = Array.isArray(base?.order_blocks) ? base.order_blocks : [];
+  const fvgRaw = Array.isArray(base?.fvg) ? base.fvg : [];
+  const liquidityRaw = Array.isArray(base?.liquidity) ? base.liquidity : [];
+  const structureRaw = Array.isArray(base?.structure_levels) ? base.structure_levels : Array.isArray(base?.structure) ? base.structure : [];
+  const patternsRaw = Array.isArray(base?.patterns) ? base.patterns : [];
+  const genericZones = Array.isArray(base?.zones) ? base.zones : [];
+  const genericLevels = Array.isArray(base?.levels) ? base.levels : [];
 
-  const liquidity = Array.isArray(base?.liquidity)
-    ? base.liquidity
-      .map((item) => {
-        const level = toFiniteNumber(item?.level);
-        if (level == null) return null;
-        return { level, label: normalizeWhitespace(item?.label || "Liquidity") };
-      })
-      .filter(Boolean)
-    : [];
+  const orderBlocks = orderBlocksRaw.map((item) => asZone(item, "Order Block")).filter(Boolean);
+  const fvg = fvgRaw.map((item) => asZone(item, "FVG")).filter(Boolean);
 
-  const structureSource = Array.isArray(base?.structure_levels) ? base.structure_levels : Array.isArray(base?.structure) ? base.structure : [];
-  const structure = Array.isArray(structureSource)
-    ? structureSource
-      .map((item) => {
-        const level = toFiniteNumber(item?.level ?? item?.price);
-        if (level == null) return null;
-        return {
-          level,
-          type: normalizeWhitespace(item?.type || "structure"),
-          label: normalizeWhitespace(item?.label || item?.type || "Structure"),
-        };
-      })
-      .filter(Boolean)
-    : [];
+  genericZones.forEach((item) => {
+    const normalized = asZone(item, "Zone");
+    if (!normalized) return;
+    const t = String(item?.type || item?.label || "").toLowerCase();
+    if (t.includes("fvg") || t.includes("imbalance")) {
+      fvg.push(normalized);
+    } else if (t.includes("liquidity")) {
+      liquidityRaw.push(item);
+    } else {
+      orderBlocks.push(normalized);
+    }
+  });
+
+  const liquidity = liquidityRaw
+    .map((item) => {
+      const level = toFiniteNumber(item?.level ?? item?.price);
+      if (level == null) return null;
+      return { level, label: normalizeWhitespace(item?.label || "Liquidity") };
+    })
+    .filter(Boolean);
+
+  const structure = [...structureRaw, ...genericLevels]
+    .map((item) => {
+      const level = toFiniteNumber(item?.level ?? item?.price);
+      if (level == null) return null;
+      return {
+        level,
+        type: normalizeWhitespace(item?.type || "structure"),
+        label: normalizeWhitespace(item?.label || item?.type || "Level"),
+      };
+    })
+    .filter(Boolean);
+
+  const patterns = patternsRaw
+    .map((item) => {
+      const label = normalizeWhitespace(item?.label || item?.name || item?.type || item?.pattern || "");
+      if (!label) return null;
+      const level = toFiniteNumber(item?.level ?? item?.price ?? item?.y ?? item?.high ?? item?.low);
+      return { label, level };
+    })
+    .filter(Boolean);
 
   return {
     order_blocks: orderBlocks,
     fvg,
     liquidity,
     structure,
+    patterns,
   };
 }
 
@@ -1290,7 +1313,8 @@ const overlayPlugin = {
     const hasAnyOverlay = smcOverlays.order_blocks.length
       || smcOverlays.fvg.length
       || smcOverlays.liquidity.length
-      || smcOverlays.structure.length;
+      || smcOverlays.structure.length
+      || smcOverlays.patterns.length;
     if (!hasAnyOverlay) return;
 
     const startX = timeScale.timeToCoordinate(candles[0]?.time);
@@ -1358,6 +1382,13 @@ const overlayPlugin = {
       ctx.stroke();
       ctx.restore();
       drawLabel(ctx, Math.max(8, rightX - 180), y - 4, item.label || `Structure: ${item.type}`, "#fbbf24");
+    });
+
+    smcOverlays.patterns.forEach((item, index) => {
+      const y = candleSeries.priceToCoordinate(item.level);
+      if (y == null) return;
+      const x = Math.max(leftX + 12, rightX - 220 + (index % 2) * 110);
+      drawLabel(ctx, x, y - 4, item.label || "Pattern", "#f9a8d4", "rgba(38, 12, 30, 0.86)");
     });
   },
 };
@@ -1561,7 +1592,7 @@ async function openIdea(idea) {
   const snapshotStatus = idea.chartSnapshotStatus || idea.chart_snapshot_status || "";
   const liveFallbackMessage = snapshotStatusRu(snapshotStatus);
 
-  resetChartState();
+  resetChartState({ keepSnapshot: true });
   showUnavailableChart("Загружаем график…");
 
   if (snapshotUrl) {
@@ -1624,6 +1655,7 @@ function closeModal() {
   }
   activeIdea = null;
   detailRequestId += 1;
+  resetChartState({ keepSnapshot: false });
   showUnavailableChart("График недоступен");
 }
 
