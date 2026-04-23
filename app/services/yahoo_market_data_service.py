@@ -4,15 +4,14 @@ from datetime import datetime, timezone
 import logging
 from typing import Any
 
-import pandas as pd
-import yfinance as yf
+import requests
 
 logger = logging.getLogger(__name__)
 
-_YAHOO_TIMEFRAME_CONFIG: dict[str, dict[str, Any]] = {
-    "M15": {"interval": "15m", "periods": ["2d", "5d"]},
-    "H1": {"interval": "60m", "periods": ["5d", "1mo"]},
-    "H4": {"interval": "60m", "periods": ["5d", "1mo"]},
+_YAHOO_TIMEFRAME_CONFIG: dict[str, dict[str, str]] = {
+    "M15": {"interval": "15m", "range": "5d"},
+    "H1": {"interval": "60m", "range": "10d"},
+    "H4": {"interval": "60m", "range": "1mo"},
 }
 
 
@@ -34,7 +33,7 @@ class YahooMarketDataService:
             return [f"{normalized}=X"]
         return [normalized]
 
-    def map_timeframe(self, timeframe: str) -> dict[str, Any] | None:
+    def map_timeframe(self, timeframe: str) -> dict[str, str] | None:
         return _YAHOO_TIMEFRAME_CONFIG.get(str(timeframe or "H1").upper().strip())
 
     def get_candles(self, symbol: str, timeframe: str, limit: int = 120) -> dict[str, Any]:
@@ -44,110 +43,151 @@ class YahooMarketDataService:
         symbol_candidates = self.map_symbol_candidates(normalized_symbol)
 
         if mapped_tf is None:
-            return {
-                "symbol": normalized_symbol,
-                "timeframe": normalized_tf,
-                "source": "yahoo_finance",
-                "source_symbol": symbol_candidates[0],
-                "candles": [],
-                "error": "unsupported_timeframe",
-            }
+            return self._error_payload(normalized_symbol, normalized_tf, symbol_candidates[0], "unsupported_timeframe")
 
-        interval = str(mapped_tf["interval"])
-        periods = [str(period) for period in list(mapped_tf.get("periods") or [])[:2]]
-        if not periods:
-            periods = ["5d"]
+        interval = mapped_tf["interval"]
+        range_value = mapped_tf["range"]
 
-        last_error = "empty_history"
         source_symbol = symbol_candidates[0]
         candles: list[dict[str, Any]] = []
 
         for candidate in symbol_candidates:
             source_symbol = candidate
-            for period in periods:
-                frame, error = self._fetch_history(candidate, interval, period)
-                if error is not None:
-                    last_error = error
-                    continue
-                if frame is None or frame.empty:
-                    last_error = "empty_history"
-                    continue
-
-                candles = self._aggregate_h4(frame) if normalized_tf == "H4" else self._normalize_rows(frame)
-                if candles:
-                    break
-                last_error = "empty_candles"
+            raw_candles, error = self._fetch_chart(candidate, interval, range_value)
+            if error:
+                continue
+            candles = self._aggregate_h4(raw_candles) if normalized_tf == "H4" else raw_candles
             if candles:
                 break
 
         bounded = candles[-max(1, min(int(limit or 1), 5000)) :]
+        if not bounded:
+            return self._error_payload(normalized_symbol, normalized_tf, source_symbol, "yahoo_failed")
+
         return {
+            "success": True,
             "symbol": normalized_symbol,
             "timeframe": normalized_tf,
             "source": "yahoo_finance",
             "source_symbol": source_symbol,
             "last_updated_utc": datetime.now(timezone.utc).isoformat(),
             "candles": bounded,
-            "error": None if bounded else last_error,
+            "error": None,
         }
 
-    def _fetch_history(self, symbol: str, interval: str, period: str) -> tuple[pd.DataFrame | None, str | None]:
+    def _fetch_chart(self, symbol: str, interval: str, range_value: str) -> tuple[list[dict[str, Any]], str | None]:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        params = {"interval": interval, "range": range_value}
         try:
-            ticker = yf.Ticker(symbol)
-            history = ticker.history(period=period, interval=interval, auto_adjust=False)
-            if isinstance(history, pd.DataFrame) and not history.empty:
-                return history, None
-            return history, "empty_history"
-        except Exception as exc:
-            logger.warning("yahoo_fetch_failed symbol=%s interval=%s period=%s error=%s", symbol, interval, period, exc)
-            return None, "request_failed"
+            response = requests.get(
+                url,
+                params=params,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            logger.warning("yahoo_fetch_failed symbol=%s interval=%s range=%s error=%s", symbol, interval, range_value, exc)
+            return [], "yahoo_failed"
 
-    def _normalize_rows(self, frame: pd.DataFrame) -> list[dict[str, Any]]:
+        if response.status_code != 200:
+            logger.warning(
+                "yahoo_fetch_failed symbol=%s interval=%s range=%s status=%s",
+                symbol,
+                interval,
+                range_value,
+                response.status_code,
+            )
+            return [], "yahoo_failed"
+
+        try:
+            data = response.json()
+        except ValueError:
+            logger.warning("yahoo_fetch_failed symbol=%s interval=%s range=%s reason=invalid_json", symbol, interval, range_value)
+            return [], "yahoo_failed"
+
+        chart = data.get("chart") if isinstance(data, dict) else None
+        result = chart.get("result") if isinstance(chart, dict) else None
+        if not isinstance(result, list) or not result:
+            logger.warning("yahoo_fetch_failed symbol=%s interval=%s range=%s reason=empty_result", symbol, interval, range_value)
+            return [], "yahoo_failed"
+
+        item = result[0] if isinstance(result[0], dict) else None
+        timestamps = item.get("timestamp") if isinstance(item, dict) else None
+        indicators = item.get("indicators") if isinstance(item, dict) else None
+        quotes = indicators.get("quote") if isinstance(indicators, dict) else None
+        quote = quotes[0] if isinstance(quotes, list) and quotes and isinstance(quotes[0], dict) else None
+
+        if not isinstance(timestamps, list) or not isinstance(quote, dict):
+            logger.warning("yahoo_fetch_failed symbol=%s interval=%s range=%s reason=missing_candles", symbol, interval, range_value)
+            return [], "yahoo_failed"
+
+        opens = quote.get("open") if isinstance(quote.get("open"), list) else []
+        highs = quote.get("high") if isinstance(quote.get("high"), list) else []
+        lows = quote.get("low") if isinstance(quote.get("low"), list) else []
+        closes = quote.get("close") if isinstance(quote.get("close"), list) else []
+        volumes = quote.get("volume") if isinstance(quote.get("volume"), list) else []
+
         candles: list[dict[str, Any]] = []
-        for idx, row in frame.iterrows():
-            ts = self._to_timestamp(idx)
-            if ts is None:
-                continue
-            open_price = self._to_float(row.get("Open"))
-            high_price = self._to_float(row.get("High"))
-            low_price = self._to_float(row.get("Low"))
-            close_price = self._to_float(row.get("Close"))
-            volume = self._to_float(row.get("Volume"))
-            if None in {open_price, high_price, low_price, close_price}:
+        for idx, ts in enumerate(timestamps):
+            o = self._value_at(opens, idx)
+            h = self._value_at(highs, idx)
+            l = self._value_at(lows, idx)
+            c = self._value_at(closes, idx)
+            v = self._value_at(volumes, idx)
+            ts_value = self._to_int(ts)
+            if ts_value is None or None in {o, h, l, c}:
                 continue
             candles.append(
                 {
-                    "time": ts,
-                    "open": open_price,
-                    "high": high_price,
-                    "low": low_price,
-                    "close": close_price,
-                    "volume": 0.0 if volume is None else volume,
+                    "time": ts_value,
+                    "open": o,
+                    "high": h,
+                    "low": l,
+                    "close": c,
+                    "volume": 0.0 if v is None else v,
                 }
             )
         candles.sort(key=lambda candle: int(candle["time"]))
-        return candles
+        return candles, None
 
-    def _aggregate_h4(self, frame: pd.DataFrame) -> list[dict[str, Any]]:
-        normalized = frame.copy()
-        idx = normalized.index
-        if idx.tz is None:
-            idx = idx.tz_localize("UTC")
-        else:
-            idx = idx.tz_convert("UTC")
-        normalized.index = idx
+    def _aggregate_h4(self, candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        grouped: dict[int, dict[str, Any]] = {}
+        for candle in candles:
+            ts = self._to_int(candle.get("time"))
+            if ts is None:
+                continue
+            bucket = ts - (ts % (4 * 3600))
+            existing = grouped.get(bucket)
+            if existing is None:
+                grouped[bucket] = {
+                    "time": bucket,
+                    "open": candle["open"],
+                    "high": candle["high"],
+                    "low": candle["low"],
+                    "close": candle["close"],
+                    "volume": float(candle.get("volume") or 0.0),
+                }
+                continue
 
-        aggregated = pd.DataFrame(
-            {
-                "Open": normalized["Open"].resample("4h").first(),
-                "High": normalized["High"].resample("4h").max(),
-                "Low": normalized["Low"].resample("4h").min(),
-                "Close": normalized["Close"].resample("4h").last(),
-                "Volume": normalized["Volume"].resample("4h").sum(min_count=1),
-            }
-        ).dropna(subset=["Open", "High", "Low", "Close"], how="any")
+            existing["high"] = max(float(existing["high"]), float(candle["high"]))
+            existing["low"] = min(float(existing["low"]), float(candle["low"]))
+            existing["close"] = candle["close"]
+            existing["volume"] = float(existing.get("volume") or 0.0) + float(candle.get("volume") or 0.0)
 
-        return self._normalize_rows(aggregated)
+        aggregated = [grouped[key] for key in sorted(grouped.keys())]
+        return aggregated
+
+    @staticmethod
+    def _error_payload(symbol: str, timeframe: str, source_symbol: str, error: str) -> dict[str, Any]:
+        return {
+            "success": False,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "source": "yahoo_finance",
+            "source_symbol": source_symbol,
+            "candles": [],
+            "error": error,
+        }
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
@@ -156,23 +196,19 @@ class YahooMarketDataService:
     @staticmethod
     def _to_float(value: Any) -> float | None:
         try:
-            if hasattr(value, "iloc"):
-                value = value.iloc[0]
             return float(value)
         except (TypeError, ValueError):
             return None
 
+    @classmethod
+    def _value_at(cls, values: list[Any], idx: int) -> float | None:
+        if idx >= len(values):
+            return None
+        return cls._to_float(values[idx])
+
     @staticmethod
-    def _to_timestamp(value: Any) -> int | None:
+    def _to_int(value: Any) -> int | None:
         try:
-            if isinstance(value, pd.Timestamp):
-                ts = value
-            else:
-                ts = pd.Timestamp(value)
-            if ts.tzinfo is None:
-                ts = ts.tz_localize("UTC")
-            else:
-                ts = ts.tz_convert("UTC")
-            return int(ts.timestamp())
-        except Exception:
+            return int(value)
+        except (TypeError, ValueError):
             return None

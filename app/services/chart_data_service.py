@@ -244,7 +244,7 @@ class ChartDataService:
                 fallback_attempted=True,
                 fallback_provider="yahoo_finance",
                 fallback_error=None,
-                final_provider_used="yahoo_finance",
+                final_provider_used="yahoo",
                 request_succeeded=True,
                 candles_count=len(yahoo_candles),
                 error=None,
