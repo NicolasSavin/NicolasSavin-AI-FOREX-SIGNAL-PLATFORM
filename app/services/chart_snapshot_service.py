@@ -273,10 +273,12 @@ class ChartSnapshotService:
         }
 
     def preserve_last_good_chart(self, *, existing_chart: str | None, incoming_chart: str | None) -> str | None:
-        if self.is_valid_snapshot_path(incoming_chart):
-            return str(incoming_chart)
-        if self.is_valid_snapshot_path(existing_chart):
-            return str(existing_chart)
+        incoming_normalized = str(incoming_chart or "").strip()
+        existing_normalized = str(existing_chart or "").strip()
+        if self.is_valid_snapshot_path(incoming_normalized):
+            return incoming_normalized
+        if self.is_valid_snapshot_path(existing_normalized):
+            return existing_normalized
         return None
 
     @classmethod

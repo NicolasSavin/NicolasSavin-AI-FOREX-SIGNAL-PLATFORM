@@ -247,24 +247,6 @@ class TradeIdeaService:
             h4_structure = str((h4 or {}).get("summary_ru") or (h4 or {}).get("summary") or "").strip()
             h1_structure = str((h1 or {}).get("summary_ru") or (h1 or {}).get("summary") or "").strip()
             m15_trigger = str((m15 or {}).get("summary_ru") or (m15 or {}).get("summary") or "").strip()
-            direction_ru = {
-                "buy": "покупки",
-                "sell": "продажи",
-                "wait": "ожидание",
-            }.get(final_signal, "ожидание")
-            expectation_text = {
-                "buy": "ожидаем продолжение восходящего импульса к целям ликвидности выше.",
-                "sell": "ожидаем продолжение нисходящего импульса к целям ликвидности ниже.",
-                "wait": "приоритет — дождаться подтверждения и не форсировать вход против структуры.",
-            }.get(final_signal, "дождаться подтверждения.")
-            action_text = {
-                "buy": "План: работать только от long-сценария при подтверждении M15, SL ниже структуры, TP по ближайшей ликвидности.",
-                "sell": "План: работать только от short-сценария при подтверждении M15, SL выше структуры, TP по ближайшей ликвидности.",
-                "wait": "План: без входа до синхронизации H4/H1 и появления чистого M15-триггера.",
-            }.get(final_signal, "План: сохранять дисциплину риска и дождаться подтверждения.")
-            invalidation_text = (
-                "Инвалидация: сценарий теряет силу при сломе структуры H1/H4 или если M15 закрепляется против базового направления."
-            )
             if final_signal == "wait":
                 idea_thesis = self._build_wait_thesis(
                     symbol=symbol,
@@ -277,20 +259,20 @@ class TradeIdeaService:
                     wait_conflict=wait_conflict,
                     final_reason=final_reason,
                 )
+                unified_narrative = idea_thesis
             else:
-                idea_thesis = (
-                    f"{symbol}: сценарий {final_signal.upper()} подтверждён по MTF. "
-                    f"H4 и H1 синхронизированы ({h4_dir}/{h1_dir}), M15 дал рабочий триггер. "
-                    f"Фокус: {expectation_text}"
+                idea_thesis = self._build_directional_thesis(
+                    symbol=symbol,
+                    signal=final_signal,
+                    final_reason=final_reason,
+                    h4_dir=h4_dir,
+                    h1_dir=h1_dir,
+                    m15_dir=m15_dir,
+                    h4_structure=h4_structure,
+                    h1_structure=h1_structure,
+                    m15_trigger=m15_trigger,
                 )
-            unified_narrative = (
-                f"Ситуация: {symbol} торгуется в режиме MTF-оценки, текущий фокус — {direction_ru}. "
-                f"Причина: H4 — {h4_structure or h4_dir}, H1 — {h1_structure or h1_dir}, M15 — {m15_trigger or m15_dir}. "
-                f"Подтверждение: {final_reason} "
-                f"Ожидание: {expectation_text} "
-                f"Действие: {action_text} "
-                f"{invalidation_text}"
-            )
+                unified_narrative = idea_thesis
             compact_summary = (
                 f"{symbol}: H4={h4_dir if h4 else 'нет данных'}; H1={h1_dir if h1 else 'нет данных'}; "
                 f"M15={m15_dir if m15 else 'нет данных'}. Итог: {final_signal.upper()}."
@@ -385,25 +367,57 @@ class TradeIdeaService:
         h1_state = h1_dir if h1 else "нет данных"
         m15_state = m15_dir if m15 else "нет данных"
         if wait_conflict == "h4_h1_conflict":
-            confirmation = "дождаться синхронизации H1 в сторону H4 и только потом искать M15-триггер"
-            activation = "активация BUY/SELL произойдёт после совпадения направления H4+H1 и подтверждающей свечной реакции на M15"
+            confirmation = "нужно, чтобы H1 вернулся в сторону H4 и на M15 появился чистый триггер в ту же сторону"
+            activation = "до этого любое движение остаётся конфликтным и вход повышает риск ложного импульса"
         elif wait_conflict == "missing_m15_trigger":
-            confirmation = "ждём импульсный M15-триггер в сторону согласованных H4/H1"
-            activation = "сценарий активируется после закрепления M15 по направлению H4/H1 с сохранением структуры"
+            confirmation = "нужна реакция на M15: удержание уровня, импульс и закрепление в сторону H4/H1"
+            activation = "пока младший ТФ молчит, вход преждевременный и план остаётся в режиме наблюдения"
         elif wait_conflict == "m15_opposes_trend":
-            confirmation = "дождаться, когда M15 перестанет идти против H4/H1 и сформирует разворотный триггер"
-            activation = "активация наступит при возврате M15 к направлению старшей структуры и подтверждении ликвидностного сценария"
+            confirmation = "нужно, чтобы M15 перестал давить против старшей структуры и показал разворот обратно по тренду"
+            activation = "без этого лучше не ловить движение, потому что локальный контртренд может углубиться"
         elif wait_conflict == "missing_h4_context":
-            confirmation = "дождаться восстановления H4-контекста и проверить, что H1/M15 не противоречат ему"
-            activation = "торговый сценарий станет валидным после появления H4 и совпадения направления минимум на двух ТФ"
+            confirmation = "нужно дождаться старшего контекста H4 и убедиться, что H1/M15 не противоречат ему"
+            activation = "после восстановления H4 можно возвращаться к сценарию с нормальным соотношением риск/идея"
         else:
-            confirmation = "ожидается чистое подтверждение структуры без разнонаправленных сигналов"
-            activation = "сценарий активируется после синхронизации MTF и появления рабочего триггера входа"
+            confirmation = "требуется синхронизация структуры и подтверждение импульса на младшем ТФ"
+            activation = "до подтверждения сохраняется нейтральный режим без форсирования сделки"
         return (
-            f"{symbol}: сейчас режим WAIT, потому что есть конфликт сигналов (H4={h4_state}, H1={h1_state}, M15={m15_state}). "
-            f"Почему без сделки: {final_reason} "
-            f"Что нужно для подтверждения: {confirmation}. "
-            f"Что активирует сценарий: {activation}."
+            f"{symbol}: рынок в режиме WAIT — старшая и средняя структура пока не дают чистой точки входа "
+            f"(H4={h4_state}, H1={h1_state}, M15={m15_state}). "
+            f"Причина: {final_reason} "
+            f"Подтверждение для активации: {confirmation}. "
+            f"Действие сейчас: не входить до синхронизации, отмечать реакцию цены в рабочей зоне и готовить лимит риска заранее. "
+            f"Инвалидация текущего ожидания: если структура продолжит ломаться разнонаправленно, сценарий пересматривается с нуля. "
+            f"Комментарий по триггеру: {activation}."
+        )
+
+    @staticmethod
+    def _build_directional_thesis(
+        *,
+        symbol: str,
+        signal: str,
+        final_reason: str,
+        h4_dir: str,
+        h1_dir: str,
+        m15_dir: str,
+        h4_structure: str,
+        h1_structure: str,
+        m15_trigger: str,
+    ) -> str:
+        is_sell = signal == "sell"
+        side_ru = "продавцы" if is_sell else "покупатели"
+        action_ru = "short" if is_sell else "long"
+        invalidation_side = "выше" if is_sell else "ниже"
+        target_side = "ниже" if is_sell else "выше"
+        return (
+            f"{symbol}: сейчас контроль у стороны {side_ru} — H4 и H1 смотрят в одну сторону ({h4_dir}/{h1_dir}), "
+            f"а M15 уже дал триггер ({m15_dir}), поэтому идея не сводится к догадке, а опирается на структуру. "
+            f"Почему это работает: {final_reason} "
+            f"Контекст по ТФ: H4 — {h4_structure or h4_dir}; H1 — {h1_structure or h1_dir}; M15 — {m15_trigger or m15_dir}. "
+            f"Подтверждение сценария: цена должна удерживать импульс в сторону {target_side} и не возвращаться в зону, где триггер был сформирован. "
+            f"Действие сейчас: работать только от {action_ru}, вход брать после локального подтверждения M15, "
+            f"SL держать за уровнем структурной инвалидации, TP фиксировать на ближайшей ликвидности {target_side}. "
+            f"Инвалидация: если цена закрепляется {invalidation_side} зоны триггера и ломает структуру против сценария, идея отменяется."
         )
 
     def _refresh_active_ideas(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
