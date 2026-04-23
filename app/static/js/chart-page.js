@@ -201,9 +201,18 @@ function buildFullText(idea) {
 function isRenderableNarrative(value) {
   const text = normalizeWhitespace(value).toLowerCase();
   if (!text) return false;
-  const blocked = ["none", "fallback", "idea_created", "status created", "debug", "schema", "payload"];
+  const blocked = ["none", "fallback", "idea_created", "status created", "debug", "schema", "payload", "статус created"];
   if (blocked.some((token) => text.includes(token))) return false;
+  if (/^[a-z]{3,8}\s*[/-]?\s*[a-z]{3,8}\s+[mhdw]\d{1,2}\s*:\s*(bullish|bearish|neutral).*(статус|status)\s+\w+/.test(text)) return false;
   if (text.includes("ситуация:") && text.includes("причина:") && text.includes("следствие:") && text.includes("действие:")) return false;
+  return true;
+}
+
+function isMeaningfulUpdate(idea) {
+  if (!idea || idea.status === "archived") return false;
+  if (Boolean(idea.has_meaningful_update)) return true;
+  const reason = normalizeWhitespace(idea.meaningful_update_reason || "").toLowerCase();
+  if (!reason || ["idea_created", "fallback", "status created", "debug"].includes(reason)) return false;
   return true;
 }
 
@@ -440,7 +449,7 @@ function buildIdeaCardMarkup(idea) {
   const timeframe = idea.timeframe || "";
   const confidence = idea.confidence ?? "-";
   const summary = buildShortText(idea);
-  const updateSummary = normalizeWhitespace(idea.update_reason || idea.update_summary);
+  const updateSummary = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
   const statusLabel = idea.status === "archived" ? statusRu(idea.final_status || idea.status) : statusRu(idea.status);
   const updatedLabel = formatDateTime(idea.meaningful_updated_at);
   const archivedStats = idea.status === "archived"
@@ -715,9 +724,11 @@ function renderDetailText(idea) {
     updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
     return;
   }
-  const updateText = normalizeWhitespace(idea.update_reason || idea.update_summary);
+  const updateText = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
   if (updateText) {
     updateDetailStatus(`Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`);
+  } else {
+    updateDetailStatus(`Статус: ${statusRu(idea.status)}`);
   }
 }
 
@@ -1310,7 +1321,7 @@ async function openIdea(idea) {
         const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
         updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
       } else {
-        const updateText = normalizeWhitespace(idea.update_reason || idea.update_summary);
+        const updateText = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
         updateDetailStatus(
           updateText
             ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`
@@ -1329,7 +1340,7 @@ async function openIdea(idea) {
       const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
       updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
     } else {
-      const updateText = normalizeWhitespace(idea.update_reason || idea.update_summary);
+      const updateText = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
       updateDetailStatus(
         updateText
           ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`
@@ -1344,7 +1355,7 @@ async function openIdea(idea) {
     const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
     updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
   } else {
-    const updateText = normalizeWhitespace(idea.update_reason || idea.update_summary);
+    const updateText = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
     updateDetailStatus(
       updateText
         ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`
@@ -1374,6 +1385,7 @@ function refreshOpenModalIfNeeded() {
   if (!activeIdea) return;
   const fresh = allIdeas.find((idea) => String(idea?.id) === String(activeIdea?.id));
   if (!fresh) return;
+  if (!isMeaningfulUpdate(fresh) && !isMeaningfulUpdate(activeIdea)) return;
   if (!hasMeaningfulIdeaChange(activeIdea, fresh)) return;
   openIdea(fresh);
 }
@@ -1404,7 +1416,7 @@ async function loadIdeasSnapshot() {
         hasRealtimeChanges = initialIdeasSyncCompleted || hasRealtimeChanges;
         continue;
       }
-      if (hasMeaningfulIdeaChange(prev, idea)) {
+      if (hasMeaningfulIdeaChange(prev, idea) && isMeaningfulUpdate(idea)) {
         hasRealtimeChanges = initialIdeasSyncCompleted || hasRealtimeChanges;
       }
     }
@@ -1426,7 +1438,7 @@ async function loadIdeasSnapshot() {
       for (const ideaId of visibleIds) {
         const prev = previousById.get(ideaId);
         const next = incomingById.get(ideaId);
-        if (!next || (prev && !hasMeaningfulIdeaChange(prev, next))) continue;
+        if (!next || !isMeaningfulUpdate(next) || (prev && !hasMeaningfulIdeaChange(prev, next))) continue;
         const card = Array.from(ideasRoot.querySelectorAll(".card[data-idea-id]"))
           .find((node) => node.dataset.ideaId === ideaId);
         flashIdeaCard(card);
