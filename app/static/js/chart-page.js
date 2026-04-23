@@ -38,6 +38,13 @@ let candleSeries = null;
 let currentChartPayload = null;
 let detailRequestId = 0;
 let chartDisplayMode = "unavailable";
+let initialIdeasSyncCompleted = false;
+let ideasPollInFlight = false;
+let lastNotificationAt = 0;
+const previousIdeasById = new Map();
+const renderedIdeaSignatureById = new Map();
+const IDEAS_POLL_INTERVAL_MS = 15000;
+const NOTIFICATION_COOLDOWN_MS = 1500;
 const CHART_REQUEST_TIMEOUT_MS = 5000;
 const DEFAULT_PAIR_OPTIONS = ["EURUSD", "GBPUSD", "USDJPY"];
 const DEFAULT_TIMEFRAME_OPTIONS = ["M15", "H1", "H4"];
@@ -409,50 +416,162 @@ function getFilteredIdeas() {
   });
 }
 
+function buildIdeaCardMarkup(idea) {
+  const tags = Array.isArray(idea.tags) ? idea.tags : [];
+  const symbol = idea.symbol || "";
+  const direction = getDirectionRu(idea.direction || "NEUTRAL");
+  const timeframe = idea.timeframe || "";
+  const confidence = idea.confidence ?? "-";
+  const summary = buildShortText(idea);
+  const updateSummary = normalizeWhitespace(idea.update_summary);
+  const statusLabel = idea.status === "archived" ? statusRu(idea.final_status || idea.status) : statusRu(idea.status);
+  const updatedLabel = formatDateTime(idea.updated_at);
+  const archivedStats = idea.status === "archived"
+    ? `<div class="symbol">Результат: ${escapeHtml(String(idea.result || "—").toUpperCase())} · PnL: ${escapeHtml(formatSignedPercent(idea.pnl_percent))} · RR: ${escapeHtml(idea.rr != null ? Number(idea.rr).toFixed(2) : "—")} · Длительность: ${escapeHtml(idea.duration || "—")}</div>`
+    : "";
+
+  return `
+    <div class="card-head">
+      <div>
+        <div class="symbol">${escapeHtml(symbol)}</div>
+        <div class="meta">${escapeHtml(direction)} · ${escapeHtml(timeframe)} · ${escapeHtml(String(confidence))}%</div>
+        <div class="symbol">Статус: ${escapeHtml(statusLabel)} · Обновлено: ${escapeHtml(updatedLabel)}</div>
+        ${archivedStats}
+      </div>
+    </div>
+    <p class="summary">${escapeHtml(summary)}</p>
+    ${updateSummary ? `<p class="summary">Обновление: ${escapeHtml(updateSummary)}</p>` : ""}
+    <div class="tags">
+      ${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function getIdeaDiffSignature(idea) {
+  return JSON.stringify({
+    updated_at: idea?.updated_at || null,
+    status: idea?.status || null,
+    final_status: idea?.final_status || null,
+    chartImageUrl: idea?.chartImageUrl || idea?.chart_image || null,
+    unified_narrative: normalizeWhitespace(idea?.unified_narrative),
+    idea_thesis: normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis),
+    confidence: Number(idea?.confidence ?? 0),
+    entry: formatLevel(idea?.entry),
+    stopLoss: formatLevel(idea?.stopLoss),
+    takeProfit: formatLevel(idea?.takeProfit),
+    signal: normalizeWhitespace(idea?.signal || idea?.direction || idea?.bias),
+    risk_note: normalizeWhitespace(idea?.risk_note || idea?.invalidation || idea?.trade_plan?.invalidation),
+    update_summary: normalizeWhitespace(idea?.update_summary || idea?.change_summary),
+  });
+}
+
+function hasMeaningfulIdeaChange(prevIdea, nextIdea) {
+  return getIdeaDiffSignature(prevIdea) !== getIdeaDiffSignature(nextIdea);
+}
+
+function playIdeaNotification() {
+  const now = Date.now();
+  if (now - lastNotificationAt < NOTIFICATION_COOLDOWN_MS) return;
+  lastNotificationAt = now;
+
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    oscillator.type = "triangle";
+    oscillator.frequency.value = 920;
+    gain.gain.value = 0.0001;
+
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+
+    const start = ctx.currentTime;
+    const duration = 0.16;
+    gain.gain.exponentialRampToValueAtTime(0.07, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+    oscillator.start(start);
+    oscillator.stop(start + duration);
+    oscillator.onended = () => ctx.close().catch(() => {});
+  } catch (error) {
+    console.debug("Не удалось воспроизвести уведомление по идее.", error);
+  }
+}
+
+function flashIdeaCard(card) {
+  if (!card) return;
+  card.classList.remove("idea-card-flash");
+  void card.offsetWidth;
+  card.classList.add("idea-card-flash");
+}
+
 function renderIdeas(ideas, notice = "") {
+  const existingCards = new Map(
+    Array.from(ideasRoot.querySelectorAll(".card[data-idea-id]"))
+      .map((card) => [card.dataset.ideaId, card])
+  );
+
+  const existingNotice = ideasRoot.querySelector('[data-role="ideas-notice"]');
+  if (notice) {
+    if (existingNotice) {
+      existingNotice.textContent = notice;
+    } else {
+      const noticeNode = document.createElement("div");
+      noticeNode.className = "empty";
+      noticeNode.dataset.role = "ideas-notice";
+      noticeNode.textContent = notice;
+      ideasRoot.prepend(noticeNode);
+    }
+  } else if (existingNotice) {
+    existingNotice.remove();
+  }
+
   if (!ideas.length) {
     ideasRoot.innerHTML = `<div class="empty">${escapeHtml(notice || "По выбранным фильтрам идеи не найдены.")}</div>`;
+    renderedIdeaSignatureById.clear();
     return;
   }
 
-  const cardsMarkup = ideas.map((idea, idx) => {
-    const tags = Array.isArray(idea.tags) ? idea.tags : [];
-    const symbol = idea.symbol || "";
-    const direction = getDirectionRu(idea.direction || "NEUTRAL");
-    const timeframe = idea.timeframe || "";
-    const confidence = idea.confidence ?? "-";
-    const summary = buildShortText(idea);
-    const updateSummary = normalizeWhitespace(idea.update_summary);
-    const statusLabel = idea.status === "archived" ? statusRu(idea.final_status || idea.status) : statusRu(idea.status);
-    const updatedLabel = formatDateTime(idea.updated_at);
-    const archivedStats = idea.status === "archived"
-      ? `<div class="symbol">Результат: ${escapeHtml(String(idea.result || "—").toUpperCase())} · PnL: ${escapeHtml(formatSignedPercent(idea.pnl_percent))} · RR: ${escapeHtml(idea.rr != null ? Number(idea.rr).toFixed(2) : "—")} · Длительность: ${escapeHtml(idea.duration || "—")}</div>`
-      : "";
+  let insertionPoint = ideasRoot.querySelector('[data-role="ideas-notice"]');
+  for (const idea of ideas) {
+    const ideaId = String(idea?.id || "");
+    if (!ideaId) continue;
 
-    return `
-      <div class="card" data-index="${idx}">
-        <div class="card-head">
-          <div>
-            <div class="symbol">${escapeHtml(symbol)}</div>
-            <div class="meta">${escapeHtml(direction)} · ${escapeHtml(timeframe)} · ${escapeHtml(String(confidence))}%</div>
-            <div class="symbol">Статус: ${escapeHtml(statusLabel)} · Обновлено: ${escapeHtml(updatedLabel)}</div>
-            ${archivedStats}
-          </div>
-        </div>
-        <p class="summary">${escapeHtml(summary)}</p>
-        ${updateSummary ? `<p class="summary">Обновление: ${escapeHtml(updateSummary)}</p>` : ""}
-        <div class="tags">
-          ${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
-        </div>
-      </div>
-    `;
-  }).join("");
+    let card = existingCards.get(ideaId);
+    if (!card) {
+      card = document.createElement("div");
+      card.className = "card";
+      card.dataset.ideaId = ideaId;
+      card.addEventListener("click", () => {
+        const currentIdea = allIdeas.find((item) => String(item?.id) === ideaId);
+        if (currentIdea) openIdea(currentIdea);
+      });
+      const insertAfter = insertionPoint ? insertionPoint.nextSibling : ideasRoot.firstChild;
+      ideasRoot.insertBefore(card, insertAfter);
+    }
 
-  ideasRoot.innerHTML = `${notice ? `<div class="empty">${escapeHtml(notice)}</div>` : ""}${cardsMarkup}`;
+    const signature = getIdeaDiffSignature(idea);
+    if (renderedIdeaSignatureById.get(ideaId) !== signature) {
+      card.innerHTML = buildIdeaCardMarkup(idea);
+      renderedIdeaSignatureById.set(ideaId, signature);
+    }
 
-  document.querySelectorAll(".card").forEach((card, idx) => {
-    card.addEventListener("click", () => openIdea(ideas[idx]));
-  });
+    const targetPosition = insertionPoint ? insertionPoint.nextSibling : ideasRoot.firstChild;
+    if (card !== targetPosition) {
+      ideasRoot.insertBefore(card, targetPosition);
+    }
+
+    insertionPoint = card;
+    existingCards.delete(ideaId);
+  }
+
+  for (const [ideaId, node] of existingCards.entries()) {
+    node.remove();
+    renderedIdeaSignatureById.delete(ideaId);
+  }
 }
 
 function applyFilters() {
@@ -460,7 +579,7 @@ function applyFilters() {
   const emptyMessage = allIdeas.length
     ? "По выбранным фильтрам идеи не найдены."
     : "Идеи пока не сгенерированы.";
-  renderIdeas(filteredIdeas, emptyMessage);
+  renderIdeas(filteredIdeas, filteredIdeas.length ? "" : emptyMessage);
 }
 
 function normalizeLevel(value) {
@@ -1037,27 +1156,91 @@ function closeModal() {
   showUnavailableChart("Chart unavailable (data temporarily missing)");
 }
 
-async function load() {
+function dedupeIdeasById(ideas) {
+  const unique = new Map();
+  for (const idea of ideas) {
+    const ideaId = String(idea?.id || "");
+    if (!ideaId) continue;
+    unique.set(ideaId, idea);
+  }
+  return Array.from(unique.values());
+}
+
+function refreshOpenModalIfNeeded() {
+  if (!activeIdea) return;
+  const fresh = allIdeas.find((idea) => String(idea?.id) === String(activeIdea?.id));
+  if (!fresh) return;
+  if (!hasMeaningfulIdeaChange(activeIdea, fresh)) return;
+  openIdea(fresh);
+}
+
+async function loadIdeasSnapshot() {
+  if (ideasPollInFlight) return;
+  ideasPollInFlight = true;
+
   try {
     const res = await fetch("/ideas/market", { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const normalizedIdeas = normalizeIdeas(data);
+    let normalizedIdeas = normalizeIdeas(data);
     if (!normalizedIdeas.length && ENABLE_MOCK_IDEAS_ON_EMPTY) {
       console.warn("Используем временный mock идей: активирован ideas_mock=1.");
-      allIdeas = normalizeIdeas({ ideas: TEMP_MOCK_IDEAS });
-    } else {
-      allIdeas = normalizedIdeas;
+      normalizedIdeas = normalizeIdeas({ ideas: TEMP_MOCK_IDEAS });
     }
+
+    normalizedIdeas = dedupeIdeasById(normalizedIdeas);
+
+    const incomingById = new Map(normalizedIdeas.map((idea) => [String(idea.id), idea]));
+    const previousById = new Map(previousIdeasById);
+
+    let hasRealtimeChanges = false;
+    for (const [ideaId, idea] of incomingById.entries()) {
+      const prev = previousById.get(ideaId);
+      if (!prev) {
+        hasRealtimeChanges = initialIdeasSyncCompleted || hasRealtimeChanges;
+        continue;
+      }
+      if (hasMeaningfulIdeaChange(prev, idea)) {
+        hasRealtimeChanges = initialIdeasSyncCompleted || hasRealtimeChanges;
+      }
+    }
+
+    allIdeas = normalizedIdeas;
+    previousIdeasById.clear();
+    for (const [ideaId, idea] of incomingById.entries()) {
+      previousIdeasById.set(ideaId, idea);
+    }
+
     populateFilters(allIdeas);
     applyFilters();
     renderStats(allIdeas, data?.statistics);
+    refreshOpenModalIfNeeded();
+
+    if (hasRealtimeChanges) {
+      playIdeaNotification();
+      const visibleIds = new Set(getFilteredIdeas().map((idea) => String(idea.id)));
+      for (const ideaId of visibleIds) {
+        const prev = previousById.get(ideaId);
+        const next = incomingById.get(ideaId);
+        if (!next || (prev && !hasMeaningfulIdeaChange(prev, next))) continue;
+        const card = Array.from(ideasRoot.querySelectorAll(".card[data-idea-id]"))
+          .find((node) => node.dataset.ideaId === ideaId);
+        flashIdeaCard(card);
+      }
+    }
+
+    initialIdeasSyncCompleted = true;
   } catch (error) {
     console.warn("Не удалось загрузить /ideas/market, synthetic fallback отключён.", error);
-    allIdeas = [];
-    populateFilters(allIdeas);
-    renderIdeas(allIdeas, "Источник идей временно недоступен. Нет актуальных рыночных данных.");
-    renderStats(allIdeas, null);
+    if (!initialIdeasSyncCompleted) {
+      allIdeas = [];
+      previousIdeasById.clear();
+      populateFilters(allIdeas);
+      renderIdeas(allIdeas, "Источник идей временно недоступен. Нет актуальных рыночных данных.");
+      renderStats(allIdeas, null);
+    }
+  } finally {
+    ideasPollInFlight = false;
   }
 }
 
@@ -1077,4 +1260,5 @@ window.addEventListener("resize", () => {
   resizeChart();
 });
 
-load();
+loadIdeasSnapshot();
+setInterval(loadIdeasSnapshot, IDEAS_POLL_INTERVAL_MS);
