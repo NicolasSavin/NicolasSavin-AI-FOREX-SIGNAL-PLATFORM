@@ -20,6 +20,7 @@ class ChartSnapshotService:
     def __init__(self, charts_dir: str = "app/static/charts") -> None:
         self.charts_dir = Path(charts_dir)
         self.charts_dir.mkdir(parents=True, exist_ok=True)
+        self.legacy_charts_dir = self.charts_dir.parent / "chart_images"
 
     def build_snapshot(
         self,
@@ -249,9 +250,34 @@ class ChartSnapshotService:
             return False
         if normalized.startswith(("http://", "https://")):
             return True
+        local_path = self._resolve_local_snapshot_path(normalized)
+        return local_path.exists() if local_path else False
+
+    def _resolve_local_snapshot_path(self, image_path: str | None) -> Path | None:
+        normalized = str(image_path or "").strip()
+        if not normalized:
+            return None
         if normalized.startswith("/static/charts/"):
-            return True
-        return False
+            filename = normalized.removeprefix("/static/charts/").lstrip("/")
+            if not filename:
+                return None
+            return self.charts_dir / filename
+        if normalized.startswith("/static/chart_images/"):
+            filename = normalized.removeprefix("/static/chart_images/").lstrip("/")
+            if not filename:
+                return None
+            return self.legacy_charts_dir / filename
+        if normalized.startswith("static/charts/"):
+            filename = normalized.removeprefix("static/charts/").lstrip("/")
+            if not filename:
+                return None
+            return self.charts_dir / filename
+        if normalized.startswith("static/chart_images/"):
+            filename = normalized.removeprefix("static/chart_images/").lstrip("/")
+            if not filename:
+                return None
+            return self.legacy_charts_dir / filename
+        return None
 
     def resolve_snapshot_with_fallback(
         self,

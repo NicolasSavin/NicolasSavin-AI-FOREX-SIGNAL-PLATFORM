@@ -400,6 +400,8 @@ function normalizeIdea(idea) {
       hasCandles: hasCandles(normalizedChartData),
     },
   );
+  console.log("chart_image:", normalizedChartImageUrl || null);
+  console.log("snapshot_status:", normalizedSnapshotStatus);
   return {
     ...idea,
     id: idea?.id || idea?.idea_id || `${symbol}-${timeframe}-${direction}`,

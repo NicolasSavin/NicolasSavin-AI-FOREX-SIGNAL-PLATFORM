@@ -1994,24 +1994,43 @@ class TradeIdeaService:
             len(candles),
             bool(existing_url),
         )
-        image_path = self.chart_snapshot_service.build_snapshot(
-            symbol=symbol,
-            timeframe=timeframe,
-            candles=candles,
-            levels=levels,
-            zones=zones,
-            entry=self._extract_numeric(entry),
-            stop_loss=self._extract_numeric(stop_loss),
-            take_profits=take_profits,
-            bias=bias,
-            confidence=confidence,
-            status=status,
-            markers=markers,
-            patterns=patterns,
-            arrows=arrows,
-            chart_overlays=resolved_chart_overlays,
-            setup_text=signal.get("short_scenario_ru") or signal.get("short_text") or signal.get("summary_ru"),
-        )
+        image_path: str | None = None
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            image_path = self.chart_snapshot_service.build_snapshot(
+                symbol=symbol,
+                timeframe=timeframe,
+                candles=candles,
+                levels=levels,
+                zones=zones,
+                entry=self._extract_numeric(entry),
+                stop_loss=self._extract_numeric(stop_loss),
+                take_profits=take_profits,
+                bias=bias,
+                confidence=confidence,
+                status=status,
+                markers=markers,
+                patterns=patterns,
+                arrows=arrows,
+                chart_overlays=resolved_chart_overlays,
+                setup_text=signal.get("short_scenario_ru") or signal.get("short_text") or signal.get("summary_ru"),
+            )
+            if self.chart_snapshot_service.is_valid_snapshot_path(image_path):
+                break
+            if attempt < max_attempts:
+                logger.warning(
+                    "snapshot_retry_scheduled symbol=%s timeframe=%s attempt=%s reason=missing_or_invalid_image_path",
+                    symbol,
+                    timeframe,
+                    attempt,
+                )
+        if not self.chart_snapshot_service.is_valid_snapshot_path(image_path):
+            logger.warning(
+                "snapshot_retry_exhausted symbol=%s timeframe=%s attempts=%s",
+                symbol,
+                timeframe,
+                max_attempts,
+            )
         resolved_snapshot = self.chart_snapshot_service.resolve_snapshot_with_fallback(
             existing_chart=existing_url,
             new_chart=image_path,

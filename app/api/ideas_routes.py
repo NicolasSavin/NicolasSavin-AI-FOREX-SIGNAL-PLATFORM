@@ -102,6 +102,21 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             services.queue_ideas_refresh()
             ideas = services.attach_live_market_contracts(services.trade_idea_service.list_api_ideas())
             logger.info("ideas_api_initial_payload_count=%s", len(ideas))
+            missing_chart_ideas = [
+                idea
+                for idea in ideas
+                if not services.trade_idea_service.chart_snapshot_service.is_valid_snapshot_path(
+                    idea.get("chartImageUrl") or idea.get("chart_image")
+                )
+            ]
+            if missing_chart_ideas:
+                logger.warning(
+                    "ideas_api_chart_validation_failed missing_count=%s action=force_rebuild_missing_snapshots_once",
+                    len(missing_chart_ideas),
+                )
+                services.trade_idea_service.rebuild_missing_snapshots(force=True)
+                ideas = services.attach_live_market_contracts(services.trade_idea_service.list_api_ideas())
+                logger.info("ideas_api_post_chart_rebuild_count=%s", len(ideas))
             if not ideas:
                 generated = await services.trade_idea_service.generate_or_refresh(market["symbols"] or DEFAULT_PAIRS)
                 ideas = services.attach_live_market_contracts(
