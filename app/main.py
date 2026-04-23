@@ -222,6 +222,13 @@ async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", lim
     }
 
 
+@app.get("/api/debug/force-generate")
+async def force_generate_debug() -> dict:
+    symbols = trade_idea_service.get_market_symbols() or DEFAULT_PAIRS
+    await trade_idea_service.generate_or_refresh(symbols, force=True)
+    return {"status": "ok"}
+
+
 @app.get("/api/debug/yahoo-test")
 @app.get("/api/debug/yahoo-test/{symbol}/{timeframe}")
 async def yahoo_test_debug(symbol: str = "EURUSD", timeframe: str = "H1", limit: int = 120) -> dict:
