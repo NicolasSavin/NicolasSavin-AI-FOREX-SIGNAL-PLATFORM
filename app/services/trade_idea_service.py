@@ -1093,6 +1093,8 @@ class TradeIdeaService:
         status: str,
     ) -> dict[str, Any]:
         existing_url = (existing or {}).get("chartImageUrl") or (existing or {}).get("chart_image")
+        if not self.chart_snapshot_service.is_valid_snapshot_path(existing_url):
+            existing_url = None
         existing_status = (existing or {}).get("chartSnapshotStatus") or (existing or {}).get("chart_snapshot_status") or "ok"
         chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
         if not chart_data and isinstance(signal.get("chartData"), dict):
@@ -1135,6 +1137,15 @@ class TradeIdeaService:
                 symbol,
                 timeframe,
             )
+            if existing_url:
+                logger.info(
+                    "idea_snapshot_no_data_reused_existing symbol=%s timeframe=%s path=%s previous_status=%s",
+                    symbol,
+                    timeframe,
+                    existing_url,
+                    existing_status,
+                )
+                return {"chartImageUrl": existing_url, "status": "no_data", "candles": []}
             return {"chartImageUrl": None, "status": "no_data", "candles": []}
         if fetch_status != "ok":
             logger.info(
@@ -1171,7 +1182,7 @@ class TradeIdeaService:
             arrows=arrows,
             setup_text=signal.get("short_scenario_ru") or signal.get("short_text") or signal.get("summary_ru"),
         )
-        if not image_path:
+        if not self.chart_snapshot_service.is_valid_snapshot_path(image_path):
             logger.warning(
                 "snapshot_failed symbol=%s timeframe=%s candles=%s status=snapshot_failed",
                 symbol,

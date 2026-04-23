@@ -195,6 +195,18 @@ class ChartSnapshotService:
         finally:
             plt.close(fig)
 
+    def is_valid_snapshot_path(self, image_path: str | None) -> bool:
+        if not image_path:
+            return False
+        normalized = str(image_path).strip()
+        if not normalized:
+            return False
+        if normalized.startswith(("http://", "https://")):
+            return True
+        if normalized.startswith("/static/charts/"):
+            return True
+        return False
+
     def _draw_zones(self, *, ax: Any, zones: list[dict[str, Any]], candles_count: int, max_price: float) -> None:
         styles = {
             "demand": {"face": "#22c55e", "label": "Demand"},
