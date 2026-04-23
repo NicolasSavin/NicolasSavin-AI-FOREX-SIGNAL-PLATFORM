@@ -613,9 +613,7 @@ function shouldDisplayAggregatedIdea(idea) {
     && hasValidTradeLevels(idea);
   if (isStrongIdea) return true;
 
-  const isMeaningfulWait = signal === "WAIT"
-    && confidence >= 45
-    && hasNarrative;
+  const isMeaningfulWait = signal === "WAIT" && hasNarrative;
   if (isMeaningfulWait) return true;
 
   if (!idea?.combined) return false;
