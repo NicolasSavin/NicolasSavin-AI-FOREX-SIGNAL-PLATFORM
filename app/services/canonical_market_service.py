@@ -84,7 +84,8 @@ class CanonicalMarketService:
                 return derived
 
         primary = self.live_provider.get_candles(symbol, normalized_tf, limit)
-        primary_candles = primary.get("candles") or []
+        primary_raw = primary.get("candles") or []
+        primary_candles = [item for item in (self._normalize_candle(candle) for candle in primary_raw) if item is not None]
         primary_error = primary.get("error")
         if primary_candles:
             contract = self._contract(
@@ -106,7 +107,8 @@ class CanonicalMarketService:
             return contract
 
         fallback = self.historical_fallback.get_candles(symbol, normalized_tf, limit)
-        fallback_candles = fallback.get("candles") or []
+        fallback_raw = fallback.get("candles") or []
+        fallback_candles = [item for item in (self._normalize_candle(candle) for candle in fallback_raw) if item is not None]
         if fallback_candles:
             contract = self._contract(
                 symbol=symbol,
@@ -191,8 +193,11 @@ class CanonicalMarketService:
             ts = candle.get("time")
             if ts is None:
                 continue
+            normalized = CanonicalMarketService._normalize_candle(candle)
+            if normalized is None:
+                continue
             bucket_start = (int(ts) // 14400) * 14400
-            buckets.setdefault(bucket_start, []).append(candle)
+            buckets.setdefault(bucket_start, []).append(normalized)
 
         output: list[dict[str, Any]] = []
         for bucket_start in sorted(buckets.keys()):
@@ -214,9 +219,34 @@ class CanonicalMarketService:
                     "close": float(closes),
                 }
             )
+        output = [candle for candle in output if CanonicalMarketService._normalize_candle(candle) is not None]
         if limit > 0:
             return output[-limit:]
         return output
+
+    @staticmethod
+    def _normalize_candle(candle: dict[str, Any]) -> dict[str, float | int] | None:
+        try:
+            timestamp = int(candle.get("time"))
+            open_price = float(candle.get("open"))
+            high_price = float(candle.get("high"))
+            low_price = float(candle.get("low"))
+            close_price = float(candle.get("close"))
+        except (TypeError, ValueError):
+            return None
+        lower_bound = min(open_price, close_price)
+        upper_bound = max(open_price, close_price)
+        repaired_low = min(low_price, lower_bound)
+        repaired_high = max(high_price, upper_bound)
+        if repaired_low > repaired_high:
+            return None
+        return {
+            "time": timestamp,
+            "open": open_price,
+            "high": repaired_high,
+            "low": repaired_low,
+            "close": close_price,
+        }
 
     @staticmethod
     def _contract(

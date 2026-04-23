@@ -213,21 +213,28 @@ class TradeIdeaService:
             final_signal = "wait"
             final_direction = "neutral"
             final_reason = "Нет согласованного multi-timeframe подтверждения."
+            wait_conflict = "multi_timeframe_conflict"
             if h4 and h1 and h4_dir in {"bullish", "bearish"} and h4_dir == h1_dir:
                 if m15_dir == h4_dir:
                     final_signal = "buy" if h4_dir == "bullish" else "sell"
                     final_direction = h4_dir
                     final_reason = "H4 и H1 согласованы, M15 подтвердил триггер."
+                    wait_conflict = "none"
                 elif m15_dir == "neutral" or not m15:
                     final_reason = "H4 и H1 согласованы, но на M15 ещё нет триггера."
+                    wait_conflict = "missing_m15_trigger"
                 else:
                     final_reason = "H4 и H1 согласованы, но M15 против базового направления."
+                    wait_conflict = "m15_opposes_trend"
             elif h4 and h1 and h4_dir in {"bullish", "bearish"} and h1_dir in {"bullish", "bearish"} and h4_dir != h1_dir:
                 final_reason = "Конфликт HTF и MTF структуры: H4 и H1 разнонаправлены."
+                wait_conflict = "h4_h1_conflict"
             elif h1 and m15 and h1_dir in {"bullish", "bearish"} and m15_dir == h1_dir and not h4:
                 final_reason = "Недостаточно HTF контекста (H4 отсутствует), ожидаем подтверждение старшего ТФ."
+                wait_conflict = "missing_h4_context"
             elif m15 and m15_dir in {"bullish", "bearish"} and (not h4 or h4_dir != m15_dir):
                 final_reason = "LTF сигнал против старшего контекста, идея не продвигается в trade."
+                wait_conflict = "ltf_vs_htf_conflict"
 
             confidence_values = [
                 int(self._extract_numeric(item.get("confidence")) or 0)
@@ -258,6 +265,24 @@ class TradeIdeaService:
             invalidation_text = (
                 "Инвалидация: сценарий теряет силу при сломе структуры H1/H4 или если M15 закрепляется против базового направления."
             )
+            if final_signal == "wait":
+                idea_thesis = self._build_wait_thesis(
+                    symbol=symbol,
+                    h4=h4,
+                    h1=h1,
+                    m15=m15,
+                    h4_dir=h4_dir,
+                    h1_dir=h1_dir,
+                    m15_dir=m15_dir,
+                    wait_conflict=wait_conflict,
+                    final_reason=final_reason,
+                )
+            else:
+                idea_thesis = (
+                    f"{symbol}: сценарий {final_signal.upper()} подтверждён по MTF. "
+                    f"H4 и H1 синхронизированы ({h4_dir}/{h1_dir}), M15 дал рабочий триггер. "
+                    f"Фокус: {expectation_text}"
+                )
             unified_narrative = (
                 f"Ситуация: {symbol} торгуется в режиме MTF-оценки, текущий фокус — {direction_ru}. "
                 f"Причина: H4 — {h4_structure or h4_dir}, H1 — {h1_structure or h1_dir}, M15 — {m15_trigger or m15_dir}. "
@@ -270,6 +295,7 @@ class TradeIdeaService:
                 f"{symbol}: H4={h4_dir if h4 else 'нет данных'}; H1={h1_dir if h1 else 'нет данных'}; "
                 f"M15={m15_dir if m15 else 'нет данных'}. Итог: {final_signal.upper()}."
             )
+            legacy_narrative = self._pick_legacy_narrative(preferred=m15 or h1 or h4 or symbol_ideas[0])
 
             preferred_timeframe_idea = m15 or h1 or h4 or symbol_ideas[0]
             latest_update = max(
@@ -293,8 +319,9 @@ class TradeIdeaService:
                     "direction": final_direction,
                     "bias": final_direction,
                     "confidence": final_confidence,
-                    "idea_thesis": unified_narrative,
+                    "idea_thesis": idea_thesis,
                     "unified_narrative": unified_narrative,
+                    "legacy_narrative": legacy_narrative,
                     "summary": final_reason,
                     "summary_ru": final_reason,
                     "short_text": final_reason,
@@ -324,6 +351,60 @@ class TradeIdeaService:
             )
         )
         return combined_cards
+
+    @staticmethod
+    def _pick_legacy_narrative(preferred: dict[str, Any]) -> str:
+        candidates = (
+            preferred.get("full_text"),
+            preferred.get("fullText"),
+            preferred.get("narrative"),
+            preferred.get("description_ru"),
+            preferred.get("summary_ru"),
+            preferred.get("summary"),
+        )
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if text:
+                return text
+        return ""
+
+    @staticmethod
+    def _build_wait_thesis(
+        *,
+        symbol: str,
+        h4: dict[str, Any] | None,
+        h1: dict[str, Any] | None,
+        m15: dict[str, Any] | None,
+        h4_dir: str,
+        h1_dir: str,
+        m15_dir: str,
+        wait_conflict: str,
+        final_reason: str,
+    ) -> str:
+        h4_state = h4_dir if h4 else "нет данных"
+        h1_state = h1_dir if h1 else "нет данных"
+        m15_state = m15_dir if m15 else "нет данных"
+        if wait_conflict == "h4_h1_conflict":
+            confirmation = "дождаться синхронизации H1 в сторону H4 и только потом искать M15-триггер"
+            activation = "активация BUY/SELL произойдёт после совпадения направления H4+H1 и подтверждающей свечной реакции на M15"
+        elif wait_conflict == "missing_m15_trigger":
+            confirmation = "ждём импульсный M15-триггер в сторону согласованных H4/H1"
+            activation = "сценарий активируется после закрепления M15 по направлению H4/H1 с сохранением структуры"
+        elif wait_conflict == "m15_opposes_trend":
+            confirmation = "дождаться, когда M15 перестанет идти против H4/H1 и сформирует разворотный триггер"
+            activation = "активация наступит при возврате M15 к направлению старшей структуры и подтверждении ликвидностного сценария"
+        elif wait_conflict == "missing_h4_context":
+            confirmation = "дождаться восстановления H4-контекста и проверить, что H1/M15 не противоречат ему"
+            activation = "торговый сценарий станет валидным после появления H4 и совпадения направления минимум на двух ТФ"
+        else:
+            confirmation = "ожидается чистое подтверждение структуры без разнонаправленных сигналов"
+            activation = "сценарий активируется после синхронизации MTF и появления рабочего триггера входа"
+        return (
+            f"{symbol}: сейчас режим WAIT, потому что есть конфликт сигналов (H4={h4_state}, H1={h1_state}, M15={m15_state}). "
+            f"Почему без сделки: {final_reason} "
+            f"Что нужно для подтверждения: {confirmation}. "
+            f"Что активирует сценарий: {activation}."
+        )
 
     def _refresh_active_ideas(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
         if not ideas:
