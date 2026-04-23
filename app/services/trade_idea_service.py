@@ -164,6 +164,12 @@ class TradeIdeaService:
         active_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES]
         archived_ideas = [idea for idea in payload.get("ideas", []) if str(idea.get("status")).lower() in CLOSED_STATUSES]
         combined_active_ideas = self._combine_ideas_by_instrument(active_ideas)
+        if not combined_active_ideas:
+            combined_active_ideas = self._build_contextual_wait_ideas(
+                reason="no_active_ideas_after_refresh",
+                symbols=None,
+            )
+
         legacy = {
             "updated_at_utc": payload.get("updated_at_utc"),
             "ideas": [self._to_legacy_card(idea) for idea in combined_active_ideas],
@@ -738,9 +744,16 @@ class TradeIdeaService:
         logger.info("ideas_fallback_built count=%s reason=%s", len(fallback), reason)
         return fallback
 
-    def _build_contextual_wait_ideas(self, *, reason: str) -> list[dict[str, Any]]:
+    def _build_contextual_wait_ideas(
+        self,
+        *,
+        reason: str,
+        symbols: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         wait_ideas: list[dict[str, Any]] = []
         for symbol in self.get_market_symbols():
+            if symbols is not None and symbol not in symbols:
+                continue
             for timeframe in self.get_market_timeframes():
                 chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
                 candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
@@ -748,9 +761,13 @@ class TradeIdeaService:
                     continue
                 latest = candles[-1] if isinstance(candles[-1], dict) else {}
                 latest_close = self._extract_numeric(latest.get("close"))
+                provider = str(chart_payload.get("source") or "unknown").lower()
+                meta_payload = chart_payload.get("meta") if isinstance(chart_payload.get("meta"), dict) else {}
+                used_yahoo_fallback = bool(meta_payload.get("fallback_from") == "twelvedata")
+                data_status = "delayed" if provider == "yahoo_finance" else "real"
                 summary = (
-                    f"{symbol} {timeframe}: Недостаточно подтверждений, ожидаем (WAIT). "
-                    f"Рынок дал {len(candles)} свечей, нужна синхронизация структуры."
+                    f"{symbol} {timeframe}: рынок в фазе ожидания — вход пока не подтверждён. "
+                    f"Доступно {len(candles)} свечей, цена около {self._format_price(latest_close)}."
                 )
                 wait_ideas.append(
                     {
@@ -762,25 +779,37 @@ class TradeIdeaService:
                         "direction": "neutral",
                         "bias": "neutral",
                         "signal": "WAIT",
-                        "confidence": 33,
+                        "confidence": 42,
                         "summary": summary,
                         "summary_ru": summary,
                         "short_text": summary,
                         "short_scenario_ru": summary,
                         "full_text": (
-                            f"{symbol} {timeframe}: свечные данные доступны ({len(candles)}), "
-                            "но структура не даёт входа с приемлемым confluence. Сценарий остаётся в WAIT."
+                            f"{symbol} {timeframe}: свечные данные доступны ({len(candles)}), текущая структура остаётся смешанной и "
+                            "не даёт чистого BUY/SELL входа с приемлемым риском. Для активации сделки нужен подтверждённый триггер: "
+                            "реакция от ключевой зоны, импульс в сторону сценария и закрепление на младшем ТФ."
                         ),
-                        "status": IDEA_STATUS_WAITING,
+                        "status": IDEA_STATUS_ACTIVE,
                         "entry": None,
                         "stopLoss": None,
                         "takeProfit": None,
                         "source_candle_count": len(candles),
                         "current_price": latest_close,
-                        "current_reasoning": "Свечи есть, но подтверждения сетапа недостаточные. Наблюдаем.",
-                        "source": "contextual_wait_fallback",
-                        "is_fallback": True,
-                        "meta": {"fallback_reason": reason, "provider": chart_payload.get("source")},
+                        "current_reasoning": (
+                            "Рыночные данные получены, но подтверждение входа не сформировано: ждём синхронизацию структуры и импульса."
+                        ),
+                        "source": "contextual_wait",
+                        "is_fallback": False,
+                        "data_status": data_status,
+                        "fallback_to_candles": False,
+                        "chart_snapshot_status": "ok",
+                        "chartSnapshotStatus": "ok",
+                        "meta": {
+                            "fallback_reason": reason,
+                            "provider": chart_payload.get("source"),
+                            "used_yahoo_fallback": used_yahoo_fallback,
+                            "data_status": data_status,
+                        },
                     }
                 )
         return wait_ideas
@@ -1014,16 +1043,12 @@ class TradeIdeaService:
             }
             missing_symbols = sorted(symbol for symbol in symbols_with_any_candles if symbol not in existing_symbols)
             if missing_symbols:
-                contextual_wait = self._build_contextual_wait_ideas(reason="post_generation_empty_for_symbol")
-                contextual_by_symbol: dict[str, dict[str, Any]] = {}
-                for idea in contextual_wait:
-                    symbol = str(idea.get("symbol") or "").upper()
-                    if symbol and symbol in missing_symbols and symbol not in contextual_by_symbol:
-                        contextual_by_symbol[symbol] = idea
-                for symbol in missing_symbols:
-                    fallback_idea = contextual_by_symbol.get(symbol)
-                    if fallback_idea is not None:
-                        payload.setdefault("ideas", []).append(fallback_idea)
+                contextual_wait = self._build_contextual_wait_ideas(
+                    reason="post_generation_empty_for_symbol",
+                    symbols=set(missing_symbols),
+                )
+                if contextual_wait:
+                    payload.setdefault("ideas", []).extend(contextual_wait)
         logger.info(
             "ideas_pipeline_summary generated_count=%s candles_loaded_count=%s ideas_generated_count=%s ideas_filtered_count=%s final_payload_count=%s skipped_reasons=%s",
             len(generated),
