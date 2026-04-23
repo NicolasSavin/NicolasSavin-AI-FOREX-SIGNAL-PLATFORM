@@ -157,6 +157,8 @@ class SignalEngine:
         ltf_features: dict,
         sentiment: dict,
     ) -> dict:
+        data_quality = self._resolve_data_quality(htf=htf, mtf=mtf, ltf=ltf)
+        policy_mode = "strict_smc" if data_quality == "high" else "fallback_directional"
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
         if mtf_features["status"] != "ready":
@@ -171,23 +173,33 @@ class SignalEngine:
                 chart_patterns=mtf_patterns,
                 pattern_summary=mtf_pattern_summary,
                 reason="Недостаточно данных для полного confluence, опубликован слабый/нейтральный сценарий.",
+                data_quality=data_quality,
             )
 
         htf_ready = htf_features.get("status") == "ready"
         ltf_ready = ltf_features.get("status") == "ready"
         trend_conflict = htf_ready and htf_features.get("trend") != mtf_features.get("trend")
-        has_confluence = has_minimum_confluence(
+        strict_confluence = has_minimum_confluence(
             bos=mtf_features.get("bos", False),
             liquidity_sweep=mtf_features.get("liquidity_sweep", False),
             order_block=bool(mtf_features["order_block"]),
             ltf_pattern=ltf_ready and bool(ltf_features.get("pattern")) and ltf_features.get("pattern") != "none",
         )
+        directional_structure = self._has_directional_structure(
+            mtf_features=mtf_features,
+            ltf_features=ltf_features,
+            htf_features=htf_features,
+        )
+        has_confluence = strict_confluence if data_quality == "high" else (strict_confluence or directional_structure)
         confluence_flags = {
+            "policy_mode": policy_mode,
             "bos": bool(mtf_features.get("bos")),
             "liquidity_sweep": bool(mtf_features.get("liquidity_sweep")),
             "order_block": bool(mtf_features.get("order_block")),
             "ltf_pattern_confirmation": ltf_ready and ltf_features.get("pattern") not in {None, "none"},
             "htf_alignment": htf_ready and not trend_conflict,
+            "directional_structure": directional_structure,
+            "strict_confluence": strict_confluence,
             "risk_filter_passed": None,
             "live_snapshot_available": mtf.get("data_status") in {"real", "delayed"},
         }
@@ -207,7 +219,7 @@ class SignalEngine:
         if confluence_flags["ltf_pattern_confirmation"] and ltf_features.get("pattern") == "engulfing":
             confidence += 4
         if not has_confluence:
-            confidence -= 12
+            confidence -= 12 if data_quality == "high" else 5
         if not htf_ready:
             confidence -= 5
         if not ltf_ready:
@@ -233,6 +245,8 @@ class SignalEngine:
             weak_reasons.append("LTF подтверждение недоступно")
         if not risk["allowed"]:
             weak_reasons.append(risk["reason_ru"])
+        if data_quality != "high":
+            weak_reasons.append("Данные получены через fallback (Yahoo): подтверждение слабее профессионального режима")
 
         sentiment_alignment = self._sentiment_alignment(action, sentiment)
         sentiment_delta = self._sentiment_delta(sentiment_alignment, sentiment)
@@ -244,6 +258,9 @@ class SignalEngine:
             htf_ready=htf_ready,
             ltf_ready=ltf_ready,
             has_confluence=has_confluence,
+            strict_confluence=strict_confluence,
+            directional_structure=directional_structure,
+            data_quality=data_quality,
             risk_allowed=bool(risk.get("allowed")),
             live_snapshot_available=bool(confluence_flags["live_snapshot_available"]),
             sentiment=sentiment,
@@ -253,6 +270,7 @@ class SignalEngine:
             scenario_type=scenario_type,
             missing_confirmations=missing_confirmations,
             risk_allowed=bool(risk.get("allowed")),
+            data_quality=data_quality,
         )
         structure_state = "analyzable" if mtf_features.get("status") == "ready" else "insufficient"
         logger.debug(
@@ -305,6 +323,8 @@ class SignalEngine:
             "invalidation_ru": default_invalidation_text(),
             "progress": progress,
             "data_status": mtf["data_status"],
+            "data_quality": data_quality,
+            "signal_policy_mode": policy_mode,
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, action, mtf_pattern_summary),
             "sentiment": sentiment,
@@ -324,6 +344,8 @@ class SignalEngine:
                 "ltf_pattern": ltf_features["pattern"],
                 "atr_percent": round(mtf_features.get("atr_percent", 0.0), 4),
                 "data_status": mtf.get("data_status", "unavailable"),
+                "data_quality": data_quality,
+                "signal_policy_mode": policy_mode,
                 "source": mtf["source"],
                 "source_symbol": mtf.get("source_symbol"),
                 "last_updated_utc": mtf.get("last_updated_utc"),
@@ -367,6 +389,7 @@ class SignalEngine:
         chart_patterns: list[dict] | None,
         pattern_summary: dict | None,
         reason: str,
+        data_quality: str = "high",
     ) -> dict:
         base_price = snapshot.get("close")
         if base_price in (None, ""):
@@ -390,6 +413,7 @@ class SignalEngine:
         pattern_impact = self.pattern_detector.signal_impact(action=action, summary=pattern_summary or {})
         confidence = 34
         signal_time = datetime.now(timezone.utc).isoformat()
+        policy_mode = "strict_smc" if data_quality == "high" else "fallback_directional"
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -410,6 +434,8 @@ class SignalEngine:
             "invalidation_ru": default_invalidation_text(),
             "progress": self._build_progress(action, price, price, level_plan["stop"], level_plan["take"]),
             "data_status": snapshot.get("data_status", "unavailable"),
+            "data_quality": data_quality,
+            "signal_policy_mode": policy_mode,
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, action, pattern_summary or {}),
             "sentiment": snapshot.get("sentiment") or {},
@@ -428,6 +454,9 @@ class SignalEngine:
                 "htf_alignment": htf_features.get("status") == "ready",
                 "risk_filter_passed": True,
                 "live_snapshot_available": snapshot.get("data_status") in {"real", "delayed"},
+                "policy_mode": policy_mode,
+                "strict_confluence": False,
+                "directional_structure": True,
             },
             "missing_confirmations": ["confluence_threshold", "htf_or_ltf_confirmation"],
             "invalidation_reasoning": "Сценарий слабый и требует подтверждения структуры.",
@@ -435,6 +464,8 @@ class SignalEngine:
                 "source": snapshot.get("source"),
                 "message": snapshot.get("message"),
                 "current_price": round(price, 6) if snapshot.get("data_status") in {"real", "delayed"} else None,
+                "data_quality": data_quality,
+                "signal_policy_mode": policy_mode,
                 "signal_origin": "backend.signal_engine",
             },
             "pipeline_debug": {
@@ -481,6 +512,8 @@ class SignalEngine:
         live_data_available = data_status in {"real", "delayed"}
         fallback_price = snapshot.get("close") if live_data_available else None
         fallback_reason = reason or scenario["reason"]
+        data_quality = self._resolve_data_quality(htf=snapshot, mtf=snapshot, ltf=snapshot)
+        policy_mode = "strict_smc" if data_quality == "high" else "fallback_directional"
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -508,6 +541,8 @@ class SignalEngine:
                 "label_ru": "Ожидание подтверждения",
             },
             "data_status": data_status,
+            "data_quality": data_quality,
+            "signal_policy_mode": policy_mode,
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, "NO_TRADE", summary),
             "sentiment": snapshot.get("sentiment") or {},
@@ -520,6 +555,7 @@ class SignalEngine:
             "structure_state": "developing" if candles_count else "insufficient",
             "confluence_flags": {
                 "live_snapshot_available": snapshot.get("data_status") in {"real", "delayed"},
+                "policy_mode": policy_mode,
             },
             "missing_confirmations": ["confluence_threshold"],
             "invalidation_reasoning": "Сценарий опубликован как fallback и требует подтверждения.",
@@ -528,6 +564,8 @@ class SignalEngine:
                 "message": snapshot.get("message"),
                 "current_price": fallback_price,
                 "data_status": data_status,
+                "data_quality": data_quality,
+                "signal_policy_mode": policy_mode,
                 "source_symbol": snapshot.get("source_symbol"),
                 "last_updated_utc": snapshot.get("last_updated_utc"),
                 "is_live_market_data": bool(snapshot.get("is_live_market_data", False)),
@@ -628,6 +666,9 @@ class SignalEngine:
         htf_ready: bool,
         ltf_ready: bool,
         has_confluence: bool,
+        strict_confluence: bool,
+        directional_structure: bool,
+        data_quality: str,
         risk_allowed: bool,
         live_snapshot_available: bool,
         sentiment: dict,
@@ -637,8 +678,12 @@ class SignalEngine:
             missing.append("htf_structure")
         if not ltf_ready:
             missing.append("ltf_trigger_pattern")
-        if not has_confluence:
+        if data_quality == "high" and not has_confluence:
             missing.append("confluence_threshold")
+        if data_quality != "high" and not directional_structure:
+            missing.append("directional_structure")
+        if data_quality != "high" and not strict_confluence:
+            missing.append("strict_confluence_missing")
         if not risk_allowed:
             missing.append("risk_filter")
         if not live_snapshot_available:
@@ -654,9 +699,16 @@ class SignalEngine:
         scenario_type: str,
         missing_confirmations: list[str],
         risk_allowed: bool,
+        data_quality: str,
     ) -> str:
         if scenario_type == "range_breakout_setup":
             return "range_bias"
+        if data_quality != "high":
+            if confidence >= 74 and risk_allowed:
+                return "confirmed"
+            if confidence >= 44:
+                return "developing"
+            return "early"
         if confidence >= 82 and not missing_confirmations and risk_allowed:
             return "high_conviction"
         if confidence >= 68 and risk_allowed and len(missing_confirmations) <= 1:
@@ -686,6 +738,32 @@ class SignalEngine:
         if alignment == "conflicts":
             return -scaled
         return 0
+
+    @staticmethod
+    def _resolve_data_quality(*, htf: dict, mtf: dict, ltf: dict) -> str:
+        sources = {
+            str(htf.get("source") or "").lower(),
+            str(mtf.get("source") or "").lower(),
+            str(ltf.get("source") or "").lower(),
+        }
+        if "yahoo_finance" in sources:
+            return "fallback"
+        return "high"
+
+    @staticmethod
+    def _has_directional_structure(*, mtf_features: dict, ltf_features: dict, htf_features: dict) -> bool:
+        trend_ready = mtf_features.get("trend") in {"up", "down"}
+        directional_marker = any(
+            (
+                bool(mtf_features.get("bos")),
+                bool(mtf_features.get("liquidity_sweep")),
+                bool(mtf_features.get("order_block")),
+                bool(mtf_features.get("fvg")),
+                ltf_features.get("pattern") not in {None, "none"},
+                htf_features.get("trend") == mtf_features.get("trend"),
+            )
+        )
+        return bool(trend_ready and directional_marker)
 
     @staticmethod
     def _idea_id(symbol: str, timeframe: str, action: str, pattern_summary: dict) -> str:
