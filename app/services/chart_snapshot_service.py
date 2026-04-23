@@ -213,8 +213,8 @@ class ChartSnapshotService:
             price_to = self._to_float(zone.get("to") or zone.get("priceTo") or zone.get("high"))
             if price_from is None or price_to is None:
                 continue
-            start_idx = int(zone.get("startIndex") or zone.get("start") or max(candles_count - 25, 0))
-            end_idx = int(zone.get("endIndex") or zone.get("end") or candles_count - 1)
+            start_idx = int(zone.get("start_index") or zone.get("startIndex") or zone.get("start") or max(candles_count - 25, 0))
+            end_idx = int(zone.get("end_index") or zone.get("endIndex") or zone.get("end") or candles_count - 1)
             start_idx = max(-1, min(start_idx, candles_count - 1))
             end_idx = max(start_idx + 1, min(end_idx, candles_count))
             bottom = min(price_from, price_to)
@@ -231,10 +231,11 @@ class ChartSnapshotService:
                     zorder=1,
                 )
             )
+            zone_label = str(zone.get("label") or style["label"])
             ax.text(
                 start_idx,
                 bottom + height / 2,
-                style["label"],
+                self._shorten_text(zone_label, limit=14),
                 color="#e5e7eb",
                 fontsize=8,
                 alpha=0.9,
@@ -248,7 +249,7 @@ class ChartSnapshotService:
             price = self._to_float(level.get("price") or level.get("value") or level.get("level"))
             if price is None:
                 continue
-            level_type = str(level.get("type") or level.get("label") or "Level")
+            level_type = str(level.get("label") or level.get("type") or "Level")
             lowered = level_type.lower()
             style = ":" if "liq" in lowered or "session" in lowered else "--"
             ax.axhline(price, color="#60a5fa", linewidth=0.9, linestyle=style, alpha=0.8)
@@ -316,6 +317,28 @@ class ChartSnapshotService:
             name = str(pattern.get("type") or pattern.get("name") or pattern.get("pattern") or "").strip()
             if not name:
                 continue
+            low = self._to_float(pattern.get("low") or pattern.get("price_from"))
+            high = self._to_float(pattern.get("high") or pattern.get("price_to"))
+            start_idx_raw = self._to_float(pattern.get("start_index") or pattern.get("startIndex") or pattern.get("x1"))
+            end_idx_raw = self._to_float(pattern.get("end_index") or pattern.get("endIndex") or pattern.get("x2"))
+            if None not in (low, high, start_idx_raw, end_idx_raw):
+                start_idx = max(0, min(start_idx_raw, candles_count - 1))
+                end_idx = max(start_idx + 1, min(end_idx_raw, candles_count - 1))
+                bottom = min(low, high)
+                height = abs(high - low) or max(abs(high), 1.0) * 0.00008
+                ax.add_patch(
+                    Rectangle(
+                        (start_idx - 0.4, bottom),
+                        end_idx - start_idx + 0.8,
+                        height,
+                        facecolor="#f472b6",
+                        edgecolor="#ec4899",
+                        alpha=0.08,
+                        linewidth=1.0,
+                        linestyle="--",
+                        zorder=2,
+                    )
+                )
             points = pattern.get("points") if isinstance(pattern.get("points"), list) else []
             if len(points) >= 2:
                 xs: list[float] = []
@@ -331,8 +354,12 @@ class ChartSnapshotService:
                     ys.append(y_val)
                 if len(xs) >= 2:
                     ax.plot(xs, ys, color="#f9a8d4", linewidth=1.0, alpha=0.8, zorder=2)
-            label_price = self._to_float(pattern.get("price") or pattern.get("y"))
-            label_index = int(pattern.get("index") or pattern.get("x") or candles_count - 3)
+            label_price = self._to_float(pattern.get("price") or pattern.get("y") or high or low)
+            label_index = int(
+                pattern.get("index")
+                or pattern.get("x")
+                or (start_idx_raw if start_idx_raw is not None else candles_count - 3)
+            )
             if label_price is not None:
                 ax.text(
                     max(0, min(label_index, candles_count - 1)),
