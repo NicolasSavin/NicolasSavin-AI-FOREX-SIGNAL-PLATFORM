@@ -106,19 +106,27 @@ function getDirectionTone(value) {
 }
 
 function getSignalTone(idea) {
-  const signal = String(idea?.final_signal || idea?.signal || "").trim().toLowerCase();
-  if (signal === "buy") return "bullish";
-  if (signal === "sell") return "bearish";
-  if (signal === "wait") return "neutral";
+  const signal = normalizeSignalValue(idea?.final_signal || idea?.signal || "");
+  if (signal === "BUY") return "bullish";
+  if (signal === "SELL") return "bearish";
+  if (signal === "WAIT") return "neutral";
   return getDirectionTone(idea?.direction || idea?.bias || "neutral");
 }
 
 function getSignalLabel(idea) {
-  const signal = String(idea?.final_signal || idea?.signal || "").trim().toLowerCase();
-  if (signal === "buy") return "ПОКУПКА";
-  if (signal === "sell") return "ПРОДАЖА";
-  if (signal === "wait") return "ОЖИДАНИЕ";
+  const signal = normalizeSignalValue(idea?.final_signal || idea?.signal || "");
+  if (signal === "BUY") return "ПОКУПКА";
+  if (signal === "SELL") return "ПРОДАЖА";
+  if (signal === "WAIT") return "ОЖИДАНИЕ";
   return getDirectionLabel(idea?.direction || idea?.bias || "neutral");
+}
+
+function normalizeSignalValue(value) {
+  const signal = normalizeWhitespace(value).toUpperCase();
+  if (["ПОКУПКА", "BUY", "LONG", "BULLISH"].includes(signal)) return "BUY";
+  if (["ПРОДАЖА", "SELL", "SHORT", "BEARISH"].includes(signal)) return "SELL";
+  if (["ОЖИДАНИЕ", "WAIT", "WAITING", "HOLD", "NEUTRAL"].includes(signal)) return "WAIT";
+  return signal;
 }
 
 function normalizeWhitespace(value) {
@@ -428,6 +436,58 @@ function normalizeIdea(idea) {
     close_reason: idea?.close_reason || "",
     history: Array.isArray(idea?.history) ? idea.history : [],
   };
+}
+
+function hasVisibleIdeaText(idea) {
+  const candidates = [
+    idea?.summary,
+    idea?.summary_ru,
+    idea?.short_text,
+    idea?.shortText,
+    idea?.full_text,
+    idea?.fullText,
+    idea?.idea_thesis,
+    idea?.unified_narrative,
+  ];
+  return candidates.some((value) => isRenderableNarrative(value));
+}
+
+function isTechnicalPlaceholderIdea(idea) {
+  const symbol = normalizeWhitespace(idea?.symbol || idea?.pair || "").toUpperCase();
+  const signal = normalizeSignalValue(idea?.final_signal || idea?.signal || "");
+  const hasSummary = hasVisibleIdeaText(idea);
+  if (!symbol && !signal && !hasSummary) return true;
+
+  const markerText = normalizeWhitespace([
+    idea?.summary,
+    idea?.summary_ru,
+    idea?.full_text,
+    idea?.fullText,
+    idea?.short_text,
+    idea?.shortText,
+  ].filter(Boolean).join(" ")).toLowerCase();
+  if (!markerText) return false;
+
+  return [
+    "debug",
+    "schema",
+    "payload",
+    "no data",
+    "нет данных",
+    "placeholder",
+    "technical placeholder",
+  ].some((token) => markerText.includes(token));
+}
+
+function isVisibleIdea(idea) {
+  const symbol = normalizeWhitespace(idea?.symbol || idea?.pair || "").toUpperCase();
+  const signal = normalizeSignalValue(idea?.final_signal || idea?.signal || "");
+  const visibleSignals = new Set(["ПОКУПКА", "ПРОДАЖА", "ОЖИДАНИЕ", "BUY", "SELL", "WAIT"]);
+  const hasValidSignal = visibleSignals.has(signal);
+  const hasText = hasVisibleIdeaText(idea);
+
+  if (isTechnicalPlaceholderIdea(idea)) return false;
+  return Boolean(symbol) && hasText && hasValidSignal;
 }
 
 function registerChartPlugin(plugin) {
@@ -1602,6 +1662,7 @@ async function loadIdeasSnapshot() {
     }
 
     normalizedIdeas = dedupeIdeasById(normalizedIdeas);
+    normalizedIdeas = normalizedIdeas.filter((idea) => isVisibleIdea(idea));
 
     normalizedIdeas = normalizedIdeas.map((idea) => mergeWithPreviousIdeaState(idea, previousById.get(String(idea?.id))));
     const incomingById = new Map(normalizedIdeas.map((idea) => [String(idea.id), idea]));
