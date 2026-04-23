@@ -842,6 +842,20 @@ class TradeIdeaService:
             existing.get("chart_overlays") if isinstance(existing, dict) else None,
             chart_overlays,
         )
+        if existing and self.isEmptyAnalysis(
+            analysis_payload,
+            chart_image_url=chart_snapshot.get("chartImageUrl"),
+            idea_thesis=idea_thesis_text,
+            unified_narrative=unified_narrative_text,
+            chart_overlays=chart_overlays,
+        ):
+            logger.info(
+                "idea_refresh_skipped_empty_analysis idea_id=%s symbol=%s timeframe=%s",
+                existing.get("idea_id"),
+                symbol,
+                timeframe,
+            )
+            return dict(existing)
         initial_candle_fingerprint = self._candle_fingerprint(
             chart_snapshot.get("candles") if isinstance(chart_snapshot.get("candles"), list) else []
         )
@@ -1052,14 +1066,8 @@ class TradeIdeaService:
     ) -> list[str]:
         reasons: list[str] = []
 
-        previous_status = str(existing.get("status") or "").lower()
-        next_status = str(payload.get("status") or "").lower()
-        if cls._is_material_status_change(previous_status=previous_status, next_status=next_status):
-            reasons.append("status_changed")
         if str(existing.get("signal") or "").upper() != str(payload.get("signal") or "").upper():
             reasons.append("signal_changed")
-        if str(existing.get("bias") or existing.get("direction") or "").lower() != str(payload.get("bias") or "").lower():
-            reasons.append("bias_changed")
 
         previous_confidence = cls._extract_numeric(existing.get("confidence"))
         next_confidence = cls._extract_numeric(payload.get("confidence"))
@@ -1081,22 +1089,13 @@ class TradeIdeaService:
 
         if str(existing.get("chartImageUrl") or existing.get("chart_image") or "") != str(payload.get("chartImageUrl") or payload.get("chart_image") or ""):
             reasons.append("chart_image_changed")
-        if cls._overlay_signature(existing) != cls._overlay_signature(payload):
+        existing_overlays = cls.normalize_chart_overlays(existing.get("chart_overlays"))
+        payload_overlays = cls.normalize_chart_overlays(payload.get("chart_overlays"))
+        if (
+            cls.isMeaningfulOverlay(existing_overlays)
+            or cls.isMeaningfulOverlay(payload_overlays)
+        ) and cls._overlay_signature({"chart_overlays": existing_overlays}) != cls._overlay_signature({"chart_overlays": payload_overlays}):
             reasons.append("chart_overlays_changed")
-
-        if next_status == IDEA_STATUS_TRIGGERED and previous_status != IDEA_STATUS_TRIGGERED:
-            reasons.append("entry_triggered")
-        if next_status == IDEA_STATUS_TP_HIT and previous_status != IDEA_STATUS_TP_HIT:
-            reasons.append("tp_hit")
-        if next_status == IDEA_STATUS_SL_HIT and previous_status != IDEA_STATUS_SL_HIT:
-            reasons.append("sl_hit")
-
-        if bool(signal.get("bos_detected")) or bool(signal.get("structure_break")):
-            reasons.append("bos")
-        if bool(signal.get("choch_detected")):
-            reasons.append("choch")
-        if bool(signal.get("zone_reaction")) or bool(signal.get("major_zone_reaction")):
-            reasons.append("zone_reaction")
 
         return list(dict.fromkeys(reasons))
 
@@ -2214,8 +2213,43 @@ class TradeIdeaService:
             "status created",
             "debug",
         )
+        reasoning_tokens = ("потому", "поэтому", "значит", "реакция", "ликвидность")
         sentences = [chunk for chunk in re.split(r"[.!?]+", normalized) if chunk.strip()]
-        return any(token in text for token in weak_tokens) or len(text) < 40 or len(sentences) > 6 or len(sentences) < 2
+        if any(token in text for token in weak_tokens) or len(text) < 40 or len(sentences) > 6 or len(sentences) < 2:
+            return True
+        return not any(token in normalized for token in reasoning_tokens)
+
+    @classmethod
+    def isWeakNarrative(cls, value: Any) -> bool:
+        return cls._is_weak_narrative_text(value)
+
+    @classmethod
+    def isMeaningfulOverlay(cls, overlays: dict[str, Any] | None) -> bool:
+        return cls.is_meaningful_overlay_payload(overlays)
+
+    @classmethod
+    def isEmptyAnalysis(
+        cls,
+        analysis: dict[str, Any] | None,
+        *,
+        chart_image_url: Any = None,
+        idea_thesis: Any = None,
+        unified_narrative: Any = None,
+        chart_overlays: dict[str, Any] | None = None,
+    ) -> bool:
+        analysis_payload = analysis if isinstance(analysis, dict) else {}
+        overlay_payload = cls.normalize_chart_overlays(analysis_payload.get("chart_overlays"))
+        if not cls.isMeaningfulOverlay(overlay_payload):
+            overlay_payload = cls.normalize_chart_overlays(chart_overlays)
+        has_analysis_blocks = any(
+            isinstance(analysis_payload.get(key), list) and len(analysis_payload.get(key)) > 0
+            for key in CHART_OVERLAY_KEYS
+        )
+        has_meaningful_overlays = cls.isMeaningfulOverlay(overlay_payload)
+        has_chart = bool(cls._clean_text(chart_image_url))
+        has_idea_thesis = not cls.isWeakNarrative(idea_thesis)
+        has_unified_narrative = not cls.isWeakNarrative(unified_narrative)
+        return not any((has_analysis_blocks, has_meaningful_overlays, has_chart, has_idea_thesis, has_unified_narrative))
 
     @classmethod
     def _idea_row_to_signal_for_backfill(cls, idea: dict[str, Any]) -> dict[str, Any]:

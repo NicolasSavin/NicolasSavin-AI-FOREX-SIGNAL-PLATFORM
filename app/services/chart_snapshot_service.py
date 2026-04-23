@@ -237,8 +237,8 @@ class ChartSnapshotService:
         new_chart: str | None,
         has_candles: bool,
     ) -> dict[str, Any]:
-        existing_valid = existing_chart if self.is_valid_snapshot_path(existing_chart) else None
-        new_valid = new_chart if self.is_valid_snapshot_path(new_chart) else None
+        existing_valid = self.preserve_last_good_chart(existing_chart=existing_chart, incoming_chart=None)
+        new_valid = self.preserve_last_good_chart(existing_chart=None, incoming_chart=new_chart)
         if new_valid:
             return {
                 "chartImageUrl": new_valid,
@@ -266,6 +266,13 @@ class ChartSnapshotService:
             "chart_status": "no_data",
             "fallback_to_candles": False,
         }
+
+    def preserve_last_good_chart(self, *, existing_chart: str | None, incoming_chart: str | None) -> str | None:
+        if self.is_valid_snapshot_path(incoming_chart):
+            return str(incoming_chart)
+        if self.is_valid_snapshot_path(existing_chart):
+            return str(existing_chart)
+        return None
 
     def _draw_zones(self, *, ax: Any, zones: list[dict[str, Any]], candles_count: int, max_price: float) -> None:
         styles = {
