@@ -377,6 +377,15 @@ class ChartDataService:
             close_price = cls._to_float(item.get("close"))
             if None in {timestamp, open_price, high_price, low_price, close_price}:
                 continue
+            normalized_ohlc = cls._normalize_ohlc(
+                open_price=open_price,
+                high_price=high_price,
+                low_price=low_price,
+                close_price=close_price,
+            )
+            if normalized_ohlc is None:
+                continue
+            open_price, high_price, low_price, close_price = normalized_ohlc
             candles.append(
                 {
                     "timestamp": timestamp,
@@ -389,6 +398,22 @@ class ChartDataService:
             )
         candles.sort(key=lambda candle: int(candle["time"]))
         return candles
+
+    @staticmethod
+    def _normalize_ohlc(
+        *,
+        open_price: float,
+        high_price: float,
+        low_price: float,
+        close_price: float,
+    ) -> tuple[float, float, float, float] | None:
+        lower_bound = min(open_price, close_price)
+        upper_bound = max(open_price, close_price)
+        repaired_low = min(low_price, lower_bound)
+        repaired_high = max(high_price, upper_bound)
+        if repaired_low > repaired_high:
+            return None
+        return open_price, repaired_high, repaired_low, close_price
 
     @classmethod
     def _extract_timestamp(cls, item: dict[str, Any]) -> int | None:

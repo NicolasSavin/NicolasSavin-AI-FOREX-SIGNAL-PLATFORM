@@ -137,6 +137,10 @@ class YahooMarketDataService:
             ts_value = self._to_int(ts)
             if ts_value is None or None in {o, h, l, c}:
                 continue
+            normalized_ohlc = self._normalize_ohlc(open_price=o, high_price=h, low_price=l, close_price=c)
+            if normalized_ohlc is None:
+                continue
+            o, h, l, c = normalized_ohlc
             candles.append(
                 {
                     "time": ts_value,
@@ -156,25 +160,51 @@ class YahooMarketDataService:
             ts = self._to_int(candle.get("time"))
             if ts is None:
                 continue
+            o = self._to_float(candle.get("open"))
+            h = self._to_float(candle.get("high"))
+            l = self._to_float(candle.get("low"))
+            c = self._to_float(candle.get("close"))
+            if None in {o, h, l, c}:
+                continue
+            normalized_ohlc = self._normalize_ohlc(open_price=o, high_price=h, low_price=l, close_price=c)
+            if normalized_ohlc is None:
+                continue
+            o, h, l, c = normalized_ohlc
             bucket = ts - (ts % (4 * 3600))
             existing = grouped.get(bucket)
             if existing is None:
                 grouped[bucket] = {
                     "time": bucket,
-                    "open": candle["open"],
-                    "high": candle["high"],
-                    "low": candle["low"],
-                    "close": candle["close"],
+                    "open": o,
+                    "high": h,
+                    "low": l,
+                    "close": c,
                     "volume": float(candle.get("volume") or 0.0),
                 }
                 continue
 
-            existing["high"] = max(float(existing["high"]), float(candle["high"]))
-            existing["low"] = min(float(existing["low"]), float(candle["low"]))
-            existing["close"] = candle["close"]
+            existing["high"] = max(float(existing["high"]), h)
+            existing["low"] = min(float(existing["low"]), l)
+            existing["close"] = c
             existing["volume"] = float(existing.get("volume") or 0.0) + float(candle.get("volume") or 0.0)
 
-        aggregated = [grouped[key] for key in sorted(grouped.keys())]
+        aggregated: list[dict[str, Any]] = []
+        for key in sorted(grouped.keys()):
+            candle = grouped[key]
+            normalized_ohlc = self._normalize_ohlc(
+                open_price=float(candle["open"]),
+                high_price=float(candle["high"]),
+                low_price=float(candle["low"]),
+                close_price=float(candle["close"]),
+            )
+            if normalized_ohlc is None:
+                continue
+            o, h, l, c = normalized_ohlc
+            candle["open"] = o
+            candle["high"] = h
+            candle["low"] = l
+            candle["close"] = c
+            aggregated.append(candle)
         return aggregated
 
     @staticmethod
@@ -212,3 +242,19 @@ class YahooMarketDataService:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _normalize_ohlc(
+        *,
+        open_price: float,
+        high_price: float,
+        low_price: float,
+        close_price: float,
+    ) -> tuple[float, float, float, float] | None:
+        lower_bound = min(open_price, close_price)
+        upper_bound = max(open_price, close_price)
+        repaired_low = min(low_price, lower_bound)
+        repaired_high = max(high_price, upper_bound)
+        if repaired_low > repaired_high:
+            return None
+        return open_price, repaired_high, repaired_low, close_price

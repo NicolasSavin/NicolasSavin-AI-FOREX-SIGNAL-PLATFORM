@@ -219,6 +219,8 @@ function buildFullText(idea) {
   if (isRenderableNarrative(thesis) && !isCompactTechnicalSummary(thesis)) return thesis;
   const unified = normalizeWhitespace(idea?.unified_narrative);
   if (isRenderableNarrative(unified) && !isCompactTechnicalSummary(unified)) return unified;
+  const legacyNarrative = normalizeWhitespace(idea?.legacy_narrative || idea?.legacyNarrative);
+  if (isRenderableNarrative(legacyNarrative) && !isCompactTechnicalSummary(legacyNarrative)) return legacyNarrative;
   const legacyNarrativeCandidates = [
     idea?.full_text,
     idea?.fullText,
@@ -927,7 +929,36 @@ function snapshotStatusRu(status) {
 }
 
 function hasCandles(payload) {
-  return Boolean(payload?.candles && Array.isArray(payload.candles) && payload.candles.length > 0);
+  const normalized = normalizeChartPayload(payload);
+  return Boolean(normalized?.candles?.length);
+}
+
+function normalizeChartPayload(payload) {
+  if (!payload || typeof payload !== "object") return { candles: [] };
+  const candles = normalizeAndValidateCandles(payload.candles);
+  return { ...payload, candles };
+}
+
+function normalizeAndValidateCandles(rawCandles) {
+  if (!Array.isArray(rawCandles)) return [];
+  const normalized = [];
+  for (const candle of rawCandles) {
+    if (!candle || typeof candle !== "object") continue;
+    const timeRaw = Number(candle.time ?? candle.timestamp);
+    const openRaw = Number(candle.open);
+    const highRaw = Number(candle.high);
+    const lowRaw = Number(candle.low);
+    const closeRaw = Number(candle.close);
+    if (![timeRaw, openRaw, highRaw, lowRaw, closeRaw].every(Number.isFinite)) continue;
+    const lowerBound = Math.min(openRaw, closeRaw);
+    const upperBound = Math.max(openRaw, closeRaw);
+    const low = Math.min(lowRaw, lowerBound);
+    const high = Math.max(highRaw, upperBound);
+    if (low > high) continue;
+    normalized.push({ time: Math.trunc(timeRaw), open: openRaw, high, low, close: closeRaw });
+  }
+  normalized.sort((a, b) => a.time - b.time);
+  return normalized;
 }
 
 function setChartMode(mode) {
@@ -956,11 +987,12 @@ function showSnapshotChart(imageUrl) {
 }
 
 function showLiveChart(payload) {
-  if (!hasCandles(payload)) return false;
+  const normalizedPayload = normalizeChartPayload(payload);
+  if (!hasCandles(normalizedPayload)) return false;
   setChartMode("live");
   ensureChart();
-  currentChartPayload = payload;
-  candleSeries.setData(payload.candles);
+  currentChartPayload = normalizedPayload;
+  candleSeries.setData(normalizedPayload.candles);
   chart.timeScale().fitContent();
   requestAnimationFrame(() => {
     requestAnimationFrame(() => drawOverlay());

@@ -44,6 +44,10 @@ class ChartSnapshotService:
         if not candles:
             logger.info("idea_snapshot_skipped reason=no_candles symbol=%s timeframe=%s", symbol, timeframe)
             return None
+        candles = self._sanitize_candles(candles)
+        if not candles:
+            logger.info("idea_snapshot_skipped reason=invalid_candles symbol=%s timeframe=%s", symbol, timeframe)
+            return None
         levels = levels or []
         zones = zones or []
         markers = markers or []
@@ -274,6 +278,39 @@ class ChartSnapshotService:
         if self.is_valid_snapshot_path(existing_chart):
             return str(existing_chart)
         return None
+
+    @classmethod
+    def _sanitize_candles(cls, candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        sanitized: list[dict[str, Any]] = []
+        for candle in candles:
+            normalized = cls._sanitize_single_candle(candle)
+            if normalized is None:
+                continue
+            sanitized.append(normalized)
+        return sanitized
+
+    @staticmethod
+    def _sanitize_single_candle(candle: dict[str, Any]) -> dict[str, Any] | None:
+        try:
+            timestamp = int(candle.get("time") or candle.get("timestamp"))
+            open_price = float(candle.get("open"))
+            high_price = float(candle.get("high"))
+            low_price = float(candle.get("low"))
+            close_price = float(candle.get("close"))
+        except (TypeError, ValueError):
+            return None
+        repaired_low = min(low_price, open_price, close_price)
+        repaired_high = max(high_price, open_price, close_price)
+        if repaired_low > repaired_high:
+            return None
+        return {
+            "time": timestamp,
+            "timestamp": timestamp,
+            "open": open_price,
+            "high": repaired_high,
+            "low": repaired_low,
+            "close": close_price,
+        }
 
     def _draw_zones(self, *, ax: Any, zones: list[dict[str, Any]], candles_count: int, max_price: float) -> None:
         styles = {
