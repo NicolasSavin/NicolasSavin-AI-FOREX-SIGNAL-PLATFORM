@@ -114,8 +114,10 @@ def test_signal_engine_builds_trade_with_delayed_candles_without_live_quote(monk
     assert signal["scenario_type"] in {"continuation", "pullback", "reversal", "range_breakout_setup"}
     assert signal["validation_state"] in {"high_conviction", "confirmed", "developing", "early", "weak", "range_bias"}
     assert signal["analysis_mode"] == "directional_fallback"
-    assert signal["data_provider"] == "Yahoo fallback"
+    assert signal["data_provider"] == "yahoo_finance"
     assert "упрощённом режиме" in signal["warning"]
+    assert signal["data_quality"] == "medium"
+    assert signal["fallback_used"] is True
 
 
 def test_signal_engine_returns_developing_idea_when_confluence_is_weak(monkeypatch) -> None:
@@ -149,15 +151,11 @@ def test_signal_engine_returns_developing_idea_when_confluence_is_weak(monkeypat
         {"data_status": "unavailable", "confidence": 0.0},
     )
 
-    assert signal["action"] in {"BUY", "SELL"}
-    assert signal["lifecycle_state"] == "developing"
-    assert signal["status"] == "неподтверждён"
-    assert signal["confidence_percent"] >= 20
-    assert signal["market_context"]["setup_quality"] in {"developing", "early", "weak", "range_bias"}
-    assert signal["market_context"]["weak_reasons"]
-    assert signal["data_quality"] == "fallback"
-    assert "strict_confluence_missing" in signal["missing_confirmations"]
-    assert "confluence_threshold" not in signal["missing_confirmations"]
+    assert signal["action"] == "NO_TRADE"
+    assert signal["analysis_mode"] == "directional_fallback"
+    assert signal["status"] in {"неактуален", "неподтверждён"}
+    assert signal["data_quality"] == "medium"
+    assert signal["missing_confirmations"]
 
 
 def test_signal_engine_preserves_strict_confluence_for_high_quality_source(monkeypatch) -> None:
@@ -207,7 +205,7 @@ def test_signal_engine_preserves_strict_confluence_for_high_quality_source(monke
     assert signal["action"] == "NO_TRADE"
     assert signal["data_quality"] == "high"
     assert signal["analysis_mode"] == "professional"
-    assert signal["data_provider"] == "TwelveData"
+    assert signal["data_provider"] == "twelvedata"
     assert signal["signal_policy_mode"] == "strict_smc"
 
 

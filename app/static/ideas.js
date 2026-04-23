@@ -40,7 +40,7 @@ function renderIdeaCard(idea) {
   const reasoning = resolveVisibleNarrative(idea);
   const compactSummary = String(idea?.compact_summary || "").trim();
   const analysisMode = String(idea.analysis_mode || "").toLowerCase() === "professional" ? "профессиональный" : "упрощённый";
-  const providerLabel = String(idea.data_provider || "").trim() || "TwelveData";
+  const providerLabel = String(idea.data_provider || "").toLowerCase() === "twelvedata" ? "TwelveData" : "Yahoo fallback";
   const warningText = String(idea.warning || "").trim();
 
   return `

@@ -158,6 +158,24 @@
       gap: 6px;
     }
 
+    .card-meta-line {
+      font-size: 12px;
+      color: #9fb0c7;
+      margin: 0 0 6px;
+    }
+
+    .card-warning,
+    .modal-warning {
+      border: 1px solid #7c2d12;
+      background: rgba(234, 88, 12, 0.14);
+      color: #fed7aa;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.35;
+      margin: 0 0 10px;
+    }
+
     .tag {
       background: var(--tag);
       color: #dbe7f7;
@@ -208,6 +226,16 @@
     .modal-sub {
       color: var(--muted);
       font-size: 14px;
+    }
+
+    .modal-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 6px;
+      margin-bottom: 10px;
+      color: #c6d4ea;
+      font-size: 13px;
     }
 
     .close-btn {
@@ -276,6 +304,10 @@
       display: none;
     }
 
+    .hidden {
+      display: none !important;
+    }
+
     .section-title {
       font-size: 13px;
       color: var(--muted);
@@ -336,6 +368,8 @@
         <div>
           <h2 id="modal-title">Идея</h2>
           <div id="modal-sub" class="modal-sub"></div>
+          <div id="modal-meta" class="modal-meta"></div>
+          <div id="modal-warning" class="modal-warning hidden"></div>
         </div>
         <button id="close-modal" class="close-btn">Закрыть</button>
       </div>
@@ -412,6 +446,8 @@
 
     const modalTitle = document.getElementById("modal-title");
     const modalSub = document.getElementById("modal-sub");
+    const modalMeta = document.getElementById("modal-meta");
+    const modalWarning = document.getElementById("modal-warning");
     const modalChart = document.getElementById("modal-chart");
     const modalChartFallback = document.getElementById("modal-chart-fallback");
 
@@ -459,6 +495,14 @@
       if (["bullish", "buy", "long"].includes(raw)) return "БЫЧИЙ";
       if (["bearish", "sell", "short"].includes(raw)) return "МЕДВЕЖИЙ";
       return "НЕЙТРАЛЬНЫЙ";
+    }
+
+    function getAnalysisModeLabel(idea) {
+      return String(idea?.analysis_mode || "").toLowerCase() === "professional" ? "профессиональный" : "упрощённый";
+    }
+
+    function getDataProviderLabel(idea) {
+      return String(idea?.data_provider || "").toLowerCase() === "twelvedata" ? "TwelveData" : "Yahoo fallback";
     }
 
     function getChartImageUrl(idea) {
@@ -807,9 +851,20 @@
       const directionRu = getDirectionRu(idea.direction || idea.bias);
       const timeframe = idea.timeframe || "Интрадей";
       const confidence = idea.confidence ?? "-";
+      const warning = String(idea.warning || "").trim();
+      const analysisMode = getAnalysisModeLabel(idea);
+      const providerLabel = getDataProviderLabel(idea);
 
       modalTitle.textContent = `${symbol} — ${directionRu}`;
       modalSub.textContent = `${timeframe} · Уверенность ${confidence}%`;
+      modalMeta.textContent = `Режим: ${analysisMode} · Источник: ${providerLabel}`;
+      if (warning) {
+        modalWarning.textContent = warning;
+        modalWarning.classList.remove("hidden");
+      } else {
+        modalWarning.textContent = "";
+        modalWarning.classList.add("hidden");
+      }
 
       setSection(modalSummary, getText(idea.summary_ru, idea.summary));
       setSection(modalTechnical, getText(idea.technical_ru, idea.technical, idea.analysis?.fundamental_ru));
@@ -862,6 +917,9 @@
         const direction = getDirectionRu(idea.direction || idea.bias || "neutral");
         const timeframe = idea.timeframe || "Интрадей";
         const confidence = idea.confidence ?? "-";
+        const analysisMode = getAnalysisModeLabel(idea);
+        const providerLabel = getDataProviderLabel(idea);
+        const warning = String(idea.warning || "").trim();
 
         return `
           <div class="card" data-idea='${escapeHtml(JSON.stringify(idea))}'>
@@ -876,6 +934,8 @@
             <div class="preview-shell">${buildChartPreviewMarkup(idea)}</div>
 
             <p class="summary">${escapeHtml(summary)}</p>
+            <p class="card-meta-line">Режим: <strong>${escapeHtml(analysisMode)}</strong> · Источник: <strong>${escapeHtml(providerLabel)}</strong></p>
+            ${warning ? `<p class="card-warning">${escapeHtml(warning)}</p>` : ""}
 
             <div class="tags">
               ${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
