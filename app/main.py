@@ -190,7 +190,10 @@ async def twelvedata_health_debug() -> dict:
 
 @app.get("/api/debug/market-health")
 async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", limit: int = 120) -> dict:
-    payload = await asyncio.to_thread(chart_data_service.get_chart, symbol, timeframe)
+    try:
+        payload = await asyncio.to_thread(chart_data_service.get_chart, symbol, timeframe, limit)
+    except TypeError:
+        payload = await asyncio.to_thread(chart_data_service.get_chart, symbol, timeframe)
     candles = payload.get("candles") if isinstance(payload, dict) and isinstance(payload.get("candles"), list) else []
     meta = payload.get("meta") if isinstance(payload, dict) and isinstance(payload.get("meta"), dict) else {}
     health = chart_data_service.get_last_market_health()

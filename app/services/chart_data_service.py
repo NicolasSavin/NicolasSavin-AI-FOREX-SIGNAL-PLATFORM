@@ -39,13 +39,14 @@ class ChartDataService:
             "source_symbol": None,
         }
 
-    def get_chart(self, symbol: str, timeframe: str) -> dict[str, Any]:
+    def get_chart(self, symbol: str, timeframe: str, limit: int | None = None) -> dict[str, Any]:
         logger.info("chart_request_started symbol=%s tf=%s", symbol, timeframe)
 
         normalized_symbol = self._normalize_symbol(symbol)
         normalized_tf = self._normalize_timeframe(timeframe)
         provider_symbol = self._format_twelvedata_symbol(normalized_symbol)
         provider_interval = TIMEFRAME_MAPPING.get(normalized_tf)
+        requested_limit = max(1, min(int(limit or self.output_size), 5000))
 
         logger.info(
             "chart_request_mapped requested_symbol=%s requested_tf=%s mapped_symbol=%s mapped_tf=%s provider_symbol=%s provider_interval=%s",
@@ -79,6 +80,7 @@ class ChartDataService:
             return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
+                limit=requested_limit,
                 twelvedata_error="missing_api_key",
                 twelvedata_payload=self.build_unavailable_payload(
                     symbol=normalized_symbol,
@@ -91,7 +93,7 @@ class ChartDataService:
         params = {
             "symbol": provider_symbol,
             "interval": provider_interval,
-            "outputsize": self.output_size,
+            "outputsize": requested_limit,
             "apikey": self.api_key,
             "format": "JSON",
         }
@@ -105,6 +107,7 @@ class ChartDataService:
             return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
+                limit=requested_limit,
                 twelvedata_error="fetch_error",
                 twelvedata_payload=self.build_unavailable_payload(
                     symbol=normalized_symbol,
@@ -118,6 +121,7 @@ class ChartDataService:
             return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
+                limit=requested_limit,
                 twelvedata_error="fetch_error",
                 twelvedata_payload=self.build_unavailable_payload(
                     symbol=normalized_symbol,
@@ -150,6 +154,7 @@ class ChartDataService:
                 return self._fallback_to_yahoo(
                     symbol=normalized_symbol,
                     timeframe=normalized_tf,
+                    limit=requested_limit,
                     twelvedata_error=reason,
                     twelvedata_payload=self.build_unavailable_payload(
                         symbol=normalized_symbol,
@@ -162,6 +167,7 @@ class ChartDataService:
             return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
+                limit=requested_limit,
                 twelvedata_error="no_data",
                 twelvedata_payload=self.build_unavailable_payload(
                     symbol=normalized_symbol,
@@ -190,7 +196,7 @@ class ChartDataService:
             "meta": {
                 "provider": "Twelve Data",
                 "interval": provider_interval,
-                "outputsize": len(candles),
+                "outputsize": min(len(candles), requested_limit),
             },
         }
 
@@ -202,6 +208,7 @@ class ChartDataService:
         *,
         symbol: str,
         timeframe: str,
+        limit: int,
         twelvedata_error: str,
         twelvedata_payload: dict[str, Any],
     ) -> dict[str, Any]:
@@ -211,7 +218,7 @@ class ChartDataService:
             timeframe,
             twelvedata_error,
         )
-        yahoo = self.yahoo_service.get_candles(symbol, timeframe, self.output_size)
+        yahoo = self.yahoo_service.get_candles(symbol, timeframe, limit)
         yahoo_candles = yahoo.get("candles") if isinstance(yahoo.get("candles"), list) else []
         yahoo_error = yahoo.get("error")
         if yahoo_candles:
