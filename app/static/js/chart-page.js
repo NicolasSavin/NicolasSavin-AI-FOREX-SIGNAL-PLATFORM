@@ -475,10 +475,6 @@ function buildIdeaCardMarkup(idea) {
 
 function getIdeaDiffSignature(idea) {
   return JSON.stringify({
-    meaningful_updated_at: idea?.meaningful_updated_at || null,
-    meaningful_update_reason: idea?.meaningful_update_reason || "",
-    status: idea?.status || null,
-    final_status: idea?.final_status || null,
     chartImageUrl: idea?.chartImageUrl || idea?.chart_image || null,
     chart_overlays: idea?.chart_overlays || null,
     unified_narrative: normalizeWhitespace(idea?.unified_narrative),
@@ -493,8 +489,28 @@ function getIdeaDiffSignature(idea) {
   });
 }
 
+function getIdeaVisualSignature(idea) {
+  return JSON.stringify({
+    chartImageUrl: idea?.chartImageUrl || idea?.chart_image || null,
+    chart_overlays: idea?.chart_overlays || null,
+    unified_narrative: normalizeWhitespace(idea?.unified_narrative),
+    idea_thesis: normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis),
+    confidence: Number(idea?.confidence ?? 0),
+    entry: formatLevel(idea?.entry),
+    stopLoss: formatLevel(idea?.stopLoss),
+    takeProfit: formatLevel(idea?.takeProfit),
+    signal: normalizeWhitespace(idea?.signal || idea?.direction || idea?.bias),
+  });
+}
+
 function hasMeaningfulIdeaChange(prevIdea, nextIdea) {
+  if (!prevIdea) return true;
   return getIdeaDiffSignature(prevIdea) !== getIdeaDiffSignature(nextIdea);
+}
+
+function hasMeaningfulVisualChange(prevIdea, nextIdea) {
+  if (!prevIdea) return true;
+  return getIdeaVisualSignature(prevIdea) !== getIdeaVisualSignature(nextIdea);
 }
 
 function playIdeaNotification() {
@@ -790,7 +806,7 @@ function showChartPlaceholder(message) {
 
 function hideChartPlaceholder() {
   chartPlaceholder.classList.remove("open");
-  chartPlaceholderText.textContent = "Chart unavailable (data temporarily missing)";
+  chartPlaceholderText.textContent = "Chart unavailable";
 }
 
 function normalizeChartImageUrl(url) {
@@ -810,8 +826,8 @@ function snapshotStatusRu(status) {
     fetch_error: "Снапшот не подготовлен: ошибка при получении данных.",
     unavailable: "Снапшот временно недоступен.",
   }[key];
-  if (reason) return `Chart unavailable (data temporarily missing) — ${reason}`;
-  return "Chart unavailable (data temporarily missing)";
+  if (reason) return `Chart unavailable — ${reason}`;
+  return "Chart unavailable";
 }
 
 function hasCandles(payload) {
@@ -858,7 +874,7 @@ function showLiveChart(payload) {
 
 function showUnavailableChart(message) {
   setChartMode("unavailable");
-  showChartPlaceholder(message || "Chart unavailable (data temporarily missing)");
+  showChartPlaceholder(message || "Chart unavailable");
 }
 
 function updateDetailStatus(message) {
@@ -1368,7 +1384,7 @@ function closeModal() {
   modal.classList.remove("open");
   activeIdea = null;
   detailRequestId += 1;
-  showUnavailableChart("Chart unavailable (data temporarily missing)");
+  showUnavailableChart("Chart unavailable");
 }
 
 function dedupeIdeasById(ideas) {
@@ -1416,7 +1432,7 @@ async function loadIdeasSnapshot() {
         hasRealtimeChanges = initialIdeasSyncCompleted || hasRealtimeChanges;
         continue;
       }
-      if (hasMeaningfulIdeaChange(prev, idea) && isMeaningfulUpdate(idea)) {
+      if (hasMeaningfulIdeaChange(prev, idea) && hasMeaningfulVisualChange(prev, idea) && isMeaningfulUpdate(idea)) {
         hasRealtimeChanges = initialIdeasSyncCompleted || hasRealtimeChanges;
       }
     }
@@ -1438,7 +1454,11 @@ async function loadIdeasSnapshot() {
       for (const ideaId of visibleIds) {
         const prev = previousById.get(ideaId);
         const next = incomingById.get(ideaId);
-        if (!next || !isMeaningfulUpdate(next) || (prev && !hasMeaningfulIdeaChange(prev, next))) continue;
+        if (
+          !next
+          || !isMeaningfulUpdate(next)
+          || (prev && (!hasMeaningfulIdeaChange(prev, next) || !hasMeaningfulVisualChange(prev, next)))
+        ) continue;
         const card = Array.from(ideasRoot.querySelectorAll(".card[data-idea-id]"))
           .find((node) => node.dataset.ideaId === ideaId);
         flashIdeaCard(card);
