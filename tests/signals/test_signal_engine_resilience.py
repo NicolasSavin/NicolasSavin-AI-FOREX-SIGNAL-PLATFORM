@@ -152,6 +152,57 @@ def test_signal_engine_returns_developing_idea_when_confluence_is_weak(monkeypat
     assert signal["confidence_percent"] >= 20
     assert signal["market_context"]["setup_quality"] in {"developing", "early", "weak", "range_bias"}
     assert signal["market_context"]["weak_reasons"]
+    assert signal["data_quality"] == "fallback"
+    assert "strict_confluence_missing" in signal["missing_confirmations"]
+    assert "confluence_threshold" not in signal["missing_confirmations"]
+
+
+def test_signal_engine_preserves_strict_confluence_for_high_quality_source(monkeypatch) -> None:
+    engine = SignalEngine()
+    monkeypatch.setattr(
+        engine.risk_engine,
+        "validate",
+        lambda **_: {"allowed": True, "reason_ru": "ok"},
+    )
+    base = {
+        "timeframe": "H1",
+        "data_status": "real",
+        "source": "twelvedata",
+        "source_symbol": "EURUSD",
+        "last_updated_utc": "2026-03-26T12:00:00+00:00",
+        "is_live_market_data": True,
+        "message": "live candles",
+        "close": 1.1123,
+        "candles": _candles(),
+    }
+    weak_features = {
+        "status": "ready",
+        "trend": "down",
+        "bos": False,
+        "liquidity_sweep": False,
+        "order_block": None,
+        "fvg": False,
+        "choch": False,
+        "divergence": "none",
+        "pattern": "none",
+        "atr_percent": 0.3,
+        "pattern_summary": {"patternSummaryRu": "Без явных паттернов."},
+        "chart_patterns": [],
+    }
+    signal = engine._build_signal(
+        "EURUSD",
+        "M15",
+        base,
+        {**base, "timeframe": "M15"},
+        {**base, "timeframe": "M15"},
+        weak_features,
+        weak_features,
+        weak_features,
+        {"data_status": "unavailable", "confidence": 0.0},
+    )
+
+    assert signal["data_quality"] == "high"
+    assert signal["signal_policy_mode"] == "strict_smc"
     assert "confluence_threshold" in signal["missing_confirmations"]
 
 
