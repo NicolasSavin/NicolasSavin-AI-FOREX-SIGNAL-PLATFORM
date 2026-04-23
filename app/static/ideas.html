@@ -235,7 +235,10 @@
     }
     .summary-main {
       min-height: 96px;
-      -webkit-line-clamp: 4;
+      display: block;
+      -webkit-line-clamp: unset;
+      -webkit-box-orient: initial;
+      overflow: visible;
       border-color: rgba(60, 83, 121, 0.8);
       background: linear-gradient(180deg, rgba(16, 30, 56, 0.95) 0%, rgba(11, 21, 39, 0.96) 100%);
       box-shadow:
