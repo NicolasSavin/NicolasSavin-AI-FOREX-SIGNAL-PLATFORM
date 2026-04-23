@@ -439,7 +439,8 @@
     .chart-wrap {
       position: relative;
       width: 100%;
-      height: 680px;
+      height: min(74vh, 760px);
+      min-height: 560px;
       border-radius: 18px;
       border: 1px solid rgba(33, 54, 85, 0.92);
       background: #08111f;
@@ -763,7 +764,8 @@
       }
 
       .chart-wrap {
-        height: 440px;
+        height: min(62vh, 520px);
+        min-height: 420px;
       }
       .mtf-strip,
       .levels-inline { grid-template-columns: 1fr; }

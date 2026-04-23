@@ -336,16 +336,20 @@ class ChartSnapshotService:
             close_price = float(candle.get("close"))
         except (TypeError, ValueError):
             return None
-        repaired_low = min(low_price, open_price, close_price)
-        repaired_high = max(high_price, open_price, close_price)
-        if repaired_low > repaired_high:
+        lower_bound = min(open_price, close_price)
+        upper_bound = max(open_price, close_price)
+        if low_price > lower_bound:
+            return None
+        if high_price < upper_bound:
+            return None
+        if low_price > high_price:
             return None
         return {
             "time": timestamp,
             "timestamp": timestamp,
             "open": open_price,
-            "high": repaired_high,
-            "low": repaired_low,
+            "high": high_price,
+            "low": low_price,
             "close": close_price,
         }
 
