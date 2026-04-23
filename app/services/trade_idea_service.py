@@ -2165,9 +2165,9 @@ class TradeIdeaService:
             candles = signal.get("candles") if isinstance(signal.get("candles"), list) else []
         model_chart_overlays = self.normalize_chart_overlays(signal.get("chart_overlays"))
         model_overlays_meaningful = self.is_meaningful_overlay_payload(model_chart_overlays)
-        fallback_chart_overlays = self._extract_conservative_chart_overlays(candles)
+        fallback_chart_overlays = self._extract_conservative_chart_overlays(candles) if len(candles) >= MODEL_CANDLES_MIN else {}
         fallback_used = False
-        if candles and not model_overlays_meaningful and self.is_meaningful_overlay_payload(fallback_chart_overlays):
+        if len(candles) >= MODEL_CANDLES_MIN and not model_overlays_meaningful and self.is_meaningful_overlay_payload(fallback_chart_overlays):
             model_chart_overlays = fallback_chart_overlays
             fallback_used = True
         if self.is_meaningful_overlay_payload(model_chart_overlays):
@@ -2187,7 +2187,7 @@ class TradeIdeaService:
             "idea_overlays_prepare symbol=%s timeframe=%s candles_present=%s model_overlays=%s fallback_used=%s categories=%s preserved_existing=%s final_counts=%s",
             str(signal.get("symbol") or "").upper(),
             str(signal.get("timeframe") or "H1").upper(),
-            bool(candles),
+            len(candles) >= MODEL_CANDLES_MIN,
             model_overlays_meaningful,
             fallback_used,
             [key for key in CHART_OVERLAY_KEYS if final_chart_overlays.get(key)],
@@ -2371,31 +2371,87 @@ class TradeIdeaService:
         overlays = self.normalize_chart_overlays({})
         if len(candles) < 6:
             return overlays
+        opens: list[float] = []
+        closes: list[float] = []
         highs: list[float] = []
         lows: list[float] = []
         for candle in candles[-20:]:
+            open_price = self._extract_numeric(candle.get("open"))
             high = self._extract_numeric(candle.get("high"))
             low = self._extract_numeric(candle.get("low"))
-            if high is None or low is None:
+            close_price = self._extract_numeric(candle.get("close"))
+            if None in (open_price, high, low, close_price):
                 continue
+            opens.append(open_price)
             highs.append(high)
             lows.append(low)
-        if not highs or not lows:
+            closes.append(close_price)
+        if not highs or not lows or not opens or not closes:
             return overlays
         range_high = max(highs)
         range_low = min(lows)
+        mid_range = (range_high + range_low) / 2
+        resistance = max(highs[-5:]) if len(highs) >= 5 else range_high
+        support = min(lows[-5:]) if len(lows) >= 5 else range_low
         overlays["structure_levels"] = [
             {"type": "range_high", "price": range_high, "label": "Range High"},
             {"type": "range_low", "price": range_low, "label": "Range Low"},
+            {"type": "mid_range", "price": mid_range, "label": "Mid Range"},
+            {"type": "resistance", "price": resistance, "label": "Resistance"},
+            {"type": "support", "price": support, "label": "Support"},
         ]
         current_price = self._extract_numeric(candles[-1].get("close")) or range_high
         tolerance = max((range_high - range_low) * 0.0015, abs(current_price) * 0.00025)
         eq_high = sum(1 for value in highs[:-1] if abs(value - range_high) <= tolerance)
         eq_low = sum(1 for value in lows[:-1] if abs(value - range_low) <= tolerance)
+        anchor_index = max(len(candles) - 8, 0)
+        ob_low = min(opens[-3], closes[-3]) if len(opens) >= 3 and len(closes) >= 3 else min(opens[-1], closes[-1])
+        ob_high = max(opens[-3], closes[-3]) if len(opens) >= 3 and len(closes) >= 3 else max(opens[-1], closes[-1])
+        overlays["order_blocks"] = [
+            {
+                "type": "bullish_order_block" if closes[-1] >= mid_range else "bearish_order_block",
+                "low": min(ob_low, ob_high),
+                "high": max(ob_low, ob_high),
+                "start_index": anchor_index,
+                "end_index": len(candles) - 1,
+                "label": "Conservative OB",
+            }
+        ]
+        if len(highs) >= 3 and len(lows) >= 1 and highs[-3] < lows[-1]:
+            overlays["fvg"].append(
+                {
+                    "type": "bullish_fvg",
+                    "low": highs[-3],
+                    "high": lows[-1],
+                    "start_index": max(len(candles) - 3, 0),
+                    "end_index": len(candles) - 1,
+                    "label": "Conservative FVG",
+                }
+            )
+        if len(lows) >= 3 and len(highs) >= 1 and lows[-3] > highs[-1]:
+            overlays["fvg"].append(
+                {
+                    "type": "bearish_fvg",
+                    "low": highs[-1],
+                    "high": lows[-3],
+                    "start_index": max(len(candles) - 3, 0),
+                    "end_index": len(candles) - 1,
+                    "label": "Conservative FVG",
+                }
+            )
         if eq_high >= 1:
             overlays["liquidity"].append({"type": "buy_side", "price": range_high, "label": "Buy-side liquidity"})
         if eq_low >= 1:
             overlays["liquidity"].append({"type": "sell_side", "price": range_low, "label": "Sell-side liquidity"})
+        overlays["patterns"] = [
+            {
+                "name": "range_breakout_setup",
+                "label": "Range breakout setup",
+                "direction": "bullish" if closes[-1] >= closes[0] else "bearish",
+                "from_index": max(len(candles) - 10, 0),
+                "to_index": len(candles) - 1,
+            }
+        ]
         return overlays
 
     @classmethod
@@ -5008,6 +5064,33 @@ class TradeIdeaService:
             normalized_overlays = self.normalize_chart_overlays(merged_overlay_source)
             validated_row["chart_overlays"] = normalized_overlays
             validated_row["overlays"] = normalized_overlays
+            reference_candles = reference.get("recent_candles") if isinstance(reference.get("recent_candles"), list) else []
+            formatted_candles = [
+                {
+                    "time": candle.get("time") or candle.get("timestamp"),
+                    "open": self._extract_numeric(candle.get("open")),
+                    "high": self._extract_numeric(candle.get("high")),
+                    "low": self._extract_numeric(candle.get("low")),
+                    "close": self._extract_numeric(candle.get("close")),
+                }
+                for candle in reference_candles
+                if isinstance(candle, dict)
+            ]
+            formatted_candles = [
+                candle
+                for candle in formatted_candles
+                if None not in (candle.get("open"), candle.get("high"), candle.get("low"), candle.get("close"))
+            ]
+            if formatted_candles:
+                chart_payload = {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "candles": formatted_candles,
+                    "chart_overlays": normalized_overlays,
+                }
+                validated_row["chartData"] = chart_payload
+                validated_row["chart_data"] = chart_payload
+                validated_row["candles"] = formatted_candles
             validated_row["llm_provider"] = "openrouter"
             validated_row["llm_model"] = get_openrouter_model()
             validated_row["candles_count_sent"] = len(reference.get("candles") or [])
