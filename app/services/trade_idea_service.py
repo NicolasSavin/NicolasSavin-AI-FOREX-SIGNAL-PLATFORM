@@ -240,15 +240,21 @@ class TradeIdeaService:
                     confidence=int(self._extract_numeric(current.get("confidence")) or 0),
                     status=str(current.get("status") or IDEA_STATUS_WAITING),
                 )
-                if chart_snapshot.get("chartImageUrl"):
-                    current["chart_image"] = chart_snapshot["chartImageUrl"]
-                    current["chartImageUrl"] = chart_snapshot["chartImageUrl"]
-                    current["chart_snapshot_status"] = "ok"
-                    current["chartSnapshotStatus"] = "ok"
+                chart_url = chart_snapshot.get("chartImageUrl")
+                if chart_url:
+                    current["chart_image"] = chart_url
+                    current["chartImageUrl"] = chart_url
+                    current["chart_snapshot_status"] = chart_snapshot.get("status") or "ok"
+                    current["chartSnapshotStatus"] = chart_snapshot.get("status") or "ok"
+                    current["chart_status"] = chart_snapshot.get("chart_status") or "snapshot"
+                    current["chartStatus"] = chart_snapshot.get("chart_status") or "snapshot"
+                    current["fallback_to_candles"] = bool(chart_snapshot.get("fallback_to_candles"))
                     current["last_chart_refresh_at"] = now_iso
-                    current["chart_version"] = int(current.get("chart_version") or 0) + 1
+                    previous_chart_url = str(idea.get("chartImageUrl") or idea.get("chart_image") or "")
+                    if chart_url != previous_chart_url:
+                        current["chart_version"] = int(current.get("chart_version") or 0) + 1
                     current["last_candle_fingerprint"] = candle_hash
-                    if chart_snapshot["chartImageUrl"] != str(idea.get("chartImageUrl") or idea.get("chart_image") or ""):
+                    if chart_url != previous_chart_url:
                         current["meaningful_updated_at"] = now_iso
                         current["meaningful_update_reason"] = "chart_image_changed"
                         current["has_meaningful_update"] = True
@@ -257,6 +263,13 @@ class TradeIdeaService:
                 else:
                     current["chart_snapshot_status"] = chart_snapshot.get("status") or "snapshot_failed"
                     current["chartSnapshotStatus"] = chart_snapshot.get("status") or "snapshot_failed"
+                    current["chart_status"] = chart_snapshot.get("chart_status") or (
+                        "fallback_candles" if chart_snapshot.get("fallback_to_candles") else "no_data"
+                    )
+                    current["chartStatus"] = current["chart_status"]
+                    current["fallback_to_candles"] = bool(chart_snapshot.get("fallback_to_candles"))
+                    current["last_candle_fingerprint"] = candle_hash
+                    changed = True
             current["internal_refresh_at"] = now_iso
             refreshed.append(current)
         return refreshed, changed
@@ -853,6 +866,11 @@ class TradeIdeaService:
         last_narrative_reason = (
             narrative_reason if should_refresh_narrative else (existing.get("last_narrative_reason") if existing else "idea_created")
         )
+        resolved_chart_url = chart_snapshot.get("chartImageUrl")
+        if not resolved_chart_url and existing:
+            existing_chart_url = existing.get("chartImageUrl") or existing.get("chart_image")
+            if self.chart_snapshot_service.is_valid_snapshot_path(existing_chart_url):
+                resolved_chart_url = existing_chart_url
 
         payload = {
             "idea_id": idea_id,
@@ -927,13 +945,16 @@ class TradeIdeaService:
             "trade_plan": trade_plan_payload,
             "detail_brief": detail_brief,
             "supported_sections": detail_brief.get("supported_sections", []),
-            "chart_image": chart_snapshot["chartImageUrl"],
-            "chartImageUrl": chart_snapshot["chartImageUrl"],
+            "chart_image": resolved_chart_url,
+            "chartImageUrl": resolved_chart_url,
             "chart_snapshot_status": chart_snapshot["status"],
             "chartSnapshotStatus": chart_snapshot["status"],
+            "chart_status": chart_snapshot.get("chart_status") or ("snapshot" if resolved_chart_url else "no_data"),
+            "chartStatus": chart_snapshot.get("chart_status") or ("snapshot" if resolved_chart_url else "no_data"),
+            "fallback_to_candles": bool(chart_snapshot.get("fallback_to_candles")),
             "last_price_update_at": now.isoformat(),
-            "last_chart_refresh_at": now.isoformat() if chart_snapshot["chartImageUrl"] else existing.get("last_chart_refresh_at") if existing else None,
-            "chart_version": (int(existing.get("chart_version") or 0) + 1 if chart_snapshot["chartImageUrl"] else int(existing.get("chart_version") or 0)) if existing else (1 if chart_snapshot["chartImageUrl"] else 0),
+            "last_chart_refresh_at": now.isoformat() if resolved_chart_url else existing.get("last_chart_refresh_at") if existing else None,
+            "chart_version": (int(existing.get("chart_version") or 0) + 1 if resolved_chart_url else int(existing.get("chart_version") or 0)) if existing else (1 if resolved_chart_url else 0),
             "last_candle_fingerprint": initial_candle_fingerprint or (existing.get("last_candle_fingerprint") if existing else ""),
             "history": history,
             "updates": updates,
@@ -1297,8 +1318,20 @@ class TradeIdeaService:
                     existing_url,
                     existing_status,
                 )
-                return {"chartImageUrl": existing_url, "status": "no_data", "candles": []}
-            return {"chartImageUrl": None, "status": "no_data", "candles": []}
+                return {
+                    "chartImageUrl": existing_url,
+                    "status": "no_data",
+                    "candles": [],
+                    "chart_status": "snapshot",
+                    "fallback_to_candles": False,
+                }
+            return {
+                "chartImageUrl": None,
+                "status": "no_data",
+                "candles": [],
+                "chart_status": "no_data",
+                "fallback_to_candles": False,
+            }
         if fetch_status != "ok":
             logger.info(
                 "idea_snapshot_candle_override symbol=%s timeframe=%s payload_status=%s effective_status=ok candles=%s",
@@ -1334,6 +1367,11 @@ class TradeIdeaService:
             arrows=arrows,
             setup_text=signal.get("short_scenario_ru") or signal.get("short_text") or signal.get("summary_ru"),
         )
+        resolved_snapshot = self.chart_snapshot_service.resolve_snapshot_with_fallback(
+            existing_chart=existing_url,
+            new_chart=image_path,
+            has_candles=bool(candles),
+        )
         if not self.chart_snapshot_service.is_valid_snapshot_path(image_path):
             logger.warning(
                 "snapshot_failed symbol=%s timeframe=%s candles=%s status=snapshot_failed",
@@ -1341,16 +1379,21 @@ class TradeIdeaService:
                 timeframe,
                 len(candles),
             )
-            if existing_url:
-                logger.info(
-                    "idea_snapshot_reused_existing symbol=%s timeframe=%s path=%s previous_status=%s new_status=snapshot_failed",
-                    symbol,
-                    timeframe,
-                    existing_url,
-                    existing_status,
-                )
-                return {"chartImageUrl": existing_url, "status": "snapshot_failed", "candles": candles}
-            return {"chartImageUrl": None, "status": "snapshot_failed", "candles": candles}
+            logger.info(
+                "idea_snapshot_fallback symbol=%s timeframe=%s fallback_to_candles=%s reused_existing=%s chart_status=%s",
+                symbol,
+                timeframe,
+                resolved_snapshot.get("fallback_to_candles"),
+                bool(existing_url),
+                resolved_snapshot.get("chart_status"),
+            )
+            return {
+                "chartImageUrl": resolved_snapshot.get("chartImageUrl"),
+                "status": resolved_snapshot.get("status") or "snapshot_failed",
+                "candles": candles,
+                "chart_status": resolved_snapshot.get("chart_status"),
+                "fallback_to_candles": bool(resolved_snapshot.get("fallback_to_candles")),
+            }
         logger.info(
             "snapshot_success symbol=%s timeframe=%s candles=%s path=%s",
             symbol,
@@ -1358,7 +1401,13 @@ class TradeIdeaService:
             len(candles),
             image_path,
         )
-        return {"chartImageUrl": image_path, "status": "ok", "candles": candles}
+        return {
+            "chartImageUrl": resolved_snapshot.get("chartImageUrl"),
+            "status": resolved_snapshot.get("status") or "ok",
+            "candles": candles,
+            "chart_status": resolved_snapshot.get("chart_status") or "snapshot",
+            "fallback_to_candles": bool(resolved_snapshot.get("fallback_to_candles")),
+        }
 
     def _extract_take_profits(self, *, signal: dict[str, Any], fallback_take_profit: float | None) -> list[float]:
         candidates = signal.get("take_profits")
@@ -1668,6 +1717,9 @@ class TradeIdeaService:
                     updated["chartImageUrl"] = snapshot["chartImageUrl"]
                     updated["chart_snapshot_status"] = snapshot["status"]
                     updated["chartSnapshotStatus"] = snapshot["status"]
+                    updated["chart_status"] = snapshot.get("chart_status") or "snapshot"
+                    updated["chartStatus"] = snapshot.get("chart_status") or "snapshot"
+                    updated["fallback_to_candles"] = bool(snapshot.get("fallback_to_candles"))
                     updated["last_chart_refresh_at"] = now_iso
                     updated["chart_version"] = int(updated.get("chart_version") or 0) + 1
             updated["updated_at"] = now_iso
@@ -1722,6 +1774,9 @@ class TradeIdeaService:
                 current["chartImageUrl"] = snapshot["chartImageUrl"]
                 current["chart_snapshot_status"] = "ok"
                 current["chartSnapshotStatus"] = "ok"
+                current["chart_status"] = snapshot.get("chart_status") or "snapshot"
+                current["chartStatus"] = snapshot.get("chart_status") or "snapshot"
+                current["fallback_to_candles"] = bool(snapshot.get("fallback_to_candles"))
                 current["last_chart_refresh_at"] = now_iso
                 current["chart_version"] = int(current.get("chart_version") or 0) + 1
                 current["updated_at"] = now_iso
@@ -1737,6 +1792,11 @@ class TradeIdeaService:
                 retry_status = str(snapshot.get("status") or "snapshot_failed").lower()
                 current["chart_snapshot_status"] = retry_status
                 current["chartSnapshotStatus"] = retry_status
+                current["chart_status"] = snapshot.get("chart_status") or (
+                    "fallback_candles" if snapshot.get("fallback_to_candles") else "no_data"
+                )
+                current["chartStatus"] = current["chart_status"]
+                current["fallback_to_candles"] = bool(snapshot.get("fallback_to_candles"))
                 changed = True
                 logger.info(
                     "idea_snapshot_retry_finished_without_image idea_id=%s symbol=%s timeframe=%s status=%s final_chart_url=%s",
