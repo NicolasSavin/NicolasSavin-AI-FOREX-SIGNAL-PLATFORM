@@ -33,6 +33,10 @@ STRUCTURED_SCHEMA = {
     "market_structure_structured": ("bias", "structure", "liquidity", "zone", "confluence"),
 }
 SMC_REQUIRED_TOKENS = ("ликвидност", "sweep", "bos", "choch", "order block", "fvg")
+SMART_MONEY_ACTOR_TOKENS = ("крупн", "смарт", "smart money", "крупного игрока", "крупный участник")
+CONFIRMATION_TOKENS = ("объ", "дельт", "cumdelta", "диверген")
+NO_CONFIRMATION_TOKENS = ("нет подтвержден", "без подтвержден", "подтверждений недостаточно")
+RISK_TOKENS = ("инвалид", "слом", "отмена", "fail", "риск")
 BANNED_PHRASES = (
     "строится вокруг",
     "в рамках",
@@ -183,6 +187,14 @@ class IdeaNarrativeLLMService:
         narrative_text = f"{result['unified_narrative']} {result['full_text']}".casefold()
         if not any(token in narrative_text for token in SMC_REQUIRED_TOKENS):
             return None
+        if not any(token in narrative_text for token in SMART_MONEY_ACTOR_TOKENS):
+            return None
+        has_confirmation = any(token in narrative_text for token in CONFIRMATION_TOKENS)
+        has_no_confirmation = any(token in narrative_text for token in NO_CONFIRMATION_TOKENS)
+        if not (has_confirmation or has_no_confirmation):
+            return None
+        if not any(token in narrative_text for token in RISK_TOKENS):
+            return None
         if any(token in narrative_text for token in FORBIDDEN_SYSTEM_TOKENS):
             return None
         return result
@@ -211,6 +223,11 @@ class IdeaNarrativeLLMService:
             "\"после снятия ликвидности\", \"после ложного пробоя\", \"после возврата в order block\".\n"
             "Логическая цепочка обязательна минимум одна: "
             "например, liquidity sweep → sellers/buyers entered → continuation/reversal expected.\n"
+            "Обязательно раскрой поведение крупного участника (Smart Money): где снята ликвидность, где он вошёл, идёт набор позиции или распределение.\n"
+            "Обязательно поясни контекст структуры: это continuation или reaction/reversal, внутри dealing range или уже есть выход со сломом структуры.\n"
+            "Если в фактах есть CHoCH/BOS — укажи это явно; если нет, прямо напиши, что структура без подтверждённого слома.\n"
+            "Добавь подтверждение через объём/дельту/cumdelta/дивергенцию либо честно укажи, что подтверждения не хватает.\n"
+            "Причинно-следственная связь обязательна: действие крупного игрока -> реакция цены -> торговое решение.\n"
             "CAUSE должен описывать: liquidity sweep / реакцию от зоны / BOS-CHoCH / imbalance.\n"
             "EFFECT должен описывать: continuation или reversal и статус структуры.\n"
             "ACTION должен описывать: buy/sell/wait, условие входа, и когда no trade.\n"
