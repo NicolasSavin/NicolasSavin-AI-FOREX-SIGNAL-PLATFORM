@@ -224,20 +224,20 @@ function buildShortText(idea) {
 }
 
 function buildFullText(idea) {
-  const modelNarrativeCandidates = [
-    idea?.idea_thesis || idea?.ideaThesis,
-    idea?.unified_narrative,
-    idea?.full_text || idea?.fullText,
-  ];
-  for (const candidate of modelNarrativeCandidates) {
-    const text = normalizeWhitespace(candidate);
-    if (isRenderableNarrative(text) && !isCompactTechnicalSummary(text)) return text;
-  }
+  const description = normalizeWhitespace(
+    idea?.idea_thesis
+    || idea?.ideaThesis
+    || idea?.unified_narrative
+    || idea?.full_text
+    || idea?.fullText
+    || idea?.summary
+  );
+  if (isRenderableNarrative(description) && !isCompactTechnicalSummary(description)) return description;
 
   const fallbackNarrative = normalizeWhitespace(idea?.fallback_narrative);
   if (isRenderableNarrative(fallbackNarrative) && !isCompactTechnicalSummary(fallbackNarrative)) return fallbackNarrative;
 
-  return "Подробное описание пока не получено. Дождитесь обновления идеи перед входом в сделку.";
+  return "Нет описания";
 }
 
 function isRenderableNarrative(value) {
@@ -793,6 +793,7 @@ function getFilteredIdeas() {
 }
 
 function buildIdeaCardMarkup(idea) {
+  console.log("IDEA DEBUG:", idea);
   const tags = Array.isArray(idea.tags) ? idea.tags : [];
   const symbol = idea.symbol || "";
   const signalLabel = getSignalLabel(idea);
