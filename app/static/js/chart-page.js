@@ -366,6 +366,8 @@ function normalizeIdea(idea) {
     full_text: fullText,
   });
 
+  const normalizedChartImageUrl = normalizeChartImageUrl(idea?.chartImageUrl || idea?.chart_image || "");
+  const normalizedChartData = idea?.chartData ?? idea?.chart_data ?? null;
   return {
     ...idea,
     id: idea?.id || idea?.idea_id || `${symbol}-${timeframe}-${direction}`,
@@ -396,9 +398,9 @@ function normalizeIdea(idea) {
     entry: idea?.entry ?? idea?.entry_zone ?? "—",
     stopLoss: idea?.stopLoss ?? idea?.stop_loss ?? "—",
     takeProfit: idea?.takeProfit ?? idea?.take_profit ?? "—",
-    chartData: idea?.chartData ?? idea?.chart_data ?? null,
-    chartImageUrl: normalizeChartImageUrl(idea?.chartImageUrl || idea?.chart_image || ""),
-    chart_image: normalizeChartImageUrl(idea?.chart_image || idea?.chartImageUrl || ""),
+    chartData: normalizedChartData,
+    chartImageUrl: normalizedChartImageUrl,
+    chart_image: normalizedChartImageUrl,
     chartSnapshotStatus: idea?.chartSnapshotStatus || idea?.chart_snapshot_status || "",
     chart_snapshot_status: idea?.chart_snapshot_status || idea?.chartSnapshotStatus || "",
     chart_overlays: idea?.chart_overlays
@@ -986,6 +988,29 @@ function showSnapshotChart(imageUrl) {
   return true;
 }
 
+function hasRenderableSnapshot(idea) {
+  return Boolean(normalizeChartImageUrl(idea?.chartImageUrl || idea?.chart_image || ""));
+}
+
+function hasRenderableCandles(idea) {
+  return hasCandles(idea?.chartData) || hasCandles(idea?.chart_data);
+}
+
+function mergeWithPreviousIdeaState(nextIdea, prevIdea) {
+  if (!prevIdea || typeof prevIdea !== "object") return nextIdea;
+  const nextSnapshot = normalizeChartImageUrl(nextIdea?.chartImageUrl || nextIdea?.chart_image || "");
+  const prevSnapshot = normalizeChartImageUrl(prevIdea?.chartImageUrl || prevIdea?.chart_image || "");
+  const mergedSnapshot = nextSnapshot || prevSnapshot;
+  const nextChartData = hasRenderableCandles(nextIdea) ? (nextIdea.chartData || nextIdea.chart_data) : null;
+  const prevChartData = hasRenderableCandles(prevIdea) ? (prevIdea.chartData || prevIdea.chart_data) : null;
+  return {
+    ...nextIdea,
+    chartImageUrl: mergedSnapshot,
+    chart_image: mergedSnapshot,
+    chartData: nextChartData || prevChartData || nextIdea.chartData || null,
+  };
+}
+
 function showLiveChart(payload) {
   const normalizedPayload = normalizeChartPayload(payload);
   if (!hasCandles(normalizedPayload)) return false;
@@ -1471,15 +1496,13 @@ async function openIdea(idea) {
 
   renderDetailText(idea);
   renderCleanDetailStatus(idea);
-  if (!showCachedChartIfAny(idea)) {
-    resetChartState();
-    showUnavailableChart("Загружаем график…");
-  }
-
   const rawSnapshotUrl = idea.chartImageUrl || idea.chart_image || "";
   const snapshotUrl = normalizeChartImageUrl(rawSnapshotUrl);
   const snapshotStatus = idea.chartSnapshotStatus || idea.chart_snapshot_status || "";
   const liveFallbackMessage = snapshotStatusRu(snapshotStatus);
+
+  resetChartState();
+  showUnavailableChart("Загружаем график…");
 
   if (snapshotUrl) {
     const snapshotLoaded = await new Promise((resolve) => {
@@ -1508,7 +1531,12 @@ async function openIdea(idea) {
     }
   }
 
-  const payload = await resolveChartData(idea);
+  let payload = null;
+  if (hasRenderableCandles(idea)) {
+    payload = idea.chartData || idea.chart_data;
+  } else {
+    payload = await resolveChartData(idea);
+  }
   if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
 
   if (showLiveChart(payload) || showLiveChart(idea.chartData)) {
@@ -1520,9 +1548,12 @@ async function openIdea(idea) {
     return;
   }
 
-  if (!showCachedChartIfAny(idea)) {
-    showUnavailableChart(liveFallbackMessage);
+  if (showCachedChartIfAny(idea)) {
+    renderCleanDetailStatus(idea);
+    return;
   }
+
+  showUnavailableChart(liveFallbackMessage);
   renderCleanDetailStatus(idea);
 }
 
@@ -1563,6 +1594,7 @@ async function loadIdeasSnapshot() {
     const res = await fetch("/ideas/market", { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    const previousById = new Map(previousIdeasById);
     let normalizedIdeas = normalizeIdeas(data);
     if (!normalizedIdeas.length && ENABLE_MOCK_IDEAS_ON_EMPTY) {
       console.warn("Используем временный mock идей: активирован ideas_mock=1.");
@@ -1571,8 +1603,8 @@ async function loadIdeasSnapshot() {
 
     normalizedIdeas = dedupeIdeasById(normalizedIdeas);
 
+    normalizedIdeas = normalizedIdeas.map((idea) => mergeWithPreviousIdeaState(idea, previousById.get(String(idea?.id))));
     const incomingById = new Map(normalizedIdeas.map((idea) => [String(idea.id), idea]));
-    const previousById = new Map(previousIdeasById);
 
     let hasRealtimeChanges = false;
     for (const [ideaId, idea] of incomingById.entries()) {
