@@ -356,3 +356,8 @@ TWELVEDATA_OUTPUTSIZE=50
 - При сломе сценария идея помечается как `invalidated`, а при новом lifecycle создаётся новая запись.
 - Это поведение реализовано без радикального изменения текущего UI: список на `/ideas` оставлен компактным, а depth анализа перенесён в modal full card.
 - Sentiment внутри trade idea используется только как дополнительный контекст и не даёт гарантий результата.
+
+## Unified idea pipeline (critical refactor)
+- В `TradeIdeaService` добавлена единая оркестрация для идеи: свечи нормализуются один раз и затем переиспользуются в SMC/overlay/chart/narrative этапах.
+- Диагностика расширена полями `candles_count_sent`, `candles_count_used`, `data_provider`, `analysis_mode`, `data_quality`, `fallback_used`, `chart_overlays_present`, `chart_snapshot_status`, `chartImageUrl`.
+- Рендер карточек `/ideas` переведён в режим «чистого рендера»: приоритет текста `idea_thesis -> unified_narrative -> full_text -> summary`, а при отсутствии PNG используется fallback-линейный chart по свечам из API.

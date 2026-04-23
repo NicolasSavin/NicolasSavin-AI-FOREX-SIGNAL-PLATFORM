@@ -73,13 +73,7 @@ function renderIdeaCard(idea) {
       ${warningText ? `<div class="idea-warning">${escapeHtml(warningText)}</div>` : ""}
       <div class="idea-news-line">Источник описания: <strong>${escapeHtml(idea.narrative_source || "резервный_шаблон")}</strong></div>
 
-      ${
-        chartImageUrl
-          ? `<div class="idea-chart-wrap">
-               <img class="idea-chart-image" src="${escapeHtml(chartImageUrl)}?t=${Date.now()}" alt="${escapeHtml(idea.title || "chart")}" />
-             </div>`
-          : `<div class="idea-chart-missing">Снапшот графика недоступен (${escapeHtml(idea.chartSnapshotStatus || idea.chart_snapshot_status || "no_data")}).</div>`
-      }
+      ${renderChartBlock(idea, chartImageUrl)}
 
       <section class="idea-section idea-section-plan">
         <h4>Единый нарратив</h4>
@@ -124,9 +118,48 @@ function resolveVisibleNarrative(idea) {
   if (unified) return unified;
   const fullText = String(idea?.full_text || "").trim();
   if (fullText) return fullText;
+  const summary = String(idea?.summary || idea?.short_text || "").trim();
+  if (summary) return summary;
   const fallbackNarrative = String(idea?.fallback_narrative || "").trim();
   if (fallbackNarrative) return fallbackNarrative;
   return "Сценарий в режиме fallback: модельный нарратив временно недоступен.";
+}
+
+function renderChartBlock(idea, chartImageUrl) {
+  if (chartImageUrl) {
+    return `<div class="idea-chart-wrap">
+      <img class="idea-chart-image" src="${escapeHtml(chartImageUrl)}?t=${Date.now()}" alt="${escapeHtml(idea.title || "chart")}" />
+    </div>`;
+  }
+  const fallbackCandles = idea?.chartData?.candles || idea?.chart_data?.candles || [];
+  const fallbackSvg = buildFallbackSvg(fallbackCandles);
+  if (fallbackSvg) {
+    return `<div class="idea-chart-wrap">${fallbackSvg}</div>`;
+  }
+  return `<div class="idea-chart-missing">Снапшот графика недоступен (${escapeHtml(idea.chartSnapshotStatus || idea.chart_snapshot_status || "no_data")}).</div>`;
+}
+
+function buildFallbackSvg(candles) {
+  if (!Array.isArray(candles) || candles.length < 2) return "";
+  const closes = candles.map((c) => Number(c?.close)).filter((v) => Number.isFinite(v));
+  if (closes.length < 2) return "";
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const width = 400;
+  const height = 180;
+  const step = width / Math.max(closes.length - 1, 1);
+  const points = closes
+    .map((value, index) => {
+      const x = index * step;
+      const ratio = max === min ? 0.5 : (value - min) / (max - min);
+      const y = height - ratio * (height - 20) - 10;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+  return `<svg class="idea-chart-image" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="fallback candles chart">
+    <rect x="0" y="0" width="${width}" height="${height}" fill="#0b1220"></rect>
+    <polyline fill="none" stroke="#22d3ee" stroke-width="2" points="${points}"></polyline>
+  </svg>`;
 }
 
 function renderIdeas(payload) {
