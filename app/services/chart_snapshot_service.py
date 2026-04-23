@@ -38,6 +38,7 @@ class ChartSnapshotService:
         markers: list[dict[str, Any]] | None = None,
         patterns: list[dict[str, Any]] | None = None,
         arrows: list[dict[str, Any]] | None = None,
+        chart_overlays: dict[str, list[dict[str, Any]]] | None = None,
         setup_text: str | None = None,
     ) -> str | None:
         if not candles:
@@ -48,6 +49,28 @@ class ChartSnapshotService:
         markers = markers or []
         patterns = patterns or []
         arrows = arrows or []
+        chart_overlays = chart_overlays if isinstance(chart_overlays, dict) else {}
+        overlay_order_blocks = chart_overlays.get("order_blocks") if isinstance(chart_overlays.get("order_blocks"), list) else []
+        overlay_liquidity = chart_overlays.get("liquidity") if isinstance(chart_overlays.get("liquidity"), list) else []
+        overlay_fvg = chart_overlays.get("fvg") if isinstance(chart_overlays.get("fvg"), list) else []
+        overlay_structure = chart_overlays.get("structure_levels") if isinstance(chart_overlays.get("structure_levels"), list) else []
+        overlay_patterns = chart_overlays.get("patterns") if isinstance(chart_overlays.get("patterns"), list) else []
+        if overlay_order_blocks or overlay_liquidity or overlay_fvg or overlay_structure or overlay_patterns:
+            logger.info(
+                "snapshot_chart_overlays_applied symbol=%s timeframe=%s counts=%s",
+                symbol,
+                timeframe,
+                {
+                    "order_blocks": len(overlay_order_blocks),
+                    "liquidity": len(overlay_liquidity),
+                    "fvg": len(overlay_fvg),
+                    "structure_levels": len(overlay_structure),
+                    "patterns": len(overlay_patterns),
+                },
+            )
+        zones = list(zones) + list(overlay_order_blocks) + list(overlay_fvg) + list(overlay_liquidity)
+        levels = list(levels) + list(overlay_structure) + list(overlay_liquidity)
+        patterns = list(patterns) + list(overlay_patterns)
         take_profits = [value for value in (take_profits or []) if value is not None]
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
