@@ -14,6 +14,7 @@ from app.core.env import get_openrouter_api_key, get_openrouter_model
 logger = logging.getLogger(__name__)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 REQUIRED_FIELDS = (
+    "idea_thesis",
     "headline",
     "summary",
     "cause",
@@ -145,10 +146,19 @@ class IdeaNarrativeLLMService:
             return None
         result: dict[str, Any] = {}
         for field in REQUIRED_FIELDS:
+            if field == "idea_thesis":
+                continue
             value = raw.get(field)
             if not isinstance(value, str) or not value.strip():
                 return None
             result[field] = value.strip()
+        idea_thesis = raw.get("idea_thesis")
+        if isinstance(idea_thesis, str) and idea_thesis.strip():
+            result["idea_thesis"] = idea_thesis.strip()
+        else:
+            result["idea_thesis"] = str(result.get("unified_narrative") or result.get("full_text") or "").strip()
+        if not result["idea_thesis"]:
+            return None
         raw_signal = str(raw.get("signal") or "").strip().upper()
         result["signal"] = raw_signal if raw_signal in {"BUY", "SELL", "WAIT"} else "WAIT"
         result["risk_note"] = str(raw.get("risk_note") or "").strip()
@@ -165,7 +175,7 @@ class IdeaNarrativeLLMService:
                 group_result[field] = value.strip()
             result[group_key] = group_result
 
-        joined = " ".join(str(result[field]) for field in REQUIRED_FIELDS).casefold()
+        joined = " ".join(str(result[field]) for field in REQUIRED_FIELDS if field in result).casefold()
         if any(phrase in joined for phrase in BANNED_PHRASES):
             return None
         if any(phrase in joined for phrase in WEAK_CAUSE_PHRASES):
@@ -185,6 +195,8 @@ class IdeaNarrativeLLMService:
             "Сформируй объяснение торговой идеи только из переданных фактов.\n"
             "Запрещено придумывать новые уровни, направление, статус или причины вне фактов.\n"
             "Ты пишешь как SMC/ICT-трейдер: простые слова, короткие предложения, дружелюбный тон для трейдера.\n"
+            "idea_thesis — ГЛАВНЫЙ единый блок объяснения для трейдера.\n"
+            "idea_thesis должен быть цельным, читабельным и объяснять: что происходит, почему сетап существует, что подтверждает, что ослабляет, какое действие и где инвалидация.\n"
             "unified_narrative должен содержать 3-6 коротких естественных предложений.\n"
             "Обязательно объясни: что происходит сейчас, почему это происходит, что из этого следует, и что делать трейдеру дальше.\n"
             "unified_narrative верни ОДНИМ связным текстом без секций и подзаголовков.\n"
@@ -209,6 +221,7 @@ class IdeaNarrativeLLMService:
             "signal верни строго как BUY, SELL или WAIT.\n"
             "risk_note верни короткой фразой, без системных меток.\n"
             "В structured-полях не повторяй в каждом поле символ/таймфрейм, если это не нужно для смысла.\n"
+            "Не разбивай главную идею на мини-карточки вида цена/bias/confidence/context — это должен быть один связный тезис idea_thesis.\n"
             "Ответ должен быть ВАЛИДНЫМ JSON и только JSON, без markdown, комментариев и префиксов.\n"
             "Верни только JSON с ключами: "
             + ", ".join(REQUIRED_FIELDS)
@@ -251,6 +264,7 @@ class IdeaNarrativeLLMService:
         signal = "BUY" if direction == "bullish" else "SELL" if direction == "bearish" else "WAIT"
         risk_note = f"Инвалидация сценария: {invalidation_logic}."
         return {
+            "idea_thesis": unified,
             "headline": f"{symbol} {timeframe} — {direction}",
             "summary": short,
             "cause": "CAUSE: liquidity sweep и реакция в ключевой SMC-зоне подтверждают исходную причину идеи.",

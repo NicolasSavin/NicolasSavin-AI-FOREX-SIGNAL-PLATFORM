@@ -167,6 +167,8 @@ function buildShortText(idea) {
 }
 
 function buildFullText(idea) {
+  const thesis = normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis);
+  if (isRenderableNarrative(thesis)) return thesis;
   const unified = normalizeWhitespace(idea?.unified_narrative);
   if (isRenderableNarrative(unified)) return unified;
   const direct = normalizeWhitespace(
@@ -183,7 +185,9 @@ function buildFullText(idea) {
   if (isRenderableNarrative(structuredText)) return structuredText;
   const detailSummary = normalizeWhitespace(idea?.detail_brief?.summary_narrative);
   if (isRenderableNarrative(detailSummary)) return detailSummary;
-  return normalizeWhitespace(idea?.summary || idea?.summary_ru);
+  const legacySummary = normalizeWhitespace(idea?.summary || idea?.summary_ru);
+  if (isRenderableNarrative(legacySummary)) return legacySummary;
+  return "Подробное описание пока не получено. Дождитесь обновления идеи перед входом в сделку.";
 }
 
 function isRenderableNarrative(value) {
@@ -293,6 +297,7 @@ function normalizeIdea(idea) {
     summary_ru: shortText,
     short_text: shortText,
     full_text: fullText,
+    idea_thesis: normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis) || fullText,
     unified_narrative: normalizeWhitespace(idea?.unified_narrative) || fullText,
     detail_brief: buildDetailBrief({
       ...idea,
@@ -493,15 +498,16 @@ function setTextContent(node, value, fallback = "—") {
 function renderMetricChips(detailBrief) {
   if (!detailMetrics) return;
   const header = detailBrief?.header || {};
-  const marketPrice = header.market_price || "Нет актуальных рыночных данных";
-  const metrics = [
-    ["Цена", marketPrice],
-    ["Изм. за день", header.daily_change || "Нет данных"],
-    ["Bias", header.bias || "—"],
-    ["Confidence", header.confidence != null && header.confidence !== "" ? `${header.confidence}%` : "—"],
-    ["Confluence", header.confluence_rating != null && header.confluence_rating !== "" ? `${header.confluence_rating}%` : "—"],
-    ["Контекст", header.market_context || "Контекст не передан"],
-  ];
+  const metrics = [];
+  if (header.market_price) metrics.push(["Цена", header.market_price]);
+  if (header.bias) metrics.push(["Bias", header.bias]);
+  if (header.confidence != null && header.confidence !== "") metrics.push(["Confidence", `${header.confidence}%`]);
+  if (header.confluence_rating != null && header.confluence_rating !== "") metrics.push(["Confluence", `${header.confluence_rating}%`]);
+  if (header.market_context) metrics.push(["Контекст", header.market_context]);
+  if (!metrics.length) {
+    detailMetrics.innerHTML = "";
+    return;
+  }
   detailMetrics.innerHTML = metrics.map(([label, value]) => `
     <div class="metric-chip">
       <div class="metric-chip-label">${escapeHtml(label)}</div>
