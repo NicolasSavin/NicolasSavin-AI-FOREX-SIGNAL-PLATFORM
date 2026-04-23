@@ -240,6 +240,33 @@ function buildFullText(idea) {
   return "Нет описания";
 }
 
+function getIdeaDescriptionWithSource(idea) {
+  const description = normalizeWhitespace(
+    idea?.idea_thesis
+    || idea?.ideaThesis
+    || idea?.unified_narrative
+    || idea?.full_text
+    || idea?.fullText
+    || idea?.summary
+    || "Нет описания"
+  );
+  const source = idea?.idea_thesis || idea?.ideaThesis
+    ? "idea_thesis"
+    : idea?.unified_narrative
+      ? "unified_narrative"
+      : idea?.full_text || idea?.fullText
+        ? "full_text"
+        : idea?.summary
+          ? "summary"
+          : "fallback";
+  console.log("DESCRIPTION SOURCE:", {
+    source,
+    thesis: idea?.idea_thesis || idea?.ideaThesis,
+    summary: idea?.summary,
+  });
+  return { description, source };
+}
+
 function isRenderableNarrative(value) {
   const text = normalizeWhitespace(value).toLowerCase();
   if (!text) return false;
@@ -800,7 +827,8 @@ function buildIdeaCardMarkup(idea) {
   const signalTone = getSignalTone(idea);
   const timeframesAvailable = Array.isArray(idea?.timeframes_available) ? idea.timeframes_available : [];
   const confidence = Math.round(Number(idea?.final_confidence ?? idea?.confidence ?? 0)) || "-";
-  const mainNarrative = buildFullText(idea);
+  const { description: mainNarrative } = getIdeaDescriptionWithSource(idea);
+  const summaryPreview = normalizeWhitespace(idea?.summary);
   const h4 = normalizeWhitespace(idea?.htf_bias_summary) || "H4: нет данных";
   const h1 = normalizeWhitespace(idea?.mtf_structure_summary) || "H1: нет данных";
   const m15 = normalizeWhitespace(idea?.ltf_trigger_summary) || "M15: нет данных";
@@ -817,6 +845,7 @@ function buildIdeaCardMarkup(idea) {
       ${(timeframesAvailable.length ? timeframesAvailable : ["H4", "H1", "M15"]).map((tf) => `<span class="tag tf-tag">${escapeHtml(tf)}</span>`).join("")}
     </div>
     <p class="summary summary-main">${escapeHtml(mainNarrative)}</p>
+    ${summaryPreview ? `<p class="summary summary-secondary">${escapeHtml(summaryPreview)}</p>` : ""}
     <div class="mtf-strip">
       <div class="strip-chip strip-chip-h4">${escapeHtml(h4)}</div>
       <div class="strip-chip strip-chip-h1">${escapeHtml(h1)}</div>
@@ -1067,10 +1096,11 @@ function renderTradingPlan(detailBrief) {
 
 function renderDetailText(idea) {
   const detailBrief = buildDetailBrief(idea);
-  const fullText = buildFullText(idea) || normalizeWhitespace(detailBrief?.summary_narrative);
-  setTextContent(ideaSummary, fullText, "");
-  if (fullText) {
-    setTextContent(analysisText, fullText, "");
+  const { description: fullText } = getIdeaDescriptionWithSource(idea);
+  const detailNarrative = fullText || buildFullText(idea) || normalizeWhitespace(detailBrief?.summary_narrative);
+  setTextContent(ideaSummary, detailNarrative, "");
+  if (detailNarrative) {
+    setTextContent(analysisText, detailNarrative, "");
     analysisText?.closest(".analysis-block")?.style?.removeProperty("display");
   } else {
     setTextContent(analysisText, "", "");
