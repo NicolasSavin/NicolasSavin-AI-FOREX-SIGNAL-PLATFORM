@@ -66,6 +66,7 @@ CHART_OVERLAY_ALIASES = {
 }
 SNAPSHOT_RETRY_INTERVAL_SECONDS = int(os.getenv("IDEAS_SNAPSHOT_RETRY_INTERVAL_SECONDS", "1800"))
 NARRATIVE_REFRESH_COOLDOWN_SECONDS = int(os.getenv("IDEAS_NARRATIVE_REFRESH_COOLDOWN_SECONDS", "300"))
+MIN_IDEA_CANDLES_REQUIRED = max(2, int(os.getenv("IDEAS_MIN_CANDLES_REQUIRED", "20")))
 logger = logging.getLogger(__name__)
 
 
@@ -337,7 +338,14 @@ class TradeIdeaService:
             timeframe = str(current.get("timeframe", "H1")).upper()
             chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
             candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
-            if not candles:
+            if len(candles) < MIN_IDEA_CANDLES_REQUIRED:
+                logger.info(
+                    "idea_live_refresh_skipped symbol=%s timeframe=%s candles=%s min_required=%s",
+                    symbol,
+                    timeframe,
+                    len(candles),
+                    MIN_IDEA_CANDLES_REQUIRED,
+                )
                 refreshed.append(current)
                 continue
             latest_candle = candles[-1] if isinstance(candles[-1], dict) else {}
@@ -728,7 +736,7 @@ class TradeIdeaService:
             symbol = str(signal.get("symbol", "")).upper()
             timeframe = str(signal.get("timeframe", "H1")).upper()
             candles_count = int(signal.get("source_candle_count") or 0)
-            if candles_count > 0:
+            if candles_count >= MIN_IDEA_CANDLES_REQUIRED:
                 symbols_with_candles.add((symbol, timeframe))
             action = signal.get("action", "NO_TRADE")
             pipeline_debug = signal.get("pipeline_debug", {}) if isinstance(signal.get("pipeline_debug"), dict) else {}
@@ -742,6 +750,16 @@ class TradeIdeaService:
                 pipeline_debug.get("reason_if_skipped"),
                 action,
             )
+            if candles_count < MIN_IDEA_CANDLES_REQUIRED:
+                skipped_reasons["insufficient_candles"] = skipped_reasons.get("insufficient_candles", 0) + 1
+                logger.info(
+                    "ideas_pipeline_skip_update_insufficient_candles symbol=%s timeframe=%s candles_count=%s min_required=%s",
+                    symbol,
+                    timeframe,
+                    candles_count,
+                    MIN_IDEA_CANDLES_REQUIRED,
+                )
+                continue
             if action == "NO_TRADE":
                 skipped_by_no_trade += 1
                 skip_reason = str(pipeline_debug.get("reason_if_skipped") or "no_trade_signal")
