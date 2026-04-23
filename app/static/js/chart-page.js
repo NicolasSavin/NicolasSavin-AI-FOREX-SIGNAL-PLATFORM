@@ -806,7 +806,7 @@ function showChartPlaceholder(message) {
 
 function hideChartPlaceholder() {
   chartPlaceholder.classList.remove("open");
-  chartPlaceholderText.textContent = "Chart unavailable";
+  chartPlaceholderText.textContent = "График недоступен";
 }
 
 function normalizeChartImageUrl(url) {
@@ -826,8 +826,8 @@ function snapshotStatusRu(status) {
     fetch_error: "Снапшот не подготовлен: ошибка при получении данных.",
     unavailable: "Снапшот временно недоступен.",
   }[key];
-  if (reason) return `Chart unavailable — ${reason}`;
-  return "Chart unavailable";
+  if (reason) return `График недоступен — ${reason}`;
+  return "График недоступен";
 }
 
 function hasCandles(payload) {
@@ -874,7 +874,7 @@ function showLiveChart(payload) {
 
 function showUnavailableChart(message) {
   setChartMode("unavailable");
-  showChartPlaceholder(message || "Chart unavailable");
+  showChartPlaceholder(message || "График недоступен");
 }
 
 function updateDetailStatus(message) {
@@ -1008,13 +1008,14 @@ function normalizeSmcOverlays(payload) {
   const orderBlocks = Array.isArray(base?.order_blocks)
     ? base.order_blocks
       .map((item) => {
-        const from = toFiniteNumber(item?.from);
-        const to = toFiniteNumber(item?.to);
+        const from = toFiniteNumber(item?.from ?? item?.low);
+        const to = toFiniteNumber(item?.to ?? item?.high);
         if (from == null || to == null) return null;
         return {
           from: Math.min(from, to),
           to: Math.max(from, to),
           type: String(item?.type || "").toLowerCase(),
+          label: normalizeWhitespace(item?.label || ""),
         };
       })
       .filter(Boolean)
@@ -1023,12 +1024,13 @@ function normalizeSmcOverlays(payload) {
   const fvg = Array.isArray(base?.fvg)
     ? base.fvg
       .map((item) => {
-        const from = toFiniteNumber(item?.from);
-        const to = toFiniteNumber(item?.to);
+        const from = toFiniteNumber(item?.from ?? item?.low);
+        const to = toFiniteNumber(item?.to ?? item?.high);
         if (from == null || to == null) return null;
         return {
           from: Math.min(from, to),
           to: Math.max(from, to),
+          label: normalizeWhitespace(item?.label || "FVG"),
         };
       })
       .filter(Boolean)
@@ -1044,14 +1046,16 @@ function normalizeSmcOverlays(payload) {
       .filter(Boolean)
     : [];
 
-  const structure = Array.isArray(base?.structure)
-    ? base.structure
+  const structureSource = Array.isArray(base?.structure_levels) ? base.structure_levels : Array.isArray(base?.structure) ? base.structure : [];
+  const structure = Array.isArray(structureSource)
+    ? structureSource
       .map((item) => {
-        const level = toFiniteNumber(item?.level);
+        const level = toFiniteNumber(item?.level ?? item?.price);
         if (level == null) return null;
         return {
           level,
           type: normalizeWhitespace(item?.type || "structure"),
+          label: normalizeWhitespace(item?.label || item?.type || "Structure"),
         };
       })
       .filter(Boolean)
@@ -1140,7 +1144,7 @@ const overlayPlugin = {
       ctx.lineTo(rightX, y);
       ctx.stroke();
       ctx.restore();
-      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, `Structure: ${item.type}`, "#fbbf24");
+      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, item.label || `Structure: ${item.type}`, "#fbbf24");
     });
   },
 };
