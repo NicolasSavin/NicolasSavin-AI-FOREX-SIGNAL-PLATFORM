@@ -1126,20 +1126,26 @@ function ensureChart() {
 
   chart = LightweightCharts.createChart(chartHost, {
     layout: {
-      background: { color: "#08111f" },
-      textColor: "#9fb0c7",
+      background: { color: "#070f1d" },
+      textColor: "#b8c7db",
     },
     grid: {
-      vertLines: { color: "#13233c" },
-      horzLines: { color: "#13233c" },
+      vertLines: { color: "rgba(30, 46, 71, 0.7)" },
+      horzLines: { color: "rgba(30, 46, 71, 0.8)" },
     },
     rightPriceScale: {
       borderColor: "#233553",
+      scaleMargins: {
+        top: 0.08,
+        bottom: 0.08,
+      },
     },
     timeScale: {
       borderColor: "#233553",
       timeVisible: true,
       secondsVisible: false,
+      rightOffset: 4,
+      barSpacing: 10,
     },
     crosshair: {
       mode: LightweightCharts.CrosshairMode.Normal,
@@ -1202,15 +1208,17 @@ function toFinitePrice(value) {
 
 function hasBasicLevels(idea) {
   return toFinitePrice(idea?.entry) != null
-    && toFinitePrice(idea?.stopLoss ?? idea?.sl) != null
-    && toFinitePrice(idea?.takeProfit ?? idea?.tp) != null;
+    || toFinitePrice(idea?.stopLoss ?? idea?.sl) != null
+    || toFinitePrice(idea?.takeProfit ?? idea?.tp) != null;
 }
 
-function createSyntheticLevelCandles(entry, stopLoss, takeProfit) {
-  const prices = [entry, stopLoss, takeProfit].filter(Number.isFinite);
+function createSyntheticLevelCandles(entry, stopLoss, takeProfit, anchorPrice = null) {
+  const prices = [entry, stopLoss, takeProfit, anchorPrice].filter(Number.isFinite);
+  if (!prices.length) return [];
+  const basePrice = Number.isFinite(anchorPrice) ? anchorPrice : (Number.isFinite(entry) ? entry : prices[0]);
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
-  const spread = Math.max(Math.abs(maxPrice - minPrice), Math.abs(entry) * 0.001, 0.0001);
+  const spread = Math.max(Math.abs(maxPrice - minPrice), Math.abs(basePrice) * 0.0012, 0.0001);
   const amplitude = spread * 0.18;
   const baseTime = Math.floor(Date.now() / 1000);
   const totalBars = 24;
@@ -1220,8 +1228,8 @@ function createSyntheticLevelCandles(entry, stopLoss, takeProfit) {
     const progress = index / Math.max(1, totalBars - 1);
     const wave = Math.sin(progress * Math.PI * 2.6);
     const prevWave = Math.sin(Math.max(0, progress - 1 / totalBars) * Math.PI * 2.6);
-    const open = entry + prevWave * amplitude * 0.9;
-    const close = entry + wave * amplitude;
+    const open = basePrice + prevWave * amplitude * 0.9;
+    const close = basePrice + wave * amplitude;
     const high = Math.max(open, close) + amplitude * 0.45;
     const low = Math.min(open, close) - amplitude * 0.45;
     candles.push({
@@ -1241,14 +1249,16 @@ function buildBasicLevelsChartPayload(idea) {
   const entry = toFinitePrice(idea?.entry);
   const stopLoss = toFinitePrice(idea?.stopLoss ?? idea?.sl);
   const takeProfit = toFinitePrice(idea?.takeProfit ?? idea?.tp);
-  if (entry == null || stopLoss == null || takeProfit == null) return null;
+  const anchorPrice = toFinitePrice(idea?.current_price ?? idea?.latest_close ?? idea?.market_reference_price);
+  const syntheticCandles = createSyntheticLevelCandles(entry, stopLoss, takeProfit, anchorPrice);
+  if (!syntheticCandles.length) return null;
+  const levelLines = [];
+  if (entry != null) levelLines.push({ price: entry, title: "Entry", color: "#facc15", lineStyle: LightweightCharts.LineStyle.Solid });
+  if (stopLoss != null) levelLines.push({ price: stopLoss, title: "SL", color: "#ef4444", lineStyle: LightweightCharts.LineStyle.Dashed });
+  if (takeProfit != null) levelLines.push({ price: takeProfit, title: "TP", color: "#22c55e", lineStyle: LightweightCharts.LineStyle.Dashed });
   return {
-    candles: createSyntheticLevelCandles(entry, stopLoss, takeProfit),
-    level_lines: [
-      { price: entry, title: "Entry", color: "#38bdf8", lineStyle: LightweightCharts.LineStyle.Solid },
-      { price: stopLoss, title: "SL", color: "#ef4444", lineStyle: LightweightCharts.LineStyle.Dashed },
-      { price: takeProfit, title: "TP", color: "#22c55e", lineStyle: LightweightCharts.LineStyle.Dashed },
-    ],
+    candles: syntheticCandles,
+    level_lines: levelLines,
   };
 }
 
@@ -1306,6 +1316,7 @@ function normalizeChartPayload(payload) {
 function normalizeAndValidateCandles(rawCandles) {
   if (!Array.isArray(rawCandles)) return [];
   const normalized = [];
+  const seenTimes = new Set();
   for (const candle of rawCandles) {
     if (!candle || typeof candle !== "object") continue;
     const timeRaw = Number(candle.time ?? candle.timestamp);
@@ -1316,10 +1327,11 @@ function normalizeAndValidateCandles(rawCandles) {
     if (![timeRaw, openRaw, highRaw, lowRaw, closeRaw].every(Number.isFinite)) continue;
     const lowerBound = Math.min(openRaw, closeRaw);
     const upperBound = Math.max(openRaw, closeRaw);
-    const low = Math.min(lowRaw, lowerBound);
-    const high = Math.max(highRaw, upperBound);
-    if (low > high) continue;
-    normalized.push({ time: Math.trunc(timeRaw), open: openRaw, high, low, close: closeRaw });
+    if (lowRaw > lowerBound || highRaw < upperBound || lowRaw > highRaw) continue;
+    const ts = Math.trunc(timeRaw);
+    if (seenTimes.has(ts)) continue;
+    seenTimes.add(ts);
+    normalized.push({ time: ts, open: openRaw, high: highRaw, low: lowRaw, close: closeRaw });
   }
   normalized.sort((a, b) => a.time - b.time);
   return normalized;
@@ -1369,19 +1381,38 @@ function hasMeaningfulChartOverlays(overlays) {
   return keys.some((key) => Array.isArray(overlays[key]) && overlays[key].length > 0);
 }
 
+function buildIdeaLevelLines(idea, overlays) {
+  const lines = [];
+  const pushLine = (price, title, color, lineStyle = LightweightCharts.LineStyle.Dashed) => {
+    const parsed = toFinitePrice(price);
+    if (parsed == null) return;
+    lines.push({ price: parsed, title, color, lineStyle });
+  };
+  pushLine(idea?.entry, "Entry", "#facc15", LightweightCharts.LineStyle.Solid);
+  pushLine(idea?.stopLoss ?? idea?.sl, "SL", "#ef4444");
+  pushLine(idea?.takeProfit ?? idea?.tp, "TP", "#22c55e");
+
+  const normalizedOverlays = normalizeSmcOverlays({ candles: [], chart_overlays: overlays || {} });
+  (normalizedOverlays.structure || []).forEach((item) => pushLine(item?.level, item?.label || "Structure", "#f59e0b"));
+  (normalizedOverlays.liquidity || []).forEach((item) => pushLine(item?.level, item?.label || "Liquidity", "#38bdf8", LightweightCharts.LineStyle.Dotted));
+  return lines;
+}
+
 function mergeWithPreviousIdeaState(nextIdea, prevIdea) {
   if (!prevIdea || typeof prevIdea !== "object") return nextIdea;
   const nextSnapshot = normalizeChartImageUrl(nextIdea?.chartImageUrl || nextIdea?.chart_image || "");
+  const prevSnapshot = normalizeChartImageUrl(prevIdea?.chartImageUrl || prevIdea?.chart_image || "");
   const nextChartData = hasRenderableCandles(nextIdea) ? (nextIdea.chartData || nextIdea.chart_data) : null;
   const prevChartData = hasRenderableCandles(prevIdea) ? (prevIdea.chartData || prevIdea.chart_data) : null;
   const nextOverlays = nextIdea?.chart_overlays;
   const prevOverlays = prevIdea?.chart_overlays;
   const mergedOverlays = hasMeaningfulChartOverlays(nextOverlays) ? nextOverlays : prevOverlays || nextOverlays || null;
+  const mergedSnapshot = nextSnapshot || prevSnapshot;
 
   return {
     ...nextIdea,
-    chartImageUrl: nextSnapshot,
-    chart_image: nextSnapshot,
+    chartImageUrl: mergedSnapshot,
+    chart_image: mergedSnapshot,
     chartData: nextChartData || prevChartData || nextIdea.chartData || null,
     chart_overlays: mergedOverlays,
   };
@@ -1585,10 +1616,17 @@ function buildPatternAnchor(candles, pattern) {
 }
 
 function normalizeSmcOverlays(payload) {
+  const nestedOverlays = payload?.overlays?.chart_overlays ?? payload?.overlays?.chartOverlays ?? payload?.overlays ?? {};
   const base = payload?.chart_overlays
     ?? payload?.chartOverlays
-    ?? payload?.overlays?.chart_overlays
+    ?? nestedOverlays
     ?? {};
+  const takeList = (...keys) => {
+    for (const key of keys) {
+      if (Array.isArray(base?.[key])) return base[key];
+    }
+    return [];
+  };
 
   const asZone = (item, fallbackLabel = "Zone") => {
     const top = toFiniteNumber(item?.top ?? item?.high ?? item?.to ?? item?.price_to ?? item?.priceTo);
@@ -1606,16 +1644,31 @@ function normalizeSmcOverlays(payload) {
     };
   };
 
-  const orderBlocksRaw = Array.isArray(base?.order_blocks) ? base.order_blocks : [];
-  const fvgRaw = Array.isArray(base?.fvg) ? base.fvg : [];
-  const liquidityRaw = Array.isArray(base?.liquidity) ? base.liquidity : [];
-  const structureRaw = Array.isArray(base?.structure_levels) ? base.structure_levels : Array.isArray(base?.structure) ? base.structure : [];
-  const patternsRaw = Array.isArray(base?.patterns) ? base.patterns : [];
+  const orderBlocksRaw = takeList("order_blocks", "orderBlocks", "orderblock", "order_blocks_zones");
+  const fvgRaw = takeList("fvg", "imbalances", "imbalance", "fair_value_gap");
+  const liquidityRaw = takeList("liquidity", "liquidity_levels", "liquidityLevels");
+  const structureRaw = takeList("structure_levels", "structure", "structureLevels");
+  const patternsRaw = takeList("patterns", "chart_patterns", "pattern_overlays");
+  const zonesRaw = takeList("zones", "working_zones", "areas");
+  const levelsRaw = takeList("levels", "trade_levels", "reference_levels");
 
-  const orderBlocks = orderBlocksRaw.map((item) => asZone(item, "Order Block")).filter(Boolean);
-  const fvg = fvgRaw.map((item) => asZone(item, "FVG")).filter(Boolean);
+  const combinedZoneItems = [...orderBlocksRaw, ...fvgRaw, ...zonesRaw];
+  const orderBlocks = combinedZoneItems
+    .map((item) => asZone(item, "Order Block"))
+    .filter(Boolean)
+    .filter((zone) => {
+      const marker = String(zone.type || zone.label || "").toLowerCase();
+      return !(marker.includes("fvg") || marker.includes("imbalance") || marker.includes("imb"));
+    });
+  const fvg = combinedZoneItems
+    .map((item) => asZone(item, "FVG"))
+    .filter(Boolean)
+    .filter((zone) => {
+      const marker = String(zone.type || zone.label || "").toLowerCase();
+      return marker.includes("fvg") || marker.includes("imbalance") || marker.includes("imb");
+    });
 
-  const liquidity = liquidityRaw
+  const liquidity = [...liquidityRaw, ...levelsRaw]
     .map((item) => {
       const level = toFiniteNumber(item?.price ?? item?.level ?? item?.value);
       if (level == null) return null;
@@ -1628,7 +1681,7 @@ function normalizeSmcOverlays(payload) {
     })
     .filter(Boolean);
 
-  const structure = structureRaw
+  const structure = [...structureRaw, ...levelsRaw]
     .map((item) => {
       const level = toFiniteNumber(item?.price ?? item?.level ?? item?.value);
       if (level == null) return null;
@@ -2019,12 +2072,14 @@ async function openIdea(idea) {
   renderDetailText(idea);
   renderCleanDetailStatus(idea);
   const snapshotUrl = getValidChartUrl(idea);
+  const cachedSnapshotUrl = getCachedChartUrl(idea);
+  const resolvedSnapshotUrl = snapshotUrl || cachedSnapshotUrl;
   const hasLevelFallback = hasBasicLevels(idea);
   const hasFallbackCandles = shouldUseFallbackCandles(idea);
   normalizeSnapshotStatus(
     idea.chartSnapshotStatus || idea.chart_snapshot_status || "",
     {
-      hasImage: Boolean(snapshotUrl),
+      hasImage: Boolean(resolvedSnapshotUrl),
       hasCandles: hasFallbackCandles,
     },
   );
@@ -2034,13 +2089,13 @@ async function openIdea(idea) {
     showUnavailableChart("Загружаем график…");
   }
 
-  if (snapshotUrl) {
-    const snapshotLoaded = await preloadSnapshotImage(snapshotUrl);
+  if (resolvedSnapshotUrl) {
+    const snapshotLoaded = await preloadSnapshotImage(resolvedSnapshotUrl);
 
     if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
     if (snapshotLoaded) {
-      showSnapshotChart(snapshotUrl);
-      cacheIdeaChart(idea.id, { type: "snapshot", value: snapshotUrl });
+      showSnapshotChart(resolvedSnapshotUrl);
+      cacheIdeaChart(idea.id, { type: "snapshot", value: resolvedSnapshotUrl });
       renderCleanDetailStatus(idea);
       return;
     }
@@ -2059,7 +2114,11 @@ async function openIdea(idea) {
   }
   if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
 
-  if (showLiveChart(payload) || showLiveChart(mergeChartPayloadWithIdeaOverlays(idea.chartData, idea))) {
+  const levelLines = buildIdeaLevelLines(idea, idea?.chart_overlays || payload?.chart_overlays);
+  if (
+    showLiveChart(payload, { levelLines })
+    || showLiveChart(mergeChartPayloadWithIdeaOverlays(idea.chartData, idea), { levelLines })
+  ) {
     const livePayload = hasCandles(payload) ? payload : idea.chartData;
     if (hasCandles(livePayload)) {
       cacheIdeaChart(idea.id, { type: "live", value: livePayload });

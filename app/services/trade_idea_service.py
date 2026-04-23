@@ -2195,15 +2195,22 @@ class TradeIdeaService:
         normalized: dict[str, list[dict[str, Any]]] = {key: [] for key in CHART_OVERLAY_KEYS}
         if not isinstance(payload, dict):
             return normalized
+        resolved_payload = payload
+        nested = payload.get("chart_overlays") if isinstance(payload.get("chart_overlays"), dict) else None
+        if nested is None and isinstance(payload.get("overlays"), dict):
+            overlays_obj = payload.get("overlays")
+            nested = overlays_obj.get("chart_overlays") if isinstance(overlays_obj.get("chart_overlays"), dict) else overlays_obj
+        if isinstance(nested, dict):
+            resolved_payload = {**resolved_payload, **nested}
         for key in CHART_OVERLAY_KEYS:
             values: list[Any] = []
             for alias in CHART_OVERLAY_ALIASES.get(key, (key,)):
-                candidate = payload.get(alias)
+                candidate = resolved_payload.get(alias)
                 if isinstance(candidate, list):
                     values.extend(candidate)
             normalized[key] = cls._normalize_overlay_items(key=key, items=values)
 
-        generic_zones = payload.get("zones")
+        generic_zones = resolved_payload.get("zones")
         if isinstance(generic_zones, list):
             for zone in cls._normalize_overlay_items(key="order_blocks", items=generic_zones):
                 zone_type = str(zone.get("type") or zone.get("label") or "").lower()
@@ -2214,7 +2221,7 @@ class TradeIdeaService:
                 else:
                     normalized["order_blocks"].append(zone)
 
-        generic_levels = payload.get("levels")
+        generic_levels = resolved_payload.get("levels")
         if isinstance(generic_levels, list):
             for level in cls._normalize_overlay_items(key="structure_levels", items=generic_levels):
                 level_type = str(level.get("type") or level.get("label") or "").lower()

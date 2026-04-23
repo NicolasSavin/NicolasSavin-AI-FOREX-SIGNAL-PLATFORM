@@ -409,11 +409,13 @@ class ChartDataService:
     ) -> tuple[float, float, float, float] | None:
         lower_bound = min(open_price, close_price)
         upper_bound = max(open_price, close_price)
-        repaired_low = min(low_price, lower_bound)
-        repaired_high = max(high_price, upper_bound)
-        if repaired_low > repaired_high:
+        if low_price > lower_bound:
             return None
-        return open_price, repaired_high, repaired_low, close_price
+        if high_price < upper_bound:
+            return None
+        if low_price > high_price:
+            return None
+        return open_price, high_price, low_price, close_price
 
     @classmethod
     def _extract_timestamp(cls, item: dict[str, Any]) -> int | None:
