@@ -162,14 +162,140 @@ class TradeIdeaService:
             payload = {"updated_at_utc": payload.get("updated_at_utc"), "ideas": ideas}
         active_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES]
         archived_ideas = [idea for idea in payload.get("ideas", []) if str(idea.get("status")).lower() in CLOSED_STATUSES]
+        combined_active_ideas = self._combine_ideas_by_instrument(active_ideas)
         legacy = {
             "updated_at_utc": payload.get("updated_at_utc"),
-            "ideas": [self._to_legacy_card(idea) for idea in active_ideas],
+            "ideas": [self._to_legacy_card(idea) for idea in combined_active_ideas],
             "archive": archived_ideas,
             "statistics": TradeIdeaStatsService.aggregate(archived_ideas),
         }
         self.legacy_store.write(legacy)
         return legacy
+
+    @staticmethod
+    def _normalize_direction(value: Any) -> str:
+        raw = str(value or "").strip().lower()
+        if raw in {"bullish", "buy", "long"}:
+            return "bullish"
+        if raw in {"bearish", "sell", "short"}:
+            return "bearish"
+        return "neutral"
+
+    def _combine_ideas_by_instrument(self, ideas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for idea in ideas:
+            symbol = str(idea.get("symbol") or "").upper()
+            if not symbol:
+                continue
+            grouped.setdefault(symbol, []).append(idea)
+
+        combined_cards: list[dict[str, Any]] = []
+        timeframe_priority = {"M15": 0, "H1": 1, "H4": 2}
+        for symbol, symbol_ideas in grouped.items():
+            timeframe_map: dict[str, dict[str, Any]] = {}
+            for idea in sorted(
+                symbol_ideas,
+                key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""),
+                reverse=True,
+            ):
+                timeframe = str(idea.get("timeframe") or "H1").upper()
+                timeframe_map.setdefault(timeframe, idea)
+
+            h4 = timeframe_map.get("H4")
+            h1 = timeframe_map.get("H1")
+            m15 = timeframe_map.get("M15")
+
+            h4_dir = self._normalize_direction((h4 or {}).get("direction") or (h4 or {}).get("bias"))
+            h1_dir = self._normalize_direction((h1 or {}).get("direction") or (h1 or {}).get("bias"))
+            m15_dir = self._normalize_direction((m15 or {}).get("direction") or (m15 or {}).get("bias"))
+
+            final_signal = "wait"
+            final_direction = "neutral"
+            final_reason = "Нет согласованного multi-timeframe подтверждения."
+            if h4 and h1 and h4_dir in {"bullish", "bearish"} and h4_dir == h1_dir:
+                if m15_dir == h4_dir:
+                    final_signal = "buy" if h4_dir == "bullish" else "sell"
+                    final_direction = h4_dir
+                    final_reason = "H4 и H1 согласованы, M15 подтвердил триггер."
+                elif m15_dir == "neutral" or not m15:
+                    final_reason = "H4 и H1 согласованы, но на M15 ещё нет триггера."
+                else:
+                    final_reason = "H4 и H1 согласованы, но M15 против базового направления."
+            elif h4 and h1 and h4_dir in {"bullish", "bearish"} and h1_dir in {"bullish", "bearish"} and h4_dir != h1_dir:
+                final_reason = "Конфликт HTF и MTF структуры: H4 и H1 разнонаправлены."
+            elif h1 and m15 and h1_dir in {"bullish", "bearish"} and m15_dir == h1_dir and not h4:
+                final_reason = "Недостаточно HTF контекста (H4 отсутствует), ожидаем подтверждение старшего ТФ."
+            elif m15 and m15_dir in {"bullish", "bearish"} and (not h4 or h4_dir != m15_dir):
+                final_reason = "LTF сигнал против старшего контекста, идея не продвигается в trade."
+
+            confidence_values = [
+                int(self._extract_numeric(item.get("confidence")) or 0)
+                for item in (h4, h1, m15)
+                if isinstance(item, dict)
+            ]
+            base_confidence = int(sum(confidence_values) / len(confidence_values)) if confidence_values else 0
+            final_confidence = max(25, base_confidence - 12) if final_signal == "wait" else max(base_confidence, 50)
+
+            preferred_timeframe_idea = m15 or h1 or h4 or symbol_ideas[0]
+            latest_update = max(
+                (
+                    str(item.get("meaningful_updated_at") or item.get("updated_at") or item.get("created_at") or "")
+                    for item in symbol_ideas
+                ),
+                default=None,
+            )
+
+            card = dict(preferred_timeframe_idea)
+            card.update(
+                {
+                    "id": f"{symbol.lower()}-combined",
+                    "idea_id": f"{symbol.lower()}-combined",
+                    "symbol": symbol,
+                    "pair": symbol,
+                    "timeframe": "MTF",
+                    "tf": "MTF",
+                    "signal": final_signal,
+                    "direction": final_direction,
+                    "bias": final_direction,
+                    "confidence": final_confidence,
+                    "idea_thesis": (
+                        f"{symbol}: HTF={h4_dir if h4 else 'нет'}; MTF={h1_dir if h1 else 'нет'}; "
+                        f"LTF={m15_dir if m15 else 'нет'}. Итог: {final_signal.upper()}."
+                    ),
+                    "unified_narrative": (
+                        f"{symbol}: HTF bias — {h4_dir if h4 else 'нет данных'}, "
+                        f"MTF структура — {h1_dir if h1 else 'нет данных'}, "
+                        f"LTF триггер — {m15_dir if m15 else 'нет данных'}. "
+                        f"Финальное решение: {final_signal.upper()} ({final_reason})"
+                    ),
+                    "summary": final_reason,
+                    "summary_ru": final_reason,
+                    "short_text": final_reason,
+                    "combined": True,
+                    "final_signal": final_signal,
+                    "final_confidence": final_confidence,
+                    "htf_bias_summary": f"H4: {h4_dir if h4 else 'нет данных'}",
+                    "mtf_structure_summary": f"H1: {h1_dir if h1 else 'нет данных'}",
+                    "ltf_trigger_summary": f"M15: {m15_dir if m15 else 'нет данных'}",
+                    "timeframe_ideas": {
+                        tf: self._to_legacy_card(item)
+                        for tf, item in sorted(timeframe_map.items(), key=lambda row: timeframe_priority.get(row[0], 99), reverse=True)
+                    },
+                    "timeframes_available": sorted(timeframe_map.keys(), key=lambda tf: timeframe_priority.get(tf, 99), reverse=True),
+                    "updated_at": latest_update,
+                    "meaningful_updated_at": latest_update,
+                    "tags": [symbol, "MTF", final_signal.upper(), *sorted(timeframe_map.keys())],
+                }
+            )
+            combined_cards.append(card)
+
+        combined_cards.sort(
+            key=lambda item: (
+                str(item.get("status") not in ACTIVE_STATUSES),
+                str(item.get("symbol") or ""),
+            )
+        )
+        return combined_cards
 
     def _refresh_active_ideas(self, ideas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
         if not ideas:
