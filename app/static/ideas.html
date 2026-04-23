@@ -15,6 +15,7 @@
       --muted: #9fb0c7;
       --tag: #13233c;
       --accent: #facc15;
+      --accent-soft: rgba(250, 204, 21, 0.18);
     }
 
     * { box-sizing: border-box; }
@@ -117,12 +118,40 @@
     }
 
     .card {
-      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
-      border: 1px solid var(--border);
+      --state-accent: #7dd3fc;
+      --state-accent-soft: rgba(125, 211, 252, 0.2);
+      --state-accent-strong: rgba(125, 211, 252, 0.34);
+      background:
+        radial-gradient(circle at top right, rgba(125, 211, 252, 0.09), transparent 42%),
+        linear-gradient(180deg, #0e1d39 0%, #0a1427 100%);
+      border: 1px solid #253a5b;
       border-radius: 18px;
-      padding: 14px;
+      padding: 15px;
       cursor: pointer;
-      transition: transform 0.15s ease, border-color 0.15s ease;
+      box-shadow:
+        0 10px 26px rgba(1, 7, 18, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.36);
+      transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+      animation: cardEnter 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .card[data-direction="bullish"] {
+      --state-accent: #34d399;
+      --state-accent-soft: rgba(52, 211, 153, 0.22);
+      --state-accent-strong: rgba(52, 211, 153, 0.38);
+    }
+
+    .card[data-direction="bearish"] {
+      --state-accent: #fb7185;
+      --state-accent-soft: rgba(251, 113, 133, 0.22);
+      --state-accent-strong: rgba(251, 113, 133, 0.38);
+    }
+
+    .card[data-direction="neutral"] {
+      --state-accent: #60a5fa;
+      --state-accent-soft: rgba(96, 165, 250, 0.2);
+      --state-accent-strong: rgba(96, 165, 250, 0.35);
     }
 
     .card.idea-card-flash {
@@ -131,18 +160,29 @@
 
     @keyframes ideaFlash {
       0% {
-        border-color: #facc15;
-        box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.52);
+        border-color: var(--state-accent);
+        box-shadow:
+          0 0 0 0 var(--state-accent-soft),
+          0 12px 28px rgba(1, 9, 22, 0.62);
       }
       100% {
-        border-color: var(--border);
-        box-shadow: 0 0 0 14px rgba(250, 204, 21, 0);
+        border-color: #253a5b;
+        box-shadow:
+          0 0 0 14px rgba(0, 0, 0, 0),
+          0 10px 26px rgba(1, 7, 18, 0.55);
       }
     }
 
     .card:hover {
-      transform: translateY(-2px);
-      border-color: #35527f;
+      transform: translateY(-3px);
+      border-color: var(--state-accent-strong);
+      box-shadow:
+        0 14px 30px rgba(1, 9, 22, 0.62),
+        0 0 0 1px rgba(255, 255, 255, 0.03),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      background:
+        radial-gradient(circle at top right, var(--state-accent-soft), transparent 48%),
+        linear-gradient(180deg, #101f3b 0%, #0a162b 100%);
     }
 
     .card-head {
@@ -161,28 +201,52 @@
       margin-bottom: 3px;
     }
 
+    .symbol:first-child {
+      color: #dbeafe;
+      font-weight: 700;
+    }
+
     .meta {
       font-size: 14px;
       font-weight: 700;
       line-height: 1.3;
+      margin-bottom: 6px;
+      color: #f4f8ff;
     }
 
     .summary {
-      margin: 0 0 12px;
-      color: #d7e0ee;
+      margin: 0 0 10px;
+      color: #e3ebf7;
       font-size: 13px;
-      line-height: 1.45;
+      line-height: 1.6;
       min-height: 40px;
+      padding: 11px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(37, 56, 89, 0.82);
+      background: linear-gradient(180deg, rgba(13, 27, 51, 0.88) 0%, rgba(11, 21, 38, 0.88) 100%);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
 
+    .summary-secondary {
+      font-size: 12px;
+      color: #bfcde3;
+      background: rgba(12, 21, 39, 0.72);
+      border-color: rgba(37, 56, 89, 0.64);
+      -webkit-line-clamp: 3;
+      min-height: 0;
+    }
+
     .tags {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+      padding-top: 8px;
+      margin-top: 6px;
+      border-top: 1px solid rgba(39, 58, 90, 0.5);
     }
 
     .tag {
@@ -220,13 +284,35 @@
     }
 
     .modal-card {
+      --state-accent: #60a5fa;
+      --state-accent-soft: rgba(96, 165, 250, 0.2);
+      --state-accent-strong: rgba(96, 165, 250, 0.38);
       width: min(1420px, 100%);
       max-height: 95vh;
       overflow-y: auto;
-      background: #0b1730;
-      border: 1px solid var(--border);
+      background:
+        radial-gradient(circle at top right, rgba(96, 165, 250, 0.1), transparent 52%),
+        linear-gradient(180deg, #0c1932 0%, #091325 100%);
+      border: 1px solid #263b5d;
       border-radius: 22px;
       padding: 20px;
+      box-shadow:
+        0 24px 56px rgba(0, 0, 0, 0.62),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.34);
+      animation: modalEnter 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .modal-card[data-direction="bullish"] {
+      --state-accent: #34d399;
+      --state-accent-soft: rgba(52, 211, 153, 0.2);
+      --state-accent-strong: rgba(52, 211, 153, 0.38);
+    }
+
+    .modal-card[data-direction="bearish"] {
+      --state-accent: #fb7185;
+      --state-accent-soft: rgba(251, 113, 133, 0.2);
+      --state-accent-strong: rgba(251, 113, 133, 0.38);
     }
 
     .modal-top {
@@ -238,6 +324,7 @@
       padding: 12px 14px;
       border-radius: 16px;
       border: 1px solid rgba(45, 67, 101, 0.85);
+      border-left: 2px solid var(--state-accent-strong);
       background: linear-gradient(180deg, rgba(14, 30, 56, 0.96) 0%, rgba(10, 22, 41, 0.96) 100%);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
     }
@@ -294,10 +381,13 @@
       width: 100%;
       height: 680px;
       border-radius: 18px;
-      border: 1px solid #162744;
+      border: 1px solid rgba(33, 54, 85, 0.92);
       background: #08111f;
       overflow: hidden;
       margin-bottom: 18px;
+      box-shadow:
+        0 10px 24px rgba(2, 8, 18, 0.52),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
     }
 
     .chart-placeholder {
@@ -385,10 +475,20 @@
     }
 
     .detail-card {
-      background: linear-gradient(180deg, #0c1a33 0%, #0a1529 100%);
-      border: 1px solid #1d2c47;
+      background: linear-gradient(180deg, #0e1e3a 0%, #0a162b 100%);
+      border: 1px solid #233857;
       border-radius: 16px;
       padding: 16px 18px;
+      box-shadow:
+        0 10px 20px rgba(2, 8, 18, 0.42),
+        inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
+
+    .detail-card-main {
+      border-color: rgba(54, 76, 111, 0.94);
+      background:
+        linear-gradient(90deg, var(--state-accent-soft), transparent 18%),
+        linear-gradient(180deg, #111f38 0%, #0b162b 100%);
     }
 
     .detail-card h3 {
@@ -399,13 +499,18 @@
     .detail-summary {
       margin: 0;
       color: #eef4ff;
-      line-height: 1.65;
+      line-height: 1.78;
     }
 
     .detail-summary-strong {
       font-size: 17px;
-      line-height: 1.85;
+      line-height: 1.92;
       letter-spacing: 0.01em;
+      padding: 14px 14px 15px;
+      border-radius: 13px;
+      background: rgba(9, 18, 35, 0.84);
+      border: 1px solid rgba(37, 56, 89, 0.8);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
     }
 
     .detail-metrics {
@@ -417,9 +522,9 @@
 
     .metric-chip {
       border-radius: 999px;
-      border: 1px solid #1d2c47;
-      background: rgba(255, 255, 255, 0.03);
-      padding: 6px 10px;
+      border: 1px solid rgba(39, 59, 91, 0.82);
+      background: rgba(255, 255, 255, 0.02);
+      padding: 5px 10px;
       display: inline-flex;
       align-items: baseline;
       gap: 6px;
@@ -442,12 +547,14 @@
 
     .levels-list {
       display: grid;
-      gap: 10px;
+      gap: 9px;
     }
 
     .level-item {
       display: grid;
-      gap: 4px;
+      gap: 3px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(36, 55, 86, 0.5);
     }
 
     .level-label {
@@ -455,12 +562,25 @@
       text-transform: uppercase;
       letter-spacing: 0.06em;
       color: var(--muted);
+      font-size: 11px;
     }
 
     .level-value {
       color: #eef4ff;
-      line-height: 1.55;
+      line-height: 1.48;
+      font-weight: 700;
+      font-size: 15px;
       white-space: pre-line;
+    }
+
+    .level-item[data-level="entry"] .level-value { color: #fcd34d; }
+    .level-item[data-level="sl"] .level-value { color: #fb7185; }
+    .level-item[data-level="tp"] .level-value { color: #4ade80; }
+    .level-item[data-level="rr"] .level-value { color: #93c5fd; }
+
+    .level-item:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
     }
 
     .status-note {
@@ -472,6 +592,12 @@
       color: #f9e58a;
       font-size: 14px;
       line-height: 1.5;
+    }
+
+    .modal-card .status-note {
+      border-color: var(--state-accent-strong);
+      background: linear-gradient(180deg, rgba(12, 23, 43, 0.86) 0%, rgba(9, 17, 33, 0.9) 100%);
+      color: #dbeafe;
     }
 
     .analysis-grid {
@@ -513,9 +639,10 @@
 
     .scenario-card {
       background: linear-gradient(180deg, #0c1a33 0%, #0a1529 100%);
-      border: 1px solid #1d2c47;
+      border: 1px solid #223553;
       border-radius: 16px;
       padding: 16px 18px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
     }
 
     .scenario-card h3 {
@@ -550,6 +677,10 @@
       .detail-grid {
         grid-template-columns: 1fr;
       }
+
+      .card {
+        box-shadow: 0 8px 18px rgba(1, 7, 18, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
     }
 
     @media (max-width: 640px) {
@@ -577,6 +708,34 @@
 
       .modal-card {
         padding: 16px;
+      }
+
+      .modal-card,
+      .chart-wrap,
+      .detail-card {
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+      }
+    }
+
+    @keyframes cardEnter {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes modalEnter {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
       }
     }
   </style>
@@ -607,7 +766,7 @@
   </div>
 
   <div id="modal" class="modal">
-    <div class="modal-card">
+    <div id="modal-card" class="modal-card" data-direction="neutral">
       <div class="modal-top">
         <div class="modal-headline">
           <h2 id="modal-title">Идея</h2>
@@ -617,7 +776,7 @@
       </div>
 
       <div class="detail-grid">
-        <section class="detail-card">
+        <section class="detail-card detail-card-main">
           <h3>Основная идея (Grok)</h3>
           <p id="idea-summary" class="detail-summary detail-summary-strong"></p>
           <div id="detail-metrics" class="detail-metrics"></div>
@@ -626,10 +785,10 @@
         <section class="detail-card">
           <h3>Уровни</h3>
           <div class="levels-list">
-            <div class="level-item"><div class="level-label">Entry</div><div id="level-entry" class="level-value"></div></div>
-            <div class="level-item"><div class="level-label">SL</div><div id="level-sl" class="level-value"></div></div>
-            <div class="level-item"><div class="level-label">TP</div><div id="level-tp" class="level-value"></div></div>
-            <div class="level-item"><div class="level-label">RR</div><div id="level-rr" class="level-value"></div></div>
+            <div class="level-item" data-level="entry"><div class="level-label">Entry</div><div id="level-entry" class="level-value"></div></div>
+            <div class="level-item" data-level="sl"><div class="level-label">SL</div><div id="level-sl" class="level-value"></div></div>
+            <div class="level-item" data-level="tp"><div class="level-label">TP</div><div id="level-tp" class="level-value"></div></div>
+            <div class="level-item" data-level="rr"><div class="level-label">RR</div><div id="level-rr" class="level-value"></div></div>
           </div>
         </section>
       </div>

@@ -4,6 +4,7 @@ const symbolFilter = document.getElementById("symbol-filter");
 const timeframeFilter = document.getElementById("timeframe-filter");
 
 const modal = document.getElementById("modal");
+const modalCard = document.getElementById("modal-card");
 const modalTitle = document.getElementById("modal-title");
 const modalSub = document.getElementById("modal-sub");
 const closeModalBtn = document.getElementById("close-modal");
@@ -94,6 +95,13 @@ function getDirectionLabel(value) {
   if (["bullish", "buy", "long"].includes(raw)) return "BUY";
   if (["bearish", "sell", "short"].includes(raw)) return "SELL";
   return "NEUTRAL";
+}
+
+function getDirectionTone(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (["bullish", "buy", "long"].includes(raw)) return "bullish";
+  if (["bearish", "sell", "short"].includes(raw)) return "bearish";
+  return "neutral";
 }
 
 function normalizeWhitespace(value) {
@@ -466,7 +474,7 @@ function buildIdeaCardMarkup(idea) {
       </div>
     </div>
     <p class="summary">${escapeHtml(summary)}</p>
-    ${updateSummary ? `<p class="summary">Обновление: ${escapeHtml(updateSummary)}</p>` : ""}
+    ${updateSummary ? `<p class="summary summary-secondary">Обновление: ${escapeHtml(updateSummary)}</p>` : ""}
     <div class="tags">
       ${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
     </div>
@@ -602,6 +610,7 @@ function renderIdeas(ideas, notice = "") {
       card.innerHTML = buildIdeaCardMarkup(idea);
       renderedIdeaSignatureById.set(ideaId, signature);
     }
+    card.dataset.direction = getDirectionTone(idea.direction);
 
     const targetPosition = insertionPoint ? insertionPoint.nextSibling : ideasRoot.firstChild;
     if (card !== targetPosition) {
@@ -1304,6 +1313,9 @@ async function openIdea(idea) {
     compactMeta.push(`Секций ${supported}`);
   }
   modalSub.textContent = compactMeta.join(" · ");
+  if (modalCard) {
+    modalCard.dataset.direction = getDirectionTone(idea.direction);
+  }
   modal.classList.add("open");
 
   renderDetailText(idea);
@@ -1386,6 +1398,9 @@ async function openIdea(idea) {
 
 function closeModal() {
   modal.classList.remove("open");
+  if (modalCard) {
+    modalCard.dataset.direction = "neutral";
+  }
   activeIdea = null;
   detailRequestId += 1;
   showUnavailableChart("Chart unavailable");
