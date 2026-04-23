@@ -255,11 +255,20 @@ class TradeIdeaService:
                 "sell": "План: работать только от short-сценария при подтверждении M15, SL выше структуры, TP по ближайшей ликвидности.",
                 "wait": "План: без входа до синхронизации H4/H1 и появления чистого M15-триггера.",
             }.get(final_signal, "План: сохранять дисциплину риска и дождаться подтверждения.")
+            invalidation_text = (
+                "Инвалидация: сценарий теряет силу при сломе структуры H1/H4 или если M15 закрепляется против базового направления."
+            )
             unified_narrative = (
                 f"Ситуация: {symbol} торгуется в режиме MTF-оценки, текущий фокус — {direction_ru}. "
                 f"Причина: H4 — {h4_structure or h4_dir}, H1 — {h1_structure or h1_dir}, M15 — {m15_trigger or m15_dir}. "
+                f"Подтверждение: {final_reason} "
                 f"Ожидание: {expectation_text} "
-                f"Действие: {action_text} ({final_reason})"
+                f"Действие: {action_text} "
+                f"{invalidation_text}"
+            )
+            compact_summary = (
+                f"{symbol}: H4={h4_dir if h4 else 'нет данных'}; H1={h1_dir if h1 else 'нет данных'}; "
+                f"M15={m15_dir if m15 else 'нет данных'}. Итог: {final_signal.upper()}."
             )
 
             preferred_timeframe_idea = m15 or h1 or h4 or symbol_ideas[0]
@@ -284,14 +293,12 @@ class TradeIdeaService:
                     "direction": final_direction,
                     "bias": final_direction,
                     "confidence": final_confidence,
-                    "idea_thesis": (
-                        f"{symbol}: H4={h4_dir if h4 else 'нет данных'}; H1={h1_dir if h1 else 'нет данных'}; "
-                        f"M15={m15_dir if m15 else 'нет данных'}. Итог: {final_signal.upper()}."
-                    ),
+                    "idea_thesis": unified_narrative,
                     "unified_narrative": unified_narrative,
                     "summary": final_reason,
                     "summary_ru": final_reason,
                     "short_text": final_reason,
+                    "compact_summary": compact_summary,
                     "combined": True,
                     "final_signal": final_signal,
                     "final_confidence": final_confidence,

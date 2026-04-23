@@ -125,6 +125,12 @@ function normalizeWhitespace(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function isCompactTechnicalSummary(value) {
+  const text = normalizeWhitespace(value).toLowerCase();
+  if (!text) return false;
+  return /h4\s*=\s*(bullish|bearish|neutral|нет данных).+h1\s*=\s*(bullish|bearish|neutral|нет данных).+m15\s*=\s*(bullish|bearish|neutral|нет данных).+итог:\s*(buy|sell|wait)/i.test(text);
+}
+
 function formatDateTime(value) {
   const text = normalizeWhitespace(value);
   if (!text) return "—";
@@ -210,23 +216,28 @@ function buildShortText(idea) {
 
 function buildFullText(idea) {
   const thesis = normalizeWhitespace(idea?.idea_thesis || idea?.ideaThesis);
-  if (isRenderableNarrative(thesis)) return thesis;
+  if (isRenderableNarrative(thesis) && !isCompactTechnicalSummary(thesis)) return thesis;
   const unified = normalizeWhitespace(idea?.unified_narrative);
-  if (isRenderableNarrative(unified)) return unified;
-  const direct = normalizeWhitespace(
-    idea?.full_text
-      || idea?.fullText
-      || idea?.narrative
-      || idea?.description_ru
-      || idea?.reason_ru
-      || idea?.rationale
-  );
-  if (isRenderableNarrative(direct)) return direct;
+  if (isRenderableNarrative(unified) && !isCompactTechnicalSummary(unified)) return unified;
+  const legacyNarrativeCandidates = [
+    idea?.full_text,
+    idea?.fullText,
+    idea?.narrative,
+    idea?.description_ru,
+    idea?.reason_ru,
+    idea?.rationale,
+    idea?.idea_context_ru,
+    idea?.ideaContext,
+  ];
+  for (const candidate of legacyNarrativeCandidates) {
+    const text = normalizeWhitespace(candidate);
+    if (isRenderableNarrative(text) && !isCompactTechnicalSummary(text)) return text;
+  }
   const { summaryStructured, tradePlanStructured } = getStructuredNarrativeBlocks(idea);
   const structuredText = normalizeWhitespace(summaryStructured?.situation) || normalizeWhitespace(tradePlanStructured?.entry_trigger);
-  if (isRenderableNarrative(structuredText)) return structuredText;
+  if (isRenderableNarrative(structuredText) && !isCompactTechnicalSummary(structuredText)) return structuredText;
   const detailSummary = normalizeWhitespace(idea?.detail_brief?.summary_narrative);
-  if (isRenderableNarrative(detailSummary)) return detailSummary;
+  if (isRenderableNarrative(detailSummary) && !isCompactTechnicalSummary(detailSummary)) return detailSummary;
   const legacySummary = normalizeWhitespace(idea?.summary || idea?.summary_ru);
   if (isRenderableNarrative(legacySummary)) return legacySummary;
   return "Подробное описание пока не получено. Дождитесь обновления идеи перед входом в сделку.";
@@ -384,6 +395,10 @@ function normalizeIdea(idea) {
     stopLoss: idea?.stopLoss ?? idea?.stop_loss ?? "—",
     takeProfit: idea?.takeProfit ?? idea?.take_profit ?? "—",
     chartData: idea?.chartData ?? idea?.chart_data ?? null,
+    chartImageUrl: normalizeChartImageUrl(idea?.chartImageUrl || idea?.chart_image || ""),
+    chart_image: normalizeChartImageUrl(idea?.chart_image || idea?.chartImageUrl || ""),
+    chartSnapshotStatus: idea?.chartSnapshotStatus || idea?.chart_snapshot_status || "",
+    chart_snapshot_status: idea?.chart_snapshot_status || idea?.chartSnapshotStatus || "",
     chart_overlays: idea?.chart_overlays
       ?? idea?.chartOverlays
       ?? idea?.chart_data?.chart_overlays
