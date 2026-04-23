@@ -45,6 +45,7 @@ let ideasPollInFlight = false;
 let lastNotificationAt = 0;
 const previousIdeasById = new Map();
 const renderedIdeaSignatureById = new Map();
+const lastValidChartByIdeaId = new Map();
 const IDEAS_POLL_INTERVAL_MS = 15000;
 const NOTIFICATION_COOLDOWN_MS = 1500;
 const CHART_REQUEST_TIMEOUT_MS = 5000;
@@ -102,6 +103,22 @@ function getDirectionTone(value) {
   if (["bullish", "buy", "long"].includes(raw)) return "bullish";
   if (["bearish", "sell", "short"].includes(raw)) return "bearish";
   return "neutral";
+}
+
+function getSignalTone(idea) {
+  const signal = String(idea?.final_signal || idea?.signal || "").trim().toLowerCase();
+  if (signal === "buy") return "bullish";
+  if (signal === "sell") return "bearish";
+  if (signal === "wait") return "neutral";
+  return getDirectionTone(idea?.direction || idea?.bias || "neutral");
+}
+
+function getSignalLabel(idea) {
+  const signal = String(idea?.final_signal || idea?.signal || "").trim().toLowerCase();
+  if (signal === "buy") return "BUY";
+  if (signal === "sell") return "SELL";
+  if (signal === "wait") return "WAIT";
+  return getDirectionLabel(idea?.direction || idea?.bias || "neutral");
 }
 
 function normalizeWhitespace(value) {
@@ -401,11 +418,16 @@ function registerChartPlugin(plugin) {
 }
 
 function normalizeIdeas(data) {
-  if (Array.isArray(data)) return data.filter(Boolean).map(normalizeIdea);
+  const normalizeList = (items) => items.filter(Boolean).map(normalizeIdea).map((idea) => ({
+    ...idea,
+    direction: getSignalTone(idea),
+    bias: getSignalTone(idea),
+  }));
+  if (Array.isArray(data)) return normalizeList(data);
   if (Array.isArray(data?.ideas) || Array.isArray(data?.archive)) {
     const active = Array.isArray(data?.ideas) ? data.ideas : [];
     const archived = Array.isArray(data?.archive) ? data.archive : [];
-    return [...active, ...archived].filter(Boolean).map(normalizeIdea);
+    return normalizeList([...active, ...archived]);
   }
   return [];
 }
@@ -481,32 +503,40 @@ function getFilteredIdeas() {
 function buildIdeaCardMarkup(idea) {
   const tags = Array.isArray(idea.tags) ? idea.tags : [];
   const symbol = idea.symbol || "";
-  const direction = getDirectionRu(idea.direction || "NEUTRAL");
-  const timeframe = idea.timeframe || "";
+  const signalLabel = getSignalLabel(idea);
+  const signalTone = getSignalTone(idea);
   const timeframesAvailable = Array.isArray(idea?.timeframes_available) ? idea.timeframes_available : [];
-  const confidence = idea.confidence ?? "-";
-  const summary = buildShortText(idea);
-  const updateSummary = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
-  const statusLabel = idea.status === "archived" ? statusRu(idea.final_status || idea.status) : statusRu(idea.status);
-  const updatedLabel = formatDateTime(idea.meaningful_updated_at);
-  const archivedStats = idea.status === "archived"
-    ? `<div class="symbol">Результат: ${escapeHtml(String(idea.result || "—").toUpperCase())} · PnL: ${escapeHtml(formatSignedPercent(idea.pnl_percent))} · RR: ${escapeHtml(idea.rr != null ? Number(idea.rr).toFixed(2) : "—")} · Длительность: ${escapeHtml(idea.duration || "—")}</div>`
-    : "";
+  const confidence = Math.round(Number(idea?.final_confidence ?? idea?.confidence ?? 0)) || "-";
+  const mainNarrative = buildFullText(idea);
+  const h4 = normalizeWhitespace(idea?.htf_bias_summary) || "H4: нет данных";
+  const h1 = normalizeWhitespace(idea?.mtf_structure_summary) || "H1: нет данных";
+  const m15 = normalizeWhitespace(idea?.ltf_trigger_summary) || "M15: нет данных";
 
   return `
     <div class="card-head">
-      <div>
+      <div class="card-head-main">
         <div class="symbol">${escapeHtml(symbol)}</div>
-        <div class="meta">${escapeHtml(direction)} · ${escapeHtml(timeframe)} · ${escapeHtml(String(confidence))}%</div>
-        ${idea?.combined ? `<div class="symbol">TF: ${escapeHtml(timeframesAvailable.join(" / ") || "H4 / H1 / M15")}</div>` : ""}
-        <div class="symbol">Статус: ${escapeHtml(statusLabel)} · Обновлено: ${escapeHtml(updatedLabel)}</div>
-        ${archivedStats}
+        <div class="meta">Итоговый сигнал: ${escapeHtml(signalLabel)} · Уверенность: ${escapeHtml(String(confidence))}%</div>
       </div>
+      <div class="signal-badge signal-badge-${escapeHtml(signalTone)}">${escapeHtml(signalLabel)}</div>
     </div>
-    <p class="summary">${escapeHtml(summary)}</p>
-    ${updateSummary ? `<p class="summary summary-secondary">Обновление: ${escapeHtml(updateSummary)}</p>` : ""}
+    <div class="timeframe-tags">
+      ${(timeframesAvailable.length ? timeframesAvailable : ["H4", "H1", "M15"]).map((tf) => `<span class="tag tf-tag">${escapeHtml(tf)}</span>`).join("")}
+    </div>
+    <p class="summary summary-main">${escapeHtml(mainNarrative)}</p>
+    <div class="mtf-strip">
+      <div class="strip-chip strip-chip-h4">${escapeHtml(h4)}</div>
+      <div class="strip-chip strip-chip-h1">${escapeHtml(h1)}</div>
+      <div class="strip-chip strip-chip-m15">${escapeHtml(m15)}</div>
+    </div>
+    <div class="levels-inline">
+      <div class="level-pill level-pill-entry">Entry: ${escapeHtml(formatLevel(idea?.entry))}</div>
+      <div class="level-pill level-pill-sl">SL: ${escapeHtml(formatLevel(idea?.stopLoss))}</div>
+      <div class="level-pill level-pill-tp">TP: ${escapeHtml(formatLevel(idea?.takeProfit))}</div>
+      <div class="level-pill level-pill-rr">RR: ${escapeHtml(calculateRiskReward(idea))}</div>
+    </div>
     <div class="tags">
-      ${tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
+      ${tags.filter((tag) => !["created", "status", "debug"].includes(String(tag).toLowerCase())).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
     </div>
   `;
 }
@@ -640,7 +670,7 @@ function renderIdeas(ideas, notice = "") {
       card.innerHTML = buildIdeaCardMarkup(idea);
       renderedIdeaSignatureById.set(ideaId, signature);
     }
-    card.dataset.direction = getDirectionTone(idea.direction);
+    card.dataset.direction = getSignalTone(idea);
 
     const targetPosition = insertionPoint ? insertionPoint.nextSibling : ideasRoot.firstChild;
     if (card !== targetPosition) {
@@ -1347,32 +1377,57 @@ async function resolveChartData(idea) {
   }
 }
 
+function cacheIdeaChart(ideaId, chartRef) {
+  if (!ideaId || !chartRef) return;
+  lastValidChartByIdeaId.set(String(ideaId), chartRef);
+}
+
+function readCachedIdeaChart(ideaId) {
+  if (!ideaId) return null;
+  return lastValidChartByIdeaId.get(String(ideaId)) || null;
+}
+
+function showCachedChartIfAny(idea) {
+  const cached = readCachedIdeaChart(idea?.id);
+  if (!cached) return false;
+  if (cached.type === "snapshot") return showSnapshotChart(cached.value);
+  if (cached.type === "live") return showLiveChart(cached.value);
+  return false;
+}
+
+function renderCleanDetailStatus(idea) {
+  if (idea.status === "archived") {
+    const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
+    updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText}`);
+    return;
+  }
+  updateDetailStatus(`Сигнал: ${getSignalLabel(idea)} · Последнее обновление: ${formatDateTime(idea.meaningful_updated_at)}`);
+}
+
 async function openIdea(idea) {
   activeIdea = idea;
   const requestId = ++detailRequestId;
-  modalTitle.textContent = `${idea.symbol} — ${getDirectionRu(idea.direction)}`;
-  const supported = Array.isArray(idea?.detail_brief?.supported_sections) ? idea.detail_brief.supported_sections.length : 0;
-  const compactMeta = [idea.timeframe];
+  modalTitle.textContent = `${idea.symbol} — ${getSignalLabel(idea)}`;
+  const compactMeta = [];
   if (idea?.combined && Array.isArray(idea?.timeframes_available)) {
-    compactMeta.push(`TF: ${idea.timeframes_available.join("/")}`);
+    compactMeta.push(`ТФ: ${idea.timeframes_available.join("/")}`);
   }
-  const confidence = Number(idea?.confidence);
+  const confidence = Number(idea?.final_confidence ?? idea?.confidence);
   if (Number.isFinite(confidence) && confidence > 0) {
     compactMeta.push(`Уверенность ${Math.round(confidence)}%`);
   }
-  if (supported > 0) {
-    compactMeta.push(`Секций ${supported}`);
-  }
   modalSub.textContent = compactMeta.join(" · ");
   if (modalCard) {
-    modalCard.dataset.direction = getDirectionTone(idea.direction);
+    modalCard.dataset.direction = getSignalTone(idea);
   }
   modal.classList.add("open");
 
   renderDetailText(idea);
-  updateDetailStatus("Загружаем desk-style detail-view идеи и проверяем доступность графика.");
-  resetChartState();
-  showUnavailableChart("Загружаем график для идеи...");
+  renderCleanDetailStatus(idea);
+  if (!showCachedChartIfAny(idea)) {
+    resetChartState();
+    showUnavailableChart("Загружаем график…");
+  }
 
   const rawSnapshotUrl = idea.chartImageUrl || idea.chart_image || "";
   const snapshotUrl = normalizeChartImageUrl(rawSnapshotUrl);
@@ -1400,17 +1455,8 @@ async function openIdea(idea) {
 
     if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
     if (snapshotLoaded) {
-      if (idea.status === "archived") {
-        const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
-        updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
-      } else {
-        const updateText = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
-        updateDetailStatus(
-          updateText
-            ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`
-            : "Detail-view заполнен: narrative, сценарии, trading plan и snapshot графика доступны."
-        );
-      }
+      cacheIdeaChart(idea.id, { type: "snapshot", value: snapshotUrl });
+      renderCleanDetailStatus(idea);
       return;
     }
   }
@@ -1419,32 +1465,18 @@ async function openIdea(idea) {
   if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
 
   if (showLiveChart(payload) || showLiveChart(idea.chartData)) {
-    if (idea.status === "archived") {
-      const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
-      updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
-    } else {
-      const updateText = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
-      updateDetailStatus(
-        updateText
-          ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`
-          : "Detail-view заполнен: narrative, сценарии, trading plan и график доступны."
-      );
+    const livePayload = hasCandles(payload) ? payload : idea.chartData;
+    if (hasCandles(livePayload)) {
+      cacheIdeaChart(idea.id, { type: "live", value: livePayload });
     }
+    renderCleanDetailStatus(idea);
     return;
   }
 
-  showUnavailableChart(liveFallbackMessage);
-  if (idea.status === "archived") {
-    const closeText = normalizeWhitespace(idea.close_explanation) || "Сценарий закрыт и зафиксирован в архиве.";
-    updateDetailStatus(`Финальный статус: ${statusRu(idea.final_status || idea.status)} · ${closeText} · Закрыто: ${formatDateTime(idea.closed_at)}`);
-  } else {
-    const updateText = isMeaningfulUpdate(idea) ? normalizeWhitespace(idea.update_reason || idea.update_summary) : "";
-    updateDetailStatus(
-      updateText
-        ? `Статус: ${statusRu(idea.status)} · Обновлено: ${formatDateTime(idea.meaningful_updated_at)} · ${updateText}`
-        : "График недоступен, но detail-view завершил загрузку: narrative, сценарии и trading plan показаны без чарта."
-    );
+  if (!showCachedChartIfAny(idea)) {
+    showUnavailableChart(liveFallbackMessage);
   }
+  renderCleanDetailStatus(idea);
 }
 
 function closeModal() {
