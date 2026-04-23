@@ -56,6 +56,8 @@ LEVEL_ENTRY_MAX_DEVIATION_PCT = 0.5
 LEVEL_STOP_LOSS_OFFSET = 0.0020
 LEVEL_TAKE_PROFIT_OFFSET = 0.0040
 CANDLE_CONTEXT_COUNT = 40
+MODEL_CANDLES_MIN = 50
+MODEL_CANDLES_MAX = 120
 CHART_OVERLAY_KEYS = ("order_blocks", "liquidity", "fvg", "structure_levels", "patterns")
 CHART_OVERLAY_ALIASES = {
     "order_blocks": ("order_blocks", "orderBlocks", "orderblock", "order_blocks_zones"),
@@ -4682,8 +4684,19 @@ class TradeIdeaService:
     def _build_market_references(self) -> dict[tuple[str, str], dict[str, Any]]:
         references: dict[tuple[str, str], dict[str, Any]] = {}
         for symbol, timeframe in OPENROUTER_IDEA_SPECS:
-            chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
+            chart_payload = self.chart_data_service.get_chart(symbol, timeframe, MODEL_CANDLES_MAX)
             candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
+            candles = candles[-MODEL_CANDLES_MAX:]
+            if len(candles) < MODEL_CANDLES_MIN:
+                logger.warning(
+                    "idea_market_reference_insufficient_candles symbol=%s timeframe=%s candles=%s min_required=%s source=%s",
+                    symbol,
+                    timeframe,
+                    len(candles),
+                    MODEL_CANDLES_MIN,
+                    chart_payload.get("source"),
+                )
+                continue
             latest_close = candles[-1].get("close") if candles else None
             if latest_close in (None, "") or not candles:
                 logger.warning(
@@ -4694,11 +4707,22 @@ class TradeIdeaService:
                     len(candles),
                 )
                 continue
+            model_candles = self._build_model_candles(candles)
+            if len(model_candles) < MODEL_CANDLES_MIN:
+                logger.warning(
+                    "idea_market_reference_invalid_model_candles symbol=%s timeframe=%s candles=%s min_required=%s",
+                    symbol,
+                    timeframe,
+                    len(model_candles),
+                    MODEL_CANDLES_MIN,
+                )
+                continue
             references[(symbol, timeframe)] = {
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "latest_close": float(latest_close),
                 "current_price": float(latest_close),
+                "candles": model_candles,
                 "recent_candles": candles[-CANDLE_CONTEXT_COUNT:],
                 "market_context": {
                     "source": chart_payload.get("source"),
@@ -4712,17 +4736,21 @@ class TradeIdeaService:
         return references
 
     def _build_openrouter_prompt(self, market_references: dict[tuple[str, str], dict[str, Any]]) -> str:
-        contexts = [
-            {
-                "symbol": ref["symbol"],
-                "timeframe": ref["timeframe"],
-                "latest_close": ref["latest_close"],
-                "current_price": ref.get("current_price", ref["latest_close"]),
-                "recent_candles": ref["recent_candles"],
-                "market_context": ref["market_context"],
-            }
-            for _, ref in sorted(market_references.items())
-        ]
+        contexts: list[dict[str, Any]] = []
+        for _, ref in sorted(market_references.items()):
+            model_candles = ref.get("candles") if isinstance(ref.get("candles"), list) else []
+            logger.info("CANDLES SENT: %s", len(model_candles))
+            contexts.append(
+                {
+                    "symbol": ref["symbol"],
+                    "timeframe": ref["timeframe"],
+                    "latest_close": ref["latest_close"],
+                    "current_price": ref.get("current_price", ref["latest_close"]),
+                    "candles": model_candles,
+                    "recent_candles": ref["recent_candles"],
+                    "market_context": ref["market_context"],
+                }
+            )
         return (
             "Сгенерируй 6 торговых идей строго по переданным market contexts.\n\n"
             "Каждая идея должна соответствовать ОДНОЙ записи из списка contexts и содержать:\n"
@@ -4743,6 +4771,9 @@ class TradeIdeaService:
             "Во всех текстовых полях используй только русский язык: без английских слов и шаблонных клише.\n"
             "risk_note верни короткой фразой про ключевой риск/invalidation.\n"
             "Если данных мало, не выдумывай: честно укажи ограниченность подтверждений в risk_note/confluence.\n\n"
+            "В КАЖДОМ context обязательно анализируй массив candles в формате:\n"
+            "{\"candles\":[{\"i\":number,\"o\":number,\"h\":number,\"l\":number,\"c\":number}]}\n"
+            "Если candles пустой/нулевой — не пытайся строить структуру.\n\n"
             "Верни chart_overlays для каждой идеи в формате: order_blocks[], liquidity[], fvg[], structure_levels[], patterns[].\n"
             "Если свечи есть, НЕ обнуляй все категории разом: верни хотя бы консервативные и наблюдаемые уровни/диапазон/ликвидность (можно по 1 элементу).\n"
             "Для слабого сетапа разрешён WAIT, но при наличии свечей сохрани видимую разметку (частично заполненные chart_overlays допустимы).\n"
@@ -4764,6 +4795,28 @@ class TradeIdeaService:
             "Верни строго VALID JSON array и ничего кроме него.\n\n"
             f"contexts = {json.dumps(contexts, ensure_ascii=False)}"
         )
+
+    def _build_model_candles(self, candles: list[dict[str, Any]]) -> list[dict[str, float | int]]:
+        model_candles: list[dict[str, float | int]] = []
+        for index, candle in enumerate(candles[-MODEL_CANDLES_MAX:]):
+            if not isinstance(candle, dict):
+                continue
+            open_price = self._extract_numeric(candle.get("open"))
+            high_price = self._extract_numeric(candle.get("high"))
+            low_price = self._extract_numeric(candle.get("low"))
+            close_price = self._extract_numeric(candle.get("close"))
+            if None in (open_price, high_price, low_price, close_price):
+                continue
+            model_candles.append(
+                {
+                    "i": index,
+                    "o": float(open_price),
+                    "h": float(high_price),
+                    "l": float(low_price),
+                    "c": float(close_price),
+                }
+            )
+        return model_candles
 
     def _normalize_openrouter_payload(
         self,
