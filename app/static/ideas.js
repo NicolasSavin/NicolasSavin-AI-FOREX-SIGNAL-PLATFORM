@@ -38,6 +38,7 @@ function renderIdeaCard(idea) {
   const tradePlan = idea.trade_plan || {};
   const updates = Array.isArray(idea.updates) ? idea.updates.slice(-5).reverse() : [];
   const reasoning = resolveVisibleNarrative(idea);
+  const compactSummary = String(idea?.compact_summary || "").trim();
 
   return `
     <article class="idea-card">
@@ -51,7 +52,9 @@ function renderIdeaCard(idea) {
         <div class="idea-label ${labelClass(idea.label)}">${escapeHtml(idea.label || "WATCH")}</div>
       </div>
 
-      <div class="idea-summary">${escapeHtml(idea.summary_ru || "")}</div>
+      <div class="idea-summary">${escapeHtml(reasoning)}</div>
+      ${compactSummary ? `<div class="idea-news-line">MTF: ${escapeHtml(compactSummary)}</div>` : ""}
+      <div class="idea-news-line">Источник narrative: <strong>${escapeHtml(idea.narrative_source || "template_fallback")}</strong></div>
 
       ${
         chartImageUrl
@@ -107,9 +110,11 @@ function isSystemLikeNarrative(value) {
 }
 
 function resolveVisibleNarrative(idea) {
+  const thesis = String(idea?.idea_thesis || "").trim();
+  if (!isSystemLikeNarrative(thesis)) return thesis;
   const unified = String(idea?.unified_narrative || "").trim();
   if (!isSystemLikeNarrative(unified)) return unified;
-  const legacy = String(idea?.full_text || idea?.summary_ru || idea?.summary || "").trim();
+  const legacy = String(idea?.full_text || idea?.summary || idea?.summary_ru || "").trim();
   if (!isSystemLikeNarrative(legacy)) return legacy;
   return "Сценарий есть, но текст пояснения обновляется. Ориентируйтесь на структуру, уровни и подтверждение входа.";
 }

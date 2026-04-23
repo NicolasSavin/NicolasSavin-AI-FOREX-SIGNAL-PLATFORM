@@ -308,6 +308,7 @@ class TradeIdeaService:
                     "summary_ru": final_reason,
                     "short_text": final_reason,
                     "compact_summary": compact_summary,
+                    "narrative_source": "combined_model",
                     "combined": True,
                     "final_signal": final_signal,
                     "final_confidence": final_confidence,
@@ -825,8 +826,11 @@ class TradeIdeaService:
             updated["is_fallback"] = False
             updated["status"] = IDEA_STATUS_ACTIVE
             updated["regenerated"] = True
-            narrative_source = str(updated.get("narrative_source") or "").strip().lower()
-            updated["narrative_source"] = "grok" if narrative_source == "grok" else "generated"
+            updated["narrative_source"] = self._resolve_narrative_source_label(
+                updated.get("narrative_source"),
+                is_fallback=bool(updated.get("is_fallback")),
+                combined=bool(updated.get("combined")),
+            )
             if target_index is not None:
                 previous = ideas[target_index]
                 ideas[target_index] = updated
@@ -1245,7 +1249,7 @@ class TradeIdeaService:
             "market_structure_structured": narrative_structured.get("market_structure_structured"),
             "narrative_structured": narrative_structured,
             "update_explanation": llm_result.data.get("update_explanation") or rationale,
-            "narrative_source": llm_result.source,
+            "narrative_source": self._resolve_narrative_source_label(llm_result.source, is_fallback=False, combined=False),
             "narrative_version": narrative_version,
             "narrative_update_reason": narrative_reason if should_refresh_narrative else "unchanged",
             "last_narrative_refresh_at": last_narrative_refresh_at,
@@ -2542,7 +2546,11 @@ class TradeIdeaService:
             updated["full_text"] = str(llm_result.data.get("unified_narrative") or llm_result.data.get("full_text") or "").strip()
         if self._is_weak_narrative_text(updated.get("unified_narrative")):
             updated["unified_narrative"] = str(llm_result.data.get("unified_narrative") or updated.get("full_text") or "").strip()
-        updated["narrative_source"] = str(llm_result.source or updated.get("narrative_source") or "llm")
+        updated["narrative_source"] = self._resolve_narrative_source_label(
+            llm_result.source or updated.get("narrative_source") or "llm",
+            is_fallback=bool(updated.get("is_fallback")),
+            combined=bool(updated.get("combined")),
+        )
         updated["signal"] = str(llm_result.data.get("signal") or updated.get("signal") or "").upper()
         updated["risk_note"] = str(llm_result.data.get("risk_note") or updated.get("risk_note") or "").strip()
         detail_brief = updated.get("detail_brief") if isinstance(updated.get("detail_brief"), dict) else {}
@@ -3280,6 +3288,21 @@ class TradeIdeaService:
     def _to_legacy_card(idea: dict[str, Any]) -> dict[str, Any]:
         return idea
 
+    @staticmethod
+    def _resolve_narrative_source_label(value: Any, *, is_fallback: bool = False, combined: bool = False) -> str:
+        if combined:
+            return "combined_model"
+        if is_fallback:
+            return "template_fallback"
+        raw = str(value or "").strip().lower()
+        if raw in {"grok", "llm"}:
+            return "grok"
+        if raw in {"fallback", "template_fallback"}:
+            return "template_fallback"
+        if raw == "combined_model":
+            return "combined_model"
+        return "template_fallback"
+
     @classmethod
     def _build_full_text(
         cls,
@@ -3293,12 +3316,13 @@ class TradeIdeaService:
     ) -> str:
         direct_text = row.get("idea_thesis") or row.get("unified_narrative") or row.get("full_text") or row.get("fullText")
         direct_clean = re.sub(r"\s+", " ", str(direct_text or "")).strip()
-        generated = generate_signal_text(cls._build_signal_data(row, trigger=trigger, invalidation=invalidation))
-        if generated:
-            return generated
 
         if cls._is_professional_narrative(direct_clean):
             return direct_clean
+
+        generated = generate_signal_text(cls._build_signal_data(row, trigger=trigger, invalidation=invalidation))
+        if generated:
+            return generated
 
         return cls._compose_professional_narrative(
             row,
@@ -4292,7 +4316,12 @@ class TradeIdeaService:
                         "narrative_structured": row.get("narrative_structured") or detail_brief.get("narrative_structured"),
                         "update_explanation": row.get("update_explanation") or row.get("update_summary") or "",
                         "update_reason": row.get("update_reason") or "",
-                        "narrative_source": row.get("narrative_source") or ("fallback" if row.get("is_fallback") else "llm"),
+                        "narrative_source": self._resolve_narrative_source_label(
+                            row.get("narrative_source"),
+                            is_fallback=bool(row.get("is_fallback")),
+                            combined=bool(row.get("combined")),
+                        ),
+                        "narrative_source_legacy": row.get("narrative_source") or ("fallback" if row.get("is_fallback") else "llm"),
                         "has_meaningful_update": bool(row.get("has_meaningful_update", False)),
                         "meaningful_updated_at": row.get("meaningful_updated_at"),
                         "meaningful_update_reason": row.get("meaningful_update_reason") or "",

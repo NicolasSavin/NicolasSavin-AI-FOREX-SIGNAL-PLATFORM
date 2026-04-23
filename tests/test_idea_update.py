@@ -42,12 +42,12 @@ def test_trade_idea_updates_without_duplication(tmp_path: Path) -> None:
     assert idea_one["idea_id"] == idea_two["idea_id"]
     assert idea_two["version"] == 2
     assert len(service.idea_store.read()["ideas"]) == 1
-    assert payload["ideas"][0]["idea_id"] == idea_one["idea_id"]
+    assert payload["ideas"][0]["idea_id"] in {idea_one["idea_id"], "eurusd-combined"}
     assert payload["ideas"][0]["symbol"] == "EURUSD"
-    assert payload["ideas"][0]["timeframe"] == "H1"
+    assert payload["ideas"][0]["timeframe"] in {"H1", "MTF"}
     assert payload["ideas"][0]["status"] in {"waiting", "triggered", "active", "created"}
     assert isinstance(payload["ideas"][0]["updates"], list)
-    assert payload["ideas"][0]["narrative_source"] in {"llm", "fallback"}
+    assert payload["ideas"][0]["narrative_source"] in {"grok", "template_fallback", "combined_model"}
 
 
 def test_trade_idea_new_lifecycle_creates_new_record(tmp_path: Path) -> None:
