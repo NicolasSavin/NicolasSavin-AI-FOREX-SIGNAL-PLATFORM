@@ -1124,6 +1124,11 @@ function renderDetailText(idea) {
 function ensureChart() {
   if (chart) return;
 
+  console.debug("[ideas-chart] chart init started", {
+    hostWidth: chartHost?.clientWidth ?? 0,
+    hostHeight: chartHost?.clientHeight ?? 0,
+  });
+
   chart = LightweightCharts.createChart(chartHost, {
     layout: {
       background: { color: "#070f1d" },
@@ -1161,6 +1166,8 @@ function ensureChart() {
     wickUpColor: "#22c55e",
     wickDownColor: "#ef4444",
   });
+
+  console.debug("[ideas-chart] candlestick series created");
 }
 
 function resetChartState({ keepSnapshot = true } = {}) {
@@ -1316,25 +1323,56 @@ function normalizeChartPayload(payload) {
 function normalizeAndValidateCandles(rawCandles) {
   if (!Array.isArray(rawCandles)) return [];
   const normalized = [];
+  let malformedCount = 0;
   const seenTimes = new Set();
   for (const candle of rawCandles) {
     if (!candle || typeof candle !== "object") continue;
-    const timeRaw = Number(candle.time ?? candle.timestamp);
+    const timeRaw = normalizeCandleTime(candle.time ?? candle.timestamp);
     const openRaw = Number(candle.open);
     const highRaw = Number(candle.high);
     const lowRaw = Number(candle.low);
     const closeRaw = Number(candle.close);
-    if (![timeRaw, openRaw, highRaw, lowRaw, closeRaw].every(Number.isFinite)) continue;
+    if (![timeRaw, openRaw, highRaw, lowRaw, closeRaw].every(Number.isFinite)) {
+      malformedCount += 1;
+      continue;
+    }
     const lowerBound = Math.min(openRaw, closeRaw);
     const upperBound = Math.max(openRaw, closeRaw);
-    if (lowRaw > lowerBound || highRaw < upperBound || lowRaw > highRaw) continue;
+    if (lowRaw > lowerBound || highRaw < upperBound || lowRaw > highRaw) {
+      malformedCount += 1;
+      continue;
+    }
     const ts = Math.trunc(timeRaw);
     if (seenTimes.has(ts)) continue;
     seenTimes.add(ts);
     normalized.push({ time: ts, open: openRaw, high: highRaw, low: lowRaw, close: closeRaw });
   }
   normalized.sort((a, b) => a.time - b.time);
+  console.debug("[ideas-chart] candles normalized", {
+    received: rawCandles.length,
+    normalized: normalized.length,
+    malformed: malformedCount,
+  });
   return normalized;
+}
+
+function normalizeCandleTime(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value > 1e12) return Math.trunc(value / 1000);
+    if (value > 1e10) return Math.trunc(value / 1000);
+    return Math.trunc(value);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return Number.NaN;
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) return normalizeCandleTime(numeric);
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) return Math.trunc(parsed / 1000);
+  }
+
+  return Number.NaN;
 }
 
 function setChartMode(mode) {
@@ -1446,13 +1484,29 @@ function applyLevelLines(levelLines) {
 
 function showLiveChart(payload, { levelLines = null } = {}) {
   const normalizedPayload = normalizeChartPayload(payload);
-  if (!hasCandles(normalizedPayload)) return false;
+  const candleCount = normalizedPayload?.candles?.length ?? 0;
+  console.debug("[ideas-chart] live payload received", { candleCount });
+  if (!hasCandles(normalizedPayload)) {
+    console.debug("[ideas-chart] fallback placeholder used", { reason: "empty_or_invalid_candles" });
+    return false;
+  }
+
+  try {
+    ensureChart();
+    currentChartPayload = normalizedPayload;
+    candleSeries.setData(normalizedPayload.candles);
+    console.debug("[ideas-chart] setData called", { candleCount });
+    applyLevelLines(levelLines ?? normalizedPayload.level_lines ?? null);
+    chart.timeScale().fitContent();
+  } catch (error) {
+    console.warn("[ideas-chart] fallback placeholder used", {
+      reason: "setData_failed",
+      message: error?.message || String(error),
+    });
+    return false;
+  }
+
   setChartMode("live");
-  ensureChart();
-  currentChartPayload = normalizedPayload;
-  candleSeries.setData(normalizedPayload.candles);
-  applyLevelLines(levelLines ?? normalizedPayload.level_lines ?? null);
-  chart.timeScale().fitContent();
   requestAnimationFrame(() => {
     requestAnimationFrame(() => drawOverlay());
   });
@@ -2135,6 +2189,16 @@ async function openIdea(idea) {
     }
   }
 
+  if (isSameIdeaRefresh && (chartDisplayMode === "live" || chartDisplayMode === "snapshot")) {
+    console.debug("[ideas-chart] keeping previously rendered chart", {
+      ideaId: idea?.id,
+      mode: chartDisplayMode,
+    });
+    renderCleanDetailStatus(idea);
+    return;
+  }
+
+  console.debug("[ideas-chart] fallback placeholder used", { reason: "no_chart_payload" });
   showUnavailableChart("График недоступен");
   renderCleanDetailStatus(idea);
 }
