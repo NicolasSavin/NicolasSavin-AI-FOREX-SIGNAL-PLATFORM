@@ -1504,10 +1504,20 @@ class TradeIdeaService:
             "stop_explanation_ru": stop_explanation,
             "target_explanation_ru": target_explanation,
             "source_candle_count": signal.get("source_candle_count"),
+            "data_provider": signal.get("data_provider"),
+            "analysis_mode": signal.get("analysis_mode"),
+            "data_quality": signal.get("data_quality"),
+            "warning": signal.get("warning"),
+            "fallback_used": signal.get("fallback_used"),
             "pipeline_debug": signal.get("pipeline_debug") if isinstance(signal.get("pipeline_debug"), dict) else {},
             "meta": {
                 "pipeline_debug": signal.get("pipeline_debug") if isinstance(signal.get("pipeline_debug"), dict) else {},
                 "source_candle_count": signal.get("source_candle_count"),
+                "data_provider": signal.get("data_provider"),
+                "analysis_mode": signal.get("analysis_mode"),
+                "data_quality": signal.get("data_quality"),
+                "warning": signal.get("warning"),
+                "fallback_used": signal.get("fallback_used"),
             },
         }
         payload = self._apply_meaningful_update_metadata(
@@ -4648,12 +4658,19 @@ class TradeIdeaService:
             data_provider = str(
                 row.get("data_provider")
                 or market_context.get("data_provider")
-                or ("Yahoo fallback" if str(row.get("data_quality") or market_context.get("data_quality") or "").lower() == "fallback" else "TwelveData")
-            )
+                or ("yahoo_finance" if str(row.get("data_quality") or market_context.get("data_quality") or "").lower() in {"fallback", "medium"} else "twelvedata")
+            ).lower()
             analysis_mode = str(
                 row.get("analysis_mode")
                 or market_context.get("analysis_mode")
                 or ("directional_fallback" if "yahoo" in data_provider.lower() else "professional")
+            )
+            fallback_used = bool(
+                row.get("fallback_used")
+                if row.get("fallback_used") is not None
+                else market_context.get("fallback_used")
+                if market_context.get("fallback_used") is not None
+                else analysis_mode == "directional_fallback"
             )
             warning = str(
                 row.get("warning")
@@ -4668,8 +4685,10 @@ class TradeIdeaService:
             normalized_data_quality = str(
                 row.get("data_quality")
                 or market_context.get("data_quality")
-                or ("fallback" if analysis_mode == "directional_fallback" else "high")
-            )
+                or ("medium" if analysis_mode == "directional_fallback" else "high")
+            ).lower()
+            if normalized_data_quality == "fallback":
+                normalized_data_quality = "medium"
 
             normalized.append(
                 self._decorate_api_idea(
@@ -4771,6 +4790,7 @@ class TradeIdeaService:
                         "analysis_mode": analysis_mode,
                         "data_quality": normalized_data_quality,
                         "warning": warning,
+                        "fallback_used": fallback_used,
                         "meta": row.get("meta")
                         or {
                             "latest_close": row.get("latest_close"),
@@ -4781,6 +4801,7 @@ class TradeIdeaService:
                             "analysis_mode": analysis_mode,
                             "data_quality": normalized_data_quality,
                             "warning": warning,
+                            "fallback_used": fallback_used,
                         },
                     },
                     source=source,

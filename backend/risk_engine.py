@@ -2,11 +2,19 @@ from __future__ import annotations
 
 
 class RiskEngine:
-    def validate(self, *, rr: float, confidence_percent: int, htf_conflict: bool, volatility_percent: float) -> dict:
+    def validate(
+        self,
+        *,
+        rr: float,
+        confidence_percent: int,
+        htf_conflict: bool,
+        volatility_percent: float,
+        min_confidence_percent: int = 65,
+    ) -> dict:
         if rr < 1.5:
             return {"allowed": False, "reason_ru": "RR ниже 1.5"}
-        if confidence_percent < 65:
-            return {"allowed": False, "reason_ru": "Уверенность ниже порога"}
+        if confidence_percent < min_confidence_percent:
+            return {"allowed": False, "reason_ru": f"Уверенность ниже порога {min_confidence_percent}%"}
         if htf_conflict:
             return {"allowed": False, "reason_ru": "Конфликт со старшим таймфреймом"}
         if volatility_percent > 3.0:
