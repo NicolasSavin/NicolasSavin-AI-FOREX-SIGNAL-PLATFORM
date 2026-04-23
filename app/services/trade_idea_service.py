@@ -56,6 +56,7 @@ LEVEL_ENTRY_MAX_DEVIATION_PCT = 0.5
 LEVEL_STOP_LOSS_OFFSET = 0.0020
 LEVEL_TAKE_PROFIT_OFFSET = 0.0040
 CANDLE_CONTEXT_COUNT = 40
+CHART_OVERLAY_KEYS = ("order_blocks", "liquidity", "fvg", "structure_levels", "patterns")
 SNAPSHOT_RETRY_INTERVAL_SECONDS = int(os.getenv("IDEAS_SNAPSHOT_RETRY_INTERVAL_SECONDS", "1800"))
 NARRATIVE_REFRESH_COOLDOWN_SECONDS = int(os.getenv("IDEAS_NARRATIVE_REFRESH_COOLDOWN_SECONDS", "300"))
 logger = logging.getLogger(__name__)
@@ -819,7 +820,14 @@ class TradeIdeaService:
             confidence=int(signal.get("confidence_percent") or signal.get("probability_percent") or 0),
             status=status,
         )
-        overlay_payload = self._build_overlay_payload(signal=signal)
+        overlay_payload = self._build_overlay_payload(signal=signal, existing=existing)
+        chart_overlays = self.normalize_chart_overlays(signal.get("chart_overlays"))
+        if not self.is_meaningful_overlay_payload(chart_overlays):
+            chart_overlays = self._chart_overlays_from_legacy_overlay_payload(overlay_payload)
+        chart_overlays = self.merge_preserving_last_good_overlays(
+            existing.get("chart_overlays") if isinstance(existing, dict) else None,
+            chart_overlays,
+        )
         initial_candle_fingerprint = self._candle_fingerprint(
             chart_snapshot.get("candles") if isinstance(chart_snapshot.get("candles"), list) else []
         )
@@ -934,6 +942,7 @@ class TradeIdeaService:
             "chart_data": signal.get("chart_data") or signal.get("chartData"),
             "chartData": signal.get("chart_data") or signal.get("chartData"),
             "overlay_data": overlay_payload,
+            "chart_overlays": chart_overlays,
             "zones": overlay_payload.get("zones", []),
             "levels": overlay_payload.get("levels", []),
             "labels": overlay_payload.get("labels", []),
@@ -1365,6 +1374,7 @@ class TradeIdeaService:
             markers=markers,
             patterns=patterns,
             arrows=arrows,
+            chart_overlays=self.normalize_chart_overlays(signal.get("chart_overlays")),
             setup_text=signal.get("short_scenario_ru") or signal.get("short_text") or signal.get("summary_ru"),
         )
         resolved_snapshot = self.chart_snapshot_service.resolve_snapshot_with_fallback(
@@ -1477,20 +1487,185 @@ class TradeIdeaService:
         compact_pattern_text = signal.get("pattern_summary") or chart_data.get("pattern_summary")
         if compact_pattern_text and not normalized_patterns:
             normalized_patterns.append({"name": str(compact_pattern_text)})
+        chart_data_alt = signal.get("chartData") if isinstance(signal.get("chartData"), dict) else {}
+        chart_overlays = self.normalize_chart_overlays(
+            signal.get("chart_overlays")
+            or chart_data.get("chart_overlays")
+            or chart_data_alt.get("chart_overlays")
+        )
+        if chart_overlays.get("order_blocks"):
+            normalized_zones.extend(self._normalize_zone_overlay(item) for item in chart_overlays["order_blocks"])
+        if chart_overlays.get("fvg"):
+            normalized_zones.extend(self._normalize_zone_overlay(item) for item in chart_overlays["fvg"])
+        if chart_overlays.get("liquidity"):
+            normalized_levels.extend(self._normalize_level_overlay(item) for item in chart_overlays["liquidity"])
+        if chart_overlays.get("structure_levels"):
+            normalized_levels.extend(self._normalize_level_overlay(item) for item in chart_overlays["structure_levels"])
+        if chart_overlays.get("patterns"):
+            normalized_patterns.extend(self._normalize_pattern_overlay(item) for item in chart_overlays["patterns"])
         return normalized_levels, normalized_zones, normalized_markers, normalized_patterns, normalized_arrows
 
-    def _build_overlay_payload(self, *, signal: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    def _build_overlay_payload(self, *, signal: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, list[dict[str, Any]]]:
         chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else {}
         if not chart_data and isinstance(signal.get("chartData"), dict):
             chart_data = signal.get("chartData")
         levels, zones, labels, patterns, arrows = self._extract_snapshot_overlays(signal=signal, chart_data=chart_data)
-        return {
+        payload = {
             "zones": zones,
             "levels": levels,
             "labels": labels,
             "arrows": arrows,
             "patterns": patterns,
         }
+        candles = chart_data.get("candles") if isinstance(chart_data.get("candles"), list) else []
+        if not candles:
+            candles = signal.get("candles") if isinstance(signal.get("candles"), list) else []
+        model_chart_overlays = self.normalize_chart_overlays(signal.get("chart_overlays"))
+        model_overlays_meaningful = self.is_meaningful_overlay_payload(model_chart_overlays)
+        fallback_chart_overlays = self._extract_conservative_chart_overlays(candles)
+        fallback_used = False
+        if candles and not model_overlays_meaningful and self.is_meaningful_overlay_payload(fallback_chart_overlays):
+            model_chart_overlays = fallback_chart_overlays
+            fallback_used = True
+        if self.is_meaningful_overlay_payload(model_chart_overlays):
+            payload = self._append_chart_overlays_to_overlay_payload(payload, model_chart_overlays)
+
+        candidate_chart_overlays = self._chart_overlays_from_legacy_overlay_payload(payload)
+        final_chart_overlays = self.merge_preserving_last_good_overlays(
+            existing.get("chart_overlays") if isinstance(existing, dict) else None,
+            candidate_chart_overlays,
+        )
+        payload = self._merge_preserving_last_good_legacy_overlay_payload(
+            existing.get("overlay_data") if isinstance(existing, dict) else None,
+            payload,
+        )
+        payload = self._append_chart_overlays_to_overlay_payload(payload, final_chart_overlays)
+        logger.info(
+            "idea_overlays_prepare symbol=%s timeframe=%s candles_present=%s model_overlays=%s fallback_used=%s categories=%s preserved_existing=%s final_counts=%s",
+            str(signal.get("symbol") or "").upper(),
+            str(signal.get("timeframe") or "H1").upper(),
+            bool(candles),
+            model_overlays_meaningful,
+            fallback_used,
+            [key for key in CHART_OVERLAY_KEYS if final_chart_overlays.get(key)],
+            bool(
+                isinstance(existing, dict)
+                and self.is_meaningful_overlay_payload(self.normalize_chart_overlays(existing.get("chart_overlays")))
+                and not self.is_meaningful_overlay_payload(candidate_chart_overlays)
+            ),
+            {k: len(payload.get(k) or []) for k in ("zones", "levels", "labels", "patterns", "arrows")},
+        )
+        return payload
+
+    @classmethod
+    def normalize_chart_overlays(cls, payload: Any) -> dict[str, list[dict[str, Any]]]:
+        normalized: dict[str, list[dict[str, Any]]] = {key: [] for key in CHART_OVERLAY_KEYS}
+        if not isinstance(payload, dict):
+            return normalized
+        for key in CHART_OVERLAY_KEYS:
+            values = payload.get(key)
+            if isinstance(values, list):
+                normalized[key] = [item for item in values if isinstance(item, dict)]
+        return normalized
+
+    @classmethod
+    def is_meaningful_overlay_payload(cls, payload: dict[str, Any] | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        return any(isinstance(payload.get(key), list) and payload.get(key) for key in CHART_OVERLAY_KEYS)
+
+    @classmethod
+    def merge_preserving_last_good_overlays(
+        cls,
+        existing: dict[str, Any] | None,
+        new_payload: dict[str, Any] | None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        normalized_existing = cls.normalize_chart_overlays(existing)
+        normalized_new = cls.normalize_chart_overlays(new_payload)
+        if cls.is_meaningful_overlay_payload(normalized_new):
+            return normalized_new
+        return normalized_existing
+
+    @staticmethod
+    def _merge_preserving_last_good_legacy_overlay_payload(
+        existing: dict[str, Any] | None,
+        new_payload: dict[str, Any] | None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        def _normalize(payload: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
+            base: dict[str, list[dict[str, Any]]] = {"zones": [], "levels": [], "labels": [], "arrows": [], "patterns": []}
+            if not isinstance(payload, dict):
+                return base
+            for key in base:
+                values = payload.get(key)
+                if isinstance(values, list):
+                    base[key] = [item for item in values if isinstance(item, dict)]
+            return base
+
+        normalized_new = _normalize(new_payload)
+        if any(normalized_new.values()):
+            return normalized_new
+        return _normalize(existing)
+
+    def _extract_conservative_chart_overlays(self, candles: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        overlays = self.normalize_chart_overlays({})
+        if len(candles) < 6:
+            return overlays
+        highs: list[float] = []
+        lows: list[float] = []
+        for candle in candles[-20:]:
+            high = self._extract_numeric(candle.get("high"))
+            low = self._extract_numeric(candle.get("low"))
+            if high is None or low is None:
+                continue
+            highs.append(high)
+            lows.append(low)
+        if not highs or not lows:
+            return overlays
+        range_high = max(highs)
+        range_low = min(lows)
+        overlays["structure_levels"] = [
+            {"type": "range_high", "price": range_high, "label": "Range High"},
+            {"type": "range_low", "price": range_low, "label": "Range Low"},
+        ]
+        current_price = self._extract_numeric(candles[-1].get("close")) or range_high
+        tolerance = max((range_high - range_low) * 0.0015, abs(current_price) * 0.00025)
+        eq_high = sum(1 for value in highs[:-1] if abs(value - range_high) <= tolerance)
+        eq_low = sum(1 for value in lows[:-1] if abs(value - range_low) <= tolerance)
+        if eq_high >= 1:
+            overlays["liquidity"].append({"type": "buy_side", "price": range_high, "label": "Buy-side liquidity"})
+        if eq_low >= 1:
+            overlays["liquidity"].append({"type": "sell_side", "price": range_low, "label": "Sell-side liquidity"})
+        return overlays
+
+    @classmethod
+    def _chart_overlays_from_legacy_overlay_payload(cls, payload: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
+        normalized = cls.normalize_chart_overlays({})
+        if not isinstance(payload, dict):
+            return normalized
+        for zone in payload.get("zones") if isinstance(payload.get("zones"), list) else []:
+            zone_type = str(zone.get("type") or zone.get("label") or "").lower()
+            if "order" in zone_type:
+                normalized["order_blocks"].append(zone)
+            elif "fvg" in zone_type or "imbalance" in zone_type:
+                normalized["fvg"].append(zone)
+            elif "liquidity" in zone_type:
+                normalized["liquidity"].append(zone)
+        for level in payload.get("levels") if isinstance(payload.get("levels"), list) else []:
+            normalized["structure_levels"].append(level)
+        for pattern in payload.get("patterns") if isinstance(payload.get("patterns"), list) else []:
+            normalized["patterns"].append(pattern)
+        return normalized
+
+    @staticmethod
+    def _append_chart_overlays_to_overlay_payload(
+        payload: dict[str, list[dict[str, Any]]],
+        chart_overlays: dict[str, list[dict[str, Any]]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        merged = dict(payload)
+        merged["zones"] = list(merged.get("zones") or []) + list(chart_overlays.get("order_blocks") or []) + list(chart_overlays.get("fvg") or []) + list(chart_overlays.get("liquidity") or [])
+        merged["levels"] = list(merged.get("levels") or []) + list(chart_overlays.get("structure_levels") or [])
+        merged["patterns"] = list(merged.get("patterns") or []) + list(chart_overlays.get("patterns") or [])
+        return merged
 
     @staticmethod
     def _has_overlay_payload(payload: dict[str, Any] | None) -> bool:
@@ -1498,10 +1673,12 @@ class TradeIdeaService:
             return False
         return any(isinstance(payload.get(key), list) and payload.get(key) for key in ("zones", "levels", "labels", "arrows", "patterns"))
 
-    @staticmethod
-    def _merge_overlay_payload(idea: dict[str, Any], overlay_payload: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    @classmethod
+    def _merge_overlay_payload(cls, idea: dict[str, Any], overlay_payload: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         updated = dict(idea)
         updated["overlay_data"] = overlay_payload
+        chart_overlays = cls._chart_overlays_from_legacy_overlay_payload(overlay_payload)
+        updated["chart_overlays"] = cls.merge_preserving_last_good_overlays(updated.get("chart_overlays"), chart_overlays)
         updated["zones"] = overlay_payload.get("zones", [])
         updated["levels"] = overlay_payload.get("levels", [])
         updated["labels"] = overlay_payload.get("labels", [])
@@ -1693,11 +1870,18 @@ class TradeIdeaService:
             if has_overlay and not force:
                 rebuilt.append(current)
                 continue
-            overlay_payload = self._build_overlay_payload(signal=current)
+            overlay_payload = self._build_overlay_payload(signal=current, existing=current)
             if not self._has_overlay_payload(overlay_payload):
                 rebuilt.append(current)
                 continue
             updated = self._merge_overlay_payload(current, overlay_payload)
+            logger.info(
+                "idea_overlay_backfill symbol=%s timeframe=%s preserved_existing=%s final_overlay_counts=%s",
+                str(current.get("symbol") or "").upper(),
+                str(current.get("timeframe") or "H1").upper(),
+                bool(current.get("chart_overlays")) and not self.is_meaningful_overlay_payload(updated.get("chart_overlays")),
+                {k: len((updated.get("chart_overlays") or {}).get(k) or []) for k in CHART_OVERLAY_KEYS},
+            )
             had_chart = bool(current.get("chartImageUrl") or current.get("chart_image"))
             if had_chart or force:
                 snapshot = self._resolve_chart_snapshot(
@@ -3546,7 +3730,10 @@ class TradeIdeaService:
                 ),
             )
             chart_data = row.get("chartData") or row.get("chart_data")
-            overlay_payload = self._build_overlay_payload(signal=row)
+            overlay_payload = self._build_overlay_payload(signal=row, existing=row if isinstance(row, dict) else None)
+            chart_overlays = self.normalize_chart_overlays(row.get("chart_overlays"))
+            if not self.is_meaningful_overlay_payload(chart_overlays):
+                chart_overlays = self._chart_overlays_from_legacy_overlay_payload(overlay_payload)
             chart_image_url = row.get("chartImageUrl") or row.get("chart_image")
             chart_snapshot_status = row.get("chartSnapshotStatus") or row.get("chart_snapshot_status") or "ok"
             tags = row.get("tags")
@@ -3607,6 +3794,7 @@ class TradeIdeaService:
                         "takeProfit": take_profit,
                         "chartData": chart_data,
                         "overlay_data": overlay_payload,
+                        "chart_overlays": chart_overlays,
                         "zones": overlay_payload.get("zones", []),
                         "levels": overlay_payload.get("levels", []),
                         "labels": overlay_payload.get("labels", []),
@@ -3747,6 +3935,10 @@ class TradeIdeaService:
             "signal верни строго BUY / SELL / WAIT.\n"
             "risk_note верни короткой фразой про ключевой риск/invalidation.\n"
             "Если данных мало, не выдумывай: честно укажи ограниченность подтверждений в risk_note/confluence.\n\n"
+            "Верни chart_overlays для каждой идеи в формате: order_blocks[], liquidity[], fvg[], structure_levels[], patterns[].\n"
+            "Если свечи есть, НЕ обнуляй все категории разом: верни хотя бы консервативные и наблюдаемые уровни/диапазон/ликвидность (можно по 1 элементу).\n"
+            "Для слабого сетапа разрешён WAIT, но при наличии свечей сохрани видимую разметку (частично заполненные chart_overlays допустимы).\n"
+            "Полностью пустой chart_overlays допустим только если candles отсутствуют или явно непригодны.\n\n"
             "Требования к short_text:\n"
             "- 1-2 предложения для карточки, но без бессмысленных общих слов\n"
             "- должен содержать действие цены + рабочую идею + уровень отмены или цель\n\n"
@@ -3782,6 +3974,17 @@ class TradeIdeaService:
             validated_row = self._validate_ai_levels(row, reference)
             if validated_row.get("_invalid_levels"):
                 continue
+            normalized_overlays = self.normalize_chart_overlays(validated_row.get("chart_overlays"))
+            if self.is_meaningful_overlay_payload(normalized_overlays):
+                validated_row["chart_overlays"] = normalized_overlays
+            logger.info(
+                "openrouter_overlay_parse symbol=%s timeframe=%s candles_present=%s model_overlays=%s categories=%s",
+                symbol,
+                timeframe,
+                bool(reference.get("recent_candles")),
+                self.is_meaningful_overlay_payload(normalized_overlays),
+                [key for key in CHART_OVERLAY_KEYS if normalized_overlays.get(key)],
+            )
             prepared.append(validated_row)
             seen.add((symbol, timeframe))
 
