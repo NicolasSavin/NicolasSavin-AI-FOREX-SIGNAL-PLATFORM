@@ -39,6 +39,9 @@ function renderIdeaCard(idea) {
   const updates = Array.isArray(idea.updates) ? idea.updates.slice(-5).reverse() : [];
   const reasoning = resolveVisibleNarrative(idea);
   const compactSummary = String(idea?.compact_summary || "").trim();
+  const analysisMode = String(idea.analysis_mode || "").toLowerCase() === "professional" ? "профессиональный" : "упрощённый";
+  const providerLabel = String(idea.data_provider || "").trim() || "TwelveData";
+  const warningText = String(idea.warning || "").trim();
 
   return `
     <article class="idea-card">
@@ -54,6 +57,9 @@ function renderIdeaCard(idea) {
 
       <div class="idea-summary">${escapeHtml(reasoning)}</div>
       ${compactSummary ? `<div class="idea-news-line">МТФ: ${escapeHtml(compactSummary)}</div>` : ""}
+      <div class="idea-news-line">Режим: <strong>${escapeHtml(analysisMode)}</strong></div>
+      <div class="idea-news-line">Источник: <strong>${escapeHtml(providerLabel)}</strong></div>
+      ${warningText ? `<div class="idea-warning">${escapeHtml(warningText)}</div>` : ""}
       <div class="idea-news-line">Источник описания: <strong>${escapeHtml(idea.narrative_source || "резервный_шаблон")}</strong></div>
 
       ${

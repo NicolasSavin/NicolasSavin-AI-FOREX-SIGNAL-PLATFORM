@@ -22,6 +22,11 @@ TIMEFRAME_STACKS = {
     "W1": {"htf": "W1", "mtf": "W1", "ltf": "D1"},
 }
 logger = logging.getLogger(__name__)
+FALLBACK_WARNING_RU = (
+    "Идея построена в упрощённом режиме из fallback-данных Yahoo. "
+    "Подтверждение слабее профессионального режима."
+)
+PROFESSIONAL_MIN_CANDLES = 20
 
 
 class SignalEngine:
@@ -157,8 +162,9 @@ class SignalEngine:
         ltf_features: dict,
         sentiment: dict,
     ) -> dict:
-        data_quality = self._resolve_data_quality(htf=htf, mtf=mtf, ltf=ltf)
-        policy_mode = "strict_smc" if data_quality == "high" else "fallback_directional"
+        analysis_contract = self._resolve_analysis_contract(htf=htf, mtf=mtf, ltf=ltf)
+        data_quality = analysis_contract["data_quality"]
+        policy_mode = "strict_smc" if analysis_contract["analysis_mode"] == "professional" else "fallback_directional"
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
         if mtf_features["status"] != "ready":
@@ -190,7 +196,8 @@ class SignalEngine:
             ltf_features=ltf_features,
             htf_features=htf_features,
         )
-        has_confluence = strict_confluence if data_quality == "high" else (strict_confluence or directional_structure)
+        professional_ready = bool(strict_confluence and htf_ready and ltf_ready and not trend_conflict)
+        has_confluence = professional_ready if analysis_contract["analysis_mode"] == "professional" else (strict_confluence or directional_structure)
         confluence_flags = {
             "policy_mode": policy_mode,
             "bos": bool(mtf_features.get("bos")),
@@ -203,6 +210,18 @@ class SignalEngine:
             "risk_filter_passed": None,
             "live_snapshot_available": mtf.get("data_status") in {"real", "delayed"},
         }
+        if analysis_contract["analysis_mode"] == "professional" and not has_confluence:
+            return self._no_trade(
+                symbol=symbol,
+                timeframe=timeframe,
+                snapshot=mtf,
+                reason=(
+                    "Профессиональный режим TwelveData: confluence недостаточный, "
+                    "идея переведена в WAIT до подтверждения структуры."
+                ),
+                chart_patterns=mtf_patterns,
+                pattern_summary=mtf_pattern_summary,
+            )
 
         action = infer_action(mtf_features["trend"])
         pattern_impact = self.pattern_detector.signal_impact(action=action, summary=mtf_pattern_summary)
@@ -324,6 +343,9 @@ class SignalEngine:
             "progress": progress,
             "data_status": mtf["data_status"],
             "data_quality": data_quality,
+            "data_provider": analysis_contract["data_provider"],
+            "analysis_mode": analysis_contract["analysis_mode"],
+            "warning": analysis_contract["warning"],
             "signal_policy_mode": policy_mode,
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, action, mtf_pattern_summary),
@@ -345,6 +367,9 @@ class SignalEngine:
                 "atr_percent": round(mtf_features.get("atr_percent", 0.0), 4),
                 "data_status": mtf.get("data_status", "unavailable"),
                 "data_quality": data_quality,
+                "data_provider": analysis_contract["data_provider"],
+                "analysis_mode": analysis_contract["analysis_mode"],
+                "warning": analysis_contract["warning"],
                 "signal_policy_mode": policy_mode,
                 "source": mtf["source"],
                 "source_symbol": mtf.get("source_symbol"),
@@ -413,7 +438,8 @@ class SignalEngine:
         pattern_impact = self.pattern_detector.signal_impact(action=action, summary=pattern_summary or {})
         confidence = 34
         signal_time = datetime.now(timezone.utc).isoformat()
-        policy_mode = "strict_smc" if data_quality == "high" else "fallback_directional"
+        analysis_contract = self._resolve_analysis_contract(htf=snapshot, mtf=snapshot, ltf=snapshot)
+        policy_mode = "strict_smc" if analysis_contract["analysis_mode"] == "professional" else "fallback_directional"
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -434,7 +460,10 @@ class SignalEngine:
             "invalidation_ru": default_invalidation_text(),
             "progress": self._build_progress(action, price, price, level_plan["stop"], level_plan["take"]),
             "data_status": snapshot.get("data_status", "unavailable"),
-            "data_quality": data_quality,
+            "data_quality": analysis_contract["data_quality"],
+            "data_provider": analysis_contract["data_provider"],
+            "analysis_mode": analysis_contract["analysis_mode"],
+            "warning": analysis_contract["warning"],
             "signal_policy_mode": policy_mode,
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, action, pattern_summary or {}),
@@ -465,6 +494,9 @@ class SignalEngine:
                 "message": snapshot.get("message"),
                 "current_price": round(price, 6) if snapshot.get("data_status") in {"real", "delayed"} else None,
                 "data_quality": data_quality,
+                "data_provider": analysis_contract["data_provider"],
+                "analysis_mode": analysis_contract["analysis_mode"],
+                "warning": analysis_contract["warning"],
                 "signal_policy_mode": policy_mode,
                 "signal_origin": "backend.signal_engine",
             },
@@ -512,8 +544,8 @@ class SignalEngine:
         live_data_available = data_status in {"real", "delayed"}
         fallback_price = snapshot.get("close") if live_data_available else None
         fallback_reason = reason or scenario["reason"]
-        data_quality = self._resolve_data_quality(htf=snapshot, mtf=snapshot, ltf=snapshot)
-        policy_mode = "strict_smc" if data_quality == "high" else "fallback_directional"
+        analysis_contract = self._resolve_analysis_contract(htf=snapshot, mtf=snapshot, ltf=snapshot)
+        policy_mode = "strict_smc" if analysis_contract["analysis_mode"] == "professional" else "fallback_directional"
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -541,7 +573,10 @@ class SignalEngine:
                 "label_ru": "Ожидание подтверждения",
             },
             "data_status": data_status,
-            "data_quality": data_quality,
+            "data_quality": analysis_contract["data_quality"],
+            "data_provider": analysis_contract["data_provider"],
+            "analysis_mode": analysis_contract["analysis_mode"],
+            "warning": analysis_contract["warning"],
             "signal_policy_mode": policy_mode,
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, "NO_TRADE", summary),
@@ -564,7 +599,10 @@ class SignalEngine:
                 "message": snapshot.get("message"),
                 "current_price": fallback_price,
                 "data_status": data_status,
-                "data_quality": data_quality,
+                "data_quality": analysis_contract["data_quality"],
+                "data_provider": analysis_contract["data_provider"],
+                "analysis_mode": analysis_contract["analysis_mode"],
+                "warning": analysis_contract["warning"],
                 "signal_policy_mode": policy_mode,
                 "source_symbol": snapshot.get("source_symbol"),
                 "last_updated_utc": snapshot.get("last_updated_utc"),
@@ -592,6 +630,8 @@ class SignalEngine:
         signal_time = datetime.now(timezone.utc).isoformat()
         summary = pattern_summary or self.pattern_detector.detect([])["summary"]
         impact = pattern_impact or self.pattern_detector.signal_impact(action="NO_TRADE", summary=summary)
+        analysis_contract = self._resolve_analysis_contract(htf=snapshot, mtf=snapshot, ltf=snapshot)
+        policy_mode = "strict_smc" if analysis_contract["analysis_mode"] == "professional" else "fallback_directional"
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -619,6 +659,11 @@ class SignalEngine:
                 "label_ru": "Ожидание нового сетапа",
             },
             "data_status": snapshot.get("data_status", "unavailable"),
+            "data_quality": analysis_contract["data_quality"],
+            "data_provider": analysis_contract["data_provider"],
+            "analysis_mode": analysis_contract["analysis_mode"],
+            "warning": analysis_contract["warning"],
+            "signal_policy_mode": policy_mode,
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, "NO_TRADE", summary),
             "sentiment": snapshot.get("sentiment") or {},
@@ -636,6 +681,11 @@ class SignalEngine:
                 "source": snapshot.get("source"),
                 "message": snapshot.get("message"),
                 "proxy_metrics": snapshot.get("proxy_metrics", []),
+                "data_quality": analysis_contract["data_quality"],
+                "data_provider": analysis_contract["data_provider"],
+                "analysis_mode": analysis_contract["analysis_mode"],
+                "warning": analysis_contract["warning"],
+                "signal_policy_mode": policy_mode,
                 "signal_origin": "backend.signal_engine",
                 "patternSummaryRu": summary.get("patternSummaryRu", "Явные графические паттерны не обнаружены"),
             },
@@ -749,6 +799,28 @@ class SignalEngine:
         if "yahoo_finance" in sources:
             return "fallback"
         return "high"
+
+    @classmethod
+    def _resolve_analysis_contract(cls, *, htf: dict, mtf: dict, ltf: dict) -> dict:
+        sources = [str(frame.get("source") or "").lower() for frame in (htf, mtf, ltf)]
+        candles_counts = [len(frame.get("candles", []) or []) for frame in (htf, mtf, ltf)]
+        has_yahoo = any(source == "yahoo_finance" for source in sources)
+        has_twelvedata = any(source == "twelvedata" for source in sources)
+        sufficient_candles = min(candles_counts) >= PROFESSIONAL_MIN_CANDLES if candles_counts else False
+
+        if has_twelvedata and sufficient_candles and not has_yahoo:
+            return {
+                "data_provider": "TwelveData",
+                "analysis_mode": "professional",
+                "data_quality": "high",
+                "warning": "",
+            }
+        return {
+            "data_provider": "Yahoo fallback" if has_yahoo else "mixed_or_unknown",
+            "analysis_mode": "directional_fallback",
+            "data_quality": "fallback",
+            "warning": FALLBACK_WARNING_RU,
+        }
 
     @staticmethod
     def _has_directional_structure(*, mtf_features: dict, ltf_features: dict, htf_features: dict) -> bool:

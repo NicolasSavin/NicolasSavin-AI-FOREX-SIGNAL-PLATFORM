@@ -113,6 +113,9 @@ def test_signal_engine_builds_trade_with_delayed_candles_without_live_quote(monk
     assert signal["market_context"]["is_live_market_data"] is False
     assert signal["scenario_type"] in {"continuation", "pullback", "reversal", "range_breakout_setup"}
     assert signal["validation_state"] in {"high_conviction", "confirmed", "developing", "early", "weak", "range_bias"}
+    assert signal["analysis_mode"] == "directional_fallback"
+    assert signal["data_provider"] == "Yahoo fallback"
+    assert "упрощённом режиме" in signal["warning"]
 
 
 def test_signal_engine_returns_developing_idea_when_confluence_is_weak(monkeypatch) -> None:
@@ -201,9 +204,11 @@ def test_signal_engine_preserves_strict_confluence_for_high_quality_source(monke
         {"data_status": "unavailable", "confidence": 0.0},
     )
 
+    assert signal["action"] == "NO_TRADE"
     assert signal["data_quality"] == "high"
+    assert signal["analysis_mode"] == "professional"
+    assert signal["data_provider"] == "TwelveData"
     assert signal["signal_policy_mode"] == "strict_smc"
-    assert "confluence_threshold" in signal["missing_confirmations"]
 
 
 def test_signal_engine_keeps_idea_when_snapshot_status_unavailable_but_candles_exist(monkeypatch) -> None:
