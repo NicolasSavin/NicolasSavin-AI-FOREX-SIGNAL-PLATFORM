@@ -752,7 +752,12 @@ class TradeIdeaService:
             invalidation=invalidation,
             bias=bias,
         )
-        unified_narrative_text = llm_result.data.get("unified_narrative") or llm_result.data.get("full_text") or self._build_full_text(
+        existing_idea_thesis = str((existing or {}).get("idea_thesis") or "").strip()
+        existing_unified_narrative = str((existing or {}).get("unified_narrative") or "").strip()
+        existing_full_text = str((existing or {}).get("full_text") or "").strip()
+
+        candidate_idea_thesis = llm_result.data.get("idea_thesis") or llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")
+        candidate_unified_narrative = llm_result.data.get("unified_narrative") or llm_result.data.get("full_text") or self._build_full_text(
             signal,
             summary=summary_text,
             idea_context=idea_context,
@@ -760,7 +765,16 @@ class TradeIdeaService:
             invalidation=invalidation,
             target=target,
         )
-        full_text = llm_result.data.get("full_text") or unified_narrative_text
+        candidate_full_text = llm_result.data.get("full_text") or candidate_unified_narrative
+        idea_thesis_text = self._prefer_meaningful_text(existing_idea_thesis, candidate_idea_thesis)
+        unified_narrative_text = self._prefer_meaningful_text(existing_unified_narrative, candidate_unified_narrative)
+        full_text = self._prefer_meaningful_text(existing_full_text, candidate_full_text)
+        if not full_text:
+            full_text = unified_narrative_text or idea_thesis_text
+        if not unified_narrative_text:
+            unified_narrative_text = idea_thesis_text or full_text
+        if not idea_thesis_text:
+            idea_thesis_text = unified_narrative_text or full_text
         short_scenario = llm_result.data.get("short_text") or self._build_trade_scenario_line(
             direction=bias,
             entry=self._format_zone(entry_value),
@@ -921,6 +935,7 @@ class TradeIdeaService:
             "short_scenario_ru": short_scenario,
             "short_text": short_scenario,
             "full_text": full_text,
+            "idea_thesis": idea_thesis_text,
             "unified_narrative": unified_narrative_text,
             "signal": str(llm_result.data.get("signal") or ("BUY" if action == "BUY" else "SELL" if action == "SELL" else "WAIT")).upper(),
             "risk_note": str(llm_result.data.get("risk_note") or llm_result.data.get("risk") or ""),
@@ -1037,7 +1052,9 @@ class TradeIdeaService:
     ) -> list[str]:
         reasons: list[str] = []
 
-        if str(existing.get("status") or "").lower() != str(payload.get("status") or "").lower():
+        previous_status = str(existing.get("status") or "").lower()
+        next_status = str(payload.get("status") or "").lower()
+        if cls._is_material_status_change(previous_status=previous_status, next_status=next_status):
             reasons.append("status_changed")
         if str(existing.get("signal") or "").upper() != str(payload.get("signal") or "").upper():
             reasons.append("signal_changed")
@@ -1057,9 +1074,9 @@ class TradeIdeaService:
             if cls._extract_numeric(existing.get(key)) != cls._extract_numeric(payload.get(key)):
                 reasons.append(reason)
 
-        if cls._clean_text(existing.get("unified_narrative")) != cls._clean_text(payload.get("unified_narrative")):
+        if cls._meaningful_text_for_compare(existing.get("unified_narrative")) != cls._meaningful_text_for_compare(payload.get("unified_narrative")):
             reasons.append("unified_narrative_changed")
-        if cls._clean_text(existing.get("idea_thesis")) != cls._clean_text(payload.get("idea_thesis")):
+        if cls._meaningful_text_for_compare(existing.get("idea_thesis")) != cls._meaningful_text_for_compare(payload.get("idea_thesis")):
             reasons.append("idea_thesis_changed")
 
         if str(existing.get("chartImageUrl") or existing.get("chart_image") or "") != str(payload.get("chartImageUrl") or payload.get("chart_image") or ""):
@@ -1067,13 +1084,11 @@ class TradeIdeaService:
         if cls._overlay_signature(existing) != cls._overlay_signature(payload):
             reasons.append("chart_overlays_changed")
 
-        next_status = str(payload.get("status") or "").lower()
-        prev_status = str(existing.get("status") or "").lower()
-        if next_status == IDEA_STATUS_TRIGGERED and prev_status != IDEA_STATUS_TRIGGERED:
+        if next_status == IDEA_STATUS_TRIGGERED and previous_status != IDEA_STATUS_TRIGGERED:
             reasons.append("entry_triggered")
-        if next_status == IDEA_STATUS_TP_HIT and prev_status != IDEA_STATUS_TP_HIT:
+        if next_status == IDEA_STATUS_TP_HIT and previous_status != IDEA_STATUS_TP_HIT:
             reasons.append("tp_hit")
-        if next_status == IDEA_STATUS_SL_HIT and prev_status != IDEA_STATUS_SL_HIT:
+        if next_status == IDEA_STATUS_SL_HIT and previous_status != IDEA_STATUS_SL_HIT:
             reasons.append("sl_hit")
 
         if bool(signal.get("bos_detected")) or bool(signal.get("structure_break")):
@@ -1089,9 +1104,37 @@ class TradeIdeaService:
     def _clean_text(value: Any) -> str:
         return " ".join(str(value or "").split())
 
+    @classmethod
+    def _meaningful_text_for_compare(cls, value: Any) -> str:
+        cleaned = cls._clean_text(value)
+        return "" if cls._is_weak_narrative_text(cleaned) else cleaned.lower()
+
+    @classmethod
+    def _prefer_meaningful_text(cls, existing_value: Any, incoming_value: Any) -> str:
+        incoming = cls._clean_text(incoming_value)
+        if incoming and not cls._is_weak_narrative_text(incoming):
+            return incoming
+        existing = cls._clean_text(existing_value)
+        if existing:
+            return existing
+        return incoming
+
+    @staticmethod
+    def _is_material_status_change(*, previous_status: str, next_status: str) -> bool:
+        if previous_status == next_status:
+            return False
+        material_statuses = {
+            IDEA_STATUS_TRIGGERED,
+            IDEA_STATUS_ACTIVE,
+            IDEA_STATUS_TP_HIT,
+            IDEA_STATUS_SL_HIT,
+            IDEA_STATUS_ARCHIVED,
+        }
+        return previous_status in material_statuses or next_status in material_statuses
+
     @staticmethod
     def _overlay_signature(payload: dict[str, Any]) -> str:
-        overlay = payload.get("overlay_data")
+        overlay = payload.get("chart_overlays")
         if not isinstance(overlay, dict):
             return ""
         return sha1(json.dumps(overlay, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
@@ -2141,6 +2184,21 @@ class TradeIdeaService:
         text = str(value or "").strip().lower()
         if not text:
             return True
+        normalized = re.sub(r"\s+", " ", text)
+        if re.search(r"^[a-z]{3,8}\s*[\/-]?\s*[a-z]{3,8}\s+[mhdw]\d{1,2}\s*:\s*(bullish|bearish|neutral).*(статус|status)\s+\w+", normalized):
+            return True
+        weak_patterns = (
+            r"\bstatus\s+created\b",
+            r"\bстатус\s+created\b",
+            r"\bidea_created\b",
+            r"\bfallback\b",
+            r"\bdebug\b",
+            r"\bschema\b",
+            r"\bpayload\b",
+            r"^\{.+\}$",
+        )
+        if any(re.search(pattern, normalized) for pattern in weak_patterns):
+            return True
         weak_tokens = (
             "статус created",
             "статус waiting",
@@ -2156,7 +2214,7 @@ class TradeIdeaService:
             "status created",
             "debug",
         )
-        sentences = [chunk for chunk in re.split(r"[.!?]+", text) if chunk.strip()]
+        sentences = [chunk for chunk in re.split(r"[.!?]+", normalized) if chunk.strip()]
         return any(token in text for token in weak_tokens) or len(text) < 40 or len(sentences) > 6 or len(sentences) < 2
 
     @classmethod
