@@ -678,6 +678,16 @@ class TradeIdeaService:
         )
         chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
         final_candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
+        candles_count = len(final_candles)
+        data_is_available = candles_count > 50
+        should_regenerate = (
+            data_is_available
+            and latest_matching_idea is not None
+            and (
+                bool(latest_matching_idea.get("is_fallback"))
+                or str(latest_matching_idea.get("status") or "").lower() == IDEA_STATUS_WAITING
+            )
+        )
         if len(final_candles) < MIN_IDEA_CANDLES_REQUIRED:
             logger.info(
                 "ideas_pipeline_skip_upsert_final_provider_candles symbol=%s timeframe=%s candles_count=%s min_required=%s provider=%s",
@@ -704,12 +714,32 @@ class TradeIdeaService:
             ),
             None,
         )
-
-        if active_index is None and action == "NO_TRADE":
-            if latest_matching_idea is not None:
-                return latest_matching_idea
-
-        if active_index is not None:
+        if data_is_available:
+            target_index = active_index
+            if target_index is None and latest_matching_idea is not None:
+                try:
+                    target_index = ideas.index(latest_matching_idea)
+                except ValueError:
+                    target_index = None
+            updated = self._build_idea(signal, existing=None, now=now)
+            updated["is_fallback"] = False
+            updated["status"] = IDEA_STATUS_ACTIVE
+            updated["regenerated"] = True
+            if target_index is not None:
+                previous = ideas[target_index]
+                ideas[target_index] = updated
+                self._append_snapshot(updated, previous=previous)
+            else:
+                ideas.append(updated)
+                self._append_snapshot(updated, previous=None)
+            logger.info(
+                "ideas_regenerated_on_data_recovery symbol=%s timeframe=%s candles_count=%s had_fallback_or_waiting=%s",
+                symbol,
+                timeframe,
+                candles_count,
+                should_regenerate,
+            )
+        elif active_index is not None:
             current = ideas[active_index]
             updated = self._build_idea(signal, existing=current, now=now)
             ideas[active_index] = updated
