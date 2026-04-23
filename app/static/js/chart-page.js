@@ -614,7 +614,6 @@ function shouldDisplayAggregatedIdea(idea) {
   if (isStrongIdea) return true;
 
   const isMeaningfulWait = signal === "WAIT"
-    && confidence >= 45
     && hasNarrative;
   if (isMeaningfulWait) return true;
 
