@@ -36,6 +36,7 @@ let allIdeas = [];
 let activeIdea = null;
 let chart = null;
 let candleSeries = null;
+let chartPriceLines = [];
 let currentChartPayload = null;
 let detailRequestId = 0;
 let chartDisplayMode = "unavailable";
@@ -1158,6 +1159,7 @@ function ensureChart() {
 
 function resetChartState({ keepSnapshot = true } = {}) {
   currentChartPayload = null;
+  clearChartPriceLines();
   if (chartSnapshotImage && !keepSnapshot) {
     chartSnapshotImage.removeAttribute("src");
   }
@@ -1179,6 +1181,75 @@ function showChartPlaceholder(message) {
 function hideChartPlaceholder() {
   chartPlaceholder.classList.remove("open");
   chartPlaceholderText.textContent = "График недоступен";
+}
+
+function clearChartPriceLines() {
+  if (!chart || !candleSeries || !Array.isArray(chartPriceLines) || !chartPriceLines.length) return;
+  chartPriceLines.forEach((line) => {
+    try {
+      candleSeries.removePriceLine(line);
+    } catch (error) {
+      console.debug("Failed to remove chart price line", error);
+    }
+  });
+  chartPriceLines = [];
+}
+
+function toFinitePrice(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function hasBasicLevels(idea) {
+  return toFinitePrice(idea?.entry) != null
+    && toFinitePrice(idea?.stopLoss ?? idea?.sl) != null
+    && toFinitePrice(idea?.takeProfit ?? idea?.tp) != null;
+}
+
+function createSyntheticLevelCandles(entry, stopLoss, takeProfit) {
+  const prices = [entry, stopLoss, takeProfit].filter(Number.isFinite);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const spread = Math.max(Math.abs(maxPrice - minPrice), Math.abs(entry) * 0.001, 0.0001);
+  const amplitude = spread * 0.18;
+  const baseTime = Math.floor(Date.now() / 1000);
+  const totalBars = 24;
+  const candles = [];
+
+  for (let index = 0; index < totalBars; index += 1) {
+    const progress = index / Math.max(1, totalBars - 1);
+    const wave = Math.sin(progress * Math.PI * 2.6);
+    const prevWave = Math.sin(Math.max(0, progress - 1 / totalBars) * Math.PI * 2.6);
+    const open = entry + prevWave * amplitude * 0.9;
+    const close = entry + wave * amplitude;
+    const high = Math.max(open, close) + amplitude * 0.45;
+    const low = Math.min(open, close) - amplitude * 0.45;
+    candles.push({
+      time: baseTime - (totalBars - index) * 3600,
+      open,
+      high,
+      low,
+      close,
+    });
+  }
+
+  return candles;
+}
+
+function buildBasicLevelsChartPayload(idea) {
+  if (!hasBasicLevels(idea)) return null;
+  const entry = toFinitePrice(idea?.entry);
+  const stopLoss = toFinitePrice(idea?.stopLoss ?? idea?.sl);
+  const takeProfit = toFinitePrice(idea?.takeProfit ?? idea?.tp);
+  if (entry == null || stopLoss == null || takeProfit == null) return null;
+  return {
+    candles: createSyntheticLevelCandles(entry, stopLoss, takeProfit),
+    level_lines: [
+      { price: entry, title: "Entry", color: "#38bdf8", lineStyle: LightweightCharts.LineStyle.Solid },
+      { price: stopLoss, title: "SL", color: "#ef4444", lineStyle: LightweightCharts.LineStyle.Dashed },
+      { price: takeProfit, title: "TP", color: "#22c55e", lineStyle: LightweightCharts.LineStyle.Dashed },
+    ],
+  };
 }
 
 function normalizeChartImageUrl(url) {
@@ -1274,6 +1345,7 @@ function setChartMode(mode) {
 
 function showSnapshotChart(imageUrl) {
   if (!chartSnapshotImage || !imageUrl) return false;
+  clearChartPriceLines();
   chartSnapshotImage.src = imageUrl;
   setChartMode("snapshot");
   return true;
@@ -1323,13 +1395,32 @@ function mergeChartPayloadWithIdeaOverlays(payload, idea) {
   return { ...payload, chart_overlays: ideaOverlays };
 }
 
-function showLiveChart(payload) {
+function applyLevelLines(levelLines) {
+  clearChartPriceLines();
+  if (!Array.isArray(levelLines) || !levelLines.length || !candleSeries) return;
+  levelLines.forEach((line) => {
+    const price = toFinitePrice(line?.price);
+    if (price == null) return;
+    const priceLine = candleSeries.createPriceLine({
+      price,
+      color: line?.color || "#cbd5e1",
+      lineWidth: 2,
+      lineStyle: line?.lineStyle ?? LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: line?.title || "",
+    });
+    chartPriceLines.push(priceLine);
+  });
+}
+
+function showLiveChart(payload, { levelLines = null } = {}) {
   const normalizedPayload = normalizeChartPayload(payload);
   if (!hasCandles(normalizedPayload)) return false;
   setChartMode("live");
   ensureChart();
   currentChartPayload = normalizedPayload;
   candleSeries.setData(normalizedPayload.candles);
+  applyLevelLines(levelLines ?? normalizedPayload.level_lines ?? null);
   chart.timeScale().fitContent();
   requestAnimationFrame(() => {
     requestAnimationFrame(() => drawOverlay());
@@ -1338,6 +1429,7 @@ function showLiveChart(payload) {
 }
 
 function showUnavailableChart(message) {
+  clearChartPriceLines();
   setChartMode("unavailable");
   showChartPlaceholder(message || "График недоступен");
 }
@@ -1927,7 +2019,7 @@ async function openIdea(idea) {
   renderDetailText(idea);
   renderCleanDetailStatus(idea);
   const snapshotUrl = getValidChartUrl(idea);
-  const cachedSnapshotUrl = getCachedChartUrl(idea);
+  const hasLevelFallback = hasBasicLevels(idea);
   const hasFallbackCandles = shouldUseFallbackCandles(idea);
   normalizeSnapshotStatus(
     idea.chartSnapshotStatus || idea.chart_snapshot_status || "",
@@ -1954,8 +2046,7 @@ async function openIdea(idea) {
     }
   }
 
-  if (cachedSnapshotUrl) {
-    showSnapshotChart(cachedSnapshotUrl);
+  if (showCachedChartIfAny(idea)) {
     renderCleanDetailStatus(idea);
     return;
   }
@@ -1977,9 +2068,12 @@ async function openIdea(idea) {
     return;
   }
 
-  if (showCachedChartIfAny(idea)) {
-    renderCleanDetailStatus(idea);
-    return;
+  if (hasLevelFallback) {
+    const levelsPayload = buildBasicLevelsChartPayload(idea);
+    if (levelsPayload && showLiveChart(levelsPayload, { levelLines: levelsPayload.level_lines })) {
+      renderCleanDetailStatus(idea);
+      return;
+    }
   }
 
   showUnavailableChart("График недоступен");
