@@ -47,7 +47,7 @@ def test_trade_idea_updates_without_duplication(tmp_path: Path) -> None:
     assert payload["ideas"][0]["timeframe"] in {"H1", "MTF"}
     assert payload["ideas"][0]["status"] in {"waiting", "triggered", "active", "created"}
     assert isinstance(payload["ideas"][0]["updates"], list)
-    assert payload["ideas"][0]["narrative_source"] in {"grok", "template_fallback", "combined_model"}
+    assert payload["ideas"][0]["narrative_source"] in {"grok", "model", "fallback_template"}
 
 
 def test_trade_idea_new_lifecycle_creates_new_record(tmp_path: Path) -> None:
