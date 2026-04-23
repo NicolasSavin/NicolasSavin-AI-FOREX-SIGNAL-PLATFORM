@@ -38,6 +38,7 @@ let candleSeries = null;
 let currentChartPayload = null;
 let detailRequestId = 0;
 let chartDisplayMode = "unavailable";
+const registeredChartPlugins = [];
 let initialIdeasSyncCompleted = false;
 let ideasPollInFlight = false;
 let lastNotificationAt = 0;
@@ -321,6 +322,11 @@ function normalizeIdea(idea) {
     stopLoss: idea?.stopLoss ?? idea?.stop_loss ?? "—",
     takeProfit: idea?.takeProfit ?? idea?.take_profit ?? "—",
     chartData: idea?.chartData ?? idea?.chart_data ?? null,
+    chart_overlays: idea?.chart_overlays
+      ?? idea?.chartOverlays
+      ?? idea?.chart_data?.chart_overlays
+      ?? idea?.chartData?.chart_overlays
+      ?? null,
     ideaContext: idea?.ideaContext ?? idea?.idea_context ?? idea?.idea_context_ru ?? idea?.context ?? idea?.rationale ?? summary,
     trigger: idea?.trigger ?? idea?.trigger_ru ?? (idea?.entry || idea?.entry_zone ? `Ждём подтверждение в зоне ${idea?.entry || idea?.entry_zone}.` : "Ждём подтверждение сценария по структуре."),
     invalidation: idea?.invalidation ?? idea?.invalidation_ru ?? idea?.trade_plan?.invalidation ?? "Идея отменяется при сломе исходной структуры.",
@@ -336,6 +342,12 @@ function normalizeIdea(idea) {
     close_reason: idea?.close_reason || "",
     history: Array.isArray(idea?.history) ? idea.history : [],
   };
+}
+
+function registerChartPlugin(plugin) {
+  if (!plugin?.id || typeof plugin?.afterDraw !== "function") return;
+  const exists = registeredChartPlugins.some(item => item.id === plugin.id);
+  if (!exists) registeredChartPlugins.push(plugin);
 }
 
 function normalizeIdeas(data) {
@@ -934,8 +946,168 @@ function prepareOverlayData(payload) {
     _price: priceFromMeta(candles, label.price_ref, zones, levels),
   }));
 
-  return { candles, zones, levels, arrows, labels };
+  return {
+    candles,
+    zones,
+    levels,
+    arrows,
+    labels,
+    smcOverlays: normalizeSmcOverlays(payload),
+  };
 }
+
+function toFiniteNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeSmcOverlays(payload) {
+  const base = payload?.chart_overlays
+    ?? payload?.chartOverlays
+    ?? payload?.overlays?.chart_overlays
+    ?? {};
+
+  const orderBlocks = Array.isArray(base?.order_blocks)
+    ? base.order_blocks
+      .map((item) => {
+        const from = toFiniteNumber(item?.from);
+        const to = toFiniteNumber(item?.to);
+        if (from == null || to == null) return null;
+        return {
+          from: Math.min(from, to),
+          to: Math.max(from, to),
+          type: String(item?.type || "").toLowerCase(),
+        };
+      })
+      .filter(Boolean)
+    : [];
+
+  const fvg = Array.isArray(base?.fvg)
+    ? base.fvg
+      .map((item) => {
+        const from = toFiniteNumber(item?.from);
+        const to = toFiniteNumber(item?.to);
+        if (from == null || to == null) return null;
+        return {
+          from: Math.min(from, to),
+          to: Math.max(from, to),
+        };
+      })
+      .filter(Boolean)
+    : [];
+
+  const liquidity = Array.isArray(base?.liquidity)
+    ? base.liquidity
+      .map((item) => {
+        const level = toFiniteNumber(item?.level);
+        if (level == null) return null;
+        return { level, label: normalizeWhitespace(item?.label || "Liquidity") };
+      })
+      .filter(Boolean)
+    : [];
+
+  const structure = Array.isArray(base?.structure)
+    ? base.structure
+      .map((item) => {
+        const level = toFiniteNumber(item?.level);
+        if (level == null) return null;
+        return {
+          level,
+          type: normalizeWhitespace(item?.type || "structure"),
+        };
+      })
+      .filter(Boolean)
+    : [];
+
+  return {
+    order_blocks: orderBlocks,
+    fvg,
+    liquidity,
+    structure,
+  };
+}
+
+const overlayPlugin = {
+  id: "smcOverlay",
+  afterDraw(chartContext) {
+    const { ctx, width, candles, smcOverlays, timeScale, candleSeries } = chartContext || {};
+    if (!ctx || !width || !Array.isArray(candles) || !candles.length || !smcOverlays) return;
+    const hasAnyOverlay = smcOverlays.order_blocks.length
+      || smcOverlays.fvg.length
+      || smcOverlays.liquidity.length
+      || smcOverlays.structure.length;
+    if (!hasAnyOverlay) return;
+
+    const startX = timeScale.timeToCoordinate(candles[0]?.time);
+    const endX = timeScale.timeToCoordinate(candles[candles.length - 1]?.time);
+    if (startX == null || endX == null) return;
+    const leftX = Math.min(startX, endX);
+    const rightX = Math.max(startX, endX);
+    const lineWidth = Math.max(1, rightX - leftX);
+
+    smcOverlays.order_blocks.forEach((zone) => {
+      const yTop = candleSeries.priceToCoordinate(zone.to);
+      const yBottom = candleSeries.priceToCoordinate(zone.from);
+      if (yTop == null || yBottom == null) return;
+      const top = Math.min(yTop, yBottom);
+      const height = Math.max(4, Math.abs(yBottom - yTop));
+      const isBearish = ["bearish", "supply", "sell", "short"].includes(zone.type);
+      ctx.save();
+      ctx.fillStyle = isBearish ? "rgba(239, 68, 68, 0.16)" : "rgba(34, 197, 94, 0.16)";
+      ctx.strokeStyle = isBearish ? "rgba(239, 68, 68, 0.5)" : "rgba(34, 197, 94, 0.5)";
+      ctx.lineWidth = 1;
+      ctx.fillRect(leftX, top, lineWidth, height);
+      ctx.strokeRect(leftX, top, lineWidth, height);
+      ctx.restore();
+    });
+
+    smcOverlays.fvg.forEach((gap) => {
+      const yTop = candleSeries.priceToCoordinate(gap.to);
+      const yBottom = candleSeries.priceToCoordinate(gap.from);
+      if (yTop == null || yBottom == null) return;
+      const top = Math.min(yTop, yBottom);
+      const height = Math.max(3, Math.abs(yBottom - yTop));
+      ctx.save();
+      ctx.fillStyle = "rgba(59, 130, 246, 0.16)";
+      ctx.strokeStyle = "rgba(96, 165, 250, 0.45)";
+      ctx.lineWidth = 1;
+      ctx.fillRect(leftX, top, lineWidth, height);
+      ctx.strokeRect(leftX, top, lineWidth, height);
+      ctx.restore();
+    });
+
+    smcOverlays.liquidity.forEach((item) => {
+      const y = candleSeries.priceToCoordinate(item.level);
+      if (y == null) return;
+      ctx.save();
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.95)";
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(leftX, y);
+      ctx.lineTo(rightX, y);
+      ctx.stroke();
+      ctx.restore();
+      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, item.label || "Liquidity", "#38bdf8");
+    });
+
+    smcOverlays.structure.forEach((item) => {
+      const y = candleSeries.priceToCoordinate(item.level);
+      if (y == null) return;
+      ctx.save();
+      ctx.strokeStyle = "rgba(251, 191, 36, 0.95)";
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(leftX, y);
+      ctx.lineTo(rightX, y);
+      ctx.stroke();
+      ctx.restore();
+      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, `Structure: ${item.type}`, "#fbbf24");
+    });
+  },
+};
+
+registerChartPlugin(overlayPlugin);
 
 function drawOverlay() {
   if (!chart || !currentChartPayload) return;
@@ -945,7 +1117,7 @@ function drawOverlay() {
   const height = overlayCanvas.clientHeight;
   ctx.clearRect(0, 0, width, height);
 
-  const { candles, zones, levels, arrows, labels } = prepareOverlayData(currentChartPayload);
+  const { candles, zones, levels, arrows, labels, smcOverlays } = prepareOverlayData(currentChartPayload);
   const timeScale = chart.timeScale();
 
   zones.forEach(zone => {
@@ -1034,10 +1206,19 @@ function drawOverlay() {
 
     drawLabel(ctx, x + 6, y - 6, label.text, color);
   });
+
+  const chartContext = { chart, ctx, width, height, candles, smcOverlays, timeScale, candleSeries };
+  registeredChartPlugins.forEach((plugin) => plugin.afterDraw(chartContext));
 }
 
 async function resolveChartData(idea) {
-  if (idea.chartData?.candles?.length) return idea.chartData;
+  const localChartData = idea.chartData;
+  if (localChartData?.candles?.length) {
+    if (idea?.chart_overlays && !localChartData.chart_overlays) {
+      return { ...localChartData, chart_overlays: idea.chart_overlays };
+    }
+    return localChartData;
+  }
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort('chart_timeout'), CHART_REQUEST_TIMEOUT_MS);
@@ -1050,7 +1231,11 @@ async function resolveChartData(idea) {
     });
     if (!res.ok) return null;
     const payload = await res.json();
-    return payload?.candles?.length ? payload : null;
+    if (!payload?.candles?.length) return null;
+    if (idea?.chart_overlays && !payload.chart_overlays) {
+      return { ...payload, chart_overlays: idea.chart_overlays };
+    }
+    return payload;
   } catch (error) {
     if (error?.name === 'AbortError') {
       console.warn('Chart request timeout for idea detail-view.', idea?.symbol, idea?.timeframe);
