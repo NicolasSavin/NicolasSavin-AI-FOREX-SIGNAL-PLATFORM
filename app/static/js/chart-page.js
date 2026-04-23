@@ -1190,8 +1190,12 @@ function normalizeChartImageUrl(url) {
   return `/static/${raw.replace(/^\/+/, "")}`;
 }
 
+function getValidChartUrl(idea) {
+  return normalizeChartImageUrl(idea?.chartImageUrl || idea?.chart_image || "");
+}
+
 function hasValidSnapshotImage(idea) {
-  return Boolean(normalizeChartImageUrl(idea?.chartImageUrl || idea?.chart_image || ""));
+  return Boolean(getValidChartUrl(idea));
 }
 
 function normalizeSnapshotStatus(rawStatus, { hasImage = false, hasCandles = false } = {}) {
@@ -1283,6 +1287,10 @@ function hasRenderableCandles(idea) {
   return hasCandles(idea?.chartData) || hasCandles(idea?.chart_data);
 }
 
+function shouldUseFallbackCandles(idea) {
+  return !hasValidSnapshotImage(idea) && hasRenderableCandles(idea);
+}
+
 function hasMeaningfulChartOverlays(overlays) {
   if (!overlays || typeof overlays !== "object") return false;
   const keys = ["order_blocks", "liquidity", "fvg", "structure_levels", "patterns", "zones", "levels"];
@@ -1292,8 +1300,6 @@ function hasMeaningfulChartOverlays(overlays) {
 function mergeWithPreviousIdeaState(nextIdea, prevIdea) {
   if (!prevIdea || typeof prevIdea !== "object") return nextIdea;
   const nextSnapshot = normalizeChartImageUrl(nextIdea?.chartImageUrl || nextIdea?.chart_image || "");
-  const prevSnapshot = normalizeChartImageUrl(prevIdea?.chartImageUrl || prevIdea?.chart_image || "");
-  const mergedSnapshot = nextSnapshot || prevSnapshot;
   const nextChartData = hasRenderableCandles(nextIdea) ? (nextIdea.chartData || nextIdea.chart_data) : null;
   const prevChartData = hasRenderableCandles(prevIdea) ? (prevIdea.chartData || prevIdea.chart_data) : null;
   const nextOverlays = nextIdea?.chart_overlays;
@@ -1302,8 +1308,8 @@ function mergeWithPreviousIdeaState(nextIdea, prevIdea) {
 
   return {
     ...nextIdea,
-    chartImageUrl: mergedSnapshot,
-    chart_image: mergedSnapshot,
+    chartImageUrl: nextSnapshot,
+    chart_image: nextSnapshot,
     chartData: nextChartData || prevChartData || nextIdea.chartData || null,
     chart_overlays: mergedOverlays,
   };
@@ -1858,12 +1864,31 @@ function readCachedIdeaChart(idea) {
   );
 }
 
+function getCachedChartUrl(idea) {
+  const cached = readCachedIdeaChart(idea);
+  if (!cached || cached.type !== "snapshot") return "";
+  return normalizeChartImageUrl(cached.value);
+}
+
 function showCachedChartIfAny(idea) {
   const cached = readCachedIdeaChart(idea);
   if (!cached) return false;
   if (cached.type === "snapshot") return showSnapshotChart(cached.value);
   if (cached.type === "live") return showLiveChart(cached.value);
   return false;
+}
+
+function preloadSnapshotImage(imageUrl) {
+  return new Promise((resolve) => {
+    if (!imageUrl) {
+      resolve(false);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = imageUrl;
+  });
 }
 
 function renderCleanDetailStatus(idea) {
@@ -1876,6 +1901,12 @@ function renderCleanDetailStatus(idea) {
 }
 
 async function openIdea(idea) {
+  const previousActiveIdea = activeIdea;
+  const isSameIdeaRefresh = Boolean(
+    previousActiveIdea
+    && String(previousActiveIdea?.id) === String(idea?.id)
+    && modal.classList.contains("open"),
+  );
   activeIdea = idea;
   const requestId = ++detailRequestId;
   modalTitle.textContent = `${idea.symbol} — ${getSignalLabel(idea)}`;
@@ -1895,45 +1926,38 @@ async function openIdea(idea) {
 
   renderDetailText(idea);
   renderCleanDetailStatus(idea);
-  const rawSnapshotUrl = idea.chartImageUrl || idea.chart_image || "";
-  const snapshotUrl = normalizeChartImageUrl(rawSnapshotUrl);
-  const snapshotStatus = normalizeSnapshotStatus(
+  const snapshotUrl = getValidChartUrl(idea);
+  const cachedSnapshotUrl = getCachedChartUrl(idea);
+  const hasFallbackCandles = shouldUseFallbackCandles(idea);
+  normalizeSnapshotStatus(
     idea.chartSnapshotStatus || idea.chart_snapshot_status || "",
     {
       hasImage: Boolean(snapshotUrl),
-      hasCandles: hasRenderableCandles(idea),
+      hasCandles: hasFallbackCandles,
     },
   );
-  const liveFallbackMessage = snapshotStatusRu(snapshotStatus);
 
-  resetChartState({ keepSnapshot: true });
-  showUnavailableChart("Загружаем график…");
+  if (!isSameIdeaRefresh || chartDisplayMode === "unavailable") {
+    resetChartState({ keepSnapshot: true });
+    showUnavailableChart("Загружаем график…");
+  }
 
   if (snapshotUrl) {
-    const snapshotLoaded = await new Promise((resolve) => {
-      const img = chartSnapshotImage;
-      if (!img) {
-        resolve(false);
-        return;
-      }
-      const done = (ok) => {
-        img.removeEventListener("load", onLoad);
-        img.removeEventListener("error", onError);
-        resolve(ok);
-      };
-      const onLoad = () => done(true);
-      const onError = () => done(false);
-      img.addEventListener("load", onLoad, { once: true });
-      img.addEventListener("error", onError, { once: true });
-      showSnapshotChart(snapshotUrl);
-    });
+    const snapshotLoaded = await preloadSnapshotImage(snapshotUrl);
 
     if (requestId !== detailRequestId || activeIdea?.id !== idea.id) return;
     if (snapshotLoaded) {
+      showSnapshotChart(snapshotUrl);
       cacheIdeaChart(idea.id, { type: "snapshot", value: snapshotUrl });
       renderCleanDetailStatus(idea);
       return;
     }
+  }
+
+  if (cachedSnapshotUrl) {
+    showSnapshotChart(cachedSnapshotUrl);
+    renderCleanDetailStatus(idea);
+    return;
   }
 
   let payload = null;
@@ -1958,7 +1982,7 @@ async function openIdea(idea) {
     return;
   }
 
-  showUnavailableChart(liveFallbackMessage);
+  showUnavailableChart("График недоступен");
   renderCleanDetailStatus(idea);
 }
 
