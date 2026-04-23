@@ -90,11 +90,11 @@ class TradeIdeaService:
         self._refresh_lock = Lock()
         self._refresh_in_progress = False
 
-    async def generate_or_refresh(self, pairs: list[str] | None = None) -> dict[str, Any]:
+    async def generate_or_refresh(self, pairs: list[str] | None = None, *, force: bool = False) -> dict[str, Any]:
         pairs = pairs or self.get_market_symbols()
         existing = self.idea_store.read()
         existing_ideas = existing.get("ideas") if isinstance(existing.get("ideas"), list) else []
-        if existing_ideas and self._is_recent_refresh(existing.get("updated_at_utc")):
+        if not force and existing_ideas and self._is_recent_refresh(existing.get("updated_at_utc")):
             logger.info(
                 "ideas_refresh_skipped reason=throttled interval_seconds=%s existing_ideas_count=%s",
                 self.refresh_interval_seconds,
@@ -686,16 +686,14 @@ class TradeIdeaService:
         chart_payload = self.chart_data_service.get_chart(symbol, timeframe)
         final_candles = chart_payload.get("candles") if isinstance(chart_payload.get("candles"), list) else []
         candles_count = len(final_candles)
-        data_is_available = candles_count > 50
-        should_regenerate = (
-            data_is_available
-            and latest_matching_idea is not None
-            and (
-                bool(latest_matching_idea.get("is_fallback"))
-                or str(latest_matching_idea.get("status") or "").lower() == IDEA_STATUS_WAITING
-            )
-        )
-        if len(final_candles) < MIN_IDEA_CANDLES_REQUIRED:
+        signal_candles_count = int(signal.get("source_candle_count") or 0)
+        signal_debug = signal.get("pipeline_debug") if isinstance(signal.get("pipeline_debug"), dict) else {}
+        debug_candles_count = int(signal_debug.get("candles_count") or 0)
+        generator_signal = bool(signal.get("signal_id")) or bool(signal_debug)
+        data_is_available = signal_candles_count > 0 or debug_candles_count > 0 or (generator_signal and candles_count > 0)
+        if str(signal.get("action") or "").upper() == "NO_TRADE" and not generator_signal and latest_matching_idea is not None:
+            return latest_matching_idea
+        if len(final_candles) <= 0:
             logger.info(
                 "ideas_pipeline_skip_upsert_final_provider_candles symbol=%s timeframe=%s candles_count=%s min_required=%s provider=%s",
                 symbol,
@@ -732,6 +730,8 @@ class TradeIdeaService:
             updated["is_fallback"] = False
             updated["status"] = IDEA_STATUS_ACTIVE
             updated["regenerated"] = True
+            narrative_source = str(updated.get("narrative_source") or "").strip().lower()
+            updated["narrative_source"] = "grok" if narrative_source == "grok" else "generated"
             if target_index is not None:
                 previous = ideas[target_index]
                 ideas[target_index] = updated
@@ -744,7 +744,7 @@ class TradeIdeaService:
                 symbol,
                 timeframe,
                 candles_count,
-                should_regenerate,
+                bool(latest_matching_idea and (latest_matching_idea.get("is_fallback") or str(latest_matching_idea.get("status") or "").lower() == IDEA_STATUS_WAITING)),
             )
         elif active_index is not None:
             current = ideas[active_index]
@@ -787,7 +787,7 @@ class TradeIdeaService:
             symbol = str(signal.get("symbol", "")).upper()
             timeframe = str(signal.get("timeframe", "H1")).upper()
             candles_count = int(signal.get("source_candle_count") or 0)
-            if candles_count >= MIN_IDEA_CANDLES_REQUIRED:
+            if candles_count > 0:
                 symbols_with_candles.add((symbol, timeframe))
             action = signal.get("action", "NO_TRADE")
             pipeline_debug = signal.get("pipeline_debug", {}) if isinstance(signal.get("pipeline_debug"), dict) else {}
@@ -801,7 +801,7 @@ class TradeIdeaService:
                 pipeline_debug.get("reason_if_skipped"),
                 action,
             )
-            if candles_count < MIN_IDEA_CANDLES_REQUIRED:
+            if candles_count <= 0:
                 skipped_reasons["insufficient_candles"] = skipped_reasons.get("insufficient_candles", 0) + 1
                 logger.info(
                     "ideas_pipeline_skip_update_insufficient_candles symbol=%s timeframe=%s candles_count=%s min_required=%s",
@@ -824,46 +824,8 @@ class TradeIdeaService:
                     False,
                     pipeline_debug.get("reason_if_skipped", "no_trade_signal"),
                 )
-            else:
-                symbols_with_idea.add((symbol, timeframe))
             self.upsert_trade_idea(signal)
             symbols_with_idea.add((symbol, timeframe))
-        for symbol_tf in symbols_with_candles:
-            if symbol_tf in symbols_with_idea:
-                continue
-            symbol, timeframe = symbol_tf
-            fallback_signal = {
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "action": "BUY",
-                "entry": None,
-                "stop_loss": None,
-                "take_profit": None,
-                "confidence_percent": 25,
-                "probability_percent": 25,
-                "status": IDEA_STATUS_WAITING,
-                "reason_ru": "Сгенерирован fallback-сценарий: свечи есть, но подтверждение ещё формируется.",
-                "description_ru": f"{symbol} {timeframe}: нейтральная структура диапазона, ожидается подтверждение.",
-                "source_candle_count": 1,
-                "market_context": {"summaryRu": "Нейтральный сценарий диапазона до появления подтверждений."},
-                "pipeline_debug": {
-                    "candles_count": 1,
-                    "features_built": False,
-                    "signal_created": True,
-                    "reason_if_skipped": "fallback_range_scenario",
-                },
-            }
-            logger.debug(
-                "ideas_pipeline_apply symbol=%s timeframe=%s candles_loaded=%s structure_built=%s signal_created=%s reason_if_skipped=%s action=%s",
-                symbol,
-                timeframe,
-                1,
-                False,
-                True,
-                "fallback_range_scenario",
-                fallback_signal["action"],
-            )
-            self.upsert_trade_idea(fallback_signal)
         payload = self.refresh_market_ideas()
         logger.info(
             "ideas_pipeline_summary generated_count=%s candles_loaded_count=%s ideas_generated_count=%s ideas_filtered_count=%s final_payload_count=%s skipped_reasons=%s",
@@ -1244,7 +1206,48 @@ class TradeIdeaService:
             payload=payload,
             now_iso=now.isoformat(),
         )
+        payload = self._ensure_minimum_valid_idea(
+            payload=payload,
+            action=action,
+            symbol=symbol,
+            timeframe=timeframe,
+        )
         return self._attach_trade_result_metrics(payload)
+
+    @classmethod
+    def _ensure_minimum_valid_idea(
+        cls,
+        *,
+        payload: dict[str, Any],
+        action: str,
+        symbol: str,
+        timeframe: str,
+    ) -> dict[str, Any]:
+        normalized_action = str(action or "NO_TRADE").upper()
+        fallback_signal = "BUY" if normalized_action == "BUY" else "SELL" if normalized_action == "SELL" else "WAIT"
+        payload["signal"] = str(payload.get("signal") or fallback_signal).upper()
+        if payload["signal"] not in {"BUY", "SELL", "WAIT"}:
+            payload["signal"] = fallback_signal
+        direction = str(payload.get("direction") or payload.get("bias") or "").strip().lower()
+        if direction not in {"bullish", "bearish", "neutral"}:
+            payload["direction"] = "bullish" if payload["signal"] == "BUY" else "bearish" if payload["signal"] == "SELL" else "neutral"
+            payload["bias"] = payload["direction"]
+        if not str(payload.get("idea_thesis") or "").strip():
+            payload["idea_thesis"] = f"{symbol} {timeframe}: сценарий обновлён на реальных свечах, ожидаем подтверждение входа."
+        last_price = cls._extract_numeric(payload.get("latest_close") or payload.get("current_price") or payload.get("entry"))
+        if last_price is not None:
+            if cls._extract_numeric(payload.get("entry")) is None:
+                payload["entry"] = round(last_price, 6)
+                payload["entry_zone"] = cls._format_zone(payload["entry"])
+            if cls._extract_numeric(payload.get("stop_loss")) is None and payload["signal"] in {"BUY", "SELL"}:
+                sl = last_price * (1 - LEVEL_STOP_LOSS_OFFSET) if payload["signal"] == "BUY" else last_price * (1 + LEVEL_STOP_LOSS_OFFSET)
+                payload["stop_loss"] = round(sl, 6)
+                payload["stopLoss"] = cls._format_price(payload["stop_loss"])
+            if cls._extract_numeric(payload.get("take_profit")) is None and payload["signal"] in {"BUY", "SELL"}:
+                tp = last_price * (1 + LEVEL_TAKE_PROFIT_OFFSET) if payload["signal"] == "BUY" else last_price * (1 - LEVEL_TAKE_PROFIT_OFFSET)
+                payload["take_profit"] = round(tp, 6)
+                payload["takeProfit"] = cls._format_price(payload["take_profit"])
+        return payload
 
     @staticmethod
     def _meaningful_reason_from_status(status: str) -> str:
