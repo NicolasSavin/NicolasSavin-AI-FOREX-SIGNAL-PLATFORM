@@ -226,18 +226,18 @@ function buildShortText(idea) {
 function buildFullText(idea) {
   const description = normalizeWhitespace(
     idea?.idea_thesis
-    || idea?.ideaThesis
     || idea?.unified_narrative
     || idea?.full_text
-    || idea?.fullText
     || idea?.summary
+    || "Нет описания"
   );
-  if (isRenderableNarrative(description) && !isCompactTechnicalSummary(description)) return description;
-
-  const fallbackNarrative = normalizeWhitespace(idea?.fallback_narrative);
-  if (isRenderableNarrative(fallbackNarrative) && !isCompactTechnicalSummary(fallbackNarrative)) return fallbackNarrative;
-
-  return "Нет описания";
+  console.log("IDEA DESCRIPTION DEBUG", {
+    idea_thesis: idea?.idea_thesis,
+    unified_narrative: idea?.unified_narrative,
+    full_text: idea?.full_text,
+    summary: idea?.summary,
+  });
+  return description;
 }
 
 function isRenderableNarrative(value) {
