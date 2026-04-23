@@ -93,9 +93,9 @@ function getDirectionRu(value) {
 
 function getDirectionLabel(value) {
   const raw = String(value || "").trim().toLowerCase();
-  if (["bullish", "buy", "long"].includes(raw)) return "BUY";
-  if (["bearish", "sell", "short"].includes(raw)) return "SELL";
-  return "NEUTRAL";
+  if (["bullish", "buy", "long"].includes(raw)) return "ПОКУПКА";
+  if (["bearish", "sell", "short"].includes(raw)) return "ПРОДАЖА";
+  return "НЕЙТРАЛЬНО";
 }
 
 function getDirectionTone(value) {
@@ -115,9 +115,9 @@ function getSignalTone(idea) {
 
 function getSignalLabel(idea) {
   const signal = String(idea?.final_signal || idea?.signal || "").trim().toLowerCase();
-  if (signal === "buy") return "BUY";
-  if (signal === "sell") return "SELL";
-  if (signal === "wait") return "WAIT";
+  if (signal === "buy") return "ПОКУПКА";
+  if (signal === "sell") return "ПРОДАЖА";
+  if (signal === "wait") return "ОЖИДАНИЕ";
   return getDirectionLabel(idea?.direction || idea?.bias || "neutral");
 }
 
@@ -281,7 +281,7 @@ function buildDetailBrief(idea) {
     sections.push({ key, title, content: text, is_proxy: isProxy });
   };
 
-  registerSection("bias", "Bias", marketStructureStructured?.bias);
+  registerSection("bias", "Уклон", marketStructureStructured?.bias);
   registerSection("structure", "Структура", marketStructureStructured?.structure);
   registerSection("liquidity", "Ликвидность", marketStructureStructured?.liquidity);
   registerSection("zone", "Зона", marketStructureStructured?.zone);
@@ -471,10 +471,10 @@ function renderStats(ideas, payloadStats) {
   const fallback = computeAggregateStats(ideas);
   const stats = payloadStats || {};
   const cards = [
-    ["Winrate", `${Number(stats.winrate ?? fallback.winrate).toFixed(2)}%`],
-    ["Trades", String(stats.total_trades ?? fallback.trades)],
-    ["Avg RR", Number(stats.avg_rr ?? fallback.avgRr).toFixed(2)],
-    ["Avg PnL", formatSignedPercent(stats.avg_pnl ?? fallback.avgPnl)],
+    ["Винрейт", `${Number(stats.winrate ?? fallback.winrate).toFixed(2)}%`],
+    ["Сделки", String(stats.total_trades ?? fallback.trades)],
+    ["Средний R/R", Number(stats.avg_rr ?? fallback.avgRr).toFixed(2)],
+    ["Средний PnL", formatSignedPercent(stats.avg_pnl ?? fallback.avgPnl)],
   ];
   statsGrid.innerHTML = cards
     .map(
@@ -751,9 +751,9 @@ function renderMetricChips(detailBrief) {
   const header = detailBrief?.header || {};
   const metrics = [];
   if (header.market_price) metrics.push(["Цена", header.market_price]);
-  if (header.bias) metrics.push(["Bias", header.bias]);
-  if (header.confidence != null && header.confidence !== "") metrics.push(["Confidence", `${header.confidence}%`]);
-  if (header.confluence_rating != null && header.confluence_rating !== "") metrics.push(["Confluence", `${header.confluence_rating}%`]);
+  if (header.bias) metrics.push(["Уклон", header.bias]);
+  if (header.confidence != null && header.confidence !== "") metrics.push(["Уверенность", `${header.confidence}%`]);
+  if (header.confluence_rating != null && header.confluence_rating !== "") metrics.push(["Согласованность", `${header.confluence_rating}%`]);
   if (header.market_context) metrics.push(["Контекст", header.market_context]);
   if (header.htf) metrics.push(["HTF", header.htf]);
   if (header.mtf) metrics.push(["MTF", header.mtf]);
@@ -1564,7 +1564,7 @@ function closeModal() {
   }
   activeIdea = null;
   detailRequestId += 1;
-  showUnavailableChart("Chart unavailable");
+  showUnavailableChart("График недоступен");
 }
 
 function dedupeIdeasById(ideas) {

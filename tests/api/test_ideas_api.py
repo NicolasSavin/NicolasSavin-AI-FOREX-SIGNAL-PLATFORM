@@ -48,8 +48,8 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert payload[0]["short_text"] == payload[0]["summary"]
     assert "действие" in payload[0]["full_text"].lower()
     assert "eurusd" in payload[0]["full_text"].lower()
-    assert "ликвид" in payload[0]["full_text"].lower()
-    assert "ликвид" in payload[0]["full_text"].lower()
+    assert "формирование структуры" in payload[0]["full_text"].lower()
+    assert "формирование структуры" in payload[0]["full_text"].lower()
     assert len(payload[0]["full_text"]) > 80
     assert payload[0]["detail_brief"]["header"]["bias"] == "Лонг / buy-the-dip bias"
     assert "smc_ict" in payload[0]["supported_sections"]
@@ -183,7 +183,7 @@ def test_build_openrouter_api_ideas_returns_ai_payload(monkeypatch, tmp_path: Pa
     assert "1.0852" in payload[0]["full_text"]
     assert "идея отменяется" in payload[0]["full_text"].lower()
     assert "идея отменяется" in payload[0]["full_text"].lower()
-    assert payload[0]["label"] == "BUY IDEA"
+    assert payload[0]["label"] == "ИДЕЯ ПОКУПКИ"
     assert payload[0]["latest_close"] == 1.0852
     assert payload[0]["market_reference_price"] == 1.0852
     assert payload[0]["entry_deviation_pct"] <= 0.5

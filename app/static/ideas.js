@@ -28,8 +28,8 @@ async function getJson(url) {
 }
 
 function labelClass(label) {
-  if (label === "BUY IDEA") return "idea-label-buy";
-  if (label === "SELL IDEA") return "idea-label-sell";
+  if (label === "BUY IDEA" || label === "ИДЕЯ ПОКУПКИ") return "idea-label-buy";
+  if (label === "SELL IDEA" || label === "ИДЕЯ ПРОДАЖИ") return "idea-label-sell";
   return "idea-label-watch";
 }
 
@@ -44,17 +44,17 @@ function renderIdeaCard(idea) {
     <article class="idea-card">
       <div class="idea-card-top">
         <div class="idea-card-meta">
-          <div class="idea-instrument">${escapeHtml(idea.instrument || "MARKET")}</div>
+          <div class="idea-instrument">${escapeHtml(idea.instrument || "РЫНОК")}</div>
           <h3 class="idea-title">${escapeHtml(idea.title || "AI-идея")}</h3>
           <div class="idea-news-line">Основание: ${escapeHtml(idea.news_title || "Рыночная новость")}</div>
-          <div class="idea-news-line">Статус: <strong>${escapeHtml((idea.status || "waiting").toUpperCase())}</strong></div>
+          <div class="idea-news-line">Статус: <strong>${escapeHtml(idea.status || "ожидание")}</strong></div>
         </div>
-        <div class="idea-label ${labelClass(idea.label)}">${escapeHtml(idea.label || "WATCH")}</div>
+        <div class="idea-label ${labelClass(idea.label)}">${escapeHtml(idea.label || "НАБЛЮДЕНИЕ")}</div>
       </div>
 
       <div class="idea-summary">${escapeHtml(reasoning)}</div>
-      ${compactSummary ? `<div class="idea-news-line">MTF: ${escapeHtml(compactSummary)}</div>` : ""}
-      <div class="idea-news-line">Источник narrative: <strong>${escapeHtml(idea.narrative_source || "template_fallback")}</strong></div>
+      ${compactSummary ? `<div class="idea-news-line">МТФ: ${escapeHtml(compactSummary)}</div>` : ""}
+      <div class="idea-news-line">Источник описания: <strong>${escapeHtml(idea.narrative_source || "резервный_шаблон")}</strong></div>
 
       ${
         chartImageUrl
@@ -72,7 +72,7 @@ function renderIdeaCard(idea) {
       <section class="idea-section idea-section-plan">
         <h4>Торговый сценарий</h4>
         <ul class="trade-plan-list">
-          <li><strong>Bias:</strong> ${escapeHtml(tradePlan.bias || "neutral")}</li>
+          <li><strong>Уклон:</strong> ${escapeHtml(tradePlan.уклон || tradePlan.bias || "нейтральный")}</li>
           <li><strong>Зона работы:</strong> ${escapeHtml(tradePlan.entry_zone || "")}</li>
           <li><strong>Инвалидация:</strong> ${escapeHtml(tradePlan.invalidation || "")}</li>
           <li><strong>Цель 1:</strong> ${escapeHtml(tradePlan.target_1 || "")}</li>

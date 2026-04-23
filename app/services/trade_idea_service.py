@@ -1339,7 +1339,7 @@ class TradeIdeaService:
             "update_summary": llm_result.data.get("update_explanation") or self._build_update_summary(signal=signal, existing=existing, bias=bias),
             "update_reason": "",
             "title": f"{symbol} {timeframe}: {action} idea",
-            "label": "BUY IDEA" if action == "BUY" else "SELL IDEA" if action == "SELL" else "WATCH",
+            "label": "ИДЕЯ ПОКУПКИ" if action == "BUY" else "ИДЕЯ ПРОДАЖИ" if action == "SELL" else "НАБЛЮДЕНИЕ",
             "headline": llm_result.data.get("headline") or f"{symbol} {timeframe}",
             "summary": llm_result.data.get("summary") or short_scenario,
             "summary_ru": short_scenario,
@@ -4465,7 +4465,7 @@ class TradeIdeaService:
                         "tags": [str(tag) for tag in tags if tag],
                         "instrument": symbol,
                         "title": f"{symbol} {timeframe}: {direction}",
-                        "label": "BUY IDEA" if direction == "bullish" else "SELL IDEA" if direction == "bearish" else "WATCH",
+                        "label": "ИДЕЯ ПОКУПКИ" if direction == "bullish" else "ИДЕЯ ПРОДАЖИ" if direction == "bearish" else "НАБЛЮДЕНИЕ",
                         "news_title": "OpenRouter AI",
                         "analysis": normalized_analysis,
                         "trade_plan": normalized_trade_plan,
@@ -4585,7 +4585,8 @@ class TradeIdeaService:
             "Добавь подтверждение (объём/дельта/cumdelta/дивергенция) или честно укажи отсутствие подтверждения.\n"
             "Добавь условие слабости сценария: где идея ломается и почему.\n"
             "unified_narrative, full_text и short_text оставь для обратной совместимости, но structured-поля обязательны.\n"
-            "signal верни строго BUY / SELL / WAIT.\n"
+            "signal верни строго BUY / SELL / WAIT (служебное поле, не добавляй эти слова в тексты).\n"
+            "Во всех текстовых полях используй только русский язык: без английских слов и шаблонных клише.\n"
             "risk_note верни короткой фразой про ключевой риск/invalidation.\n"
             "Если данных мало, не выдумывай: честно укажи ограниченность подтверждений в risk_note/confluence.\n\n"
             "Верни chart_overlays для каждой идеи в формате: order_blocks[], liquidity[], fvg[], structure_levels[], patterns[].\n"

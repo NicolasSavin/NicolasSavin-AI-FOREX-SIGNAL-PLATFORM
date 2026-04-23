@@ -14,6 +14,50 @@ from backend.market.services.snapshot_service import MarketSnapshotService
 logger = logging.getLogger(__name__)
 
 
+SIGNAL_VALUE_RU = {"BUY": "ПОКУПКА", "SELL": "ПРОДАЖА", "WAIT": "ОЖИДАНИЕ"}
+DIRECTION_VALUE_RU = {"bullish": "бычий", "bearish": "медвежий", "neutral": "нейтральный"}
+KEY_MAP_RU = {
+    "confidence": "уверенность",
+    "confluence": "согласованность",
+    "entry": "вход",
+    "stop_loss": "стоп_лосс",
+    "take_profit": "тейк_профит",
+    "signal": "сигнал",
+    "direction": "направление",
+    "bias": "уклон",
+}
+
+
+def _translate_scalar(key: str, value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    normalized = value.strip()
+    upper = normalized.upper()
+    lower = normalized.lower()
+    if key in {"signal", "final_signal"} and upper in SIGNAL_VALUE_RU:
+        return SIGNAL_VALUE_RU[upper]
+    if key in {"direction", "bias"} and lower in DIRECTION_VALUE_RU:
+        return DIRECTION_VALUE_RU[lower]
+    return value
+
+
+def _localize_output_layer(payload: object) -> object:
+    if isinstance(payload, list):
+        return [_localize_output_layer(item) for item in payload]
+    if not isinstance(payload, dict):
+        return payload
+
+    localized: dict[str, object] = {}
+    for key, value in payload.items():
+        localized_value = _localize_output_layer(value)
+        localized[key] = _translate_scalar(key, localized_value)
+
+        ru_key = KEY_MAP_RU.get(key)
+        if ru_key:
+            localized[ru_key] = localized[key]
+    return localized
+
+
 @dataclass
 class IdeasRouteServices:
     trade_idea_service: TradeIdeaService
@@ -49,7 +93,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
         payload["ideas"] = services.attach_live_market_contracts(payload.get("ideas") or [])
         payload["archive"] = services.attach_live_market_contracts(payload.get("archive") or [])
         payload["market"] = [services.canonical_market_service.get_market_contract(symbol) for symbol in DEFAULT_PAIRS]
-        return payload
+        return _localize_output_layer(payload)
 
     @router.get("/api/ideas")
     async def api_ideas():
@@ -75,22 +119,22 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
                 generated_count,
                 fallback_count,
             )
-            return {
+            return _localize_output_layer({
                 "ideas": ideas,
                 "market": market,
                 "diagnostics": {
                     "generated_count": generated_count,
                     "fallback_count": fallback_count,
                 },
-            }
+            })
         except Exception as exc:
             logger.exception("ideas_api_failed reason=%s", exc)
             fallback_reason = f"route_exception:{type(exc).__name__}"
-            return {
+            return _localize_output_layer({
                 "ideas": services.trade_idea_service.fallback_ideas(reason=fallback_reason),
                 "market": market,
                 "diagnostics": {"error": str(exc), "reason": fallback_reason},
-            }
+            })
 
     @router.post("/api/ideas/recover-missing-chart-snapshots")
     async def recover_missing_chart_snapshots():

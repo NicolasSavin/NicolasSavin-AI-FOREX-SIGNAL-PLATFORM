@@ -7,9 +7,8 @@ from typing import Any
 def generate_signal_text(signal_data: dict[str, Any]) -> str:
     """Генерирует короткий narrative в формате CAUSE → EFFECT → ACTION."""
 
-    language = _resolve_language(signal_data)
     if _market_data_unavailable(signal_data):
-        return _build_unavailable_text(signal_data, language=language)
+        return _build_unavailable_text(signal_data)
 
     symbol = str(signal_data.get("symbol") or "Инструмент").upper()
     timeframe = str(signal_data.get("timeframe") or "H1").upper()
@@ -26,36 +25,21 @@ def generate_signal_text(signal_data: dict[str, Any]) -> str:
     confirmation = _confirmations(signal_data)
     expectation = _expected_path(signal_data, direction=direction, take_profit=take_profit)
     invalidation = _invalidation(signal_data, direction=direction, stop_loss=stop_loss)
-    action_hint = {"bullish": "buy", "bearish": "sell", "neutral": "wait"}[direction]
+    action_hint = {"bullish": "ПОКУПКА", "bearish": "ПРОДАЖА", "neutral": "ОЖИДАНИЕ"}[direction]
 
-    if language == "en":
-        price_ref = f" Spot is near {current_price}." if current_price != "—" else ""
-        cause = (
-            f"CAUSE:\n{symbol} {timeframe}: liquidity context is {liquidity}. "
-            f"Structure is {structure}.{price_ref}".strip()
-        )
-        effect = (
-            f"EFFECT:\nLiquidity sweep → smart money reaction → {expectation}. "
-            f"Confirmation comes from {confirmation}."
-        )
-        action = (
-            f"ACTION:\n{action_hint.upper()} near entry {entry}, SL {stop_loss}, TP {take_profit}. "
-            f"No trade if {invalidation}."
-        )
-    else:
-        price_ref = f" Текущая цена около {current_price}." if current_price != "—" else ""
-        cause = (
-            f"ПРИЧИНА:\n{symbol} {timeframe}: ликвидность — {liquidity}. "
-            f"Структура — {structure}.{price_ref}".strip()
-        )
-        effect = (
-            f"ЭФФЕКТ:\nСнятие ликвидности → реакция крупных участников → {expectation}. "
-            f"Подтверждение: {confirmation}."
-        )
-        action = (
-            f"ДЕЙСТВИЕ:\n{action_hint.upper()} от зоны входа {entry}, SL {stop_loss}, TP {take_profit}. "
-            f"Без сделки, если {invalidation}."
-        )
+    price_ref = f" Текущая цена около {current_price}." if current_price != "—" else ""
+    cause = (
+        f"ПРИЧИНА:\n{symbol} {timeframe}: ликвидность — {liquidity}. "
+        f"Структура — {structure}.{price_ref}".strip()
+    )
+    effect = (
+        f"ЭФФЕКТ:\nСнятие ликвидности → реакция крупных участников → {expectation}. "
+        f"Подтверждение: {confirmation}."
+    )
+    action = (
+        f"ДЕЙСТВИЕ:\n{action_hint} от зоны входа {entry}, стоп {stop_loss}, цель {take_profit}. "
+        f"Без сделки, если {invalidation}."
+    )
 
     return f"{cause}\n\n{effect}\n\n{action}".strip()
 
@@ -84,21 +68,14 @@ def _market_data_unavailable(signal_data: dict[str, Any]) -> bool:
     return not has_price
 
 
-def _build_unavailable_text(signal_data: dict[str, Any], *, language: str) -> str:
+def _build_unavailable_text(signal_data: dict[str, Any]) -> str:
     symbol = str(signal_data.get("symbol") or "Инструмент").upper()
     timeframe = str(signal_data.get("timeframe") or "H1").upper()
-    if language == "en":
-        return (
-            "CAUSE:\n"
-            f"{symbol} {timeframe}: no reliable market snapshot.\n\n"
-            "EFFECT:\nWithout live price, structure, and liquidity, direction cannot be confirmed.\n\n"
-            "ACTION:\nWait and do not open a trade until market data is restored."
-        )
     return (
         "ПРИЧИНА:\n"
         f"{symbol} {timeframe}: нет надёжного рыночного снимка.\n\n"
-        "ЭФФЕКТ:\nБез актуальной цены, структуры и ликвидности направление не подтверждается.\n\n"
-        "ДЕЙСТВИЕ:\nЖдать и не открывать сделку до восстановления рыночных данных."
+        "ЭФФЕКТ:\nНедостаточно подтверждений, ожидаем формирование структуры.\n\n"
+        "ДЕЙСТВИЕ:\nОЖИДАНИЕ: без сделки до появления подтверждённой структуры."
     )
 
 
@@ -127,8 +104,8 @@ def _liquidity_context(signal_data: dict[str, Any], *, direction: str) -> str:
         bits = [x for x in [liquidity, f"целевая ликвидность: {target}" if target else "", eq, f"inducement: {inducement}" if inducement else ""] if x]
         return "; ".join(bits)
     return {
-        "bullish": "снятие sell-side liquidity под локальными минимумами и концентрацию buy-side above highs",
-        "bearish": "снятие buy-side liquidity над локальными максимумами и концентрацию sell-side below lows",
+        "bullish": "снятие ликвидности под локальными минимумами и концентрацию ликвидности над максимумами",
+        "bearish": "снятие ликвидности над локальными максимумами и концентрацию ликвидности под минимумами",
         "neutral": "двустороннюю ликвидность по границам диапазона без явного приоритета",
     }[direction]
 
@@ -207,8 +184,8 @@ def _expected_path(signal_data: dict[str, Any], *, direction: str, take_profit: 
     target = _clean_text(signal_data.get("target_liquidity")) or take_profit
     scenario_confirmation = _clean_text(signal_data.get("scenario_confirmation"))
     base = {
-        "bullish": f"продолжение импульса к buy-side liquidity в районе {target}",
-        "bearish": f"продолжение давления к sell-side liquidity в районе {target}",
+        "bullish": f"продолжение импульса к ликвидности покупателей в районе {target}",
+        "bearish": f"продолжение давления к ликвидности продавцов в районе {target}",
         "neutral": f"выход из баланса после подтверждения в сторону ликвидности {target}",
     }[direction]
     if scenario_confirmation:
@@ -234,13 +211,6 @@ def _to_list(value: Any) -> list[str]:
     if isinstance(value, str) and _clean_text(value):
         return [_clean_text(value)]
     return []
-
-
-def _resolve_language(signal_data: dict[str, Any]) -> str:
-    raw = _clean_text(signal_data.get("language") or signal_data.get("lang") or signal_data.get("locale")).lower()
-    if raw.startswith("en"):
-        return "en"
-    return "ru"
 
 
 def _norm_direction(value: Any) -> str:

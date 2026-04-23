@@ -38,7 +38,7 @@ def test_generate_signal_text_contains_structured_causal_chain() -> None:
     assert "ДЕЙСТВИЕ:" in text
     assert "снятие ликвидности" in text.lower()
     assert "→" in text
-    assert "TP 1.0876" in text
+    assert "цель 1.0876" in text
     assert "1.0828" in text
 
 
