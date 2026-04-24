@@ -72,6 +72,12 @@ SNAPSHOT_RETRY_INTERVAL_SECONDS = int(os.getenv("IDEAS_SNAPSHOT_RETRY_INTERVAL_S
 NARRATIVE_REFRESH_COOLDOWN_SECONDS = int(os.getenv("IDEAS_NARRATIVE_REFRESH_COOLDOWN_SECONDS", "300"))
 MIN_IDEA_CANDLES_REQUIRED = max(2, int(os.getenv("IDEAS_MIN_CANDLES_REQUIRED", "20")))
 logger = logging.getLogger(__name__)
+GENERIC_NARRATIVE_PHRASES = (
+    "рынок давят продавцы",
+    "структура описана как continuation",
+    "снятия ликвидности (none)",
+    "структурных подтверждений недостаточно",
+)
 
 
 
@@ -285,13 +291,22 @@ class TradeIdeaService:
                 )
             )
             primary_narrative = idea_thesis_raw or unified_narrative_raw or full_text_raw
-            idea_thesis = idea_thesis_raw or primary_narrative or fallback_narrative
-            unified_narrative = unified_narrative_raw or full_text_raw or primary_narrative or fallback_narrative
-            combined_is_fallback = not bool(primary_narrative)
-            full_text = full_text_raw or unified_narrative or fallback_narrative
+            idea_thesis = self._sanitize_user_narrative_text(idea_thesis_raw or primary_narrative)
+            unified_narrative = self._sanitize_user_narrative_text(unified_narrative_raw or full_text_raw or primary_narrative)
+            full_text = self._sanitize_user_narrative_text(full_text_raw or unified_narrative or primary_narrative)
+            combined_is_fallback = not bool(idea_thesis or unified_narrative or full_text)
+            if combined_is_fallback:
+                idea_thesis = fallback_narrative
+                unified_narrative = fallback_narrative
+                full_text = fallback_narrative
+            narrative_quality = self._resolve_narrative_quality(
+                idea_thesis=idea_thesis,
+                unified_narrative=unified_narrative,
+                full_text=full_text,
+            )
             combined_narrative_source = self._resolve_narrative_source_label(
                 (narrative_source_idea or {}).get("narrative_source"),
-                is_fallback=combined_is_fallback,
+                is_fallback=combined_is_fallback or narrative_quality == "generic_fallback",
                 combined=False,
             )
             compact_summary = (
@@ -325,13 +340,19 @@ class TradeIdeaService:
                     "idea_thesis": idea_thesis,
                     "unified_narrative": unified_narrative,
                     "full_text": full_text,
-                    "fallback_narrative": fallback_narrative,
+                    "fallback_narrative": fallback_narrative if combined_is_fallback else "",
                     "legacy_narrative": legacy_narrative,
                     "summary": final_reason,
                     "summary_ru": final_reason,
                     "short_text": final_reason,
                     "compact_summary": compact_summary,
                     "narrative_source": combined_narrative_source,
+                    "narrative_quality": narrative_quality,
+                    "narrative_uniqueness_hash": self._narrative_uniqueness_hash(
+                        symbol=symbol,
+                        timeframe="MTF",
+                        text=idea_thesis or unified_narrative or full_text,
+                    ),
                     "llm_provider": "openrouter",
                     "llm_model": get_openrouter_model(),
                     "candles_count_sent": int((narrative_source_idea or {}).get("candles_count_sent") or 0),
@@ -382,9 +403,9 @@ class TradeIdeaService:
     def _pick_primary_narrative_fields(cls, idea: dict[str, Any] | None) -> tuple[str, str, str]:
         if not isinstance(idea, dict):
             return "", "", ""
-        idea_thesis = str(idea.get("idea_thesis") or "").strip()
-        unified_narrative = str(idea.get("unified_narrative") or "").strip()
-        full_text = str(idea.get("full_text") or idea.get("fullText") or "").strip()
+        idea_thesis = cls._sanitize_user_narrative_text(idea.get("idea_thesis"))
+        unified_narrative = cls._sanitize_user_narrative_text(idea.get("unified_narrative"))
+        full_text = cls._sanitize_user_narrative_text(idea.get("full_text") or idea.get("fullText"))
         return idea_thesis, unified_narrative, full_text
 
     @staticmethod
@@ -1242,8 +1263,12 @@ class TradeIdeaService:
         existing_unified_narrative = str((existing or {}).get("unified_narrative") or "").strip()
         existing_full_text = str((existing or {}).get("full_text") or "").strip()
 
-        candidate_idea_thesis = llm_result.data.get("idea_thesis") or llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")
-        candidate_unified_narrative = llm_result.data.get("unified_narrative") or llm_result.data.get("full_text") or self._build_full_text(
+        candidate_idea_thesis = self._sanitize_user_narrative_text(
+            llm_result.data.get("idea_thesis") or llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")
+        )
+        candidate_unified_narrative = self._sanitize_user_narrative_text(
+            llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")
+        ) or self._build_full_text(
             signal,
             summary=summary_text,
             idea_context=idea_context,
@@ -1251,16 +1276,29 @@ class TradeIdeaService:
             invalidation=invalidation,
             target=target,
         )
-        candidate_full_text = llm_result.data.get("full_text") or candidate_unified_narrative
-        idea_thesis_text = self._prefer_meaningful_text(existing_idea_thesis, candidate_idea_thesis)
-        unified_narrative_text = self._prefer_meaningful_text(existing_unified_narrative, candidate_unified_narrative)
-        full_text = self._prefer_meaningful_text(existing_full_text, candidate_full_text)
+        candidate_full_text = self._sanitize_user_narrative_text(llm_result.data.get("full_text") or candidate_unified_narrative)
+        if self._is_generic_narrative_text(candidate_idea_thesis):
+            candidate_idea_thesis = ""
+        if self._is_generic_narrative_text(candidate_unified_narrative):
+            candidate_unified_narrative = ""
+        if self._is_generic_narrative_text(candidate_full_text):
+            candidate_full_text = ""
+        idea_thesis_text = self._sanitize_user_narrative_text(self._prefer_meaningful_text(existing_idea_thesis, candidate_idea_thesis))
+        unified_narrative_text = self._sanitize_user_narrative_text(
+            self._prefer_meaningful_text(existing_unified_narrative, candidate_unified_narrative)
+        )
+        full_text = self._sanitize_user_narrative_text(self._prefer_meaningful_text(existing_full_text, candidate_full_text))
         if not full_text:
             full_text = unified_narrative_text or idea_thesis_text
         if not unified_narrative_text:
             unified_narrative_text = idea_thesis_text or full_text
         if not idea_thesis_text:
             idea_thesis_text = unified_narrative_text or full_text
+        narrative_quality = self._resolve_narrative_quality(
+            idea_thesis=idea_thesis_text,
+            unified_narrative=unified_narrative_text,
+            full_text=full_text,
+        )
         short_scenario = llm_result.data.get("short_text") or self._build_trade_scenario_line(
             direction=bias,
             entry=self._format_zone(entry_value),
@@ -1461,7 +1499,17 @@ class TradeIdeaService:
             "market_structure_structured": narrative_structured.get("market_structure_structured"),
             "narrative_structured": narrative_structured,
             "update_explanation": llm_result.data.get("update_explanation") or rationale,
-            "narrative_source": self._resolve_narrative_source_label(llm_result.source, is_fallback=False, combined=False),
+            "narrative_source": self._resolve_narrative_source_label(
+                llm_result.source,
+                is_fallback=narrative_quality == "generic_fallback",
+                combined=False,
+            ),
+            "narrative_quality": narrative_quality,
+            "narrative_uniqueness_hash": self._narrative_uniqueness_hash(
+                symbol=symbol,
+                timeframe=timeframe,
+                text=idea_thesis_text or unified_narrative_text or full_text,
+            ),
             "llm_provider": "openrouter",
             "llm_model": get_openrouter_model(),
             "candles_count_sent": candles_count_sent,
@@ -1697,6 +1745,36 @@ class TradeIdeaService:
     @staticmethod
     def _clean_text(value: Any) -> str:
         return " ".join(str(value or "").split())
+
+    @classmethod
+    def _sanitize_user_narrative_text(cls, value: Any) -> str:
+        text = cls._clean_text(value)
+        if not text:
+            return ""
+        sanitized = re.sub(r"\(\s*none\s*\)", "", text, flags=re.IGNORECASE)
+        sanitized = re.sub(r"\bnone\b", "", sanitized, flags=re.IGNORECASE)
+        return re.sub(r"\s+", " ", sanitized).strip(" ,;:-")
+
+    @classmethod
+    def _is_generic_narrative_text(cls, value: Any) -> bool:
+        normalized = cls._sanitize_user_narrative_text(value).casefold()
+        if not normalized:
+            return True
+        return any(phrase in normalized for phrase in GENERIC_NARRATIVE_PHRASES)
+
+    @classmethod
+    def _resolve_narrative_quality(cls, *, idea_thesis: str, unified_narrative: str, full_text: str) -> str:
+        values = (idea_thesis, unified_narrative, full_text)
+        if any(cls._is_generic_narrative_text(value) for value in values):
+            return "generic_fallback"
+        if any(cls._is_weak_narrative_text(value) for value in values):
+            return "generic_fallback"
+        return "specific"
+
+    @classmethod
+    def _narrative_uniqueness_hash(cls, *, symbol: str, timeframe: str, text: str) -> str:
+        payload = f"{str(symbol).upper()}|{str(timeframe).upper()}|{cls._sanitize_user_narrative_text(text).lower()}"
+        return sha1(payload.encode("utf-8")).hexdigest()[:16]
 
     @classmethod
     def _meaningful_text_for_compare(cls, value: Any) -> str:
@@ -3047,6 +3125,8 @@ class TradeIdeaService:
         if not text:
             return True
         normalized = re.sub(r"\s+", " ", text)
+        if any(phrase in normalized for phrase in GENERIC_NARRATIVE_PHRASES):
+            return True
         if re.search(r"^[a-z]{3,8}\s*[\/-]?\s*[a-z]{3,8}\s+[mhdw]\d{1,2}\s*:\s*(bullish|bearish|neutral).*(статус|status)\s+\w+", normalized):
             return True
         weak_patterns = (
@@ -3660,6 +3740,7 @@ class TradeIdeaService:
                 }
             )
         market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        resolved_overlays = chart_overlays if isinstance(chart_overlays, dict) else cls.normalize_chart_overlays(signal.get("chart_overlays"))
         liquidity_sweep_raw = signal.get("liquidity_sweep")
         liquidity_sweep: str
         if isinstance(liquidity_sweep_raw, str) and liquidity_sweep_raw.strip():
@@ -3713,21 +3794,98 @@ class TradeIdeaService:
             or signal.get("invalidation_ru")
             or "инвалидация при сломе структуры и возврате за зону снятой ликвидности"
         )
+        market_price = cls._extract_latest_close(signal)
+        numeric_entry = cls._extract_numeric(signal.get("entry"))
+        numeric_sl = cls._extract_numeric(signal.get("stop_loss"))
+        numeric_tp = cls._extract_numeric(signal.get("take_profit"))
+        recent_slice = model_candles[-25:] if model_candles else []
+        recent_high = max((item.get("h") for item in recent_slice if item.get("h") is not None), default=None)
+        recent_low = min((item.get("l") for item in recent_slice if item.get("l") is not None), default=None)
+
+        def _collect_overlay_prices(keys: tuple[str, ...]) -> list[float]:
+            values: list[float] = []
+            for key in keys:
+                raw_items = resolved_overlays.get(key) if isinstance(resolved_overlays, dict) else []
+                if not isinstance(raw_items, list):
+                    continue
+                for item in raw_items:
+                    if not isinstance(item, dict):
+                        continue
+                    for field in ("price", "level", "y", "value", "top", "bottom", "start", "end"):
+                        parsed = cls._extract_numeric(item.get(field))
+                        if parsed is not None:
+                            values.append(float(parsed))
+            return values
+
+        def _nearest_level(values: list[float], *, side: str) -> float | None:
+            if market_price is None:
+                return None
+            if side == "above":
+                candidates = [value for value in values if value > market_price]
+                return min(candidates) if candidates else None
+            candidates = [value for value in values if value < market_price]
+            return max(candidates) if candidates else None
+
+        liquidity_values = _collect_overlay_prices(("liquidity",))
+        support_values = _collect_overlay_prices(("zones", "order_blocks"))
+        resistance_values = _collect_overlay_prices(("structure_levels", "levels"))
+        nearest_liquidity_above = _nearest_level(liquidity_values, side="above")
+        nearest_liquidity_below = _nearest_level(liquidity_values, side="below")
+        nearest_support = _nearest_level(sorted(set(support_values)), side="below")
+        nearest_resistance = _nearest_level(sorted(set(resistance_values)), side="above")
+
+        impulse_desc = "Импульс неочевиден, требуется подтверждение."
+        if len(recent_slice) >= 2:
+            first_open = cls._extract_numeric(recent_slice[0].get("o"))
+            last_close = cls._extract_numeric(recent_slice[-1].get("c"))
+            if first_open is not None and last_close is not None:
+                delta_move = last_close - first_open
+                if abs(delta_move) > 0:
+                    impulse_desc = (
+                        "Есть восходящий импульс последних свечей."
+                        if delta_move > 0
+                        else "Есть нисходящий импульс последних свечей."
+                    )
+        provider_warning = str(
+            signal.get("warning")
+            or market_context.get("warning")
+            or (
+                "Используется Yahoo fallback, точность сценария ниже."
+                if str(signal.get("data_provider") or market_context.get("data_provider") or "").lower() == "yahoo_finance"
+                or str(signal.get("analysis_mode") or market_context.get("analysis_mode") or "").lower() == "directional_fallback"
+                else ""
+            )
+        )
+        existing_h4_bias = str(existing.get("h4_bias_summary") or "") if isinstance(existing, dict) else ""
+        existing_h1_bias = str(existing.get("h1_bias_summary") or "") if isinstance(existing, dict) else ""
+        existing_m15_bias = str(existing.get("m15_bias_summary") or "") if isinstance(existing, dict) else ""
         return {
             "symbol": symbol,
             "timeframe": timeframe,
             "direction": direction,
             "status": status,
-            "entry": cls._extract_numeric(signal.get("entry")),
-            "sl": cls._extract_numeric(signal.get("stop_loss")),
-            "tp": cls._extract_numeric(signal.get("take_profit")),
+            "entry": numeric_entry,
+            "sl": numeric_sl,
+            "tp": numeric_tp,
             "rr": cls._calculate_rr(
                 direction=direction,
-                entry=cls._extract_numeric(signal.get("entry")),
-                stop_loss=cls._extract_numeric(signal.get("stop_loss")),
-                take_profit=cls._extract_numeric(signal.get("take_profit")),
+                entry=numeric_entry,
+                stop_loss=numeric_sl,
+                take_profit=numeric_tp,
             ),
-            "market_price": cls._extract_latest_close(signal),
+            "market_price": market_price,
+            "current_price": market_price,
+            "h4_bias": str(signal.get("h4_bias") or market_context.get("h4_bias") or existing_h4_bias),
+            "h1_bias": str(signal.get("h1_bias") or market_context.get("h1_bias") or existing_h1_bias),
+            "m15_bias": str(signal.get("m15_bias") or market_context.get("m15_bias") or existing_m15_bias),
+            "recent_high": recent_high,
+            "recent_low": recent_low,
+            "nearest_liquidity_above": nearest_liquidity_above,
+            "nearest_liquidity_below": nearest_liquidity_below,
+            "nearest_support": nearest_support,
+            "nearest_resistance": nearest_resistance,
+            "candle_impulse_description": impulse_desc,
+            "provider_mode_warning": provider_warning,
             "smc_ict_facts": signal.get("smc_ru") or signal.get("ict_ru") or rationale,
             "pattern_facts": signal.get("pattern_ru") or market_context.get("patternSummaryRu"),
             "harmonic_pattern_facts": signal.get("harmonic_ru"),
@@ -3744,7 +3902,7 @@ class TradeIdeaService:
             "existing_idea_id": existing.get("idea_id") if existing else None,
             "candles": model_candles[-MODEL_CANDLES_MAX:],
             "candles_count_sent": len(model_candles[-MODEL_CANDLES_MAX:]),
-            "overlays": chart_overlays if isinstance(chart_overlays, dict) else {},
+            "overlays": resolved_overlays if isinstance(resolved_overlays, dict) else {},
             "analysis_mode": signal.get("analysis_mode"),
             "data_provider": signal.get("data_provider"),
         }
@@ -4674,9 +4832,9 @@ class TradeIdeaService:
                 or self._combine_targets(trade_plan.get("target_1"), trade_plan.get("target_2"))
                 or (f"Ближайшая цель: {take_profit}." if take_profit != "—" else "Цель будет уточняться после появления подтверждения.")
             )
-            idea_thesis = str(row.get("idea_thesis") or "").strip()
-            unified_narrative = str(row.get("unified_narrative") or "").strip()
-            full_text = str(row.get("full_text") or row.get("fullText") or "").strip()
+            idea_thesis = self._sanitize_user_narrative_text(row.get("idea_thesis"))
+            unified_narrative = self._sanitize_user_narrative_text(row.get("unified_narrative"))
+            full_text = self._sanitize_user_narrative_text(row.get("full_text") or row.get("fullText"))
             raw_narrative_source = row.get("narrative_source")
             resolved_source = self._resolve_narrative_source_label(
                 raw_narrative_source,
@@ -4686,6 +4844,7 @@ class TradeIdeaService:
             has_model_narrative = any(
                 str(value or "").strip()
                 and not re.search(r"\b(status\s+created|idea_created|debug|schema|payload)\b", str(value), re.IGNORECASE)
+                and not self._is_generic_narrative_text(value)
                 for value in (idea_thesis, unified_narrative, full_text)
             )
             if resolved_source == "fallback_template" and has_model_narrative:
@@ -4705,11 +4864,23 @@ class TradeIdeaService:
                 unified_narrative = full_text
             if not idea_thesis:
                 idea_thesis = unified_narrative or full_text
+            narrative_quality = self._resolve_narrative_quality(
+                idea_thesis=idea_thesis,
+                unified_narrative=unified_narrative,
+                full_text=full_text,
+            )
             fallback_narrative = ""
-            if not has_model_narrative:
-                fallback_narrative = full_text
-            elif is_fallback_narrative:
-                fallback_narrative = full_text
+            if not (idea_thesis or unified_narrative or full_text):
+                fallback_narrative = self._build_full_text(
+                    row,
+                    summary=str(summary),
+                    idea_context=str(idea_context),
+                    trigger=str(trigger),
+                    invalidation=str(invalidation),
+                    target=str(target),
+                )
+            elif not has_model_narrative or is_fallback_narrative:
+                fallback_narrative = ""
             short_text = self._build_short_text(
                 row,
                 direction=direction,
@@ -4863,6 +5034,12 @@ class TradeIdeaService:
                         "update_explanation": row.get("update_explanation") or row.get("update_summary") or "",
                         "update_reason": row.get("update_reason") or "",
                         "narrative_source": resolved_source,
+                        "narrative_quality": narrative_quality,
+                        "narrative_uniqueness_hash": self._narrative_uniqueness_hash(
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            text=idea_thesis or unified_narrative or full_text or fallback_narrative,
+                        ),
                         "llm_provider": str(row.get("llm_provider") or "openrouter"),
                         "llm_model": str(row.get("llm_model") or get_openrouter_model()),
                         "candles_count_sent": int(self._extract_numeric(row.get("candles_count_sent")) or 0),
@@ -5427,6 +5604,10 @@ class TradeIdeaService:
         payload["llm_provider"] = str(payload.get("llm_provider") or "openrouter")
         payload["llm_model"] = str(payload.get("llm_model") or get_openrouter_model())
         payload["narrative_source"] = str(payload.get("narrative_source") or "model")
+        payload["narrative_quality"] = str(payload.get("narrative_quality") or "specific")
+        if payload["narrative_quality"] not in {"specific", "generic_fallback"}:
+            payload["narrative_quality"] = "specific"
+        payload["narrative_uniqueness_hash"] = str(payload.get("narrative_uniqueness_hash") or "")
         payload["candles_count_sent"] = int(TradeIdeaService._extract_numeric(payload.get("candles_count_sent")) or 0)
         if payload.get("chart_overlays_present") is None:
             payload["chart_overlays_present"] = TradeIdeaService.is_meaningful_overlay_payload(payload.get("chart_overlays"))

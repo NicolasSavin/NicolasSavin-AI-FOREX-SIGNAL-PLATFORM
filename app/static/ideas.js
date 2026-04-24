@@ -112,16 +112,17 @@ function renderIdeaCard(idea) {
 }
 
 function resolveVisibleNarrative(idea) {
-  const thesis = String(idea?.idea_thesis || "").trim();
+  const sanitize = (value) => String(value || "").replace(/\(\s*none\s*\)/gi, "").replace(/\bnone\b/gi, "").trim();
+  const thesis = sanitize(idea?.idea_thesis);
   if (thesis) return thesis;
-  const unified = String(idea?.unified_narrative || "").trim();
+  const unified = sanitize(idea?.unified_narrative);
   if (unified) return unified;
-  const fullText = String(idea?.full_text || "").trim();
+  const fullText = sanitize(idea?.full_text);
   if (fullText) return fullText;
-  const summary = String(idea?.summary || idea?.short_text || "").trim();
-  if (summary) return summary;
-  const fallbackNarrative = String(idea?.fallback_narrative || "").trim();
+  const fallbackNarrative = sanitize(idea?.fallback_narrative);
   if (fallbackNarrative) return fallbackNarrative;
+  const summary = sanitize(idea?.summary || idea?.short_text);
+  if (summary) return summary;
   return "Сценарий в режиме fallback: модельный нарратив временно недоступен.";
 }
 
