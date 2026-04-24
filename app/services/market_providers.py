@@ -18,6 +18,7 @@ from app.services.real_market_data_provider import RealMarketDataProvider
 logger = logging.getLogger(__name__)
 
 _TWELVEDATA_BASE = "https://api.twelvedata.com"
+_FINNHUB_BASE = "https://finnhub.io/api/v1"
 
 _TIMEFRAME_TO_TD = {
     "M5": "5min",
@@ -498,6 +499,151 @@ class YahooProvider(RealMarketDataProvider):
     def _set_rate_limited(self, symbol: str) -> None:
         with self._lock:
             self._cooldown_until[symbol] = monotonic() + self._rate_limit_cooldown_seconds
+
+
+class FinnhubProvider(RealMarketDataProvider):
+    """Finnhub provider for candles. Quote endpoint is intentionally not used as live quote source."""
+
+    def __init__(self) -> None:
+        self.api_key = (os.getenv("FINNHUB_API_KEY") or "").strip()
+        self.timeout = float(os.getenv("FINNHUB_TIMEOUT_SECONDS", "4"))
+
+    def get_quote(self, symbol: str) -> dict[str, Any]:
+        normalized = _normalize_symbol(symbol)
+        return _unavailable(normalized, "finnhub", "FinnhubProvider не используется для live quote endpoint.")
+
+    def get_candles(self, symbol: str, timeframe: str, limit: int) -> dict[str, Any]:
+        normalized = _normalize_symbol(symbol)
+        normalized_tf = str(timeframe or "H1").upper().strip()
+        normalized_limit = max(1, min(int(limit or 1), 5000))
+        if not self.api_key:
+            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "missing_api_key"}
+
+        resolution = self._map_resolution(normalized_tf)
+        if not resolution:
+            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "unsupported_timeframe"}
+
+        source_symbol = self._finnhub_symbol(normalized)
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        from_ts = max(0, now_ts - self._seconds_for_timeframe(normalized_tf) * max(60, normalized_limit + 5))
+        try:
+            response = requests.get(
+                f"{_FINNHUB_BASE}/forex/candle",
+                params={
+                    "symbol": source_symbol,
+                    "resolution": resolution,
+                    "from": from_ts,
+                    "to": now_ts,
+                    "token": self.api_key,
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException:
+            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "request_failed"}
+        except ValueError:
+            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "invalid_json"}
+
+        candles = self._normalize_finnhub_candles(payload, normalized_limit)
+        return {
+            "symbol": normalized,
+            "timeframe": normalized_tf,
+            "source_symbol": source_symbol,
+            "last_updated_utc": datetime.now(timezone.utc).isoformat(),
+            "candles": candles,
+            "error": None if candles else str(payload.get("s") or "empty_candles").lower(),
+        }
+
+    def get_latest_close(self, symbol: str, timeframe: str) -> dict[str, Any]:
+        data = self.get_candles(symbol, timeframe, 2)
+        candles = data.get("candles") or []
+        return {
+            "symbol": data.get("symbol"),
+            "timeframe": data.get("timeframe"),
+            "latest_close": candles[-1]["close"] if candles else None,
+            "source_symbol": data.get("source_symbol"),
+            "last_updated_utc": data.get("last_updated_utc"),
+            "error": data.get("error"),
+        }
+
+    def get_market_status(self, symbol: str) -> dict[str, Any]:
+        return {
+            "symbol": _normalize_symbol(symbol),
+            "is_market_open": None,
+            "session": "unknown",
+            "error": "not_supported",
+        }
+
+    @staticmethod
+    def _map_resolution(timeframe: str) -> str | None:
+        mapping = {
+            "M5": "5",
+            "M15": "15",
+            "M30": "30",
+            "H1": "60",
+            "H4": "240",
+            "D1": "D",
+            "W1": "W",
+        }
+        return mapping.get(timeframe)
+
+    @staticmethod
+    def _seconds_for_timeframe(timeframe: str) -> int:
+        return {
+            "M5": 300,
+            "M15": 900,
+            "M30": 1800,
+            "H1": 3600,
+            "H4": 14400,
+            "D1": 86400,
+            "W1": 604800,
+        }.get(timeframe, 3600)
+
+    @staticmethod
+    def _finnhub_symbol(symbol: str) -> str:
+        if len(symbol) == 6 and symbol.isalpha():
+            return f"OANDA:{symbol[:3]}_{symbol[3:]}"
+        return symbol
+
+    @staticmethod
+    def _normalize_finnhub_candles(payload: Any, limit: int) -> list[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return []
+        status = str(payload.get("s") or "").lower()
+        opens = payload.get("o")
+        highs = payload.get("h")
+        lows = payload.get("l")
+        closes = payload.get("c")
+        times = payload.get("t")
+        volumes = payload.get("v")
+        if status != "ok":
+            return []
+        series = (opens, highs, lows, closes, times)
+        if not all(isinstance(item, list) for item in series):
+            return []
+        size = min(len(opens), len(highs), len(lows), len(closes), len(times))
+        output: list[dict[str, Any]] = []
+        for idx in range(size):
+            ts = _to_float(times[idx])
+            op = _to_float(opens[idx])
+            hi = _to_float(highs[idx])
+            lo = _to_float(lows[idx])
+            cl = _to_float(closes[idx])
+            if None in {ts, op, hi, lo, cl}:
+                continue
+            output.append(
+                {
+                    "time": int(ts),
+                    "open": float(op),
+                    "high": float(hi),
+                    "low": float(lo),
+                    "close": float(cl),
+                    "volume": float(_to_float(volumes[idx]) if isinstance(volumes, list) and idx < len(volumes) else 0.0),
+                }
+            )
+        output.sort(key=lambda item: int(item["time"]))
+        return output[-max(1, limit) :]
 
 
 def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:

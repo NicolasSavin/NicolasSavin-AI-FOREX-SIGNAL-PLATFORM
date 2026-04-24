@@ -6,7 +6,7 @@ from threading import Lock
 from time import monotonic
 from typing import Any
 
-from app.services.market_providers import TwelveDataProvider, YahooProvider
+from app.services.market_providers import FinnhubProvider, TwelveDataProvider, YahooProvider
 from app.services.real_market_data_provider import RealMarketDataProvider
 
 
@@ -18,13 +18,16 @@ class CanonicalMarketService:
     ) -> None:
         self.live_provider = live_provider or TwelveDataProvider()
         self.historical_fallback = historical_fallback or YahooProvider()
+        self.finnhub_provider = FinnhubProvider()
         self._quote_ttl_seconds = float(os.getenv("MARKET_QUOTE_CACHE_TTL_SECONDS", "15"))
         self._chart_ttl_seconds = float(os.getenv("MARKET_CHART_CACHE_TTL_SECONDS", "90"))
         self._status_ttl_seconds = float(os.getenv("MARKET_STATUS_CACHE_TTL_SECONDS", "30"))
+        self._provider_fetch_ttl_seconds = max(60.0, float(os.getenv("MARKET_PROVIDER_FETCH_CACHE_TTL_SECONDS", "60")))
         self._cache_lock = Lock()
         self._quote_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._chart_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._provider_fetch_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     def get_price_contract(self, symbol: str) -> dict[str, Any]:
         cache_key = self._normalize_symbol(symbol)
@@ -83,46 +86,22 @@ class CanonicalMarketService:
                 self._cache_set(self._chart_cache, cache_key, derived)
                 return derived
 
-        primary = self.live_provider.get_candles(symbol, normalized_tf, limit)
-        primary_raw = primary.get("candles") or []
-        primary_candles = [item for item in (self._normalize_candle(candle) for candle in primary_raw) if item is not None]
-        primary_error = primary.get("error")
-        if primary_candles:
+        provider_selection = self.get_candles(symbol, normalized_tf, limit)
+        selected_candles = provider_selection.get("candles") or []
+        if selected_candles:
             contract = self._contract(
                 symbol=symbol,
-                data_status="real",
-                source="twelvedata",
-                source_symbol=primary.get("source_symbol") or symbol,
-                last_updated_utc=primary.get("last_updated_utc"),
-                is_live_market_data=True,
+                data_status="real" if provider_selection.get("provider") in {"finnhub", "twelvedata"} else "delayed",
+                source="yahoo_finance" if provider_selection.get("provider") == "yahoo" else str(provider_selection.get("provider")),
+                source_symbol=provider_selection.get("source_symbol") or symbol,
+                last_updated_utc=provider_selection.get("last_updated_utc"),
+                is_live_market_data=provider_selection.get("provider") in {"finnhub", "twelvedata"},
                 payload={
                     "timeframe": normalized_tf,
-                    "candles": primary_candles,
-                    "current_price": primary_candles[-1].get("close"),
-                    "warning_ru": None,
-                    "diagnostics": {"provider_error": None},
-                },
-            )
-            self._cache_set(self._chart_cache, cache_key, contract)
-            return contract
-
-        fallback = self.historical_fallback.get_candles(symbol, normalized_tf, limit)
-        fallback_raw = fallback.get("candles") or []
-        fallback_candles = [item for item in (self._normalize_candle(candle) for candle in fallback_raw) if item is not None]
-        if fallback_candles:
-            contract = self._contract(
-                symbol=symbol,
-                data_status="delayed",
-                source="yahoo_finance",
-                source_symbol=fallback.get("source_symbol") or symbol,
-                last_updated_utc=fallback.get("last_updated_utc"),
-                is_live_market_data=False,
-                payload={
-                    "timeframe": normalized_tf,
-                    "candles": fallback_candles,
-                    "current_price": fallback_candles[-1].get("close"),
-                    "warning_ru": "Live candles недоступны, показаны только исторические delayed-данные.",
-                    "diagnostics": {"provider_error": primary_error},
+                    "candles": selected_candles,
+                    "current_price": selected_candles[-1].get("close"),
+                    "warning_ru": "Live candles недоступны, показаны только исторические delayed-данные." if provider_selection.get("provider") == "yahoo" else None,
+                    "diagnostics": provider_selection.get("diagnostics") or {"provider_error": None},
                 },
             )
             self._cache_set(self._chart_cache, cache_key, contract)
@@ -131,20 +110,83 @@ class CanonicalMarketService:
         contract = self._contract(
             symbol=symbol,
             data_status="unavailable",
-            source="twelvedata",
-            source_symbol=primary.get("source_symbol") or symbol,
+            source=str(provider_selection.get("provider") or "twelvedata"),
+            source_symbol=provider_selection.get("source_symbol") or symbol,
             last_updated_utc=datetime.now(timezone.utc).isoformat(),
             is_live_market_data=False,
             payload={
                 "timeframe": normalized_tf,
                 "candles": [],
                 "current_price": None,
-                "warning_ru": f"Свечные данные недоступны: {primary_error or 'unknown_error'}. Синтетический fallback удалён.",
-                "diagnostics": {"provider_error": primary_error},
+                "warning_ru": f"Свечные данные недоступны: {provider_selection.get('error') or 'unknown_error'}. Синтетический fallback удалён.",
+                "diagnostics": provider_selection.get("diagnostics") or {"provider_error": provider_selection.get("error")},
             },
         )
         self._cache_set(self._chart_cache, cache_key, contract)
         return contract
+
+    def get_candles(self, symbol: str, timeframe: str, limit: int = 120) -> dict[str, Any]:
+        normalized_symbol = self._normalize_symbol(symbol)
+        normalized_tf = str(timeframe or "H1").upper().strip()
+        normalized_limit = max(1, int(limit or 1))
+        diagnostics: dict[str, Any] = {
+            "final_provider_used": None,
+            "finnhub_error": None,
+            "twelvedata_error": None,
+            "yahoo_used": False,
+            "cache_hit": False,
+            "provider_error": None,
+        }
+        for provider in ("finnhub", "twelvedata", "yahoo"):
+            if provider == "finnhub":
+                payload, cache_hit = self.fetch_finnhub_candles(normalized_symbol, normalized_tf, normalized_limit)
+            elif provider == "twelvedata":
+                payload, cache_hit = self.fetch_twelvedata_candles(normalized_symbol, normalized_tf, normalized_limit)
+            else:
+                payload, cache_hit = self.fetch_yahoo_candles(normalized_symbol, normalized_tf, normalized_limit)
+
+            raw_candles = payload.get("candles") or []
+            candles = [item for item in (self._normalize_candle(candle) for candle in raw_candles) if item is not None]
+            error = payload.get("error")
+            if len(candles) < 30:
+                error = error or f"insufficient_candles_{len(candles)}"
+                if provider == "finnhub":
+                    diagnostics["finnhub_error"] = error
+                elif provider == "twelvedata":
+                    diagnostics["twelvedata_error"] = error
+                diagnostics["provider_error"] = error
+                continue
+            diagnostics["final_provider_used"] = provider
+            diagnostics["cache_hit"] = bool(cache_hit)
+            diagnostics["yahoo_used"] = provider == "yahoo"
+            return {
+                "provider": provider,
+                "candles": candles,
+                "source_symbol": payload.get("source_symbol") or normalized_symbol,
+                "last_updated_utc": payload.get("last_updated_utc"),
+                "error": None,
+                "diagnostics": diagnostics,
+            }
+
+        diagnostics["final_provider_used"] = "none"
+        diagnostics["yahoo_used"] = True
+        return {
+            "provider": "twelvedata",
+            "candles": [],
+            "source_symbol": normalized_symbol,
+            "last_updated_utc": datetime.now(timezone.utc).isoformat(),
+            "error": diagnostics.get("provider_error"),
+            "diagnostics": diagnostics,
+        }
+
+    def fetch_finnhub_candles(self, symbol: str, timeframe: str, limit: int) -> tuple[dict[str, Any], bool]:
+        return self._fetch_provider_candles(provider="finnhub", symbol=symbol, timeframe=timeframe, limit=limit)
+
+    def fetch_twelvedata_candles(self, symbol: str, timeframe: str, limit: int) -> tuple[dict[str, Any], bool]:
+        return self._fetch_provider_candles(provider="twelvedata", symbol=symbol, timeframe=timeframe, limit=limit)
+
+    def fetch_yahoo_candles(self, symbol: str, timeframe: str, limit: int) -> tuple[dict[str, Any], bool]:
+        return self._fetch_provider_candles(provider="yahoo", symbol=symbol, timeframe=timeframe, limit=limit)
 
     def get_market_contract(self, symbol: str) -> dict[str, Any]:
         price = self.get_price_contract(symbol)
@@ -217,6 +259,7 @@ class CanonicalMarketService:
                     "high": float(max(highs)),
                     "low": float(min(lows)),
                     "close": float(closes),
+                    "volume": float(sum(float(item.get("volume") or 0.0) for item in group)),
                 }
             )
         output = [candle for candle in output if CanonicalMarketService._normalize_candle(candle) is not None]
@@ -232,6 +275,7 @@ class CanonicalMarketService:
             high_price = float(candle.get("high"))
             low_price = float(candle.get("low"))
             close_price = float(candle.get("close"))
+            volume = float(candle.get("volume") or 0.0)
         except (TypeError, ValueError):
             return None
         lower_bound = min(open_price, close_price)
@@ -246,6 +290,7 @@ class CanonicalMarketService:
             "high": repaired_high,
             "low": repaired_low,
             "close": close_price,
+            "volume": volume,
         }
 
     @staticmethod
@@ -288,3 +333,17 @@ class CanonicalMarketService:
     def _cache_set(self, cache: dict[str, tuple[float, dict[str, Any]]], key: str, payload: dict[str, Any]) -> None:
         with self._cache_lock:
             cache[key] = (monotonic(), dict(payload))
+
+    def _fetch_provider_candles(self, *, provider: str, symbol: str, timeframe: str, limit: int) -> tuple[dict[str, Any], bool]:
+        cache_key = f"{provider}:{symbol}:{timeframe}"
+        cached = self._cache_get(self._provider_fetch_cache, cache_key, self._provider_fetch_ttl_seconds)
+        if cached is not None:
+            return {**cached, "candles": (cached.get("candles") or [])[-max(1, int(limit or 1)) :]}, True
+        if provider == "finnhub":
+            payload = self.finnhub_provider.get_candles(symbol, timeframe, limit)
+        elif provider == "twelvedata":
+            payload = self.live_provider.get_candles(symbol, timeframe, limit)
+        else:
+            payload = self.historical_fallback.get_candles(symbol, timeframe, limit)
+        self._cache_set(self._provider_fetch_cache, cache_key, dict(payload))
+        return payload, False
