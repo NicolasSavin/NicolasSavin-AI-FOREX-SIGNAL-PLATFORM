@@ -56,11 +56,6 @@ class TwelveDataProvider(RealMarketDataProvider):
         self._cycle_cache_hits = 0
         self._cycle_cache_misses = 0
         self._last_request_debug: dict[str, Any] = {}
-        logger.info(
-            "twelvedata_init api_key_present=%s api_key_length=%s",
-            bool(self.api_key),
-            len(self.api_key) if self.api_key else 0,
-        )
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
         normalized = _normalize_symbol(symbol)
@@ -74,6 +69,7 @@ class TwelveDataProvider(RealMarketDataProvider):
         close = _to_float(payload.get("close"))
         prev = _to_float(payload.get("previous_close"))
         ts = _parse_iso_dt(payload.get("datetime")) or datetime.now(timezone.utc)
+
         if close is None:
             return _unavailable(normalized, "twelvedata", "Quote API не вернул close.")
 
@@ -97,18 +93,13 @@ class TwelveDataProvider(RealMarketDataProvider):
         normalized_limit = max(1, min(int(limit or 1), 5000))
         interval = _TIMEFRAME_TO_TD.get(normalized_tf)
         provider_symbol = _td_symbol(normalized)
+
         cycle_key = (normalized, normalized_tf, normalized_limit)
         cache_key = f"{normalized}::{normalized_tf}"
-        logger.info(
-            "twelvedata_candles_request normalized_symbol=%s normalized_timeframe=%s provider_symbol=%s provider_interval=%s limit=%s",
-            normalized,
-            normalized_tf,
-            provider_symbol,
-            interval,
-            normalized_limit,
-        )
+
         if not interval:
             return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "unsupported_timeframe"}
+
         if not self.api_key:
             return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "missing_api_key"}
 
@@ -124,17 +115,26 @@ class TwelveDataProvider(RealMarketDataProvider):
             return cached
 
         self._mark_cycle_miss(symbol=normalized, timeframe=normalized_tf, limit=normalized_limit)
+
         if self._is_rate_limited():
             fallback = self._cache_get(cache_key, limit=normalized_limit, ttl_seconds=86400.0)
             if fallback is not None:
                 payload = {**fallback, "error": "rate_limited", "rate_limited": True, "used_cached_fallback": True}
                 self._cycle_cache_set(cycle_key, payload)
                 return payload
-            payload = {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "rate_limited", "rate_limited": True}
+
+            payload = {
+                "symbol": normalized,
+                "timeframe": normalized_tf,
+                "candles": [],
+                "error": "rate_limited",
+                "rate_limited": True,
+            }
             self._cycle_cache_set(cycle_key, payload)
             return payload
 
         self._increment_cycle_api_calls()
+
         payload = self._request(
             "time_series",
             {
@@ -144,11 +144,14 @@ class TwelveDataProvider(RealMarketDataProvider):
                 "format": "JSON",
             },
         )
+
         payload = _normalize_td_payload(payload)
         td_error = _extract_td_error(payload)
+
         if td_error is not None:
             if _is_rate_limit_error(td_error):
                 self._set_rate_limited()
+
                 fallback = self._cache_get(cache_key, limit=normalized_limit, ttl_seconds=86400.0)
                 if fallback is not None:
                     rate_limited_payload = {
@@ -159,6 +162,7 @@ class TwelveDataProvider(RealMarketDataProvider):
                     }
                     self._cycle_cache_set(cycle_key, rate_limited_payload)
                     return rate_limited_payload
+
                 rate_limited_payload = {
                     "symbol": normalized,
                     "timeframe": normalized_tf,
@@ -169,25 +173,14 @@ class TwelveDataProvider(RealMarketDataProvider):
                 self._cache_set(cache_key, rate_limited_payload, ttl_seconds=self._failure_ttl_seconds)
                 self._cycle_cache_set(cycle_key, rate_limited_payload)
                 return rate_limited_payload
+
             error_payload = {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": td_error}
             self._cache_set(cache_key, error_payload, ttl_seconds=self._failure_ttl_seconds)
             self._cycle_cache_set(cycle_key, error_payload)
             return error_payload
 
         candles = _normalize_td_candles(payload.get("candles"))
-        if not candles and isinstance(payload, dict):
-            logger.warning(
-                "twelvedata_empty_candles normalized_symbol=%s normalized_timeframe=%s provider_symbol=%s provider_interval=%s meta=%s",
-                normalized,
-                normalized_tf,
-                provider_symbol,
-                interval,
-                {
-                    "status": payload.get("status"),
-                    "code": payload.get("code"),
-                    "meta": payload.get("meta"),
-                },
-            )
+
         result = {
             "symbol": normalized,
             "timeframe": normalized_tf,
@@ -195,7 +188,9 @@ class TwelveDataProvider(RealMarketDataProvider):
             "last_updated_utc": datetime.now(timezone.utc).isoformat(),
             "candles": candles,
             "error": None if candles else "empty_candles",
+            "provider": "twelvedata",
         }
+
         self._cache_set(
             cache_key,
             result,
@@ -208,6 +203,7 @@ class TwelveDataProvider(RealMarketDataProvider):
         candles = self.get_candles(symbol, timeframe, 2)
         seq = candles.get("candles") or []
         latest = seq[-1]["close"] if seq else None
+
         return {
             "symbol": candles.get("symbol"),
             "timeframe": candles.get("timeframe"),
@@ -219,6 +215,7 @@ class TwelveDataProvider(RealMarketDataProvider):
 
     def get_market_status(self, symbol: str) -> dict[str, Any]:
         quote = self.get_quote(symbol)
+
         if quote.get("price") is None:
             return {
                 "symbol": quote.get("symbol") or _normalize_symbol(symbol),
@@ -231,6 +228,7 @@ class TwelveDataProvider(RealMarketDataProvider):
         weekday = now.weekday()
         is_open = weekday < 5
         session = "forex_open" if is_open else "forex_closed"
+
         return {
             "symbol": quote["symbol"],
             "is_market_open": is_open,
@@ -240,37 +238,22 @@ class TwelveDataProvider(RealMarketDataProvider):
 
     def _request(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
         query = {**params, "apikey": self.api_key}
-        safe_query = {**params, "apikey_present": bool(self.api_key), "apikey_length": len(self.api_key) if self.api_key else 0}
         raw_request_url = self._build_sanitized_url(endpoint=endpoint, query=query)
+
         self._last_request_debug = {
             "endpoint": endpoint,
             "provider_symbol_used": str(params.get("symbol") or ""),
             "raw_request_url": raw_request_url,
         }
-        logger.info(
-            "twelvedata_http_request endpoint=%s api_key_present=%s provider_symbol_sent=%s raw_request_url=%s query=%s",
-            endpoint,
-            bool(self.api_key),
-            str(params.get("symbol") or ""),
-            raw_request_url,
-            safe_query,
-        )
+
         try:
             resp = requests.get(f"{_TWELVEDATA_BASE}/{endpoint}", params=query, timeout=self.timeout)
             http_status = resp.status_code
+
             try:
                 payload = resp.json()
             except ValueError:
                 payload = {}
-            top_level_error = payload.get("message") if isinstance(payload, dict) else None
-            logger.info(
-                "twelvedata_http_response endpoint=%s status_code=%s td_status=%s top_level_error=%s top_level_body=%s",
-                endpoint,
-                http_status,
-                payload.get("status") if isinstance(payload, dict) else None,
-                top_level_error,
-                payload if isinstance(payload, dict) else str(payload)[:500],
-            )
 
             if http_status >= 400:
                 if isinstance(payload, dict):
@@ -280,9 +263,12 @@ class TwelveDataProvider(RealMarketDataProvider):
                         "message": payload.get("message") or f"http_{http_status}",
                     }
                 return {"status": "error", "message": f"http_{http_status}"}
+
             if isinstance(payload, dict):
                 return payload
+
             return {"status": "error", "message": "invalid_json_payload"}
+
         except requests.RequestException as exc:
             logger.warning("twelvedata_request_failed endpoint=%s error=%s", endpoint, exc)
             return {"status": "error", "message": str(exc)}
@@ -295,8 +281,10 @@ class TwelveDataProvider(RealMarketDataProvider):
         prepared = requests.Request("GET", f"{_TWELVEDATA_BASE}/{endpoint}", params=query).prepare()
         parsed = urlsplit(prepared.url or "")
         sanitized_query: list[tuple[str, str]] = []
+
         for key, value in parse_qsl(parsed.query, keep_blank_values=True):
             sanitized_query.append((key, "***" if key.lower() == "apikey" else value))
+
         return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(sanitized_query), parsed.fragment))
 
     def begin_request_cycle(self) -> int:
@@ -312,6 +300,7 @@ class TwelveDataProvider(RealMarketDataProvider):
         with self._lock:
             if cycle_id != self._cycle_id:
                 return None
+
             stats = {
                 "api_calls": self._cycle_api_calls,
                 "cache_hits": self._cycle_cache_hits,
@@ -325,16 +314,19 @@ class TwelveDataProvider(RealMarketDataProvider):
             cached = self._candles_cache.get(key)
             if not cached:
                 return None
+
             saved_at, payload = cached
             if monotonic() - saved_at > max(0.0, ttl_seconds):
                 self._candles_cache.pop(key, None)
                 return None
+
             candles = payload.get("candles") or []
             return {**payload, "candles": candles[-limit:]}
 
     def _cache_set(self, key: str, payload: dict[str, Any], ttl_seconds: float) -> None:
         if ttl_seconds <= 0:
             return
+
         with self._lock:
             self._candles_cache[key] = (monotonic(), dict(payload))
 
@@ -358,11 +350,13 @@ class TwelveDataProvider(RealMarketDataProvider):
     def _mark_cycle_hit(self, *, source: str, symbol: str, timeframe: str, limit: int) -> None:
         with self._lock:
             self._cycle_cache_hits += 1
+
         logger.info("twelvedata_cache_hit source=%s symbol=%s timeframe=%s limit=%s", source, symbol, timeframe, limit)
 
     def _mark_cycle_miss(self, *, symbol: str, timeframe: str, limit: int) -> None:
         with self._lock:
             self._cycle_cache_misses += 1
+
         logger.info("twelvedata_cache_miss symbol=%s timeframe=%s limit=%s", symbol, timeframe, limit)
 
     def _increment_cycle_api_calls(self) -> None:
@@ -394,6 +388,7 @@ class YahooProvider(RealMarketDataProvider):
         normalized = _normalize_symbol(symbol)
         normalized_tf = timeframe.upper().strip()
         cache_key = f"{normalized}::{normalized_tf}::{max(1, min(limit, 500))}"
+
         cached = self._cache_get(cache_key, ttl_seconds=self._cache_ttl_seconds)
         if cached is not None:
             return cached
@@ -410,14 +405,18 @@ class YahooProvider(RealMarketDataProvider):
 
         cfg = _TIMEFRAME_TO_YF.get(normalized_tf, _TIMEFRAME_TO_YF["H1"])
         source_symbol = f"{normalized}=X"
+
         try:
             history = yf.Ticker(source_symbol).history(period=cfg["period"], interval=cfg["interval"])
+
             if history.empty:
                 payload = {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "empty_history"}
                 self._cache_set(cache_key, payload, ttl_seconds=self._failure_ttl_seconds)
                 return payload
+
             rows = history.tail(max(1, min(limit, 500))).iterrows()
             candles: list[dict[str, Any]] = []
+
             for idx, row in rows:
                 ts = idx.to_pydatetime().astimezone(timezone.utc)
                 candles.append(
@@ -427,8 +426,10 @@ class YahooProvider(RealMarketDataProvider):
                         "high": float(row["High"]),
                         "low": float(row["Low"]),
                         "close": float(row["Close"]),
+                        "volume": 0.0,
                     }
                 )
+
             payload = {
                 "symbol": normalized,
                 "timeframe": normalized_tf,
@@ -436,15 +437,21 @@ class YahooProvider(RealMarketDataProvider):
                 "last_updated_utc": datetime.now(timezone.utc).isoformat(),
                 "candles": candles,
                 "error": None if candles else "empty_candles",
+                "provider": "yahoo",
             }
+
             self._cache_set(cache_key, payload, ttl_seconds=self._cache_ttl_seconds if candles else self._failure_ttl_seconds)
             return payload
+
         except Exception as exc:
             logger.warning("yahoo_candles_failed symbol=%s tf=%s error=%s", normalized, normalized_tf, exc)
+
             raw_error = str(exc).lower()
             error_code = "rate_limited" if "too many requests" in raw_error or "429" in raw_error else "request_failed"
+
             if error_code == "rate_limited":
                 self._set_rate_limited(normalized)
+
             payload = {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": error_code}
             self._cache_set(cache_key, payload, ttl_seconds=self._failure_ttl_seconds)
             return payload
@@ -452,6 +459,7 @@ class YahooProvider(RealMarketDataProvider):
     def get_latest_close(self, symbol: str, timeframe: str) -> dict[str, Any]:
         data = self.get_candles(symbol, timeframe, 2)
         candles = data.get("candles") or []
+
         return {
             "symbol": data.get("symbol"),
             "timeframe": data.get("timeframe"),
@@ -474,15 +482,18 @@ class YahooProvider(RealMarketDataProvider):
             cached = self._candles_cache.get(key)
             if not cached:
                 return None
+
             saved_at, payload = cached
             if monotonic() - saved_at > max(0.0, ttl_seconds):
                 self._candles_cache.pop(key, None)
                 return None
+
             return dict(payload)
 
     def _cache_set(self, key: str, payload: dict[str, Any], ttl_seconds: float) -> None:
         if ttl_seconds <= 0:
             return
+
         with self._lock:
             self._candles_cache[key] = (monotonic(), dict(payload))
 
@@ -491,9 +502,11 @@ class YahooProvider(RealMarketDataProvider):
             until = self._cooldown_until.get(symbol)
             if until is None:
                 return False
+
             if monotonic() >= until:
                 self._cooldown_until.pop(symbol, None)
                 return False
+
             return True
 
     def _set_rate_limited(self, symbol: str) -> None:
@@ -502,62 +515,142 @@ class YahooProvider(RealMarketDataProvider):
 
 
 class FinnhubProvider(RealMarketDataProvider):
-    """Finnhub provider for candles. Quote endpoint is intentionally not used as live quote source."""
+    """Finnhub provider for forex candles."""
 
     def __init__(self) -> None:
         self.api_key = (os.getenv("FINNHUB_API_KEY") or "").strip()
-        self.timeout = float(os.getenv("FINNHUB_TIMEOUT_SECONDS", "4"))
+        self.timeout = float(os.getenv("FINNHUB_TIMEOUT_SECONDS", "8"))
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
         normalized = _normalize_symbol(symbol)
-        return _unavailable(normalized, "finnhub", "FinnhubProvider не используется для live quote endpoint.")
+        return _unavailable(normalized, "finnhub", "FinnhubProvider используется только для свечей.")
 
     def get_candles(self, symbol: str, timeframe: str, limit: int) -> dict[str, Any]:
         normalized = _normalize_symbol(symbol)
         normalized_tf = str(timeframe or "H1").upper().strip()
-        normalized_limit = max(1, min(int(limit or 1), 5000))
+        normalized_limit = max(1, min(int(limit or 120), 500))
+
         if not self.api_key:
-            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "missing_api_key"}
+            return {
+                "symbol": normalized,
+                "timeframe": normalized_tf,
+                "candles": [],
+                "error": "missing_api_key",
+                "provider": "finnhub",
+            }
 
         resolution = self._map_resolution(normalized_tf)
         if not resolution:
-            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "unsupported_timeframe"}
+            return {
+                "symbol": normalized,
+                "timeframe": normalized_tf,
+                "candles": [],
+                "error": "unsupported_timeframe",
+                "provider": "finnhub",
+            }
 
-        source_symbol = self._finnhub_symbol(normalized)
         now_ts = int(datetime.now(timezone.utc).timestamp())
-        from_ts = max(0, now_ts - self._seconds_for_timeframe(normalized_tf) * max(60, normalized_limit + 5))
-        try:
-            response = requests.get(
-                f"{_FINNHUB_BASE}/forex/candle",
-                params={
-                    "symbol": source_symbol,
-                    "resolution": resolution,
-                    "from": from_ts,
-                    "to": now_ts,
-                    "token": self.api_key,
-                },
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except requests.RequestException:
-            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "request_failed"}
-        except ValueError:
-            return {"symbol": normalized, "timeframe": normalized_tf, "candles": [], "error": "invalid_json"}
 
-        candles = self._normalize_finnhub_candles(payload, normalized_limit)
+        # Важно: Finnhub обычно НЕ принимает resolution=240.
+        # Поэтому H4 берём как H1 и агрегируем в 4H вручную.
+        fetch_limit = normalized_limit * 4 if normalized_tf == "H4" else normalized_limit
+        source_tf_for_window = "H1" if normalized_tf == "H4" else normalized_tf
+
+        from_ts = max(
+            0,
+            now_ts - self._seconds_for_timeframe(source_tf_for_window) * max(80, fetch_limit + 20),
+        )
+
+        last_error = None
+        last_status = None
+        last_body = None
+        used_symbol = None
+
+        for source_symbol in self._candidate_symbols(normalized):
+            used_symbol = source_symbol
+
+            try:
+                response = requests.get(
+                    f"{_FINNHUB_BASE}/forex/candle",
+                    params={
+                        "symbol": source_symbol,
+                        "resolution": resolution,
+                        "from": from_ts,
+                        "to": now_ts,
+                        "token": self.api_key,
+                    },
+                    timeout=self.timeout,
+                )
+
+                last_status = response.status_code
+
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {}
+
+                last_body = payload if isinstance(payload, dict) else str(payload)[:300]
+
+                logger.info(
+                    "finnhub_candles_response symbol=%s tf=%s provider_symbol=%s resolution=%s status_code=%s body=%s",
+                    normalized,
+                    normalized_tf,
+                    source_symbol,
+                    resolution,
+                    response.status_code,
+                    last_body,
+                )
+
+                if response.status_code >= 400:
+                    last_error = f"http_{response.status_code}"
+                    continue
+
+                candles = self._normalize_finnhub_candles(payload, fetch_limit)
+
+                if normalized_tf == "H4" and candles:
+                    candles = self._aggregate_to_h4(candles)
+
+                candles = candles[-normalized_limit:]
+
+                if candles:
+                    return {
+                        "symbol": normalized,
+                        "timeframe": normalized_tf,
+                        "source_symbol": source_symbol,
+                        "last_updated_utc": datetime.now(timezone.utc).isoformat(),
+                        "candles": candles,
+                        "error": None,
+                        "provider": "finnhub",
+                    }
+
+                last_error = str(payload.get("s") or payload.get("error") or "empty_candles").lower()
+
+            except requests.RequestException as exc:
+                last_error = f"request_failed:{exc.__class__.__name__}:{str(exc)[:180]}"
+                logger.warning(
+                    "finnhub_request_failed symbol=%s tf=%s provider_symbol=%s error=%s",
+                    normalized,
+                    normalized_tf,
+                    source_symbol,
+                    exc,
+                )
+
         return {
             "symbol": normalized,
             "timeframe": normalized_tf,
-            "source_symbol": source_symbol,
+            "source_symbol": used_symbol,
             "last_updated_utc": datetime.now(timezone.utc).isoformat(),
-            "candles": candles,
-            "error": None if candles else str(payload.get("s") or "empty_candles").lower(),
+            "candles": [],
+            "error": last_error or "empty_candles",
+            "http_status": last_status,
+            "raw_status": last_body,
+            "provider": "finnhub",
         }
 
     def get_latest_close(self, symbol: str, timeframe: str) -> dict[str, Any]:
         data = self.get_candles(symbol, timeframe, 2)
         candles = data.get("candles") or []
+
         return {
             "symbol": data.get("symbol"),
             "timeframe": data.get("timeframe"),
@@ -576,13 +669,34 @@ class FinnhubProvider(RealMarketDataProvider):
         }
 
     @staticmethod
+    def _candidate_symbols(symbol: str) -> list[str]:
+        mapping = {
+            "EURUSD": ["OANDA:EUR_USD", "EUR_USD"],
+            "GBPUSD": ["OANDA:GBP_USD", "GBP_USD"],
+            "USDJPY": ["OANDA:USD_JPY", "USD_JPY"],
+            "AUDUSD": ["OANDA:AUD_USD", "AUD_USD"],
+            "USDCAD": ["OANDA:USD_CAD", "USD_CAD"],
+            "USDCHF": ["OANDA:USD_CHF", "USD_CHF"],
+            "NZDUSD": ["OANDA:NZD_USD", "NZD_USD"],
+            "XAUUSD": ["OANDA:XAU_USD", "XAU_USD", "FOREXCOM:XAU_USD"],
+        }
+
+        if symbol in mapping:
+            return mapping[symbol]
+
+        if len(symbol) == 6 and symbol.isalpha():
+            return [f"OANDA:{symbol[:3]}_{symbol[3:]}", f"{symbol[:3]}_{symbol[3:]}"]
+
+        return [symbol]
+
+    @staticmethod
     def _map_resolution(timeframe: str) -> str | None:
         mapping = {
             "M5": "5",
             "M15": "15",
             "M30": "30",
             "H1": "60",
-            "H4": "240",
+            "H4": "60",
             "D1": "D",
             "W1": "W",
         }
@@ -601,59 +715,105 @@ class FinnhubProvider(RealMarketDataProvider):
         }.get(timeframe, 3600)
 
     @staticmethod
-    def _finnhub_symbol(symbol: str) -> str:
-        if len(symbol) == 6 and symbol.isalpha():
-            return f"OANDA:{symbol[:3]}_{symbol[3:]}"
-        return symbol
-
-    @staticmethod
     def _normalize_finnhub_candles(payload: Any, limit: int) -> list[dict[str, Any]]:
         if not isinstance(payload, dict):
             return []
+
         status = str(payload.get("s") or "").lower()
+        if status != "ok":
+            return []
+
         opens = payload.get("o")
         highs = payload.get("h")
         lows = payload.get("l")
         closes = payload.get("c")
         times = payload.get("t")
         volumes = payload.get("v")
-        if status != "ok":
+
+        if not all(isinstance(item, list) for item in (opens, highs, lows, closes, times)):
             return []
-        series = (opens, highs, lows, closes, times)
-        if not all(isinstance(item, list) for item in series):
-            return []
+
         size = min(len(opens), len(highs), len(lows), len(closes), len(times))
         output: list[dict[str, Any]] = []
+
         for idx in range(size):
             ts = _to_float(times[idx])
             op = _to_float(opens[idx])
             hi = _to_float(highs[idx])
             lo = _to_float(lows[idx])
             cl = _to_float(closes[idx])
+
             if None in {ts, op, hi, lo, cl}:
                 continue
+
+            volume = 0.0
+            if isinstance(volumes, list) and idx < len(volumes):
+                maybe_volume = _to_float(volumes[idx])
+                if maybe_volume is not None:
+                    volume = float(maybe_volume)
+
             output.append(
                 {
+                    "timestamp": int(ts),
                     "time": int(ts),
                     "open": float(op),
-                    "high": float(hi),
-                    "low": float(lo),
+                    "high": float(max(hi, op, cl, lo)),
+                    "low": float(min(lo, op, cl, hi)),
                     "close": float(cl),
-                    "volume": float(_to_float(volumes[idx]) if isinstance(volumes, list) and idx < len(volumes) else 0.0),
+                    "volume": volume,
                 }
             )
+
         output.sort(key=lambda item: int(item["time"]))
-        return output[-max(1, limit) :]
+        return output[-max(1, limit):]
+
+    @staticmethod
+    def _aggregate_to_h4(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not candles:
+            return []
+
+        buckets: dict[int, list[dict[str, Any]]] = {}
+
+        for candle in candles:
+            ts = int(candle["time"])
+            bucket = ts - (ts % 14400)
+            buckets.setdefault(bucket, []).append(candle)
+
+        output: list[dict[str, Any]] = []
+
+        for bucket_ts in sorted(buckets):
+            group = sorted(buckets[bucket_ts], key=lambda item: int(item["time"]))
+
+            if not group:
+                continue
+
+            output.append(
+                {
+                    "timestamp": bucket_ts,
+                    "time": bucket_ts,
+                    "open": float(group[0]["open"]),
+                    "high": float(max(item["high"] for item in group)),
+                    "low": float(min(item["low"] for item in group)),
+                    "close": float(group[-1]["close"]),
+                    "volume": float(sum(float(item.get("volume") or 0.0) for item in group)),
+                }
+            )
+
+        return output
 
 
 def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:
     if not isinstance(values, list):
         return []
+
     output: list[dict[str, Any]] = []
+
     for item in values:
         if not isinstance(item, dict):
             continue
+
         ts = _parse_ts(item.get("datetime"))
+
         candle = {
             "timestamp": ts,
             "time": ts,
@@ -664,9 +824,12 @@ def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:
             "close": _to_float(item.get("close")),
             "volume": _to_float(item.get("volume")),
         }
+
         if ts is None or None in {candle["open"], candle["high"], candle["low"], candle["close"]}:
             continue
+
         output.append(candle)
+
     output.sort(key=lambda candle: int(candle["time"]))
     return output
 
@@ -674,24 +837,32 @@ def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:
 def _parse_ts(value: Any) -> int | None:
     if value is None:
         return None
+
     raw = str(value).strip()
+
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
             return timegm(datetime.strptime(raw, fmt).timetuple())
         except ValueError:
             continue
+
     return None
 
 
 def _parse_iso_dt(value: Any) -> datetime | None:
     if value is None:
         return None
+
     raw = str(value).strip().replace("Z", "+00:00")
+
     try:
         parsed = datetime.fromisoformat(raw)
+
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=timezone.utc)
+
         return parsed.astimezone(timezone.utc)
+
     except ValueError:
         return None
 
@@ -718,38 +889,48 @@ def _td_symbol(symbol: str) -> str:
         "NZDUSD": "NZDUSD",
         "XAUUSD": "XAUUSD",
     }
+
     if symbol in symbol_map:
         return symbol_map[symbol]
+
     return symbol
 
 
 def _extract_td_error(payload: dict[str, Any]) -> str | None:
     if not isinstance(payload, dict):
         return "invalid_payload"
+
     status = str(payload.get("status") or "").lower()
     code = payload.get("code")
     message = str(payload.get("message") or "").strip()
     errors = payload.get("errors")
+
     if status == "error":
         return message or "api_error"
+
     if code not in (None, "", 200):
         if message:
             return f"code_{code}:{message}"
         return f"code_{code}"
+
     if isinstance(errors, dict) and errors:
         flattened = "; ".join(f"{key}={value}" for key, value in errors.items())
         return flattened[:400]
+
     return None
 
 
 def _normalize_td_payload(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {"candles": []}
+
     normalized = dict(payload)
     candles = normalized.get("candles")
     values = normalized.get("values")
+
     if not isinstance(candles, list):
         normalized["candles"] = values if isinstance(values, list) else []
+
     return normalized
 
 
