@@ -8,6 +8,8 @@ const modalCard = document.getElementById("modal-card");
 const modalTitle = document.getElementById("modal-title");
 const modalSub = document.getElementById("modal-sub");
 const closeModalBtn = document.getElementById("close-modal");
+const detailWarnings = document.getElementById("detail-warnings");
+const detailWarningsList = document.getElementById("detail-warnings-list");
 
 const analysisText = document.getElementById("analysis-text");
 const tradingPlanText = document.getElementById("trading-plan-text");
@@ -834,6 +836,9 @@ function buildIdeaCardMarkup(idea) {
   const h4 = normalizeWhitespace(idea?.htf_bias_summary) || "H4: нет данных";
   const h1 = normalizeWhitespace(idea?.mtf_structure_summary) || "H1: нет данных";
   const m15 = normalizeWhitespace(idea?.ltf_trigger_summary) || "M15: нет данных";
+  const warnings = collectIdeaWarnings(idea);
+  const compactWarnings = warnings.slice(0, 2);
+  const hiddenWarningsCount = Math.max(0, warnings.length - compactWarnings.length);
 
   return `
     <div class="card-head">
@@ -859,6 +864,12 @@ function buildIdeaCardMarkup(idea) {
       <div class="level-pill level-pill-tp">TP: ${escapeHtml(formatLevel(idea?.takeProfit))}</div>
       <div class="level-pill level-pill-rr">RR: ${escapeHtml(calculateRiskReward(idea))}</div>
     </div>
+    ${compactWarnings.length ? `
+      <div class="card-warning-badges">
+        ${compactWarnings.map((message) => `<span class="warning-badge">${escapeHtml(message.replace("⚠️ ", ""))}</span>`).join("")}
+        ${hiddenWarningsCount > 0 ? `<span class="warning-badge">+${hiddenWarningsCount}</span>` : ""}
+      </div>
+    ` : ""}
     <div class="tags">
       ${tags.filter((tag) => !["created", "status", "debug"].includes(String(tag).toLowerCase())).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}
     </div>
@@ -1045,6 +1056,38 @@ function calculateRiskReward(idea) {
   const reward = Math.abs(target - entry);
   if (!risk || !Number.isFinite(risk) || !Number.isFinite(reward)) return "—";
   return `${(reward / risk).toFixed(2)}R`;
+}
+
+function collectIdeaWarnings(idea) {
+  const warnings = [];
+  const provider = normalizeWhitespace(idea?.data_provider).toLowerCase();
+  const fallbackUsed = idea?.fallback_used === true;
+  const dataQuality = normalizeWhitespace(idea?.data_quality).toLowerCase();
+  const overlaysPresent = idea?.chart_overlays_present;
+  const snapshotStatus = normalizeWhitespace(idea?.chartSnapshotStatus || idea?.chart_snapshot_status).toLowerCase();
+  const chartStatus = normalizeWhitespace(idea?.chart_status || idea?.chartStatus).toLowerCase();
+  const confidence = Number(idea?.confidence);
+
+  if (provider === "yahoo_finance" || fallbackUsed) warnings.push("⚠️ Используется Yahoo fallback — анализ упрощён");
+  if (dataQuality === "medium" || dataQuality === "low") warnings.push("⚠️ Качество данных снижено");
+  if (overlaysPresent === false) warnings.push("⚠️ OB/FVG/ликвидность не подтверждены");
+  if ((snapshotStatus && snapshotStatus !== "ok") || chartStatus.includes("fallback")) {
+    warnings.push("⚠️ График построен в fallback-режиме");
+  }
+  if (Number.isFinite(confidence) && confidence < 50) warnings.push("⚠️ Низкая уверенность");
+  return warnings;
+}
+
+function renderModalWarnings(idea) {
+  if (!detailWarnings || !detailWarningsList) return;
+  const warnings = collectIdeaWarnings(idea);
+  if (!warnings.length) {
+    detailWarnings.style.display = "none";
+    detailWarningsList.innerHTML = "";
+    return;
+  }
+  detailWarningsList.innerHTML = warnings.map((message) => `<li>${escapeHtml(message)}</li>`).join("");
+  detailWarnings.style.display = "";
 }
 
 function setTextContent(node, value, fallback = "—") {
@@ -2157,6 +2200,7 @@ async function openIdea(idea) {
   modal.classList.add("open");
 
   renderDetailText(idea);
+  renderModalWarnings(idea);
   renderCleanDetailStatus(idea);
   const snapshotUrl = getValidChartUrl(idea);
   const cachedSnapshotUrl = getCachedChartUrl(idea);

@@ -5430,6 +5430,17 @@ class TradeIdeaService:
         payload["candles_count_sent"] = int(TradeIdeaService._extract_numeric(payload.get("candles_count_sent")) or 0)
         if payload.get("chart_overlays_present") is None:
             payload["chart_overlays_present"] = TradeIdeaService.is_meaningful_overlay_payload(payload.get("chart_overlays"))
+        payload["data_provider"] = str(payload.get("data_provider") or "unknown").lower()
+        payload["fallback_used"] = bool(payload.get("fallback_used"))
+        data_quality = str(payload.get("data_quality") or "").lower()
+        payload["data_quality"] = data_quality if data_quality in {"high", "medium", "low"} else ("medium" if payload["fallback_used"] else "high")
+        chart_snapshot_status = str(payload.get("chartSnapshotStatus") or payload.get("chart_snapshot_status") or "no_data").lower()
+        payload["chartSnapshotStatus"] = chart_snapshot_status
+        payload["chart_snapshot_status"] = chart_snapshot_status
+        chart_status = str(payload.get("chart_status") or payload.get("chartStatus") or "").lower()
+        payload["chart_status"] = chart_status or ("fallback_candles" if chart_snapshot_status != "ok" else "snapshot")
+        payload["chartStatus"] = payload["chart_status"]
+        payload["confidence"] = int(TradeIdeaService._extract_numeric(payload.get("confidence")) or 0)
         return payload
 
     @classmethod
