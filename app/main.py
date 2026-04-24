@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 import asyncio
+from time import monotonic
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -67,6 +68,8 @@ calendar_store = JsonStorage("signals_data/calendar.json", {"updated_at_utc": No
 heatmap_store = JsonStorage("signals_data/heatmap.json", {"updated_at_utc": None, "rows": []})
 logger = logging.getLogger(__name__)
 _ideas_refresh_task: asyncio.Task | None = None
+_twelvedata_probe_cache: dict[str, object] = {"saved_at": 0.0, "probes": []}
+_twelvedata_probe_ttl_seconds = 600.0
 
 
 class SnapshotResponse(BaseModel):
@@ -150,7 +153,7 @@ async def health() -> HealthResponse:
 
 
 @app.get("/api/debug/twelvedata-health")
-async def twelvedata_health_debug() -> dict:
+async def twelvedata_health_debug(run_probe: bool = False) -> dict:
     provider = canonical_market_service.live_provider
     api_key = getattr(provider, "api_key", "") or ""
 
@@ -161,24 +164,33 @@ async def twelvedata_health_debug() -> dict:
 
     probe_pairs = [("EURUSD", "M15"), ("GBPUSD", "H1")]
     probe_results: list[dict] = []
-    for symbol, timeframe in probe_pairs:
-        probe = await asyncio.to_thread(provider.get_candles, symbol, timeframe, 30)
-        request_debug = provider.get_last_request_debug() if hasattr(provider, "get_last_request_debug") else {}
-        probe_error = probe.get("error")
-        probe_candles = probe.get("candles") or []
-        probe_results.append(
-            {
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "provider_symbol_used": request_debug.get("provider_symbol_used") or _td_symbol(symbol),
-                "provider_interval": _TIMEFRAME_TO_TD.get(timeframe),
-                "candles_count": len(probe_candles),
-                "request_succeeded": probe_error is None and len(probe_candles) > 0,
-                "error": probe_error,
-                "source_symbol": probe.get("source_symbol"),
-                "raw_request_url": request_debug.get("raw_request_url"),
-            }
-        )
+    cache_age_seconds = max(0.0, monotonic() - float(_twelvedata_probe_cache.get("saved_at") or 0.0))
+    cached_probes = _twelvedata_probe_cache.get("probes")
+    has_fresh_probe_cache = isinstance(cached_probes, list) and bool(cached_probes) and cache_age_seconds <= _twelvedata_probe_ttl_seconds
+    should_probe = bool(run_probe or not has_fresh_probe_cache)
+    if should_probe:
+        for symbol, timeframe in probe_pairs:
+            probe = await asyncio.to_thread(provider.get_candles, symbol, timeframe, 30)
+            request_debug = provider.get_last_request_debug() if hasattr(provider, "get_last_request_debug") else {}
+            probe_error = probe.get("error")
+            probe_candles = probe.get("candles") or []
+            probe_results.append(
+                {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "provider_symbol_used": request_debug.get("provider_symbol_used") or _td_symbol(symbol),
+                    "provider_interval": _TIMEFRAME_TO_TD.get(timeframe),
+                    "candles_count": len(probe_candles),
+                    "request_succeeded": probe_error is None and len(probe_candles) > 0,
+                    "error": probe_error,
+                    "source_symbol": probe.get("source_symbol"),
+                    "raw_request_url": request_debug.get("raw_request_url"),
+                }
+            )
+        _twelvedata_probe_cache["saved_at"] = monotonic()
+        _twelvedata_probe_cache["probes"] = probe_results
+    elif isinstance(cached_probes, list):
+        probe_results = list(cached_probes)
 
     return {
         "provider": "twelvedata",
@@ -187,6 +199,9 @@ async def twelvedata_health_debug() -> dict:
         "api_key_length": len(api_key) if api_key else 0,
         "symbol_mapping": symbol_mapping,
         "timeframe_mapping": timeframe_mapping,
+        "run_probe": bool(run_probe),
+        "probe_cache_hit": not should_probe,
+        "probe_cache_age_seconds": cache_age_seconds if has_fresh_probe_cache else None,
         "probe": probe_results[0] if probe_results else None,
         "probes": probe_results,
     }
@@ -208,8 +223,10 @@ async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", lim
         source_symbol = _td_symbol(str(symbol).upper().replace("/", "").strip()) if "twelvedata" in str(provider_used) else str(symbol).upper().replace("/", "").strip()
     return {
         "provider_used": provider_used,
+        "twelvedata_cache_hit": bool(health.get("twelvedata_cache_hit", health.get("cache_hit"))),
         "cache_hit": bool(health.get("cache_hit")),
         "cache_age_seconds": health.get("cache_age_seconds"),
+        "next_allowed_request_at": health.get("next_allowed_request_at"),
         "primary_provider": health.get("primary_provider") or "twelvedata",
         "primary_error": health.get("primary_error"),
         "fallback_attempted": bool(health.get("fallback_attempted")),

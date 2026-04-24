@@ -5,7 +5,7 @@ from datetime import datetime
 import logging
 import os
 from threading import Lock
-from time import monotonic
+from time import monotonic, time
 from typing import Any
 
 import requests
@@ -33,10 +33,15 @@ class ChartDataService:
         self.timeout_seconds = float(os.getenv("TWELVEDATA_TIMEOUT", str(DEFAULT_CHART_TIMEOUT_SECONDS)))
         self.output_size = int(os.getenv("TWELVEDATA_OUTPUTSIZE", str(DEFAULT_CHART_LIMIT)))
         self.yahoo_service = YahooMarketDataService()
-        self._cache_ttl_seconds = max(60.0, float(os.getenv("TWELVEDATA_CHART_CACHE_TTL_SECONDS", "60")))
+        self._cache_ttl_seconds = max(600.0, float(os.getenv("TWELVEDATA_CHART_CACHE_TTL_SECONDS", "600")))
         self._stale_success_ttl_seconds = max(self._cache_ttl_seconds, float(os.getenv("TWELVEDATA_STALE_CACHE_TTL_SECONDS", "900")))
+        self._request_cooldown_seconds = max(
+            self._cache_ttl_seconds,
+            float(os.getenv("TWELVEDATA_REQUEST_COOLDOWN_SECONDS", str(self._cache_ttl_seconds))),
+        )
         self._cache_lock = Lock()
         self._candles_cache: dict[str, dict[str, Any]] = {}
+        self._next_allowed_request_by_key: dict[str, float] = {}
         self._last_market_health: dict[str, Any] = {
             "primary_provider": "twelvedata",
             "primary_error": None,
@@ -51,6 +56,8 @@ class ChartDataService:
             "provider_used": None,
             "cache_hit": False,
             "cache_age_seconds": None,
+            "twelvedata_cache_hit": False,
+            "next_allowed_request_at": None,
         }
 
     def get_chart(self, symbol: str, timeframe: str, limit: int | None = None) -> dict[str, Any]:
@@ -89,6 +96,7 @@ class ChartDataService:
                 provider_used="twelvedata_cached",
                 cache_hit=True,
                 cache_age_seconds=cache_age_seconds,
+                next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
             )
             return cached_fresh
 
@@ -114,6 +122,7 @@ class ChartDataService:
                 provider_used="twelvedata",
                 cache_hit=False,
                 cache_age_seconds=None,
+                next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
             )
             return payload
 
@@ -129,6 +138,22 @@ class ChartDataService:
                     timeframe=normalized_tf,
                     message_ru="Свечной API не настроен: отсутствует TWELVEDATA_API_KEY.",
                     reason="fetch_error",
+                ),
+                provider_symbol=provider_symbol,
+                cache_key=cache_key,
+            )
+
+        if not self._is_request_allowed(cache_key):
+            return self._fallback_to_yahoo(
+                symbol=normalized_symbol,
+                timeframe=normalized_tf,
+                limit=requested_limit,
+                twelvedata_error="throttled",
+                twelvedata_payload=self.build_unavailable_payload(
+                    symbol=normalized_symbol,
+                    timeframe=normalized_tf,
+                    message_ru="Запрос к Twelve Data отложен: действует локальный throttling.",
+                    reason="rate_limited",
                 ),
                 provider_symbol=provider_symbol,
                 cache_key=cache_key,
@@ -152,6 +177,7 @@ class ChartDataService:
             response.raise_for_status()
             payload = response.json()
         except requests.RequestException as exc:
+            self._set_next_allowed_request(cache_key)
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=request_exception error=%s", normalized_symbol, normalized_tf, exc)
             return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
@@ -168,6 +194,7 @@ class ChartDataService:
                 cache_key=cache_key,
             )
         except ValueError:
+            self._set_next_allowed_request(cache_key)
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=invalid_json", normalized_symbol, normalized_tf)
             return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
@@ -204,6 +231,7 @@ class ChartDataService:
                     payload.get("message"),
                 )
                 reason = "rate_limited" if str(payload.get("code")) == "429" else "fetch_error"
+                self._set_next_allowed_request(cache_key)
                 return self._fallback_to_yahoo(
                     symbol=normalized_symbol,
                     timeframe=normalized_tf,
@@ -219,6 +247,7 @@ class ChartDataService:
                     cache_key=cache_key,
                 )
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=empty_candles", normalized_symbol, normalized_tf)
+            self._set_next_allowed_request(cache_key)
             return self._fallback_to_yahoo(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
@@ -249,6 +278,7 @@ class ChartDataService:
             provider_used="twelvedata",
             cache_hit=False,
             cache_age_seconds=0.0,
+            next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
         )
         response_payload = {
             "symbol": normalized_symbol,
@@ -297,8 +327,31 @@ class ChartDataService:
                 provider_used="twelvedata_cached",
                 cache_hit=True,
                 cache_age_seconds=cache_age_seconds,
+                next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
             )
             return stale_cached
+
+        if twelvedata_error in {"rate_limited", "throttled"}:
+            cached_any_age = self._get_cached_payload_any_age(cache_key=cache_key, limit=limit)
+            if cached_any_age is not None:
+                cache_age_seconds = self._cache_age_seconds(cache_key)
+                self._set_market_health(
+                    primary_provider="twelvedata",
+                    primary_error=twelvedata_error,
+                    fallback_attempted=False,
+                    fallback_provider="yahoo_finance",
+                    fallback_error=None,
+                    final_provider_used="twelvedata_cached",
+                    request_succeeded=True,
+                    candles_count=len(cached_any_age.get("candles") or []),
+                    error=None,
+                    source_symbol=provider_symbol,
+                    provider_used="twelvedata_cached",
+                    cache_hit=True,
+                    cache_age_seconds=cache_age_seconds,
+                    next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
+                )
+                return cached_any_age
 
         logger.warning(
             "twelvedata_failed_yahoo_fallback symbol=%s tf=%s twelvedata_error=%s",
@@ -325,6 +378,7 @@ class ChartDataService:
                 provider_used="yahoo",
                 cache_hit=False,
                 cache_age_seconds=self._cache_age_seconds(cache_key),
+                next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
             )
             return {
                 "symbol": symbol,
@@ -356,6 +410,7 @@ class ChartDataService:
             provider_used="twelvedata",
             cache_hit=False,
             cache_age_seconds=self._cache_age_seconds(cache_key),
+            next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
         )
         return twelvedata_payload
 
@@ -375,6 +430,7 @@ class ChartDataService:
         provider_used: str | None,
         cache_hit: bool,
         cache_age_seconds: float | None,
+        next_allowed_request_at: str | None,
     ) -> None:
         self._last_market_health = {
             "primary_provider": primary_provider,
@@ -389,7 +445,9 @@ class ChartDataService:
             "source_symbol": source_symbol,
             "provider_used": provider_used,
             "cache_hit": bool(cache_hit),
+            "twelvedata_cache_hit": bool(cache_hit),
             "cache_age_seconds": cache_age_seconds,
+            "next_allowed_request_at": next_allowed_request_at,
         }
         logger.info(
             "market_provider_selected primary_provider=%s final_provider=%s fallback_attempted=%s request_succeeded=%s candles=%s error=%s source_symbol=%s",
@@ -412,6 +470,7 @@ class ChartDataService:
         with self._cache_lock:
             self._candles_cache[cache_key] = {
                 "saved_at": monotonic(),
+                "saved_at_epoch": time(),
                 "payload": dict(payload),
             }
 
@@ -438,6 +497,25 @@ class ChartDataService:
                 return None
             saved_at = float(cache_entry.get("saved_at") or 0.0)
             return max(0.0, monotonic() - saved_at)
+
+    def _get_cached_payload_any_age(self, *, cache_key: str, limit: int) -> dict[str, Any] | None:
+        return self._get_cached_payload(cache_key=cache_key, limit=limit, max_age_seconds=float("inf"))
+
+    def _is_request_allowed(self, cache_key: str) -> bool:
+        with self._cache_lock:
+            next_allowed = float(self._next_allowed_request_by_key.get(cache_key) or 0.0)
+        return time() >= next_allowed
+
+    def _set_next_allowed_request(self, cache_key: str) -> None:
+        with self._cache_lock:
+            self._next_allowed_request_by_key[cache_key] = time() + self._request_cooldown_seconds
+
+    def _get_next_allowed_request_at(self, cache_key: str) -> str | None:
+        with self._cache_lock:
+            next_allowed = float(self._next_allowed_request_by_key.get(cache_key) or 0.0)
+        if next_allowed <= 0:
+            return None
+        return datetime.utcfromtimestamp(next_allowed).isoformat() + "Z"
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
