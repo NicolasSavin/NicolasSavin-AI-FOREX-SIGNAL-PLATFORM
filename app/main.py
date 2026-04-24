@@ -199,11 +199,15 @@ async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", lim
     candles = payload.get("candles") if isinstance(payload, dict) and isinstance(payload.get("candles"), list) else []
     meta = payload.get("meta") if isinstance(payload, dict) and isinstance(payload.get("meta"), dict) else {}
     health = chart_data_service.get_last_market_health()
-    final_provider_used = health.get("final_provider_used") or payload.get("source") or "unknown"
+    provider_used = health.get("provider_used") or health.get("final_provider_used") or payload.get("source") or "unknown"
+    final_provider_used = health.get("final_provider_used") or provider_used
     source_symbol = health.get("source_symbol")
     if not source_symbol:
-        source_symbol = _td_symbol(str(symbol).upper().replace("/", "").strip()) if final_provider_used == "twelvedata" else str(symbol).upper().replace("/", "").strip()
+        source_symbol = _td_symbol(str(symbol).upper().replace("/", "").strip()) if "twelvedata" in str(provider_used) else str(symbol).upper().replace("/", "").strip()
     return {
+        "provider_used": provider_used,
+        "cache_hit": bool(health.get("cache_hit")),
+        "cache_age_seconds": health.get("cache_age_seconds"),
         "primary_provider": health.get("primary_provider") or "twelvedata",
         "primary_error": health.get("primary_error"),
         "fallback_attempted": bool(health.get("fallback_attempted")),

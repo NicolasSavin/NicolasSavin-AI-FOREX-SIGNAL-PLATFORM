@@ -4,6 +4,8 @@ from calendar import timegm
 from datetime import datetime
 import logging
 import os
+from threading import Lock
+from time import monotonic
 from typing import Any
 
 import requests
@@ -31,6 +33,10 @@ class ChartDataService:
         self.timeout_seconds = float(os.getenv("TWELVEDATA_TIMEOUT", str(DEFAULT_CHART_TIMEOUT_SECONDS)))
         self.output_size = int(os.getenv("TWELVEDATA_OUTPUTSIZE", str(DEFAULT_CHART_LIMIT)))
         self.yahoo_service = YahooMarketDataService()
+        self._cache_ttl_seconds = max(60.0, float(os.getenv("TWELVEDATA_CHART_CACHE_TTL_SECONDS", "60")))
+        self._stale_success_ttl_seconds = max(self._cache_ttl_seconds, float(os.getenv("TWELVEDATA_STALE_CACHE_TTL_SECONDS", "900")))
+        self._cache_lock = Lock()
+        self._candles_cache: dict[str, dict[str, Any]] = {}
         self._last_market_health: dict[str, Any] = {
             "primary_provider": "twelvedata",
             "primary_error": None,
@@ -42,6 +48,9 @@ class ChartDataService:
             "candles_count": 0,
             "error": "not_started",
             "source_symbol": None,
+            "provider_used": None,
+            "cache_hit": False,
+            "cache_age_seconds": None,
         }
 
     def get_chart(self, symbol: str, timeframe: str, limit: int | None = None) -> dict[str, Any]:
@@ -62,6 +71,26 @@ class ChartDataService:
             provider_symbol,
             provider_interval,
         )
+        cache_key = self._cache_key(normalized_symbol, normalized_tf)
+        cached_fresh = self._get_cached_payload(cache_key=cache_key, limit=requested_limit, max_age_seconds=self._cache_ttl_seconds)
+        if cached_fresh is not None:
+            cache_age_seconds = self._cache_age_seconds(cache_key)
+            self._set_market_health(
+                primary_provider="twelvedata",
+                primary_error=None,
+                fallback_attempted=False,
+                fallback_provider="yahoo_finance",
+                fallback_error=None,
+                final_provider_used="twelvedata_cached",
+                request_succeeded=True,
+                candles_count=len(cached_fresh.get("candles") or []),
+                error=None,
+                source_symbol=provider_symbol,
+                provider_used="twelvedata_cached",
+                cache_hit=True,
+                cache_age_seconds=cache_age_seconds,
+            )
+            return cached_fresh
 
         if normalized_tf not in TIMEFRAME_MAPPING:
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=unsupported_timeframe", normalized_symbol, normalized_tf)
@@ -82,6 +111,9 @@ class ChartDataService:
                 candles_count=0,
                 error="unsupported_timeframe",
                 source_symbol=provider_symbol,
+                provider_used="twelvedata",
+                cache_hit=False,
+                cache_age_seconds=None,
             )
             return payload
 
@@ -98,6 +130,8 @@ class ChartDataService:
                     message_ru="Свечной API не настроен: отсутствует TWELVEDATA_API_KEY.",
                     reason="fetch_error",
                 ),
+                provider_symbol=provider_symbol,
+                cache_key=cache_key,
             )
 
         params = {
@@ -125,6 +159,8 @@ class ChartDataService:
                     message_ru="Не удалось загрузить реальные свечные данные из Twelve Data.",
                     reason="fetch_error",
                 ),
+                provider_symbol=provider_symbol,
+                cache_key=cache_key,
             )
         except ValueError:
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=invalid_json", normalized_symbol, normalized_tf)
@@ -139,6 +175,8 @@ class ChartDataService:
                     message_ru="Свечной API вернул некорректный ответ.",
                     reason="fetch_error",
                 ),
+                provider_symbol=provider_symbol,
+                cache_key=cache_key,
             )
 
         payload, candles = self.normalize_provider_payload(payload)
@@ -172,6 +210,8 @@ class ChartDataService:
                         message_ru=f"Twelve Data недоступен: {payload.get('message') or 'неизвестная ошибка'}.",
                         reason=reason,
                     ),
+                    provider_symbol=provider_symbol,
+                    cache_key=cache_key,
                 )
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=empty_candles", normalized_symbol, normalized_tf)
             return self._fallback_to_yahoo(
@@ -185,6 +225,8 @@ class ChartDataService:
                     message_ru="Свечной API не вернул candles/values для выбранной идеи.",
                     reason="no_data",
                 ),
+                provider_symbol=provider_symbol,
+                cache_key=cache_key,
             )
 
         logger.info("twelvedata_success symbol=%s tf=%s candles=%s", normalized_symbol, normalized_tf, len(candles))
@@ -199,9 +241,11 @@ class ChartDataService:
             candles_count=len(candles),
             error=None,
             source_symbol=provider_symbol,
+            provider_used="twelvedata",
+            cache_hit=False,
+            cache_age_seconds=0.0,
         )
-
-        return {
+        response_payload = {
             "symbol": normalized_symbol,
             "timeframe": normalized_tf,
             "source": "twelvedata",
@@ -214,6 +258,8 @@ class ChartDataService:
                 "outputsize": min(len(candles), requested_limit),
             },
         }
+        self._store_cached_payload(cache_key=cache_key, payload=response_payload)
+        return response_payload
 
     def get_last_market_health(self) -> dict[str, Any]:
         return dict(self._last_market_health)
@@ -226,7 +272,29 @@ class ChartDataService:
         limit: int,
         twelvedata_error: str,
         twelvedata_payload: dict[str, Any],
+        provider_symbol: str,
+        cache_key: str,
     ) -> dict[str, Any]:
+        stale_cached = self._get_cached_payload(cache_key=cache_key, limit=limit, max_age_seconds=self._stale_success_ttl_seconds)
+        if stale_cached is not None:
+            cache_age_seconds = self._cache_age_seconds(cache_key)
+            self._set_market_health(
+                primary_provider="twelvedata",
+                primary_error=twelvedata_error,
+                fallback_attempted=False,
+                fallback_provider="yahoo_finance",
+                fallback_error=None,
+                final_provider_used="twelvedata_cached",
+                request_succeeded=True,
+                candles_count=len(stale_cached.get("candles") or []),
+                error=None,
+                source_symbol=provider_symbol,
+                provider_used="twelvedata_cached",
+                cache_hit=True,
+                cache_age_seconds=cache_age_seconds,
+            )
+            return stale_cached
+
         logger.warning(
             "twelvedata_failed_yahoo_fallback symbol=%s tf=%s twelvedata_error=%s",
             symbol,
@@ -249,6 +317,9 @@ class ChartDataService:
                 candles_count=len(yahoo_candles),
                 error=None,
                 source_symbol=str(yahoo.get("source_symbol") or symbol),
+                provider_used="yahoo",
+                cache_hit=False,
+                cache_age_seconds=self._cache_age_seconds(cache_key),
             )
             return {
                 "symbol": symbol,
@@ -277,6 +348,9 @@ class ChartDataService:
             candles_count=0,
             error=f"twelvedata:{twelvedata_error};yahoo:{yahoo_error or 'unknown_error'}",
             source_symbol=str(yahoo.get("source_symbol") or symbol),
+            provider_used="twelvedata",
+            cache_hit=False,
+            cache_age_seconds=self._cache_age_seconds(cache_key),
         )
         return twelvedata_payload
 
@@ -293,6 +367,9 @@ class ChartDataService:
         candles_count: int,
         error: str | None,
         source_symbol: str | None,
+        provider_used: str | None,
+        cache_hit: bool,
+        cache_age_seconds: float | None,
     ) -> None:
         self._last_market_health = {
             "primary_provider": primary_provider,
@@ -305,6 +382,9 @@ class ChartDataService:
             "candles_count": max(0, int(candles_count or 0)),
             "error": error,
             "source_symbol": source_symbol,
+            "provider_used": provider_used,
+            "cache_hit": bool(cache_hit),
+            "cache_age_seconds": cache_age_seconds,
         }
         logger.info(
             "market_provider_selected primary_provider=%s final_provider=%s fallback_attempted=%s request_succeeded=%s candles=%s error=%s source_symbol=%s",
@@ -316,6 +396,43 @@ class ChartDataService:
             error,
             source_symbol,
         )
+
+    def _cache_key(self, symbol: str, timeframe: str) -> str:
+        return f"{symbol}::{timeframe}"
+
+    def _store_cached_payload(self, *, cache_key: str, payload: dict[str, Any]) -> None:
+        candles = payload.get("candles") if isinstance(payload.get("candles"), list) else []
+        if not candles:
+            return
+        with self._cache_lock:
+            self._candles_cache[cache_key] = {
+                "saved_at": monotonic(),
+                "payload": dict(payload),
+            }
+
+    def _get_cached_payload(self, *, cache_key: str, limit: int, max_age_seconds: float) -> dict[str, Any] | None:
+        with self._cache_lock:
+            cache_entry = self._candles_cache.get(cache_key)
+            if not cache_entry:
+                return None
+            saved_at = float(cache_entry.get("saved_at") or 0.0)
+            age = monotonic() - saved_at
+            if age > max(0.0, max_age_seconds):
+                return None
+            payload = cache_entry.get("payload") if isinstance(cache_entry.get("payload"), dict) else {}
+            candles = payload.get("candles") if isinstance(payload.get("candles"), list) else []
+            if not candles:
+                return None
+            trimmed = candles[-max(1, int(limit or 1)) :]
+            return {**payload, "candles": trimmed}
+
+    def _cache_age_seconds(self, cache_key: str) -> float | None:
+        with self._cache_lock:
+            cache_entry = self._candles_cache.get(cache_key)
+            if not cache_entry:
+                return None
+            saved_at = float(cache_entry.get("saved_at") or 0.0)
+            return max(0.0, monotonic() - saved_at)
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
