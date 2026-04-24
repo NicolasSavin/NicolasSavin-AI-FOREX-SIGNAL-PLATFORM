@@ -144,10 +144,10 @@ def test_market_endpoint_never_returns_synthetic_contract_fields() -> None:
 
 
 def test_twelvedata_symbol_and_timeframe_mapping_contract() -> None:
-    assert _td_symbol('EURUSD') == 'EUR/USD'
-    assert _td_symbol('GBPUSD') == 'GBP/USD'
-    assert _td_symbol('USDJPY') == 'USD/JPY'
-    assert _td_symbol('XAUUSD') == 'XAU/USD'
+    assert _td_symbol('EURUSD') == 'EURUSD'
+    assert _td_symbol('GBPUSD') == 'GBPUSD'
+    assert _td_symbol('USDJPY') == 'USDJPY'
+    assert _td_symbol('XAUUSD') == 'XAUUSD'
 
     assert _TIMEFRAME_TO_TD['M15'] == '15min'
     assert _TIMEFRAME_TO_TD['H1'] == '1h'
@@ -163,9 +163,17 @@ def test_twelvedata_debug_health_endpoint(monkeypatch) -> None:
         lambda symbol, timeframe, limit: {
             'symbol': symbol,
             'timeframe': timeframe,
-            'source_symbol': 'EUR/USD',
+            'source_symbol': 'EURUSD',
             'candles': [{'time': 1710929700, 'open': 1.086, 'high': 1.087, 'low': 1.085, 'close': 1.0865}],
             'error': None,
+        },
+    )
+    monkeypatch.setattr(
+        provider,
+        'get_last_request_debug',
+        lambda: {
+            'provider_symbol_used': 'EURUSD',
+            'raw_request_url': 'https://api.twelvedata.com/time_series?symbol=EURUSD&interval=15min&apikey=%2A%2A%2A',
         },
     )
 
@@ -176,12 +184,13 @@ def test_twelvedata_debug_health_endpoint(monkeypatch) -> None:
 
     assert payload['provider'] == 'twelvedata'
     assert payload['api_key_present'] is True
-    assert payload['symbol_mapping']['EURUSD'] == 'EUR/USD'
+    assert payload['symbol_mapping']['EURUSD'] == 'EURUSD'
     assert payload['timeframe_mapping']['M15'] == '15min'
-    assert payload['probe']['provider_symbol'] == 'EUR/USD'
+    assert payload['probe']['provider_symbol_used'] == 'EURUSD'
     assert payload['probe']['provider_interval'] == '15min'
     assert payload['probe']['candles_count'] == 1
     assert payload['probe']['request_succeeded'] is True
+    assert payload['probe']['raw_request_url']
 
 
 def test_market_health_debug_endpoint(monkeypatch) -> None:
