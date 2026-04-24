@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from app.core.env import get_twelvedata_api_key
+from app.services.market_service_registry import get_canonical_market_service
 from app.services.yahoo_market_data_service import YahooMarketDataService
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class ChartDataService:
         self.timeout_seconds = float(os.getenv("TWELVEDATA_TIMEOUT", str(DEFAULT_CHART_TIMEOUT_SECONDS)))
         self.output_size = int(os.getenv("TWELVEDATA_OUTPUTSIZE", str(DEFAULT_CHART_LIMIT)))
         self.yahoo_service = YahooMarketDataService()
+        self.canonical_market_service = get_canonical_market_service()
         self._cache_ttl_seconds = max(600.0, float(os.getenv("TWELVEDATA_CHART_CACHE_TTL_SECONDS", "600")))
         self._stale_success_ttl_seconds = max(self._cache_ttl_seconds, float(os.getenv("TWELVEDATA_STALE_CACHE_TTL_SECONDS", "900")))
         self._request_cooldown_seconds = max(
@@ -61,240 +63,67 @@ class ChartDataService:
         }
 
     def get_chart(self, symbol: str, timeframe: str, limit: int | None = None) -> dict[str, Any]:
-        logger.info("chart_request_started symbol=%s tf=%s", symbol, timeframe)
+        return self._get_chart_from_canonical(symbol=symbol, timeframe=timeframe, limit=limit)
 
+    def _get_chart_from_canonical(self, *, symbol: str, timeframe: str, limit: int | None = None) -> dict[str, Any]:
         normalized_symbol = self._normalize_symbol(symbol)
         normalized_tf = self._normalize_timeframe(timeframe)
-        provider_symbol = self._format_twelvedata_symbol(normalized_symbol)
-        provider_interval = TIMEFRAME_MAPPING.get(normalized_tf)
         requested_limit = max(1, min(int(limit or self.output_size), 5000))
-
-        logger.info(
-            "chart_request_mapped requested_symbol=%s requested_tf=%s mapped_symbol=%s mapped_tf=%s provider_symbol=%s provider_interval=%s",
-            symbol,
-            timeframe,
-            normalized_symbol,
-            normalized_tf,
-            provider_symbol,
-            provider_interval,
+        provider_payload = self.canonical_market_service.get_candles(normalized_symbol, normalized_tf, requested_limit)
+        diagnostics = provider_payload.get("diagnostics") if isinstance(provider_payload.get("diagnostics"), dict) else {}
+        raw_candles = provider_payload.get("candles") if isinstance(provider_payload.get("candles"), list) else []
+        candles = self._normalize_candles(raw_candles)
+        provider = str(provider_payload.get("provider") or "none")
+        finnhub_error = diagnostics.get("finnhub_error")
+        twelvedata_error = diagnostics.get("twelvedata_error")
+        final_provider_used = diagnostics.get("final_provider_used") or provider
+        error = provider_payload.get("error")
+        finnhub_attempted = bool(finnhub_error is not None or provider in {"finnhub", "twelvedata", "yahoo"})
+        self._set_market_health(
+            primary_provider="finnhub",
+            primary_error=finnhub_error if provider != "finnhub" else None,
+            fallback_attempted=provider != "finnhub",
+            fallback_provider="twelvedata",
+            fallback_error=twelvedata_error if provider == "yahoo" else None,
+            final_provider_used=final_provider_used,
+            request_succeeded=bool(candles),
+            candles_count=len(candles),
+            error=str(error) if error else None,
+            source_symbol=str(provider_payload.get("source_symbol") or normalized_symbol),
+            provider_used=final_provider_used,
+            cache_hit=bool(diagnostics.get("cache_hit")),
+            cache_age_seconds=None,
+            next_allowed_request_at=None,
         )
-        cache_key = self._cache_key(normalized_symbol, normalized_tf)
-        cached_fresh = self._get_cached_payload(cache_key=cache_key, limit=requested_limit, max_age_seconds=self._cache_ttl_seconds)
-        if cached_fresh is not None:
-            cache_age_seconds = self._cache_age_seconds(cache_key)
-            self._set_market_health(
-                primary_provider="twelvedata",
-                primary_error=None,
-                fallback_attempted=False,
-                fallback_provider="yahoo_finance",
-                fallback_error=None,
-                final_provider_used="twelvedata_cached",
-                request_succeeded=True,
-                candles_count=len(cached_fresh.get("candles") or []),
-                error=None,
-                source_symbol=provider_symbol,
-                provider_used="twelvedata_cached",
-                cache_hit=True,
-                cache_age_seconds=cache_age_seconds,
-                next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
-            )
-            return cached_fresh
+        self._last_market_health["finnhub_configured"] = bool(getattr(self.canonical_market_service.finnhub_provider, "api_key", ""))
+        self._last_market_health["finnhub_attempted"] = finnhub_attempted
+        self._last_market_health["finnhub_error"] = finnhub_error
 
-        if normalized_tf not in TIMEFRAME_MAPPING:
-            logger.warning("twelvedata_failed symbol=%s tf=%s reason=unsupported_timeframe", normalized_symbol, normalized_tf)
-            payload = self.build_unavailable_payload(
+        if not candles:
+            return self.build_unavailable_payload(
                 symbol=normalized_symbol,
                 timeframe=normalized_tf,
-                message_ru="Неподдерживаемый таймфрейм для свечного графика.",
+                message_ru=f"Свечные данные недоступны: {error or diagnostics.get('provider_error') or 'unknown_error'}.",
                 reason="fetch_error",
             )
-            self._set_market_health(
-                primary_provider="twelvedata",
-                primary_error="unsupported_timeframe",
-                fallback_attempted=False,
-                fallback_provider="yahoo_finance",
-                fallback_error=None,
-                final_provider_used="twelvedata",
-                request_succeeded=False,
-                candles_count=0,
-                error="unsupported_timeframe",
-                source_symbol=provider_symbol,
-                provider_used="twelvedata",
-                cache_hit=False,
-                cache_age_seconds=None,
-                next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
-            )
-            return payload
 
-        if not self.api_key:
-            logger.warning("twelvedata_failed symbol=%s tf=%s reason=missing_api_key", normalized_symbol, normalized_tf)
-            return self._fallback_to_yahoo(
-                symbol=normalized_symbol,
-                timeframe=normalized_tf,
-                limit=requested_limit,
-                twelvedata_error="missing_api_key",
-                twelvedata_payload=self.build_unavailable_payload(
-                    symbol=normalized_symbol,
-                    timeframe=normalized_tf,
-                    message_ru="Свечной API не настроен: отсутствует TWELVEDATA_API_KEY.",
-                    reason="fetch_error",
-                ),
-                provider_symbol=provider_symbol,
-                cache_key=cache_key,
-            )
-
-        if not self._is_request_allowed(cache_key):
-            return self._fallback_to_yahoo(
-                symbol=normalized_symbol,
-                timeframe=normalized_tf,
-                limit=requested_limit,
-                twelvedata_error="throttled",
-                twelvedata_payload=self.build_unavailable_payload(
-                    symbol=normalized_symbol,
-                    timeframe=normalized_tf,
-                    message_ru="Запрос к Twelve Data отложен: действует локальный throttling.",
-                    reason="rate_limited",
-                ),
-                provider_symbol=provider_symbol,
-                cache_key=cache_key,
-            )
-
-        params = {
-            "symbol": provider_symbol,
-            "interval": provider_interval,
-            "outputsize": requested_limit,
-            "apikey": self.api_key,
-            "format": "JSON",
-        }
-        logger.info(
-            "twelvedata_chart_request_symbol_sent requested_symbol=%s provider_symbol=%s",
-            normalized_symbol,
-            provider_symbol,
-        )
-
-        try:
-            response = requests.get(self.api_url, params=params, timeout=self.timeout_seconds)
-            response.raise_for_status()
-            payload = response.json()
-        except requests.RequestException as exc:
-            self._set_next_allowed_request(cache_key)
-            logger.warning("twelvedata_failed symbol=%s tf=%s reason=request_exception error=%s", normalized_symbol, normalized_tf, exc)
-            return self._fallback_to_yahoo(
-                symbol=normalized_symbol,
-                timeframe=normalized_tf,
-                limit=requested_limit,
-                twelvedata_error="fetch_error",
-                twelvedata_payload=self.build_unavailable_payload(
-                    symbol=normalized_symbol,
-                    timeframe=normalized_tf,
-                    message_ru="Не удалось загрузить реальные свечные данные из Twelve Data.",
-                    reason="fetch_error",
-                ),
-                provider_symbol=provider_symbol,
-                cache_key=cache_key,
-            )
-        except ValueError:
-            self._set_next_allowed_request(cache_key)
-            logger.warning("twelvedata_failed symbol=%s tf=%s reason=invalid_json", normalized_symbol, normalized_tf)
-            return self._fallback_to_yahoo(
-                symbol=normalized_symbol,
-                timeframe=normalized_tf,
-                limit=requested_limit,
-                twelvedata_error="fetch_error",
-                twelvedata_payload=self.build_unavailable_payload(
-                    symbol=normalized_symbol,
-                    timeframe=normalized_tf,
-                    message_ru="Свечной API вернул некорректный ответ.",
-                    reason="fetch_error",
-                ),
-                provider_symbol=provider_symbol,
-                cache_key=cache_key,
-            )
-
-        payload, candles = self.normalize_provider_payload(payload)
-        provider_status = str(payload.get("status") or "").lower()
-        logger.info(
-            "twelvedata_payload_normalized symbol=%s tf=%s provider_status=%s candle_count=%s keys=%s",
-            normalized_symbol,
-            normalized_tf,
-            provider_status or "unknown",
-            len(candles),
-            sorted(payload.keys()),
-        )
-        if not candles:
-            if provider_status == "error":
-                logger.warning(
-                    "twelvedata_failed symbol=%s tf=%s reason=api_error code=%s message=%s",
-                    normalized_symbol,
-                    normalized_tf,
-                    payload.get("code"),
-                    payload.get("message"),
-                )
-                reason = "rate_limited" if str(payload.get("code")) == "429" else "fetch_error"
-                self._set_next_allowed_request(cache_key)
-                return self._fallback_to_yahoo(
-                    symbol=normalized_symbol,
-                    timeframe=normalized_tf,
-                    limit=requested_limit,
-                    twelvedata_error=reason,
-                    twelvedata_payload=self.build_unavailable_payload(
-                        symbol=normalized_symbol,
-                        timeframe=normalized_tf,
-                        message_ru=f"Twelve Data недоступен: {payload.get('message') or 'неизвестная ошибка'}.",
-                        reason=reason,
-                    ),
-                    provider_symbol=provider_symbol,
-                    cache_key=cache_key,
-                )
-            logger.warning("twelvedata_failed symbol=%s tf=%s reason=empty_candles", normalized_symbol, normalized_tf)
-            self._set_next_allowed_request(cache_key)
-            return self._fallback_to_yahoo(
-                symbol=normalized_symbol,
-                timeframe=normalized_tf,
-                limit=requested_limit,
-                twelvedata_error="no_data",
-                twelvedata_payload=self.build_unavailable_payload(
-                    symbol=normalized_symbol,
-                    timeframe=normalized_tf,
-                    message_ru="Свечной API не вернул candles/values для выбранной идеи.",
-                    reason="no_data",
-                ),
-                provider_symbol=provider_symbol,
-                cache_key=cache_key,
-            )
-
-        logger.info("twelvedata_success symbol=%s tf=%s candles=%s", normalized_symbol, normalized_tf, len(candles))
-        self._set_market_health(
-            primary_provider="twelvedata",
-            primary_error=None,
-            fallback_attempted=False,
-            fallback_provider="yahoo_finance",
-            fallback_error=None,
-            final_provider_used="twelvedata",
-            request_succeeded=True,
-            candles_count=len(candles),
-            error=None,
-            source_symbol=provider_symbol,
-            provider_used="twelvedata",
-            cache_hit=False,
-            cache_age_seconds=0.0,
-            next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
-        )
-        response_payload = {
+        source = "yahoo_finance" if provider == "yahoo" else provider
+        return {
             "symbol": normalized_symbol,
             "timeframe": normalized_tf,
-            "source": "twelvedata",
+            "source": source,
             "status": "ok",
-            "message_ru": None,
+            "message_ru": None if provider != "yahoo" else "Live candles недоступны, использован Yahoo fallback.",
             "candles": candles,
             "meta": {
-                "provider": "Twelve Data",
-                "interval": provider_interval,
-                "outputsize": min(len(candles), requested_limit),
+                "provider": provider.upper(),
+                "outputsize": len(candles),
+                "finnhub_attempted": finnhub_attempted,
+                "finnhub_error": finnhub_error,
+                "twelvedata_error": twelvedata_error,
+                "final_provider_used": final_provider_used,
             },
         }
-        self._store_cached_payload(cache_key=cache_key, payload=response_payload)
-        return response_payload
 
     def get_last_market_health(self) -> dict[str, Any]:
         return dict(self._last_market_health)

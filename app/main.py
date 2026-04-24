@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import os
 from pathlib import Path
 
 import asyncio
@@ -209,39 +210,41 @@ async def twelvedata_health_debug(run_probe: bool = False) -> dict:
 
 @app.get("/api/debug/market-health")
 async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", limit: int = 120) -> dict:
-    try:
-        payload = await asyncio.to_thread(chart_data_service.get_chart, symbol, timeframe, limit)
-    except TypeError:
-        payload = await asyncio.to_thread(chart_data_service.get_chart, symbol, timeframe)
-    candles = payload.get("candles") if isinstance(payload, dict) and isinstance(payload.get("candles"), list) else []
-    meta = payload.get("meta") if isinstance(payload, dict) and isinstance(payload.get("meta"), dict) else {}
-    health = chart_data_service.get_last_market_health()
-    provider_used = health.get("provider_used") or health.get("final_provider_used") or payload.get("source") or "unknown"
-    final_provider_used = health.get("final_provider_used") or provider_used
-    source_symbol = health.get("source_symbol")
-    if not source_symbol:
-        source_symbol = _td_symbol(str(symbol).upper().replace("/", "").strip()) if "twelvedata" in str(provider_used) else str(symbol).upper().replace("/", "").strip()
+    normalized_symbol = str(symbol).upper().replace("/", "").strip()
+    normalized_timeframe = str(timeframe or "H1").upper().strip()
+    requested_limit = max(1, int(limit or 1))
+    payload = await asyncio.to_thread(canonical_market_service.get_candles, normalized_symbol, normalized_timeframe, requested_limit)
+    candles = payload.get("candles") if isinstance(payload.get("candles"), list) else []
+    diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
+    final_provider_used = diagnostics.get("final_provider_used") or payload.get("provider") or "unknown"
+    provider_used = final_provider_used
+    source_symbol = payload.get("source_symbol") or normalized_symbol
+    app_commit = os.getenv("RENDER_GIT_COMMIT") or os.getenv("APP_COMMIT") or os.getenv("GIT_COMMIT") or "unknown"
+    finnhub_api_key = getattr(canonical_market_service.finnhub_provider, "api_key", "") or ""
+    finnhub_error = diagnostics.get("finnhub_error")
     return {
+        "app_commit": app_commit,
+        "build_version": app.version,
         "provider_used": provider_used,
-        "twelvedata_cache_hit": bool(health.get("twelvedata_cache_hit", health.get("cache_hit"))),
-        "cache_hit": bool(health.get("cache_hit")),
-        "cache_age_seconds": health.get("cache_age_seconds"),
-        "next_allowed_request_at": health.get("next_allowed_request_at"),
-        "primary_provider": health.get("primary_provider") or "twelvedata",
-        "primary_error": health.get("primary_error"),
-        "fallback_attempted": bool(health.get("fallback_attempted")),
-        "fallback_provider": health.get("fallback_provider"),
-        "fallback_error": health.get("fallback_error"),
+        "finnhub_configured": bool(finnhub_api_key),
+        "finnhub_attempted": bool(finnhub_error is not None or provider_used in {"finnhub", "twelvedata", "yahoo"}),
+        "finnhub_error": finnhub_error,
+        "cache_hit": bool(diagnostics.get("cache_hit")),
+        "primary_provider": "finnhub",
+        "primary_error": finnhub_error if provider_used != "finnhub" else None,
+        "fallback_attempted": provider_used != "finnhub",
+        "fallback_provider": "twelvedata",
+        "fallback_error": diagnostics.get("twelvedata_error") if provider_used == "yahoo" else None,
         "final_provider_used": final_provider_used,
-        "request_succeeded": bool(health.get("request_succeeded") or len(candles) > 0),
-        "candles_count": int(health.get("candles_count") or len(candles)),
-        "error": health.get("error"),
+        "request_succeeded": bool(len(candles) > 0),
+        "candles_count": len(candles),
+        "error": payload.get("error"),
         "source_symbol": source_symbol,
-        "symbol": str(symbol).upper().replace("/", "").strip(),
-        "timeframe": str(timeframe or "H1").upper().strip(),
-        "requested_limit": max(1, int(limit or 1)),
+        "symbol": normalized_symbol,
+        "timeframe": normalized_timeframe,
+        "requested_limit": requested_limit,
         "status": payload.get("status"),
-        "meta_provider": meta.get("provider"),
+        "meta_provider": payload.get("provider"),
     }
 
 
