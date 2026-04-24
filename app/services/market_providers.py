@@ -7,6 +7,7 @@ import os
 from threading import Lock
 from time import monotonic
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 import yfinance as yf
@@ -53,6 +54,7 @@ class TwelveDataProvider(RealMarketDataProvider):
         self._cycle_api_calls = 0
         self._cycle_cache_hits = 0
         self._cycle_cache_misses = 0
+        self._last_request_debug: dict[str, Any] = {}
         logger.info(
             "twelvedata_init api_key_present=%s api_key_length=%s",
             bool(self.api_key),
@@ -238,10 +240,18 @@ class TwelveDataProvider(RealMarketDataProvider):
     def _request(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
         query = {**params, "apikey": self.api_key}
         safe_query = {**params, "apikey_present": bool(self.api_key), "apikey_length": len(self.api_key) if self.api_key else 0}
+        raw_request_url = self._build_sanitized_url(endpoint=endpoint, query=query)
+        self._last_request_debug = {
+            "endpoint": endpoint,
+            "provider_symbol_used": str(params.get("symbol") or ""),
+            "raw_request_url": raw_request_url,
+        }
         logger.info(
-            "twelvedata_http_request endpoint=%s api_key_present=%s query=%s",
+            "twelvedata_http_request endpoint=%s api_key_present=%s provider_symbol_sent=%s raw_request_url=%s query=%s",
             endpoint,
             bool(self.api_key),
+            str(params.get("symbol") or ""),
+            raw_request_url,
             safe_query,
         )
         try:
@@ -275,6 +285,18 @@ class TwelveDataProvider(RealMarketDataProvider):
         except requests.RequestException as exc:
             logger.warning("twelvedata_request_failed endpoint=%s error=%s", endpoint, exc)
             return {"status": "error", "message": str(exc)}
+
+    def get_last_request_debug(self) -> dict[str, Any]:
+        return dict(self._last_request_debug)
+
+    @staticmethod
+    def _build_sanitized_url(endpoint: str, query: dict[str, Any]) -> str:
+        prepared = requests.Request("GET", f"{_TWELVEDATA_BASE}/{endpoint}", params=query).prepare()
+        parsed = urlsplit(prepared.url or "")
+        sanitized_query: list[tuple[str, str]] = []
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+            sanitized_query.append((key, "***" if key.lower() == "apikey" else value))
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(sanitized_query), parsed.fragment))
 
     def begin_request_cycle(self) -> int:
         with self._lock:
@@ -541,19 +563,17 @@ def _normalize_symbol(symbol: str) -> str:
 
 def _td_symbol(symbol: str) -> str:
     symbol_map = {
-        "EURUSD": "EUR/USD",
-        "GBPUSD": "GBP/USD",
-        "USDJPY": "USD/JPY",
-        "AUDUSD": "AUD/USD",
-        "USDCAD": "USD/CAD",
-        "USDCHF": "USD/CHF",
-        "NZDUSD": "NZD/USD",
-        "XAUUSD": "XAU/USD",
+        "EURUSD": "EURUSD",
+        "GBPUSD": "GBPUSD",
+        "USDJPY": "USDJPY",
+        "AUDUSD": "AUDUSD",
+        "USDCAD": "USDCAD",
+        "USDCHF": "USDCHF",
+        "NZDUSD": "NZDUSD",
+        "XAUUSD": "XAUUSD",
     }
     if symbol in symbol_map:
         return symbol_map[symbol]
-    if len(symbol) == 6 and symbol.isalpha():
-        return f"{symbol[:3]}/{symbol[3:]}"
     return symbol
 
 

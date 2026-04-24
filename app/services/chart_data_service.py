@@ -141,6 +141,11 @@ class ChartDataService:
             "apikey": self.api_key,
             "format": "JSON",
         }
+        logger.info(
+            "twelvedata_chart_request_symbol_sent requested_symbol=%s provider_symbol=%s",
+            normalized_symbol,
+            provider_symbol,
+        )
 
         try:
             response = requests.get(self.api_url, params=params, timeout=self.timeout_seconds)
@@ -444,8 +449,6 @@ class ChartDataService:
 
     @staticmethod
     def _format_twelvedata_symbol(symbol: str) -> str:
-        if len(symbol) == 6 and symbol.isalpha():
-            return f"{symbol[:3]}/{symbol[3:]}"
         return symbol
 
     @staticmethod

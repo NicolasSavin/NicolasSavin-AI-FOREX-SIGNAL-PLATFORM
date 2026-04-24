@@ -163,18 +163,20 @@ async def twelvedata_health_debug() -> dict:
     probe_results: list[dict] = []
     for symbol, timeframe in probe_pairs:
         probe = await asyncio.to_thread(provider.get_candles, symbol, timeframe, 30)
+        request_debug = provider.get_last_request_debug() if hasattr(provider, "get_last_request_debug") else {}
         probe_error = probe.get("error")
         probe_candles = probe.get("candles") or []
         probe_results.append(
             {
                 "symbol": symbol,
                 "timeframe": timeframe,
-                "provider_symbol": _td_symbol(symbol),
+                "provider_symbol_used": request_debug.get("provider_symbol_used") or _td_symbol(symbol),
                 "provider_interval": _TIMEFRAME_TO_TD.get(timeframe),
                 "candles_count": len(probe_candles),
                 "request_succeeded": probe_error is None and len(probe_candles) > 0,
                 "error": probe_error,
                 "source_symbol": probe.get("source_symbol"),
+                "raw_request_url": request_debug.get("raw_request_url"),
             }
         )
 
