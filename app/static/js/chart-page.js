@@ -133,7 +133,11 @@ function normalizeSignalValue(value) {
 }
 
 function normalizeWhitespace(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
+  return String(value ?? "")
+    .replace(/\(\s*none\s*\)/gi, "")
+    .replace(/\bnone\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isCompactTechnicalSummary(value) {
@@ -230,6 +234,7 @@ function buildFullText(idea) {
     idea?.idea_thesis
     || idea?.unified_narrative
     || idea?.full_text
+    || idea?.fallback_narrative
     || idea?.summary
     || "Нет описания"
   );
@@ -249,6 +254,7 @@ function getIdeaDescriptionWithSource(idea) {
     || idea?.unified_narrative
     || idea?.full_text
     || idea?.fullText
+    || idea?.fallback_narrative
     || idea?.summary
     || "Нет описания"
   );
@@ -258,6 +264,8 @@ function getIdeaDescriptionWithSource(idea) {
       ? "unified_narrative"
       : idea?.full_text || idea?.fullText
         ? "full_text"
+        : idea?.fallback_narrative
+          ? "fallback_narrative"
         : idea?.summary
           ? "summary"
           : "fallback";

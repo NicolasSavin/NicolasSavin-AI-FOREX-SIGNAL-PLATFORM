@@ -46,6 +46,12 @@ BANNED_PHRASES = (
 )
 WEAK_CAUSE_PHRASES = ("после коррекции",)
 FORBIDDEN_SYSTEM_TOKENS = ("none", "fallback", "idea_created", "status created", "debug", "schema", "payload")
+GENERIC_NARRATIVE_PHRASES = (
+    "рынок давят продавцы",
+    "структура описана как continuation",
+    "снятия ликвидности (none)",
+    "структурных подтверждений недостаточно",
+)
 
 
 @dataclass
@@ -187,6 +193,8 @@ class IdeaNarrativeLLMService:
         if any(phrase in joined for phrase in WEAK_CAUSE_PHRASES):
             return None
         narrative_text = f"{result['unified_narrative']} {result['full_text']}".casefold()
+        if any(phrase in narrative_text for phrase in GENERIC_NARRATIVE_PHRASES):
+            return None
         if not any(token in narrative_text for token in SMC_REQUIRED_TOKENS):
             return None
         if not any(token in narrative_text for token in SMART_MONEY_ACTOR_TOKENS):
@@ -211,6 +219,7 @@ class IdeaNarrativeLLMService:
             "Ты пишешь как SMC/ICT-трейдер: простые слова, короткие предложения, дружелюбный тон для трейдера.\n"
             "Все текстовые поля только на русском языке, без английских слов и кальки.\n"
             "Тон естественный: как комментарий реального аналитика, а не шаблонный авто-текст.\n"
+            "Do not use the same wording across symbols. Write a unique explanation for this exact instrument and levels.\n"
             "idea_thesis — ГЛАВНЫЙ единый блок объяснения для трейдера.\n"
             "idea_thesis должен быть цельным, читабельным и объяснять: что происходит, почему сетап существует, что подтверждает, что ослабляет, какое действие и где инвалидация.\n"
             "unified_narrative должен содержать 3-6 коротких естественных предложений.\n"
@@ -268,20 +277,25 @@ class IdeaNarrativeLLMService:
         rr = facts.get("rr")
         delta_text = json.dumps(delta or {}, ensure_ascii=False)
         short = f"{symbol} {timeframe}: {direction}, статус {status}."
-        liquidity = str(facts.get("liquidity_sweep") or "none")
+        liquidity = str(facts.get("liquidity_sweep") or "").strip()
         structure = str(facts.get("structure_state") or "unknown")
-        key_zone = str(facts.get("key_zone") or "none")
+        key_zone = str(facts.get("key_zone") or "").strip()
         location = str(facts.get("location") or "unknown")
         target_liquidity = str(facts.get("target_liquidity") or tp or "не определён")
         invalidation_logic = str(facts.get("invalidation_logic") or f"пробой уровня SL {sl}")
-        smc_missing = any(value in {"none", "unknown", ""} for value in (liquidity, structure, key_zone, location))
+        liquidity_phrase = (
+            f"после снятия ликвидности ({liquidity})"
+            if liquidity and liquidity.lower() not in {"none", "unknown"}
+            else "без явного снятия ликвидности"
+        )
+        smc_missing = any(value in {"none", "unknown", ""} for value in (liquidity or "none", structure, key_zone or "none", location))
         structural_warning = "структурных подтверждений недостаточно. " if smc_missing else ""
         weak_structure_warning = "структурная база слабая, идея основана на вторичных факторах. " if smc_missing else ""
         signal = "BUY" if direction == "bullish" else "SELL" if direction == "bearish" else "WAIT"
         if signal == "SELL":
             unified = (
                 f"{symbol} {timeframe}: рынок давят продавцы, цена удерживается под ключевой зоной {key_zone}, а структура описана как {structure}. "
-                f"Причина сценария — реакция после снятия ликвидности ({liquidity}), что поддерживает продолжение вниз к {target_liquidity}. "
+                f"Причина сценария — реакция {liquidity_phrase}, что поддерживает продолжение вниз к {target_liquidity}. "
                 f"{structural_warning}{weak_structure_warning}"
                 f"Подтверждение: свечи должны сохранять импульс вниз и не возвращаться устойчиво выше зоны входа {entry}. "
                 f"Действие: приоритет только short при подтверждении, риск контролируется через SL {sl}. "
@@ -290,7 +304,7 @@ class IdeaNarrativeLLMService:
         elif signal == "BUY":
             unified = (
                 f"{symbol} {timeframe}: инициативу удерживают покупатели, цена работает над зоной {key_zone}, структура сейчас {structure}. "
-                f"Причина сценария — реакция после снятия ликвидности ({liquidity}), поэтому приоритет остаётся за движением к {target_liquidity}. "
+                f"Причина сценария — реакция {liquidity_phrase}, поэтому приоритет остаётся за движением к {target_liquidity}. "
                 f"{structural_warning}{weak_structure_warning}"
                 f"Подтверждение: нужно удержание импульса вверх и отсутствие возврата под зону входа {entry}. "
                 f"Действие: рассматривать только long при подтверждённой реакции, риск фиксировать через SL {sl}. "
@@ -298,7 +312,7 @@ class IdeaNarrativeLLMService:
             )
         else:
             unified = (
-                f"{symbol} {timeframe}: рынок в режиме ОЖИДАНИЯ, потому что структура {structure} и реакция на ликвидность ({liquidity}) пока не дают чистого перевеса. "
+                f"{symbol} {timeframe}: рынок в режиме ОЖИДАНИЯ, потому что структура {structure} и реакция на ликвидность пока не дают чистого перевеса. "
                 f"Конфликт: цена находится около {key_zone}, но подтверждение направления к {target_liquidity} ещё неполное. "
                 f"{structural_warning}{weak_structure_warning}"
                 f"Что подтвердит сценарий: нужен явный импульс и закрепление в одну сторону от рабочей зоны около {entry}. "
