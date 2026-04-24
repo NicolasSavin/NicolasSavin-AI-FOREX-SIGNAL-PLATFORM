@@ -16,6 +16,7 @@ from app.services.chart_data_service import ChartDataService
 from app.services.chart_snapshot_service import ChartSnapshotService
 from app.services.idea_narrative_llm import IdeaNarrativeLLMService, NarrativeResult
 from app.services.narrative_generator import generate_signal_preview_text, generate_signal_text
+from app.services.smc_detector import SmcDetector
 from app.services.storage.json_storage import JsonStorage
 from app.services.trade_idea_stats_service import TradeIdeaStatsService
 from backend.data_provider import DataProvider
@@ -58,6 +59,7 @@ LEVEL_TAKE_PROFIT_OFFSET = 0.0040
 CANDLE_CONTEXT_COUNT = 40
 MODEL_CANDLES_MIN = 50
 MODEL_CANDLES_MAX = 120
+SMC_OVERLAY_CANDLES_MIN = 30
 CHART_OVERLAY_KEYS = ("order_blocks", "liquidity", "fvg", "structure_levels", "patterns", "zones", "levels", "markers", "arrows")
 CHART_OVERLAY_ALIASES = {
     "order_blocks": ("order_blocks", "orderBlocks", "orderblock", "order_blocks_zones"),
@@ -89,6 +91,7 @@ class TradeIdeaService:
         self.data_provider = DataProvider()
         self.chart_data_service = chart_data_service or ChartDataService()
         self.chart_snapshot_service = ChartSnapshotService()
+        self.smc_detector = SmcDetector(min_candles=SMC_OVERLAY_CANDLES_MIN)
         self.refresh_interval_seconds = int(os.getenv("IDEAS_REFRESH_INTERVAL_SECONDS", "180"))
         self.live_price_refresh_seconds = int(os.getenv("IDEAS_LIVE_PRICE_REFRESH_SECONDS", "15"))
         self.live_chart_refresh_seconds = int(os.getenv("IDEAS_LIVE_CHART_REFRESH_SECONDS", "45"))
@@ -2281,9 +2284,9 @@ class TradeIdeaService:
             candles = signal.get("candles") if isinstance(signal.get("candles"), list) else []
         model_chart_overlays = self.normalize_chart_overlays(signal.get("chart_overlays"))
         model_overlays_meaningful = self.is_meaningful_overlay_payload(model_chart_overlays)
-        fallback_chart_overlays = self._extract_conservative_chart_overlays(candles) if len(candles) >= MODEL_CANDLES_MIN else {}
+        fallback_chart_overlays = self._extract_conservative_chart_overlays(candles) if len(candles) >= SMC_OVERLAY_CANDLES_MIN else {}
         fallback_used = False
-        if len(candles) >= MODEL_CANDLES_MIN and not model_overlays_meaningful and self.is_meaningful_overlay_payload(fallback_chart_overlays):
+        if len(candles) >= SMC_OVERLAY_CANDLES_MIN and not model_overlays_meaningful and self.is_meaningful_overlay_payload(fallback_chart_overlays):
             model_chart_overlays = fallback_chart_overlays
             fallback_used = True
         if self.is_meaningful_overlay_payload(model_chart_overlays):
@@ -2303,7 +2306,7 @@ class TradeIdeaService:
             "idea_overlays_prepare symbol=%s timeframe=%s candles_present=%s model_overlays=%s fallback_used=%s categories=%s preserved_existing=%s final_counts=%s",
             str(signal.get("symbol") or "").upper(),
             str(signal.get("timeframe") or "H1").upper(),
-            len(candles) >= MODEL_CANDLES_MIN,
+            len(candles) >= SMC_OVERLAY_CANDLES_MIN,
             model_overlays_meaningful,
             fallback_used,
             [key for key in CHART_OVERLAY_KEYS if final_chart_overlays.get(key)],
@@ -2527,8 +2530,12 @@ class TradeIdeaService:
 
     def _extract_conservative_chart_overlays(self, candles: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         overlays = self.normalize_chart_overlays({})
-        if len(candles) < 6:
+        if len(candles) < SMC_OVERLAY_CANDLES_MIN:
             return overlays
+        smc_overlays = self.smc_detector.detect(candles)
+        overlays["order_blocks"] = smc_overlays.get("order_blocks") or []
+        overlays["fvg"] = smc_overlays.get("fvg") or []
+        overlays["liquidity"] = smc_overlays.get("liquidity") or []
         opens: list[float] = []
         closes: list[float] = []
         highs: list[float] = []
@@ -2558,49 +2565,6 @@ class TradeIdeaService:
             {"type": "resistance", "price": resistance, "label": "Resistance"},
             {"type": "support", "price": support, "label": "Support"},
         ]
-        current_price = self._extract_numeric(candles[-1].get("close")) or range_high
-        tolerance = max((range_high - range_low) * 0.0015, abs(current_price) * 0.00025)
-        eq_high = sum(1 for value in highs[:-1] if abs(value - range_high) <= tolerance)
-        eq_low = sum(1 for value in lows[:-1] if abs(value - range_low) <= tolerance)
-        anchor_index = max(len(candles) - 8, 0)
-        ob_low = min(opens[-3], closes[-3]) if len(opens) >= 3 and len(closes) >= 3 else min(opens[-1], closes[-1])
-        ob_high = max(opens[-3], closes[-3]) if len(opens) >= 3 and len(closes) >= 3 else max(opens[-1], closes[-1])
-        overlays["order_blocks"] = [
-            {
-                "type": "bullish_order_block" if closes[-1] >= mid_range else "bearish_order_block",
-                "low": min(ob_low, ob_high),
-                "high": max(ob_low, ob_high),
-                "start_index": anchor_index,
-                "end_index": len(candles) - 1,
-                "label": "Conservative OB",
-            }
-        ]
-        if len(highs) >= 3 and len(lows) >= 1 and highs[-3] < lows[-1]:
-            overlays["fvg"].append(
-                {
-                    "type": "bullish_fvg",
-                    "low": highs[-3],
-                    "high": lows[-1],
-                    "start_index": max(len(candles) - 3, 0),
-                    "end_index": len(candles) - 1,
-                    "label": "Conservative FVG",
-                }
-            )
-        if len(lows) >= 3 and len(highs) >= 1 and lows[-3] > highs[-1]:
-            overlays["fvg"].append(
-                {
-                    "type": "bearish_fvg",
-                    "low": highs[-1],
-                    "high": lows[-3],
-                    "start_index": max(len(candles) - 3, 0),
-                    "end_index": len(candles) - 1,
-                    "label": "Conservative FVG",
-                }
-            )
-        if eq_high >= 1:
-            overlays["liquidity"].append({"type": "buy_side", "price": range_high, "label": "Buy-side liquidity"})
-        if eq_low >= 1:
-            overlays["liquidity"].append({"type": "sell_side", "price": range_low, "label": "Sell-side liquidity"})
         overlays["patterns"] = [
             {
                 "name": "range_breakout_setup",
