@@ -312,6 +312,29 @@
       border-top: 1px solid rgba(39, 58, 90, 0.5);
     }
 
+    .card-warning-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .warning-badge {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(251, 191, 36, 0.34);
+      background: rgba(120, 53, 15, 0.28);
+      color: #fde68a;
+      font-size: 11px;
+      line-height: 1.25;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .tag {
       background: var(--tag);
       color: #dbe7f7;
@@ -417,6 +440,37 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .detail-warnings {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      background: linear-gradient(180deg, rgba(120, 53, 15, 0.3) 0%, rgba(69, 26, 3, 0.28) 100%);
+    }
+
+    .detail-warnings-title {
+      margin: 0 0 8px;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #fde68a;
+      font-weight: 700;
+    }
+
+    .detail-warnings-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 6px;
+    }
+
+    .detail-warnings-list li {
+      color: #fde68a;
+      font-size: 13px;
+      line-height: 1.45;
     }
 
     .close-btn {
@@ -840,6 +894,11 @@
           <div id="modal-sub" class="modal-sub"></div>
         </div>
         <button id="close-modal" class="close-btn">Закрыть</button>
+      </div>
+
+      <div id="detail-warnings" class="detail-warnings" style="display:none;">
+        <h3 class="detail-warnings-title">Предупреждения по качеству данных</h3>
+        <ul id="detail-warnings-list" class="detail-warnings-list"></ul>
       </div>
 
       <div class="detail-grid">
