@@ -1451,6 +1451,22 @@ class TradeIdeaService:
             fallback_to_candles=chart_snapshot.get("fallback_to_candles"),
             has_candles=bool(chart_snapshot.get("candles")),
         )
+        final_chart_payload = self._build_final_chart_payload(
+            normalized_candles=chart_snapshot.get("candles") if isinstance(chart_snapshot.get("candles"), list) else pipeline["candles"],
+            signal=signal,
+            overlay_payload=overlay_payload,
+            chart_overlays=chart_overlays,
+            entry=entry_value,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            reference_price=latest_close,
+        )
+        chart_diagnostics = self._chart_diagnostics(
+            chart_image_url=normalized_chart_state["chart_image_url"],
+            chart_payload=final_chart_payload,
+            chart_snapshot_status=normalized_chart_state["chart_snapshot_status"],
+            chart_status=normalized_chart_state["chart_status"],
+        )
 
         payload = {
             "idea_id": idea_id,
@@ -1526,8 +1542,8 @@ class TradeIdeaService:
             "trigger": trigger,
             "invalidation": invalidation,
             "target": target,
-            "chart_data": signal.get("chart_data") or signal.get("chartData"),
-            "chartData": signal.get("chart_data") or signal.get("chartData"),
+            "chart_data": final_chart_payload,
+            "chartData": final_chart_payload,
             "overlay_data": overlay_payload,
             "chart_overlays": chart_overlays,
             "chart_overlays_present": self.is_meaningful_overlay_payload(chart_overlays),
@@ -1549,6 +1565,9 @@ class TradeIdeaService:
             "chart_status": normalized_chart_state["chart_status"],
             "chartStatus": normalized_chart_state["chart_status"],
             "fallback_to_candles": normalized_chart_state["fallback_to_candles"],
+            "chart_built_from": chart_diagnostics["chart_built_from"],
+            "chartData_candles_count": chart_diagnostics["chartData_candles_count"],
+            "chart_error": chart_diagnostics["chart_error"],
             "last_price_update_at": now.isoformat(),
             "last_chart_refresh_at": now.isoformat() if resolved_chart_url else existing.get("last_chart_refresh_at") if existing else None,
             "chart_version": (int(existing.get("chart_version") or 0) + 1 if resolved_chart_url else int(existing.get("chart_version") or 0)) if existing else (1 if resolved_chart_url else 0),
@@ -1660,6 +1679,76 @@ class TradeIdeaService:
             "chart_snapshot_status": normalized_status,
             "chart_status": normalized_chart_status,
             "fallback_to_candles": fallback_flag,
+        }
+
+    @classmethod
+    def _build_final_chart_payload(
+        cls,
+        *,
+        normalized_candles: list[dict[str, Any]] | None,
+        signal: dict[str, Any],
+        overlay_payload: dict[str, list[dict[str, Any]]] | None,
+        chart_overlays: dict[str, list[dict[str, Any]]] | None,
+        entry: Any,
+        stop_loss: Any,
+        take_profit: Any,
+        reference_price: Any = None,
+    ) -> dict[str, Any]:
+        candles = [item for item in (normalized_candles or []) if isinstance(item, dict)]
+        levels: dict[str, Any] = {
+            "entry": cls._extract_numeric(entry),
+            "stop_loss": cls._extract_numeric(stop_loss),
+            "take_profit": cls._extract_numeric(take_profit),
+            "reference": cls._extract_numeric(reference_price),
+        }
+        level_candidates = (
+            overlay_payload.get("levels") if isinstance(overlay_payload, dict) else None
+        )
+        if isinstance(level_candidates, list):
+            levels["items"] = [item for item in level_candidates if isinstance(item, dict)]
+        chart_payload: dict[str, Any] = {
+            "candles": candles,
+            "levels": levels,
+            "overlays": chart_overlays if isinstance(chart_overlays, dict) else {},
+            "chart_overlays": chart_overlays if isinstance(chart_overlays, dict) else {},
+        }
+        legacy_chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else (
+            signal.get("chartData") if isinstance(signal.get("chartData"), dict) else {}
+        )
+        for optional_key in ("meta", "source", "timeframe", "symbol"):
+            value = legacy_chart_data.get(optional_key)
+            if value not in (None, "", []):
+                chart_payload[optional_key] = value
+        return chart_payload
+
+    @staticmethod
+    def _chart_diagnostics(
+        *,
+        chart_image_url: str | None,
+        chart_payload: dict[str, Any] | None,
+        chart_snapshot_status: str,
+        chart_status: str,
+    ) -> dict[str, Any]:
+        candles = chart_payload.get("candles") if isinstance(chart_payload, dict) and isinstance(chart_payload.get("candles"), list) else []
+        candles_count = len(candles)
+        has_snapshot = bool(chart_image_url)
+        if has_snapshot:
+            built_from = "snapshot"
+        elif candles_count > 0:
+            built_from = "candles_fallback"
+        else:
+            built_from = "missing"
+        chart_error = ""
+        normalized_snapshot_status = str(chart_snapshot_status or "").strip().lower()
+        normalized_chart_status = str(chart_status or "").strip().lower()
+        if built_from == "missing":
+            chart_error = normalized_snapshot_status or normalized_chart_status or "no_data"
+        elif normalized_snapshot_status and normalized_snapshot_status != "ok":
+            chart_error = normalized_snapshot_status
+        return {
+            "chart_built_from": built_from,
+            "chartData_candles_count": candles_count,
+            "chart_error": chart_error,
         }
 
     @staticmethod
@@ -4909,28 +4998,47 @@ class TradeIdeaService:
                     bias=direction,
                 ),
             )
-            chart_data = row.get("chartData") or row.get("chart_data")
             overlay_payload = self._build_overlay_payload(signal=row, existing=row if isinstance(row, dict) else None)
             chart_overlays = self.normalize_chart_overlays(row.get("chart_overlays") or row.get("overlays"))
             if not self.is_meaningful_overlay_payload(chart_overlays):
                 chart_overlays = self._chart_overlays_from_legacy_overlay_payload(overlay_payload)
+            row_chart_payload, row_candles = self.chart_data_service.normalize_provider_payload(
+                row.get("chartData") if isinstance(row.get("chartData"), dict) else row.get("chart_data") if isinstance(row.get("chart_data"), dict) else {}
+            )
+            if not row_candles and isinstance(row.get("candles"), list):
+                row_candles = [item for item in row.get("candles") if isinstance(item, dict)]
             normalized_chart_state = self._normalize_chart_state(
                 chart_image_url=row.get("chartImageUrl") or row.get("chart_image"),
                 chart_snapshot_status=row.get("chartSnapshotStatus") or row.get("chart_snapshot_status"),
                 chart_status=row.get("chart_status") or row.get("chartStatus"),
                 fallback_to_candles=row.get("fallback_to_candles"),
-                has_candles=False,
+                has_candles=bool(row_candles),
             )
             chart_image_url = normalized_chart_state["chart_image_url"]
             chart_snapshot_status = normalized_chart_state["chart_snapshot_status"]
             chart_status = normalized_chart_state["chart_status"]
-            tags = row.get("tags")
-            if not isinstance(tags, list) or not tags:
-                tags = [source, symbol, timeframe, direction]
-
             entry_value = self._extract_numeric_level(row, "entry", "entry_zone")
             stop_loss_value = self._extract_numeric_level(row, "stopLoss", "stop_loss")
             take_profit_value = self._extract_numeric_level(row, "takeProfit", "take_profit")
+            chart_data = self._build_final_chart_payload(
+                normalized_candles=row_candles,
+                signal=row_chart_payload if isinstance(row_chart_payload, dict) else row,
+                overlay_payload=overlay_payload,
+                chart_overlays=chart_overlays,
+                entry=entry_value,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                reference_price=self._extract_numeric(row.get("current_price") or row.get("latest_close")),
+            )
+            chart_diagnostics = self._chart_diagnostics(
+                chart_image_url=chart_image_url,
+                chart_payload=chart_data,
+                chart_snapshot_status=chart_snapshot_status,
+                chart_status=chart_status,
+            )
+            tags = row.get("tags")
+            if not isinstance(tags, list) or not tags:
+                tags = [source, symbol, timeframe, direction]
             data_provider = str(
                 row.get("data_provider")
                 or market_context.get("data_provider")
@@ -5043,6 +5151,9 @@ class TradeIdeaService:
                         "chart_status": chart_status,
                         "chartStatus": chart_status,
                         "fallback_to_candles": normalized_chart_state["fallback_to_candles"],
+                        "chart_built_from": chart_diagnostics["chart_built_from"],
+                        "chartData_candles_count": chart_diagnostics["chartData_candles_count"],
+                        "chart_error": chart_diagnostics["chart_error"],
                         "ideaContext": str(idea_context),
                         "trigger": str(trigger),
                         "invalidation": str(invalidation),

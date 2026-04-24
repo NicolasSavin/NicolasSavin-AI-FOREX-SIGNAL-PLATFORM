@@ -1493,6 +1493,13 @@ function hasRenderableCandles(idea) {
   return hasCandles(idea?.chartData) || hasCandles(idea?.chart_data);
 }
 
+function getIdeaCandlesCount(idea) {
+  const apiCount = Number(idea?.chartData_candles_count ?? idea?.candles_count_used ?? 0);
+  if (Number.isFinite(apiCount) && apiCount > 0) return apiCount;
+  const dataPayload = normalizeChartPayload(idea?.chartData || idea?.chart_data || {});
+  return Array.isArray(dataPayload?.candles) ? dataPayload.candles.length : 0;
+}
+
 function shouldUseFallbackCandles(idea) {
   return !hasValidSnapshotImage(idea) && hasRenderableCandles(idea);
 }
@@ -2284,7 +2291,18 @@ async function openIdea(idea) {
   }
 
   console.debug("[ideas-chart] fallback placeholder used", { reason: "no_chart_payload" });
-  showUnavailableChart("График недоступен");
+  const candlesCount = getIdeaCandlesCount(idea);
+  const hasMissingChartData = !hasRenderableCandles(idea);
+  const hasMissingSnapshot = !resolvedSnapshotUrl;
+  if (candlesCount >= 20 && (isSameIdeaRefresh || chartDisplayMode === "live" || chartDisplayMode === "snapshot")) {
+    renderCleanDetailStatus(idea);
+    return;
+  }
+  if (hasMissingSnapshot && hasMissingChartData) {
+    showUnavailableChart("График недоступен");
+  } else {
+    showUnavailableChart("Загружаем свечной график…");
+  }
   renderCleanDetailStatus(idea);
 }
 
