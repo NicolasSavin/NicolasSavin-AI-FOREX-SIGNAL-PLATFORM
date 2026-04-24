@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from app.core.env import get_twelvedata_api_key
+from app.services.market_providers import FinnhubProvider
 from app.services.yahoo_market_data_service import YahooMarketDataService
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ TIMEFRAME_MAPPING = {
 SUPPORTED_CHART_TIMEFRAMES = tuple(TIMEFRAME_MAPPING.keys())
 DEFAULT_CHART_TIMEOUT_SECONDS = 4.0
 DEFAULT_CHART_LIMIT = 50
+_UNSET = object()
 
 
 class ChartDataService:
@@ -33,6 +35,7 @@ class ChartDataService:
         self.timeout_seconds = float(os.getenv("TWELVEDATA_TIMEOUT", str(DEFAULT_CHART_TIMEOUT_SECONDS)))
         self.output_size = int(os.getenv("TWELVEDATA_OUTPUTSIZE", str(DEFAULT_CHART_LIMIT)))
         self.yahoo_service = YahooMarketDataService()
+        self.finnhub_provider = FinnhubProvider()
         self._cache_ttl_seconds = max(600.0, float(os.getenv("TWELVEDATA_CHART_CACHE_TTL_SECONDS", "600")))
         self._stale_success_ttl_seconds = max(self._cache_ttl_seconds, float(os.getenv("TWELVEDATA_STALE_CACHE_TTL_SECONDS", "900")))
         self._request_cooldown_seconds = max(
@@ -43,7 +46,7 @@ class ChartDataService:
         self._candles_cache: dict[str, dict[str, Any]] = {}
         self._next_allowed_request_by_key: dict[str, float] = {}
         self._last_market_health: dict[str, Any] = {
-            "primary_provider": "twelvedata",
+            "primary_provider": "finnhub",
             "primary_error": None,
             "fallback_attempted": False,
             "fallback_provider": "yahoo_finance",
@@ -58,6 +61,10 @@ class ChartDataService:
             "cache_age_seconds": None,
             "twelvedata_cache_hit": False,
             "next_allowed_request_at": None,
+            "finnhub_configured": bool(getattr(self.finnhub_provider, "api_key", "")),
+            "finnhub_attempted": False,
+            "finnhub_error": None,
+            "finnhub_candles_count": 0,
         }
 
     def get_chart(self, symbol: str, timeframe: str, limit: int | None = None) -> dict[str, Any]:
@@ -68,6 +75,10 @@ class ChartDataService:
         provider_symbol = self._format_twelvedata_symbol(normalized_symbol)
         provider_interval = TIMEFRAME_MAPPING.get(normalized_tf)
         requested_limit = max(1, min(int(limit or self.output_size), 5000))
+        finnhub_configured = bool(getattr(self.finnhub_provider, "api_key", ""))
+        finnhub_attempted = False
+        finnhub_error: str | None = None
+        finnhub_candles_count = 0
 
         logger.info(
             "chart_request_mapped requested_symbol=%s requested_tf=%s mapped_symbol=%s mapped_tf=%s provider_symbol=%s provider_interval=%s",
@@ -82,21 +93,27 @@ class ChartDataService:
         cached_fresh = self._get_cached_payload(cache_key=cache_key, limit=requested_limit, max_age_seconds=self._cache_ttl_seconds)
         if cached_fresh is not None:
             cache_age_seconds = self._cache_age_seconds(cache_key)
+            cached_source = str(cached_fresh.get("source") or "")
+            cached_provider = "finnhub_cached" if "finnhub" in cached_source else "twelvedata_cached"
             self._set_market_health(
-                primary_provider="twelvedata",
+                primary_provider="finnhub",
                 primary_error=None,
                 fallback_attempted=False,
                 fallback_provider="yahoo_finance",
                 fallback_error=None,
-                final_provider_used="twelvedata_cached",
+                final_provider_used=cached_provider,
                 request_succeeded=True,
                 candles_count=len(cached_fresh.get("candles") or []),
                 error=None,
                 source_symbol=provider_symbol,
-                provider_used="twelvedata_cached",
+                provider_used=cached_provider,
                 cache_hit=True,
                 cache_age_seconds=cache_age_seconds,
                 next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
+                finnhub_configured=finnhub_configured,
+                finnhub_attempted=False,
+                finnhub_error=None,
+                finnhub_candles_count=0,
             )
             return cached_fresh
 
@@ -123,8 +140,57 @@ class ChartDataService:
                 cache_hit=False,
                 cache_age_seconds=None,
                 next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
+                finnhub_configured=finnhub_configured,
+                finnhub_attempted=False,
+                finnhub_error="unsupported_timeframe",
+                finnhub_candles_count=0,
             )
             return payload
+
+        if finnhub_configured:
+            finnhub_attempted = True
+            finnhub_payload, finnhub_candles = self.normalize_provider_payload(
+                self.finnhub_provider.get_candles(normalized_symbol, normalized_tf, requested_limit)
+            )
+            finnhub_candles_count = len(finnhub_candles)
+            if finnhub_candles_count >= 30:
+                response_payload = {
+                    "symbol": normalized_symbol,
+                    "timeframe": normalized_tf,
+                    "source": "finnhub",
+                    "status": "ok",
+                    "message_ru": None,
+                    "candles": finnhub_candles,
+                    "meta": {
+                        "provider": "Finnhub",
+                        "outputsize": min(finnhub_candles_count, requested_limit),
+                    },
+                }
+                self._store_cached_payload(cache_key=cache_key, payload=response_payload)
+                self._set_market_health(
+                    primary_provider="finnhub",
+                    primary_error=None,
+                    fallback_attempted=False,
+                    fallback_provider="yahoo_finance",
+                    fallback_error=None,
+                    final_provider_used="finnhub",
+                    request_succeeded=True,
+                    candles_count=finnhub_candles_count,
+                    error=None,
+                    source_symbol=str(finnhub_payload.get("source_symbol") or normalized_symbol),
+                    provider_used="finnhub",
+                    cache_hit=False,
+                    cache_age_seconds=0.0,
+                    next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
+                    finnhub_configured=True,
+                    finnhub_attempted=True,
+                    finnhub_error=None,
+                    finnhub_candles_count=finnhub_candles_count,
+                )
+                return response_payload
+            finnhub_error = str(finnhub_payload.get("error") or f"insufficient_candles_{finnhub_candles_count}")
+        else:
+            finnhub_error = "missing_api_key"
 
         if not self.api_key:
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=missing_api_key", normalized_symbol, normalized_tf)
@@ -141,6 +207,10 @@ class ChartDataService:
                 ),
                 provider_symbol=provider_symbol,
                 cache_key=cache_key,
+                finnhub_configured=finnhub_configured,
+                finnhub_attempted=finnhub_attempted,
+                finnhub_error=finnhub_error,
+                finnhub_candles_count=finnhub_candles_count,
             )
 
         if not self._is_request_allowed(cache_key):
@@ -157,6 +227,10 @@ class ChartDataService:
                 ),
                 provider_symbol=provider_symbol,
                 cache_key=cache_key,
+                finnhub_configured=finnhub_configured,
+                finnhub_attempted=finnhub_attempted,
+                finnhub_error=finnhub_error,
+                finnhub_candles_count=finnhub_candles_count,
             )
 
         params = {
@@ -192,6 +266,10 @@ class ChartDataService:
                 ),
                 provider_symbol=provider_symbol,
                 cache_key=cache_key,
+                finnhub_configured=finnhub_configured,
+                finnhub_attempted=finnhub_attempted,
+                finnhub_error=finnhub_error,
+                finnhub_candles_count=finnhub_candles_count,
             )
         except ValueError:
             self._set_next_allowed_request(cache_key)
@@ -209,6 +287,10 @@ class ChartDataService:
                 ),
                 provider_symbol=provider_symbol,
                 cache_key=cache_key,
+                finnhub_configured=finnhub_configured,
+                finnhub_attempted=finnhub_attempted,
+                finnhub_error=finnhub_error,
+                finnhub_candles_count=finnhub_candles_count,
             )
 
         payload, candles = self.normalize_provider_payload(payload)
@@ -245,6 +327,10 @@ class ChartDataService:
                     ),
                     provider_symbol=provider_symbol,
                     cache_key=cache_key,
+                    finnhub_configured=finnhub_configured,
+                    finnhub_attempted=finnhub_attempted,
+                    finnhub_error=finnhub_error,
+                    finnhub_candles_count=finnhub_candles_count,
                 )
             logger.warning("twelvedata_failed symbol=%s tf=%s reason=empty_candles", normalized_symbol, normalized_tf)
             self._set_next_allowed_request(cache_key)
@@ -261,11 +347,15 @@ class ChartDataService:
                 ),
                 provider_symbol=provider_symbol,
                 cache_key=cache_key,
+                finnhub_configured=finnhub_configured,
+                finnhub_attempted=finnhub_attempted,
+                finnhub_error=finnhub_error,
+                finnhub_candles_count=finnhub_candles_count,
             )
 
         logger.info("twelvedata_success symbol=%s tf=%s candles=%s", normalized_symbol, normalized_tf, len(candles))
         self._set_market_health(
-            primary_provider="twelvedata",
+            primary_provider="finnhub",
             primary_error=None,
             fallback_attempted=False,
             fallback_provider="yahoo_finance",
@@ -279,6 +369,10 @@ class ChartDataService:
             cache_hit=False,
             cache_age_seconds=0.0,
             next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
+            finnhub_configured=finnhub_configured,
+            finnhub_attempted=finnhub_attempted,
+            finnhub_error=finnhub_error,
+            finnhub_candles_count=finnhub_candles_count,
         )
         response_payload = {
             "symbol": normalized_symbol,
@@ -309,6 +403,10 @@ class ChartDataService:
         twelvedata_payload: dict[str, Any],
         provider_symbol: str,
         cache_key: str,
+        finnhub_configured: bool = False,
+        finnhub_attempted: bool = False,
+        finnhub_error: str | None = None,
+        finnhub_candles_count: int = 0,
     ) -> dict[str, Any]:
         stale_cached = self._get_cached_payload(cache_key=cache_key, limit=limit, max_age_seconds=self._stale_success_ttl_seconds)
         if stale_cached is not None:
@@ -328,6 +426,10 @@ class ChartDataService:
                 cache_hit=True,
                 cache_age_seconds=cache_age_seconds,
                 next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
+                finnhub_configured=finnhub_configured,
+                finnhub_attempted=finnhub_attempted,
+                finnhub_error=finnhub_error,
+                finnhub_candles_count=finnhub_candles_count,
             )
             return stale_cached
 
@@ -350,6 +452,10 @@ class ChartDataService:
                     cache_hit=True,
                     cache_age_seconds=cache_age_seconds,
                     next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
+                    finnhub_configured=finnhub_configured,
+                    finnhub_attempted=finnhub_attempted,
+                    finnhub_error=finnhub_error,
+                    finnhub_candles_count=finnhub_candles_count,
                 )
                 return cached_any_age
 
@@ -379,6 +485,10 @@ class ChartDataService:
                 cache_hit=False,
                 cache_age_seconds=self._cache_age_seconds(cache_key),
                 next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
+                finnhub_configured=finnhub_configured,
+                finnhub_attempted=finnhub_attempted,
+                finnhub_error=finnhub_error,
+                finnhub_candles_count=finnhub_candles_count,
             )
             return {
                 "symbol": symbol,
@@ -411,6 +521,10 @@ class ChartDataService:
             cache_hit=False,
             cache_age_seconds=self._cache_age_seconds(cache_key),
             next_allowed_request_at=self._get_next_allowed_request_at(cache_key),
+            finnhub_configured=finnhub_configured,
+            finnhub_attempted=finnhub_attempted,
+            finnhub_error=finnhub_error,
+            finnhub_candles_count=finnhub_candles_count,
         )
         return twelvedata_payload
 
@@ -431,7 +545,19 @@ class ChartDataService:
         cache_hit: bool,
         cache_age_seconds: float | None,
         next_allowed_request_at: str | None,
+        finnhub_configured: bool | object = _UNSET,
+        finnhub_attempted: bool | object = _UNSET,
+        finnhub_error: str | None | object = _UNSET,
+        finnhub_candles_count: int | object = _UNSET,
     ) -> None:
+        resolved_finnhub_configured = self._last_market_health.get("finnhub_configured") if finnhub_configured is _UNSET else bool(finnhub_configured)
+        resolved_finnhub_attempted = self._last_market_health.get("finnhub_attempted") if finnhub_attempted is _UNSET else bool(finnhub_attempted)
+        resolved_finnhub_error = self._last_market_health.get("finnhub_error") if finnhub_error is _UNSET else finnhub_error
+        resolved_finnhub_candles_count = (
+            self._last_market_health.get("finnhub_candles_count")
+            if finnhub_candles_count is _UNSET
+            else max(0, int(finnhub_candles_count or 0))
+        )
         self._last_market_health = {
             "primary_provider": primary_provider,
             "primary_error": primary_error,
@@ -448,6 +574,10 @@ class ChartDataService:
             "twelvedata_cache_hit": bool(cache_hit),
             "cache_age_seconds": cache_age_seconds,
             "next_allowed_request_at": next_allowed_request_at,
+            "finnhub_configured": bool(resolved_finnhub_configured),
+            "finnhub_attempted": bool(resolved_finnhub_attempted),
+            "finnhub_error": resolved_finnhub_error,
+            "finnhub_candles_count": int(resolved_finnhub_candles_count or 0),
         }
         logger.info(
             "market_provider_selected primary_provider=%s final_provider=%s fallback_attempted=%s request_succeeded=%s candles=%s error=%s source_symbol=%s",
