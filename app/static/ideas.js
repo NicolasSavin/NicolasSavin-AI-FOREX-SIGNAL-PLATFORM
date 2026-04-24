@@ -50,8 +50,8 @@ function renderIdeaCard(idea) {
   const updates = Array.isArray(idea.updates) ? idea.updates.slice(-5).reverse() : [];
   const reasoning = resolveVisibleNarrative(idea);
   const compactSummary = String(idea?.compact_summary || "").trim();
-  const analysisMode = String(idea.analysis_mode || "").toLowerCase() === "professional" ? "профессиональный" : "упрощённый";
-  const providerLabel = String(idea.data_provider || "").toLowerCase() === "twelvedata" ? "TwelveData" : "Yahoo fallback";
+  const analysisMode = String(idea.analysis_mode || "").toLowerCase() === "smc_pro" ? "SMC PRO" : "Упрощённый";
+  const providerLabel = (function(){ const p=String(idea.data_provider || "").toLowerCase(); if (p === "finnhub") return "Finnhub"; if (p === "twelvedata") return "TwelveData"; return "Yahoo"; })();
   const warningText = String(idea.warning || "").trim();
 
   return `

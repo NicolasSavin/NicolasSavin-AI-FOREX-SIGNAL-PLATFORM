@@ -23,3 +23,7 @@ def get_openrouter_model() -> str:
 
 def get_twelvedata_api_key() -> str | None:
     return get_env("TWELVEDATA_API_KEY")
+
+
+def get_finnhub_api_key() -> str | None:
+    return get_env("FINNHUB_API_KEY")

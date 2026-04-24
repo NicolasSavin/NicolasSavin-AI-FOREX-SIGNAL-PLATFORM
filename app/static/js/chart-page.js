@@ -1076,7 +1076,7 @@ function collectIdeaWarnings(idea) {
   const chartStatus = normalizeWhitespace(idea?.chart_status || idea?.chartStatus).toLowerCase();
   const confidence = Number(idea?.confidence);
 
-  if (provider === "yahoo_finance" || fallbackUsed) warnings.push("⚠️ Используется Yahoo fallback — анализ упрощён");
+  if (provider === "yahoo_finance" || fallbackUsed) warnings.push("⚠️ Используется Yahoo — анализ упрощён");
   if (dataQuality === "medium" || dataQuality === "low") warnings.push("⚠️ Качество данных снижено");
   if (overlaysPresent === false) warnings.push("⚠️ OB/FVG/ликвидность не подтверждены");
   if ((snapshotStatus && snapshotStatus !== "ok") || chartStatus.includes("fallback")) {

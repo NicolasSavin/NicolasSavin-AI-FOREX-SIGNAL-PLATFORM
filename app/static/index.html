@@ -498,11 +498,11 @@
     }
 
     function getAnalysisModeLabel(idea) {
-      return String(idea?.analysis_mode || "").toLowerCase() === "professional" ? "профессиональный" : "упрощённый";
+      return String(idea?.analysis_mode || "").toLowerCase() === "smc_pro" ? "SMC PRO" : "Упрощённый";
     }
 
     function getDataProviderLabel(idea) {
-      return String(idea?.data_provider || "").toLowerCase() === "twelvedata" ? "TwelveData" : "Yahoo fallback";
+      return (function(){ const p=String(idea?.data_provider || "").toLowerCase(); if (p === "finnhub") return "Finnhub"; if (p === "twelvedata") return "TwelveData"; return "Yahoo"; })();
     }
 
     function getChartImageUrl(idea) {

@@ -2338,10 +2338,16 @@ class TradeIdeaService:
             signal["source_candle_count"] = len(normalized_candles)
 
         provider = str(signal.get("data_provider") or chart_data.get("source") or "unknown").lower()
-        analysis_mode = str(signal.get("analysis_mode") or ("directional_fallback" if "yahoo" in provider else "professional"))
-        fallback_used = bool(signal.get("fallback_used") if signal.get("fallback_used") is not None else analysis_mode == "directional_fallback")
-        warning = str(signal.get("warning") or ("Идея построена в упрощённом режиме из fallback-данных Yahoo. Подтверждение слабее профессионального режима." if analysis_mode == "directional_fallback" else ""))
-        data_quality = str(signal.get("data_quality") or ("medium" if analysis_mode == "directional_fallback" else "high")).lower()
+        analysis_mode = str(signal.get("analysis_mode") or ("fallback_simple" if "yahoo" in provider else "smc_pro")).lower()
+        if analysis_mode in {"professional", "smc_pro"}:
+            analysis_mode = "smc_pro"
+        elif analysis_mode in {"directional_fallback", "fallback_simple"}:
+            analysis_mode = "fallback_simple"
+        else:
+            analysis_mode = "fallback_simple" if "yahoo" in provider else "smc_pro"
+        fallback_used = bool(signal.get("fallback_used") if signal.get("fallback_used") is not None else analysis_mode == "fallback_simple")
+        warning = str(signal.get("warning") or ("Идея построена в упрощённом режиме из fallback-данных Yahoo. Подтверждение слабее профессионального режима." if analysis_mode == "fallback_simple" else ""))
+        data_quality = str(signal.get("data_quality") or ("medium" if analysis_mode == "fallback_simple" else "high")).lower()
         signal["data_provider"] = provider
         signal["analysis_mode"] = analysis_mode
         signal["fallback_used"] = fallback_used
@@ -3816,7 +3822,7 @@ class TradeIdeaService:
             or (
                 "Используется Yahoo fallback, точность сценария ниже."
                 if str(signal.get("data_provider") or market_context.get("data_provider") or "").lower() == "yahoo_finance"
-                or str(signal.get("analysis_mode") or market_context.get("analysis_mode") or "").lower() == "directional_fallback"
+                or str(signal.get("analysis_mode") or market_context.get("analysis_mode") or "").lower() in {"directional_fallback", "fallback_simple"}
                 else ""
             )
         )
@@ -4939,14 +4945,20 @@ class TradeIdeaService:
             analysis_mode = str(
                 row.get("analysis_mode")
                 or market_context.get("analysis_mode")
-                or ("directional_fallback" if "yahoo" in data_provider.lower() else "professional")
-            )
+                or ("fallback_simple" if "yahoo" in data_provider.lower() else "smc_pro")
+            ).lower()
+            if analysis_mode in {"professional", "smc_pro"}:
+                analysis_mode = "smc_pro"
+            elif analysis_mode in {"directional_fallback", "fallback_simple"}:
+                analysis_mode = "fallback_simple"
+            else:
+                analysis_mode = "fallback_simple" if "yahoo" in data_provider.lower() else "smc_pro"
             fallback_used = bool(
                 row.get("fallback_used")
                 if row.get("fallback_used") is not None
                 else market_context.get("fallback_used")
                 if market_context.get("fallback_used") is not None
-                else analysis_mode == "directional_fallback"
+                else analysis_mode in {"directional_fallback", "fallback_simple"}
             )
             warning = str(
                 row.get("warning")
@@ -4954,14 +4966,14 @@ class TradeIdeaService:
                 or (
                     "Идея построена в упрощённом режиме из fallback-данных Yahoo. "
                     "Подтверждение слабее профессионального режима."
-                    if analysis_mode == "directional_fallback"
+                    if analysis_mode in {"directional_fallback", "fallback_simple"}
                     else ""
                 )
             )
             normalized_data_quality = str(
                 row.get("data_quality")
                 or market_context.get("data_quality")
-                or ("medium" if analysis_mode == "directional_fallback" else "high")
+                or ("medium" if analysis_mode in {"directional_fallback", "fallback_simple"} else "high")
             ).lower()
             if normalized_data_quality == "fallback":
                 normalized_data_quality = "medium"

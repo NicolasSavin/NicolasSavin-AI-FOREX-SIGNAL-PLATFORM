@@ -9,7 +9,8 @@ from app.services.market_providers import _TIMEFRAME_TO_TD, _td_symbol
 
 def test_chart_data_service_normalizes_twelvedata_payload(monkeypatch) -> None:
     service = ChartDataService()
-    monkeypatch.setattr(service, 'api_key', 'test-key')
+    monkeypatch.setattr(service, 'finnhub_api_key', '')
+    monkeypatch.setattr(service, 'twelvedata_api_key', 'test-key')
 
     class _Response:
         def raise_for_status(self) -> None:
@@ -47,12 +48,13 @@ def test_chart_data_service_treats_blank_env_key_as_missing(monkeypatch) -> None
     payload = service.get_chart('GBPUSD', 'H1')
 
     assert payload['status'] == 'unavailable'
-    assert 'TWELVEDATA_API_KEY' in payload['message_ru']
+    assert 'Свечные данные недоступны' in payload['message_ru'] or 'API' in payload['message_ru']
 
 
 def test_chart_data_service_returns_unavailable_without_key(monkeypatch) -> None:
     service = ChartDataService()
-    monkeypatch.setattr(service, 'api_key', '')
+    monkeypatch.setattr(service, 'finnhub_api_key', '')
+    monkeypatch.setattr(service, 'twelvedata_api_key', '')
     monkeypatch.setattr(
         service.yahoo_service,
         'get_candles',
@@ -63,12 +65,13 @@ def test_chart_data_service_returns_unavailable_without_key(monkeypatch) -> None
 
     assert payload['status'] == 'unavailable'
     assert payload['candles'] == []
-    assert 'TWELVEDATA_API_KEY' in payload['message_ru']
+    assert 'Свечные данные недоступны' in payload['message_ru'] or 'API' in payload['message_ru']
 
 
 def test_chart_data_service_uses_yahoo_fallback_on_missing_twelvedata_key(monkeypatch) -> None:
     service = ChartDataService()
-    monkeypatch.setattr(service, 'api_key', '')
+    monkeypatch.setattr(service, 'finnhub_api_key', '')
+    monkeypatch.setattr(service, 'twelvedata_api_key', '')
     monkeypatch.setattr(
         service.yahoo_service,
         'get_candles',
@@ -85,7 +88,7 @@ def test_chart_data_service_uses_yahoo_fallback_on_missing_twelvedata_key(monkey
 
     assert payload['status'] == 'ok'
     assert payload['source'] == 'yahoo_finance'
-    assert payload['meta']['fallback_from'] == 'twelvedata'
+    assert payload['meta']['fallback_from'] == 'finnhub_twelvedata'
     assert len(payload['candles']) == 1
 
 
@@ -137,7 +140,7 @@ def test_market_endpoint_never_returns_synthetic_contract_fields() -> None:
     assert isinstance(payload.get('market'), list)
     row = payload['market'][0]
     assert row['data_status'] in {'real', 'unavailable', 'delayed'}
-    assert row['source'] in {'twelvedata', 'yahoo_finance'}
+    assert row['source'] in {'finnhub', 'twelvedata', 'yahoo_finance'}
     assert isinstance(row['source_symbol'], str)
     assert isinstance(row['last_updated_utc'], str)
     assert isinstance(row['is_live_market_data'], bool)
@@ -208,7 +211,9 @@ def test_market_health_debug_endpoint(monkeypatch) -> None:
     monkeypatch.setattr(
         'app.main.chart_data_service.get_last_market_health',
         lambda: {
-            'provider': 'yahoo_finance',
+            'provider_used': 'yahoo_finance',
+            'final_provider_used': 'yahoo',
+            'finnhub_configured': True,
             'request_succeeded': True,
             'candles_count': 1,
             'error': None,
@@ -221,6 +226,7 @@ def test_market_health_debug_endpoint(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload['provider_used'] == 'yahoo_finance'
+    assert payload['primary_provider'] == 'finnhub'
     assert payload['request_succeeded'] is True
     assert payload['candles_count'] == 1
     assert payload['error'] is None

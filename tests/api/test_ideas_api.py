@@ -53,7 +53,7 @@ def test_build_api_ideas_normalizes_trade_ideas(tmp_path: Path) -> None:
     assert len(payload[0]["full_text"]) > 80
     assert payload[0]["detail_brief"]["header"]["bias"] == "Лонг / buy-the-dip bias"
     assert "smc_ict" in payload[0]["supported_sections"]
-    assert payload[0]["analysis_mode"] == "professional"
+    assert payload[0]["analysis_mode"] == "smc_pro"
     assert payload[0]["data_provider"] == "twelvedata"
     assert payload[0]["data_quality"] == "high"
     assert payload[0]["warning"] == ""
@@ -85,7 +85,7 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
                     "status": "active",
                     "data_quality": "fallback",
                     "data_provider": "yahoo_finance",
-                    "analysis_mode": "directional_fallback",
+                    "analysis_mode": "fallback_simple",
                 }
             ],
         }
@@ -108,7 +108,7 @@ def test_build_api_ideas_expands_detail_payload_and_fallbacks(tmp_path: Path) ->
     assert payload[0]["target"] == "1.262 / 1.258"
     assert payload[0]["detail_brief"]["trade_plan"]["take_profits"] == "1.262 / 1.258"
     assert "fundamental" in payload[0]["supported_sections"]
-    assert payload[0]["analysis_mode"] == "directional_fallback"
+    assert payload[0]["analysis_mode"] == "fallback_simple"
     assert payload[0]["data_provider"] == "yahoo_finance"
     assert payload[0]["data_quality"] == "medium"
     assert "упрощённом режиме" in payload[0]["warning"]

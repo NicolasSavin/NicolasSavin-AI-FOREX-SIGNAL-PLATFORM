@@ -7,7 +7,7 @@
 - Trade idea графики переведены на server-side snapshot pipeline: при создании идеи backend получает реальные OHLC candles, строит PNG через `matplotlib`, сохраняет файл в `/static/charts/{symbol}_{timeframe}_{timestamp}.png` и возвращает путь как `chartImageUrl` (повторная генерация в modal больше не выполняется).
 - Исправлено восстановление legacy ideas без `chartImageUrl`: при наличии реальных candles снапшот теперь строится независимо от устаревшего `chartSnapshotStatus=rate_limited`, а при ошибке рендера статус принудительно переводится в `snapshot_failed`.
 - Добавлен безопасный one-time maintenance endpoint `POST /api/ideas/recover-missing-chart-snapshots` для ручного восстановления старых идей без дублирования `idea_id` и без изменения lifecycle TP/SL.
-- Основной live-провайдер теперь `TwelveDataProvider`; `YahooProvider` сохранён только как optional historical fallback для свечей (статус `delayed`) и больше не используется как live пользовательская цена.
+- Приоритет провайдеров свечей: `Finnhub → TwelveData → Yahoo Finance fallback` (без synthetic market data).
 - Введён строгий контракт market-data ответа: `data_status` (`real | unavailable | delayed`), `source`, `source_symbol`, `last_updated_utc`, `is_live_market_data`.
 - Удалены тихие synthetic fallback цены для production-endpoint; при ошибках источника API возвращает `unavailable` и frontend показывает warning по live-ценам.
 - Добавлен polling-апдейтер текущих цен в карточках сигналов через `/api/market` (без выдуманных значений).
@@ -333,6 +333,7 @@ SENTIMENT_PROVIDER=mock
 OANDA_SENTIMENT_BASE_URL=
 OANDA_SENTIMENT_API_KEY=
 SENTIMENT_WEIGHT=0.12
+FINNHUB_API_KEY=
 TWELVEDATA_API_KEY=
 TWELVEDATA_TIMEOUT=4
 TWELVEDATA_OUTPUTSIZE=50

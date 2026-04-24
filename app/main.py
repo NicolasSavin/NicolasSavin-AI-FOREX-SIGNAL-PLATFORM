@@ -28,6 +28,7 @@ from app.services.analytics.service import SignalAnalyticsService
 from app.services.market_service_registry import get_canonical_market_service
 from app.services.market_data import MarketDataService
 from app.services.market_providers import _TIMEFRAME_TO_TD, _td_symbol
+from app.services.chart_data_service import FINNHUB_SYMBOL_MAPPING
 from app.services.mt4_bridge import Mt4BridgeService
 from app.services.chart_data_service import ChartDataService
 from app.services.news_service import NewsService
@@ -204,20 +205,26 @@ async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", lim
     provider_used = health.get("provider_used") or health.get("final_provider_used") or payload.get("source") or "unknown"
     final_provider_used = health.get("final_provider_used") or provider_used
     source_symbol = health.get("source_symbol")
+    normalized_symbol = str(symbol).upper().replace("/", "").strip()
     if not source_symbol:
-        source_symbol = _td_symbol(str(symbol).upper().replace("/", "").strip()) if "twelvedata" in str(provider_used) else str(symbol).upper().replace("/", "").strip()
+        if "finnhub" in str(provider_used):
+            source_symbol = FINNHUB_SYMBOL_MAPPING.get(normalized_symbol, normalized_symbol)
+        elif "twelvedata" in str(provider_used):
+            source_symbol = _td_symbol(normalized_symbol)
+        else:
+            source_symbol = normalized_symbol
     return {
         "provider_used": provider_used,
         "cache_hit": bool(health.get("cache_hit")),
         "cache_age_seconds": health.get("cache_age_seconds"),
-        "primary_provider": health.get("primary_provider") or "twelvedata",
-        "primary_error": health.get("primary_error"),
-        "fallback_attempted": bool(health.get("fallback_attempted")),
-        "fallback_provider": health.get("fallback_provider"),
-        "fallback_error": health.get("fallback_error"),
+        "primary_provider": health.get("primary_provider") or "finnhub",
         "final_provider_used": final_provider_used,
-        "request_succeeded": bool(health.get("request_succeeded") or len(candles) > 0),
+        "finnhub_configured": bool(health.get("finnhub_configured")),
+        "finnhub_error": health.get("finnhub_error"),
+        "twelvedata_error": health.get("twelvedata_error"),
+        "fallback_provider": health.get("fallback_provider") or "yahoo_finance",
         "candles_count": int(health.get("candles_count") or len(candles)),
+        "request_succeeded": bool(health.get("request_succeeded") or len(candles) > 0),
         "error": health.get("error"),
         "source_symbol": source_symbol,
         "symbol": str(symbol).upper().replace("/", "").strip(),
