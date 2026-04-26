@@ -39,7 +39,6 @@ from app.services.signal_service import SignalService
 from app.services.storage.json_storage import JsonStorage
 from app.services.trade_idea_service import TradeIdeaService
 from app.services.twelvedata_ws_service import twelvedata_ws_service
-from app.services.yahoo_market_data_service import YahooMarketDataService
 from backend.chat_service import ChatRequest, ChatResponse, ForexChatService
 from backend.market.services.snapshot_service import MarketSnapshotService
 from backend.signal_engine import SUPPORTED_TIMEFRAMES, SignalEngine
@@ -48,7 +47,7 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 CHARTS_DIR = STATIC_DIR / "charts"
 
-app = FastAPI(title="NicolasSavin AI FOREX SIGNAL PLATFORM", version="3.8.0")
+app = FastAPI(title="NicolasSavin AI FOREX SIGNAL PLATFORM", version="3.8.1")
 
 CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -61,7 +60,6 @@ signal_service = SignalService(market_data_service=market_data_service)
 signal_analytics_service = SignalAnalyticsService(signal_engine=signal_engine)
 mt4_bridge_service = Mt4BridgeService()
 chart_data_service = ChartDataService()
-yahoo_market_data_service = YahooMarketDataService()
 canonical_market_service = get_canonical_market_service()
 market_snapshot_service = MarketSnapshotService()
 trade_idea_service = TradeIdeaService(
@@ -81,7 +79,6 @@ heatmap_store = JsonStorage(
 
 logger = logging.getLogger(__name__)
 
-_ideas_refresh_task: asyncio.Task | None = None
 _twelvedata_probe_cache: dict[str, object] = {"saved_at": 0.0, "probes": []}
 _twelvedata_probe_ttl_seconds = 600.0
 
@@ -101,26 +98,18 @@ def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
 
 
 def _queue_ideas_refresh() -> None:
-    global _ideas_refresh_task
+    """
+    Auto-refresh is intentionally disabled on Render Free.
 
-    if _ideas_refresh_task is not None and not _ideas_refresh_task.done():
-        return
+    Reason:
+    Background idea generation was repeatedly calling Yahoo/Stooq fallback
+    providers and could block the whole web service, causing 502 responses.
 
-    if not trade_idea_service.needs_refresh():
-        return
-
-    if not trade_idea_service.try_acquire_refresh():
-        return
-
-    async def _runner() -> None:
-        try:
-            await trade_idea_service.generate_or_refresh()
-        except Exception:
-            logger.exception("ideas_background_refresh_failed")
-        finally:
-            trade_idea_service.release_refresh()
-
-    _ideas_refresh_task = asyncio.create_task(_runner())
+    Manual generation can still be triggered through /api/debug/force-generate
+    if needed.
+    """
+    logger.info("ideas_auto_refresh_disabled")
+    return None
 
 
 app.include_router(
@@ -299,47 +288,27 @@ async def market_health_debug(
         or payload.get("provider")
         or "unknown"
     )
-    provider_used = final_provider_used
-    source_symbol = payload.get("source_symbol") or normalized_symbol
-
-    app_commit = (
-        os.getenv("RENDER_GIT_COMMIT")
-        or os.getenv("APP_COMMIT")
-        or os.getenv("GIT_COMMIT")
-        or "unknown"
-    )
-
-    finnhub_api_key = getattr(canonical_market_service.finnhub_provider, "api_key", "") or ""
-    finnhub_error = diagnostics.get("finnhub_error")
 
     return {
-        "app_commit": app_commit,
-        "build_version": app.version,
-        "provider_used": provider_used,
-        "finnhub_configured": bool(finnhub_api_key),
-        "finnhub_attempted": bool(
-            finnhub_error is not None
-            or provider_used in {"finnhub", "twelvedata", "yahoo"}
+        "app_commit": (
+            os.getenv("RENDER_GIT_COMMIT")
+            or os.getenv("APP_COMMIT")
+            or os.getenv("GIT_COMMIT")
+            or "unknown"
         ),
-        "finnhub_error": finnhub_error,
-        "cache_hit": bool(diagnostics.get("cache_hit")),
-        "primary_provider": "finnhub",
-        "primary_error": finnhub_error if provider_used != "finnhub" else None,
-        "fallback_attempted": provider_used != "finnhub",
-        "fallback_provider": "twelvedata",
-        "fallback_error": diagnostics.get("twelvedata_error")
-        if provider_used == "yahoo"
-        else None,
-        "final_provider_used": final_provider_used,
+        "build_version": app.version,
+        "provider_used": final_provider_used,
+        "fallbacks_disabled": True,
         "request_succeeded": bool(len(candles) > 0),
         "candles_count": len(candles),
         "error": payload.get("error"),
-        "source_symbol": source_symbol,
+        "source_symbol": payload.get("source_symbol") or normalized_symbol,
         "symbol": normalized_symbol,
         "timeframe": normalized_timeframe,
         "requested_limit": requested_limit,
         "status": payload.get("status"),
         "meta_provider": payload.get("provider"),
+        "diagnostics": diagnostics,
     }
 
 
@@ -348,34 +317,6 @@ async def force_generate_debug() -> dict:
     symbols = trade_idea_service.get_market_symbols() or DEFAULT_PAIRS
     await trade_idea_service.generate_or_refresh(symbols, force=True)
     return {"status": "ok"}
-
-
-@app.get("/api/debug/yahoo-test")
-@app.get("/api/debug/yahoo-test/{symbol}/{timeframe}")
-async def yahoo_test_debug(
-    symbol: str = "EURUSD",
-    timeframe: str = "H1",
-    limit: int = 120,
-) -> dict:
-    yahoo_payload = await asyncio.to_thread(
-        yahoo_market_data_service.get_candles,
-        symbol,
-        timeframe,
-        limit,
-    )
-    candles = yahoo_payload.get("candles") if isinstance(yahoo_payload.get("candles"), list) else []
-
-    return {
-        "provider": "yahoo",
-        "request_succeeded": len(candles) > 0,
-        "candles_count": len(candles),
-        "error": yahoo_payload.get("error"),
-        "source_symbol": yahoo_payload.get("source_symbol"),
-        "symbol": str(symbol).upper().replace("/", "").strip(),
-        "timeframe": str(timeframe or "H1").upper().strip(),
-        "first_candle": candles[0] if candles else None,
-        "last_candle": candles[-1] if candles else None,
-    }
 
 
 @app.get("/signals/live", response_model=SignalsLiveResponse)
