@@ -1,9 +1,9 @@
 from __future__ import annotations
+
+import asyncio
 import logging
 import os
 from pathlib import Path
-
-import asyncio
 from time import monotonic
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app.api.ideas_routes import IdeasRouteServices, build_ideas_router
 from app.schemas.analytics import AnalyticsCapabilityResponse, AnalyticsSignalResponse
 from app.schemas.contracts import (
     HealthResponse,
@@ -27,28 +28,28 @@ from app.schemas.contracts import (
     SignalsLiveResponse,
 )
 from app.services.analytics.service import SignalAnalyticsService
-from app.services.market_service_registry import get_canonical_market_service
+from app.services.chart_data_service import ChartDataService
 from app.services.market_data import MarketDataService
 from app.services.market_providers import _TIMEFRAME_TO_TD, _td_symbol
+from app.services.market_service_registry import get_canonical_market_service
 from app.services.mt4_bridge import Mt4BridgeService
-from app.services.chart_data_service import ChartDataService
 from app.services.news_service import NewsService
 from app.services.signal_hub import DEFAULT_PAIRS, SignalHubService
 from app.services.signal_service import SignalService
 from app.services.storage.json_storage import JsonStorage
 from app.services.trade_idea_service import TradeIdeaService
+from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.yahoo_market_data_service import YahooMarketDataService
-from app.api.ideas_routes import IdeasRouteServices, build_ideas_router
-from backend.market.services.snapshot_service import MarketSnapshotService
 from backend.chat_service import ChatRequest, ChatResponse, ForexChatService
-from backend.signal_engine import SignalEngine, SUPPORTED_TIMEFRAMES
-
+from backend.market.services.snapshot_service import MarketSnapshotService
+from backend.signal_engine import SUPPORTED_TIMEFRAMES, SignalEngine
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 CHARTS_DIR = STATIC_DIR / "charts"
 
 app = FastAPI(title="NicolasSavin AI FOREX SIGNAL PLATFORM", version="3.8.0")
+
 CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -63,11 +64,23 @@ chart_data_service = ChartDataService()
 yahoo_market_data_service = YahooMarketDataService()
 canonical_market_service = get_canonical_market_service()
 market_snapshot_service = MarketSnapshotService()
-trade_idea_service = TradeIdeaService(signal_engine=signal_engine, chart_data_service=chart_data_service)
+trade_idea_service = TradeIdeaService(
+    signal_engine=signal_engine,
+    chart_data_service=chart_data_service,
+)
 chat_service = ForexChatService()
-calendar_store = JsonStorage("signals_data/calendar.json", {"updated_at_utc": None, "events": []})
-heatmap_store = JsonStorage("signals_data/heatmap.json", {"updated_at_utc": None, "rows": []})
+
+calendar_store = JsonStorage(
+    "signals_data/calendar.json",
+    {"updated_at_utc": None, "events": []},
+)
+heatmap_store = JsonStorage(
+    "signals_data/heatmap.json",
+    {"updated_at_utc": None, "rows": []},
+)
+
 logger = logging.getLogger(__name__)
+
 _ideas_refresh_task: asyncio.Task | None = None
 _twelvedata_probe_cache: dict[str, object] = {"saved_at": 0.0, "probes": []}
 _twelvedata_probe_ttl_seconds = 600.0
@@ -83,16 +96,19 @@ def _static_response(filename: str) -> FileResponse:
     return FileResponse(STATIC_DIR / filename)
 
 
-
-
 def _attach_live_market_contracts(ideas: list[dict]) -> list[dict]:
     return market_snapshot_service.attach_live_market_contracts(ideas)
+
+
 def _queue_ideas_refresh() -> None:
     global _ideas_refresh_task
+
     if _ideas_refresh_task is not None and not _ideas_refresh_task.done():
         return
+
     if not trade_idea_service.needs_refresh():
         return
+
     if not trade_idea_service.try_acquire_refresh():
         return
 
@@ -118,6 +134,16 @@ app.include_router(
         )
     )
 )
+
+
+@app.on_event("startup")
+def start_twelvedata_ws() -> None:
+    twelvedata_ws_service.start()
+
+
+@app.on_event("shutdown")
+def stop_twelvedata_ws() -> None:
+    twelvedata_ws_service.stop()
 
 
 @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
@@ -153,6 +179,21 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok", version=app.version)
 
 
+@app.get("/api/ws-health")
+def ws_health():
+    return twelvedata_ws_service.health()
+
+
+@app.get("/api/ws-market")
+def ws_market():
+    return twelvedata_ws_service.get_all_prices()
+
+
+@app.get("/api/ws-price/{symbol}")
+def ws_price(symbol: str):
+    return twelvedata_ws_service.get_price(symbol)
+
+
 @app.get("/api/debug/twelvedata-health")
 async def twelvedata_health_debug(run_probe: bool = False) -> dict:
     provider = canonical_market_service.live_provider
@@ -160,26 +201,49 @@ async def twelvedata_health_debug(run_probe: bool = False) -> dict:
 
     symbol_examples = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
     timeframe_examples = ["M15", "H1", "H4"]
+
     symbol_mapping = {symbol: _td_symbol(symbol) for symbol in symbol_examples}
     timeframe_mapping = {tf: _TIMEFRAME_TO_TD.get(tf) for tf in timeframe_examples}
 
     probe_pairs = [("EURUSD", "M15"), ("GBPUSD", "H1")]
     probe_results: list[dict] = []
-    cache_age_seconds = max(0.0, monotonic() - float(_twelvedata_probe_cache.get("saved_at") or 0.0))
+
+    cache_age_seconds = max(
+        0.0,
+        monotonic() - float(_twelvedata_probe_cache.get("saved_at") or 0.0),
+    )
     cached_probes = _twelvedata_probe_cache.get("probes")
-    has_fresh_probe_cache = isinstance(cached_probes, list) and bool(cached_probes) and cache_age_seconds <= _twelvedata_probe_ttl_seconds
+
+    has_fresh_probe_cache = (
+        isinstance(cached_probes, list)
+        and bool(cached_probes)
+        and cache_age_seconds <= _twelvedata_probe_ttl_seconds
+    )
     should_probe = bool(run_probe or not has_fresh_probe_cache)
+
     if should_probe:
         for symbol, timeframe in probe_pairs:
-            probe = await asyncio.to_thread(provider.get_candles, symbol, timeframe, 30)
-            request_debug = provider.get_last_request_debug() if hasattr(provider, "get_last_request_debug") else {}
+            probe = await asyncio.to_thread(
+                provider.get_candles,
+                symbol,
+                timeframe,
+                30,
+            )
+            request_debug = (
+                provider.get_last_request_debug()
+                if hasattr(provider, "get_last_request_debug")
+                else {}
+            )
+
             probe_error = probe.get("error")
             probe_candles = probe.get("candles") or []
+
             probe_results.append(
                 {
                     "symbol": symbol,
                     "timeframe": timeframe,
-                    "provider_symbol_used": request_debug.get("provider_symbol_used") or _td_symbol(symbol),
+                    "provider_symbol_used": request_debug.get("provider_symbol_used")
+                    or _td_symbol(symbol),
                     "provider_interval": _TIMEFRAME_TO_TD.get(timeframe),
                     "candles_count": len(probe_candles),
                     "request_succeeded": probe_error is None and len(probe_candles) > 0,
@@ -188,8 +252,10 @@ async def twelvedata_health_debug(run_probe: bool = False) -> dict:
                     "raw_request_url": request_debug.get("raw_request_url"),
                 }
             )
+
         _twelvedata_probe_cache["saved_at"] = monotonic()
         _twelvedata_probe_cache["probes"] = probe_results
+
     elif isinstance(cached_probes, list):
         probe_results = list(cached_probes)
 
@@ -209,32 +275,61 @@ async def twelvedata_health_debug(run_probe: bool = False) -> dict:
 
 
 @app.get("/api/debug/market-health")
-async def market_health_debug(symbol: str = "EURUSD", timeframe: str = "H1", limit: int = 120) -> dict:
+async def market_health_debug(
+    symbol: str = "EURUSD",
+    timeframe: str = "H1",
+    limit: int = 120,
+) -> dict:
     normalized_symbol = str(symbol).upper().replace("/", "").strip()
     normalized_timeframe = str(timeframe or "H1").upper().strip()
     requested_limit = max(1, int(limit or 1))
-    payload = await asyncio.to_thread(canonical_market_service.get_candles, normalized_symbol, normalized_timeframe, requested_limit)
+
+    payload = await asyncio.to_thread(
+        canonical_market_service.get_candles,
+        normalized_symbol,
+        normalized_timeframe,
+        requested_limit,
+    )
+
     candles = payload.get("candles") if isinstance(payload.get("candles"), list) else []
     diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
-    final_provider_used = diagnostics.get("final_provider_used") or payload.get("provider") or "unknown"
+
+    final_provider_used = (
+        diagnostics.get("final_provider_used")
+        or payload.get("provider")
+        or "unknown"
+    )
     provider_used = final_provider_used
     source_symbol = payload.get("source_symbol") or normalized_symbol
-    app_commit = os.getenv("RENDER_GIT_COMMIT") or os.getenv("APP_COMMIT") or os.getenv("GIT_COMMIT") or "unknown"
+
+    app_commit = (
+        os.getenv("RENDER_GIT_COMMIT")
+        or os.getenv("APP_COMMIT")
+        or os.getenv("GIT_COMMIT")
+        or "unknown"
+    )
+
     finnhub_api_key = getattr(canonical_market_service.finnhub_provider, "api_key", "") or ""
     finnhub_error = diagnostics.get("finnhub_error")
+
     return {
         "app_commit": app_commit,
         "build_version": app.version,
         "provider_used": provider_used,
         "finnhub_configured": bool(finnhub_api_key),
-        "finnhub_attempted": bool(finnhub_error is not None or provider_used in {"finnhub", "twelvedata", "yahoo"}),
+        "finnhub_attempted": bool(
+            finnhub_error is not None
+            or provider_used in {"finnhub", "twelvedata", "yahoo"}
+        ),
         "finnhub_error": finnhub_error,
         "cache_hit": bool(diagnostics.get("cache_hit")),
         "primary_provider": "finnhub",
         "primary_error": finnhub_error if provider_used != "finnhub" else None,
         "fallback_attempted": provider_used != "finnhub",
         "fallback_provider": "twelvedata",
-        "fallback_error": diagnostics.get("twelvedata_error") if provider_used == "yahoo" else None,
+        "fallback_error": diagnostics.get("twelvedata_error")
+        if provider_used == "yahoo"
+        else None,
         "final_provider_used": final_provider_used,
         "request_succeeded": bool(len(candles) > 0),
         "candles_count": len(candles),
@@ -257,9 +352,19 @@ async def force_generate_debug() -> dict:
 
 @app.get("/api/debug/yahoo-test")
 @app.get("/api/debug/yahoo-test/{symbol}/{timeframe}")
-async def yahoo_test_debug(symbol: str = "EURUSD", timeframe: str = "H1", limit: int = 120) -> dict:
-    yahoo_payload = await asyncio.to_thread(yahoo_market_data_service.get_candles, symbol, timeframe, limit)
+async def yahoo_test_debug(
+    symbol: str = "EURUSD",
+    timeframe: str = "H1",
+    limit: int = 120,
+) -> dict:
+    yahoo_payload = await asyncio.to_thread(
+        yahoo_market_data_service.get_candles,
+        symbol,
+        timeframe,
+        limit,
+    )
     candles = yahoo_payload.get("candles") if isinstance(yahoo_payload.get("candles"), list) else []
+
     return {
         "provider": "yahoo",
         "request_succeeded": len(candles) > 0,
@@ -308,7 +413,10 @@ async def api_create_signal(payload: SignalCreateRequest) -> SignalCard:
 
 
 @app.patch("/api/signals/{signal_id}/status", response_model=SignalCard)
-async def api_patch_signal_status(signal_id: str, payload: SignalStatusPatchRequest) -> SignalCard:
+async def api_patch_signal_status(
+    signal_id: str,
+    payload: SignalStatusPatchRequest,
+) -> SignalCard:
     updated = await signal_hub.patch_status(signal_id, payload)
     if updated is None:
         raise HTTPException(status_code=404, detail="signal_not_found")
@@ -320,10 +428,15 @@ async def api_signal_news(signal_id: str) -> list[NewsItemResponse]:
     signal = await signal_hub.get_signal(signal_id)
     if signal is None:
         raise HTTPException(status_code=404, detail="signal_not_found")
+
     active_payload = await signal_hub.list_signals(pairs=DEFAULT_PAIRS)
+
     return news_service.get_news_for_signal(
         signal.model_dump(mode="json", by_alias=True),
-        active_signals=[item.model_dump(mode="json", by_alias=True) for item in active_payload.signals],
+        active_signals=[
+            item.model_dump(mode="json", by_alias=True)
+            for item in active_payload.signals
+        ],
     )
 
 
@@ -331,14 +444,24 @@ async def api_signal_news(signal_id: str) -> list[NewsItemResponse]:
 @app.get("/api/news", response_model=NewsListResponse)
 async def market_news() -> NewsListResponse:
     active_payload = await signal_hub.list_signals(pairs=DEFAULT_PAIRS)
-    return news_service.list_news(active_signals=[item.model_dump(mode="json", by_alias=True) for item in active_payload.signals])
+
+    return news_service.list_news(
+        active_signals=[
+            item.model_dump(mode="json", by_alias=True)
+            for item in active_payload.signals
+        ]
+    )
 
 
 @app.get("/api/news/relevant", response_model=NewsListResponse)
 async def relevant_news(symbol: str | None = None) -> NewsListResponse:
     active_payload = await signal_hub.list_signals(pairs=DEFAULT_PAIRS)
+
     return news_service.list_relevant_news(
-        active_signals=[item.model_dump(mode="json", by_alias=True) for item in active_payload.signals],
+        active_signals=[
+            item.model_dump(mode="json", by_alias=True)
+            for item in active_payload.signals
+        ],
         instrument=symbol.upper() if symbol else None,
     )
 
@@ -346,12 +469,18 @@ async def relevant_news(symbol: str | None = None) -> NewsListResponse:
 @app.get("/api/news/{news_id}", response_model=NewsItemResponse)
 async def news_detail(news_id: str) -> NewsItemResponse:
     active_payload = await signal_hub.list_signals(pairs=DEFAULT_PAIRS)
+
     item = news_service.get_news(
         news_id,
-        active_signals=[signal.model_dump(mode="json", by_alias=True) for signal in active_payload.signals],
+        active_signals=[
+            signal.model_dump(mode="json", by_alias=True)
+            for signal in active_payload.signals
+        ],
     )
+
     if item is None:
         raise HTTPException(status_code=404, detail="news_not_found")
+
     return item
 
 
@@ -396,8 +525,14 @@ async def analytics_signal(symbol: str) -> AnalyticsSignalResponse:
 @app.get("/api/chart/{symbol}/{tf}")
 async def api_chart(symbol: str, tf: str | None = None):
     chart_tf = (tf or "H1").upper()
+
     try:
-        payload = await asyncio.to_thread(canonical_market_service.get_chart_contract, symbol, chart_tf, 120)
+        payload = await asyncio.to_thread(
+            canonical_market_service.get_chart_contract,
+            symbol,
+            chart_tf,
+            120,
+        )
         return payload.get("candles", []) if isinstance(payload, dict) else []
     except Exception:
         logger.exception("chart_route_failed symbol=%s tf=%s", symbol, chart_tf)
@@ -410,24 +545,44 @@ async def api_chart(symbol: str, tf: str | None = None):
 @app.get("/api/canonical/chart/{symbol}/{tf}")
 async def canonical_chart(symbol: str, tf: str | None = None):
     chart_tf = (tf or "H1").upper()
-    return await asyncio.to_thread(canonical_market_service.get_chart_contract, symbol, chart_tf, 120)
+
+    return await asyncio.to_thread(
+        canonical_market_service.get_chart_contract,
+        symbol,
+        chart_tf,
+        120,
+    )
 
 
 @app.get("/price/{symbol}")
 @app.get("/api/price/{symbol}")
 async def canonical_price(symbol: str):
-    return await asyncio.to_thread(canonical_market_service.get_price_contract, symbol)
+    return await asyncio.to_thread(
+        canonical_market_service.get_price_contract,
+        symbol,
+    )
 
 
 @app.get("/market")
 @app.get("/api/market")
 async def canonical_market(symbols: str | None = None):
-    requested = [item.strip().upper() for item in (symbols or ",".join(DEFAULT_PAIRS)).split(",") if item.strip()]
+    requested = [
+        item.strip().upper()
+        for item in (symbols or ",".join(DEFAULT_PAIRS)).split(",")
+        if item.strip()
+    ]
+
     unique = []
     for symbol in requested:
         if symbol not in unique:
             unique.append(symbol)
-    return {"market": [canonical_market_service.get_market_contract(symbol) for symbol in unique]}
+
+    return {
+        "market": [
+            canonical_market_service.get_market_contract(symbol)
+            for symbol in unique
+        ]
+    }
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -442,12 +597,17 @@ async def snapshot(symbol: str, tf: str) -> SnapshotResponse:
 
         url = await take_tv_snapshot(symbol, tf)
         return SnapshotResponse(image_url=url, status="ok")
+
     except ModuleNotFoundError:
         return SnapshotResponse(
             image_url=None,
             status="unavailable",
-            message_ru="Сервис snapshot недоступен в текущем окружении: отсутствует playwright.",
+            message_ru=(
+                "Сервис snapshot недоступен в текущем окружении: "
+                "отсутствует playwright."
+            ),
         )
+
     except Exception as exc:
         return SnapshotResponse(
             image_url=None,
