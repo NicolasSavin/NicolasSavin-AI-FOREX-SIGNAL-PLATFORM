@@ -1,5 +1,3 @@
-# app/services/twelvedata_ws_service.py
-
 from __future__ import annotations
 
 import json
@@ -25,7 +23,6 @@ class TwelveDataWebSocketService:
         )
 
         self.symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()]
-
         self.enabled = os.getenv("TWELVEDATA_WS_ENABLED", "true").lower() in {
             "1",
             "true",
@@ -70,7 +67,6 @@ class TwelveDataWebSocketService:
             return
 
         self._stop_event.clear()
-
         self._thread = threading.Thread(
             target=self._run_forever,
             name="twelvedata-ws",
@@ -97,6 +93,7 @@ class TwelveDataWebSocketService:
         if not item:
             return {
                 "symbol": normalized,
+                "requested_symbol": symbol,
                 "price": None,
                 "data_status": "unavailable",
                 "source": "twelvedata_ws",
@@ -110,6 +107,7 @@ class TwelveDataWebSocketService:
 
         return {
             "symbol": normalized,
+            "requested_symbol": symbol,
             "source_symbol": item.get("source_symbol") or normalized,
             "price": item.get("price"),
             "timestamp": item.get("timestamp"),
@@ -189,14 +187,17 @@ class TwelveDataWebSocketService:
         self._connected = True
         self._last_error = None
 
-        subscribe_message = {
-            "action": "subscribe",
-            "params": {
-                "symbols": ",".join(self.symbols),
-            },
-        }
+        ws.send(
+            json.dumps(
+                {
+                    "action": "subscribe",
+                    "params": {
+                        "symbols": ",".join(self.symbols),
+                    },
+                }
+            )
+        )
 
-        ws.send(json.dumps(subscribe_message))
         self._start_heartbeat()
 
     def _on_message(self, ws: websocket.WebSocketApp, message: str) -> None:
@@ -229,6 +230,7 @@ class TwelveDataWebSocketService:
             return
 
         normalized = self._normalize_symbol(str(symbol))
+        now_utc = datetime.now(timezone.utc).isoformat()
 
         with self._lock:
             self._cache[normalized] = {
@@ -236,7 +238,7 @@ class TwelveDataWebSocketService:
                 "source_symbol": str(symbol),
                 "price": price_float,
                 "timestamp": payload.get("timestamp"),
-                "last_updated_utc": datetime.now(timezone.utc).isoformat(),
+                "last_updated_utc": now_utc,
                 "received_at_ts": time.time(),
                 "raw": payload,
             }
@@ -295,6 +297,7 @@ class TwelveDataWebSocketService:
             .upper()
             .replace("/", "")
             .replace("-", "")
+            .replace("_", "")
             .replace(" ", "")
             .strip()
         )
