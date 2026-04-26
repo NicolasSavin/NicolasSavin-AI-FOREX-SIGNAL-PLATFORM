@@ -1,25 +1,24 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
+fastapi
+uvicorn[standard]
 
-pydantic==2.9.2
-pydantic-settings==2.5.2
+pydantic
+pydantic-settings
 
-requests==2.32.3
-httpx==0.27.2
+requests
+httpx
 
-websocket-client==1.8.0
+websocket-client
 
-python-dotenv==1.0.1
+python-dotenv
 
-jinja2==3.1.4
+jinja2
+aiofiles
 
-aiofiles==24.1.0
+typing-extensions
 
-typing-extensions==4.12.2
+orjson
 
-orjson==3.10.7
+pandas
+numpy
 
-pandas==2.2.2
-numpy==1.26.4
-
-loguru==0.7.2
+loguru
