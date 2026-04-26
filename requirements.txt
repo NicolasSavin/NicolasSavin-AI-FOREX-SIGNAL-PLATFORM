@@ -24,3 +24,4 @@ numpy
 loguru
 
 beautifulsoup4
+yfinance
