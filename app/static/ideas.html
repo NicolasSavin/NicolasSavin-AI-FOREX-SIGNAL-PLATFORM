@@ -1,972 +1,595 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI идеи</title>
-
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI-идеи по рынку</title>
   <style>
     :root {
-      --bg: #08111f;
-      --panel: #0b1730;
-      --panel-2: #0d1b34;
-      --border: #1d2c47;
-      --text: #ffffff;
-      --muted: #9fb0c7;
-      --tag: #13233c;
-      --accent: #facc15;
-      --accent-soft: rgba(250, 204, 21, 0.18);
+      --bg: #07111f;
+      --panel: #0d1d34;
+      --panel2: #102642;
+      --border: #25446e;
+      --text: #f4f8ff;
+      --muted: #9bb7d8;
+      --green: #2df59a;
+      --red: #ff5f7a;
+      --yellow: #ffd84d;
+      --blue: #39c5ff;
+      --violet: #b9a7ff;
     }
 
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
-      background: var(--bg);
+      background: radial-gradient(circle at top, #10284a 0%, var(--bg) 48%, #030812 100%);
       color: var(--text);
-      font-family: Arial, sans-serif;
+      font-family: Arial, Helvetica, sans-serif;
     }
 
-    .wrap {
-      max-width: 1400px;
+    .page {
+      max-width: 1440px;
       margin: 0 auto;
-      padding: 24px 16px 40px;
+      padding: 28px 28px 60px;
     }
 
-    .topbar {
+    .top {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
       gap: 16px;
-      margin-bottom: 18px;
-      flex-wrap: wrap;
+      margin-bottom: 22px;
     }
 
-    .topbar-left h1 {
-      margin: 0 0 6px;
-      font-size: 28px;
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
       line-height: 1.1;
     }
 
-    .topbar-left p {
-      margin: 0;
+    .subtitle {
       color: var(--muted);
       font-size: 14px;
-      line-height: 1.45;
     }
 
-    .home-link {
-      display: inline-block;
-      text-decoration: none;
+    .home {
       color: var(--text);
-      background: #13233c;
-      border: 1px solid #233553;
+      text-decoration: none;
+      background: #132849;
+      border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 10px 14px;
-      font-size: 14px;
-      font-weight: 600;
+      padding: 10px 16px;
+      font-weight: 700;
+      white-space: nowrap;
     }
 
-    .toolbar {
+    .controls {
       display: flex;
       gap: 10px;
+      margin: 18px 0;
       flex-wrap: wrap;
-      margin-bottom: 18px;
     }
 
-    .toolbar select {
-      background: #0c1a33;
-      color: #fff;
-      border: 1px solid #223455;
+    select, button {
+      background: #10213d;
+      color: var(--text);
+      border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 10px 12px;
-      min-width: 150px;
+      padding: 10px 14px;
+      font-weight: 700;
+    }
+
+    button { cursor: pointer; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 18px 0;
+    }
+
+    .stat {
+      background: rgba(16, 38, 66, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+    }
+
+    .stat-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .stat-value {
+      margin-top: 6px;
+      font-size: 22px;
+      font-weight: 800;
     }
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(340px, 420px));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 14px;
     }
 
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 10px;
-      margin: 0 0 16px;
-    }
-
-    .stat-card {
-      background: linear-gradient(180deg, #0c1a33 0%, #0a1529 100%);
-      border: 1px solid #1d2c47;
-      border-radius: 14px;
-      padding: 10px 12px;
-    }
-
-    .stat-label {
-      font-size: 11px;
-      text-transform: uppercase;
-      color: var(--muted);
-      letter-spacing: 0.06em;
-      margin-bottom: 6px;
-    }
-
-    .stat-value {
-      font-size: 20px;
-      font-weight: 700;
-      color: #eef4ff;
-    }
-
     .card {
-      --state-accent: #7dd3fc;
-      --state-accent-soft: rgba(125, 211, 252, 0.2);
-      --state-accent-strong: rgba(125, 211, 252, 0.34);
-      background:
-        radial-gradient(circle at top right, rgba(125, 211, 252, 0.09), transparent 42%),
-        linear-gradient(180deg, #0e1d39 0%, #0a1427 100%);
-      border: 1px solid #253a5b;
-      border-radius: 18px;
-      padding: 15px;
-      cursor: pointer;
-      box-shadow:
-        0 10px 26px rgba(1, 7, 18, 0.55),
-        inset 0 1px 0 rgba(255, 255, 255, 0.04),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.36);
-      transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
-      animation: cardEnter 0.34s cubic-bezier(0.22, 1, 0.36, 1);
-    }
-
-    .card[data-direction="bullish"] {
-      --state-accent: #34d399;
-      --state-accent-soft: rgba(52, 211, 153, 0.22);
-      --state-accent-strong: rgba(52, 211, 153, 0.38);
-    }
-
-    .card[data-direction="bearish"] {
-      --state-accent: #fb7185;
-      --state-accent-soft: rgba(251, 113, 133, 0.22);
-      --state-accent-strong: rgba(251, 113, 133, 0.38);
-    }
-
-    .card[data-direction="neutral"] {
-      --state-accent: #60a5fa;
-      --state-accent-soft: rgba(96, 165, 250, 0.2);
-      --state-accent-strong: rgba(96, 165, 250, 0.35);
-    }
-
-    .card.idea-card-flash {
-      animation: ideaFlash 2.4s ease;
-    }
-
-    @keyframes ideaFlash {
-      0% {
-        border-color: var(--state-accent);
-        box-shadow:
-          0 0 0 0 var(--state-accent-soft),
-          0 12px 28px rgba(1, 9, 22, 0.62);
-      }
-      100% {
-        border-color: #253a5b;
-        box-shadow:
-          0 0 0 14px rgba(0, 0, 0, 0),
-          0 10px 26px rgba(1, 7, 18, 0.55);
-      }
-    }
-
-    .card:hover {
-      transform: translateY(-3px);
-      border-color: var(--state-accent-strong);
-      box-shadow:
-        0 14px 30px rgba(1, 9, 22, 0.62),
-        0 0 0 1px rgba(255, 255, 255, 0.03),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
-      background:
-        radial-gradient(circle at top right, var(--state-accent-soft), transparent 48%),
-        linear-gradient(180deg, #101f3b 0%, #0a162b 100%);
+      background: linear-gradient(180deg, rgba(20, 47, 82, .98), rgba(9, 22, 40, .98));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 18px 40px rgba(0,0,0,.28);
     }
 
     .card-head {
       display: flex;
       justify-content: space-between;
+      gap: 12px;
       align-items: flex-start;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-    .card-head-main {
-      min-width: 0;
+      margin-bottom: 12px;
     }
 
     .symbol {
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 3px;
+      font-weight: 900;
+      letter-spacing: .04em;
     }
 
-    .symbol:first-child {
-      color: #dbeafe;
-      font-weight: 700;
-    }
-
-    .meta {
+    .signal-line {
+      margin-top: 4px;
       font-size: 14px;
-      font-weight: 700;
-      line-height: 1.3;
-      margin-bottom: 6px;
-      color: #f4f8ff;
+      font-weight: 800;
     }
 
-    .summary {
-      margin: 0 0 10px;
-      color: #e3ebf7;
-      font-size: 13px;
-      line-height: 1.6;
-      min-height: 40px;
-      padding: 11px 12px;
-      border-radius: 12px;
-      border: 1px solid rgba(37, 56, 89, 0.82);
-      background: linear-gradient(180deg, rgba(13, 27, 51, 0.88) 0%, rgba(11, 21, 38, 0.88) 100%);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-    .summary-main {
-      min-height: 96px;
-      display: block;
-      -webkit-line-clamp: unset;
-      -webkit-box-orient: initial;
-      overflow: visible;
-      border-color: rgba(60, 83, 121, 0.8);
-      background: linear-gradient(180deg, rgba(16, 30, 56, 0.95) 0%, rgba(11, 21, 39, 0.96) 100%);
-      box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.05),
-        0 8px 16px rgba(2, 8, 18, 0.35);
-    }
-    .signal-badge {
-      padding: 7px 12px;
+    .badge {
       border-radius: 999px;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      border: 1px solid rgba(255,255,255,0.16);
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+      white-space: nowrap;
     }
-    .signal-badge-bullish { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; }
-    .signal-badge-bearish { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
-    .signal-badge-neutral { background: rgba(129, 140, 248, 0.2); color: #c4b5fd; }
-    .timeframe-tags { display: flex; gap: 6px; margin: 6px 0 10px; }
-    .tf-tag { border-color: rgba(125, 211, 252, 0.24); }
-    .mtf-strip {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+
+    .badge-buy {
+      color: #00140a;
+      background: var(--green);
+      border-color: #8cffca;
+    }
+
+    .badge-sell {
+      color: white;
+      background: #7a1d2c;
+      border-color: var(--red);
+    }
+
+    .badge-wait {
+      color: var(--violet);
+      background: #273868;
+      border-color: #5368b7;
+    }
+
+    .chip-row {
+      display: flex;
       gap: 8px;
-      margin-bottom: 10px;
+      flex-wrap: wrap;
+      margin: 12px 0;
     }
-    .strip-chip {
-      padding: 8px 10px;
-      border-radius: 10px;
-      border: 1px solid rgba(47, 69, 104, 0.7);
-      background: rgba(9, 18, 34, 0.85);
+
+    .chip {
       font-size: 11px;
-      color: #dbeafe;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #0a223f;
+      color: #d7ecff;
+      border: 1px solid #173e6c;
+      font-weight: 800;
     }
-    .strip-chip-h4 { border-color: rgba(167, 139, 250, 0.6); color: #c4b5fd; }
-    .strip-chip-h1 { border-color: rgba(56, 189, 248, 0.6); color: #7dd3fc; }
-    .strip-chip-m15 { border-color: rgba(250, 204, 21, 0.55); color: #fcd34d; }
-    .levels-inline {
+
+    .chip-live {
+      color: #d8fff0;
+      border-color: #1abf7a;
+    }
+
+    .chip-rest {
+      color: #fff3b2;
+      border-color: #b48a00;
+    }
+
+    .chip-warn {
+      color: #ffdcdc;
+      border-color: #87414e;
+    }
+
+    .box {
+      background: rgba(5, 17, 32, .74);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      margin: 10px 0;
+      color: #e8f3ff;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .levels {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
-      margin-bottom: 8px;
-    }
-    .level-pill {
-      border-radius: 10px;
-      padding: 8px 10px;
-      border: 1px solid rgba(47, 69, 104, 0.7);
-      background: rgba(9, 18, 34, 0.82);
-      font-size: 12px;
-      font-weight: 700;
-    }
-    .level-pill-entry { color: #fcd34d; }
-    .level-pill-sl { color: #fda4af; }
-    .level-pill-tp { color: #86efac; }
-    .level-pill-rr { color: #93c5fd; }
-
-    .summary-secondary {
-      font-size: 12px;
-      color: #bfcde3;
-      background: rgba(12, 21, 39, 0.72);
-      border-color: rgba(37, 56, 89, 0.64);
-      -webkit-line-clamp: 3;
-      min-height: 0;
+      margin-top: 12px;
     }
 
-    .tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      padding-top: 8px;
-      margin-top: 6px;
-      border-top: 1px solid rgba(39, 58, 90, 0.5);
-    }
-
-    .card-warning-badges {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 8px;
-    }
-
-    .warning-badge {
-      display: inline-flex;
-      align-items: center;
-      max-width: 100%;
-      padding: 4px 8px;
-      border-radius: 999px;
-      border: 1px solid rgba(251, 191, 36, 0.34);
-      background: rgba(120, 53, 15, 0.28);
-      color: #fde68a;
-      font-size: 11px;
-      line-height: 1.25;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .tag {
-      background: var(--tag);
-      color: #dbe7f7;
-      border-radius: 999px;
-      padding: 5px 9px;
-      font-size: 11px;
-      line-height: 1;
-    }
-
-    .empty {
-      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+    .level {
+      background: #07162a;
       border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 22px;
-      color: var(--muted);
-      font-size: 14px;
-      max-width: 420px;
+      border-radius: 10px;
+      padding: 9px 10px;
+      font-size: 13px;
+      font-weight: 800;
     }
 
-    .modal {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.88);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 18px;
-      z-index: 1000;
-    }
+    .entry { color: var(--yellow); }
+    .tp { color: var(--green); }
+    .sl { color: var(--red); }
+    .rr { color: var(--blue); }
 
-    .modal.open {
-      display: flex;
-    }
-
-    .modal-card {
-      --state-accent: #60a5fa;
-      --state-accent-soft: rgba(96, 165, 250, 0.2);
-      --state-accent-strong: rgba(96, 165, 250, 0.38);
-      width: min(1420px, 100%);
-      max-height: 95vh;
-      overflow-y: auto;
-      background:
-        radial-gradient(circle at top right, rgba(96, 165, 250, 0.1), transparent 52%),
-        linear-gradient(180deg, #0c1932 0%, #091325 100%);
-      border: 1px solid #263b5d;
-      border-radius: 22px;
-      padding: 20px;
-      box-shadow:
-        0 24px 56px rgba(0, 0, 0, 0.62),
-        inset 0 1px 0 rgba(255, 255, 255, 0.04),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.34);
-      animation: modalEnter 0.42s cubic-bezier(0.22, 1, 0.36, 1);
-    }
-
-    .modal-card[data-direction="bullish"] {
-      --state-accent: #34d399;
-      --state-accent-soft: rgba(52, 211, 153, 0.2);
-      --state-accent-strong: rgba(52, 211, 153, 0.38);
-    }
-
-    .modal-card[data-direction="bearish"] {
-      --state-accent: #fb7185;
-      --state-accent-soft: rgba(251, 113, 133, 0.2);
-      --state-accent-strong: rgba(251, 113, 133, 0.38);
-    }
-
-    .modal-top {
+    .footer {
+      margin-top: 12px;
       display: flex;
       justify-content: space-between;
-      gap: 12px;
-      align-items: center;
-      margin-bottom: 12px;
-      padding: 12px 14px;
-      border-radius: 16px;
-      border: 1px solid rgba(45, 67, 101, 0.85);
-      border-left: 2px solid var(--state-accent-strong);
-      background: linear-gradient(180deg, rgba(14, 30, 56, 0.96) 0%, rgba(10, 22, 41, 0.96) 100%);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    }
-
-    .modal-headline {
-      min-width: 0;
-    }
-
-    .modal-top h2 {
-      margin: 0 0 4px;
-      font-size: 22px;
-      line-height: 1.2;
-      font-weight: 800;
-      letter-spacing: 0.01em;
-      color: #f4f8ff;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .modal-sub {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.4;
-      letter-spacing: 0.03em;
-      text-transform: uppercase;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .detail-warnings {
-      margin-bottom: 12px;
-      padding: 10px 12px;
-      border-radius: 14px;
-      border: 1px solid rgba(251, 191, 36, 0.35);
-      background: linear-gradient(180deg, rgba(120, 53, 15, 0.3) 0%, rgba(69, 26, 3, 0.28) 100%);
-    }
-
-    .detail-warnings-title {
-      margin: 0 0 8px;
-      font-size: 12px;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: #fde68a;
-      font-weight: 700;
-    }
-
-    .detail-warnings-list {
-      margin: 0;
-      padding: 0;
-      list-style: none;
-      display: grid;
-      gap: 6px;
-    }
-
-    .detail-warnings-list li {
-      color: #fde68a;
-      font-size: 13px;
-      line-height: 1.45;
-    }
-
-    .close-btn {
-      border: 1px solid #2a3f63;
-      background: linear-gradient(180deg, #132a49 0%, #10223c 100%);
-      color: #dbe7f7;
-      border-radius: 10px;
-      padding: 7px 11px;
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-      line-height: 1;
-      flex-shrink: 0;
-      transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
-    }
-
-    .close-btn:hover {
-      border-color: #46699d;
-      background: linear-gradient(180deg, #183359 0%, #142c4c 100%);
-      color: #f4f8ff;
-    }
-
-    .chart-wrap {
-      position: relative;
-      width: 100%;
-      height: min(74vh, 760px);
-      min-height: 560px;
-      border-radius: 18px;
-      border: 1px solid rgba(33, 54, 85, 0.92);
-      background: #08111f;
-      overflow: hidden;
-      margin-bottom: 18px;
-      box-shadow:
-        0 10px 24px rgba(2, 8, 18, 0.52),
-        inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    }
-
-    .chart-placeholder {
-      position: absolute;
-      inset: 0;
-      z-index: 3;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
       gap: 10px;
-      text-align: center;
-      padding: 24px;
       color: var(--muted);
-      background: linear-gradient(180deg, rgba(8, 17, 31, 0.72) 0%, rgba(8, 17, 31, 0.94) 100%);
-    }
-
-    .chart-placeholder.open {
-      display: flex;
-    }
-
-    .chart-placeholder strong {
-      color: #eef4ff;
-      font-size: 16px;
-    }
-
-    .chart-host {
-      position: absolute;
-      inset: 0;
-      z-index: 1;
-    }
-
-    .chart-snapshot-layer {
-      position: absolute;
-      inset: 0;
-      z-index: 1;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      background:
-        radial-gradient(circle at top, rgba(56, 189, 248, 0.08), transparent 46%),
-        #08111f;
-    }
-
-    .chart-snapshot-layer.open {
-      display: flex;
-    }
-
-    .chart-snapshot-image {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-    }
-
-    .chart-live-layer {
-      position: absolute;
-      inset: 0;
-      z-index: 1;
-      display: none;
-    }
-
-    .chart-live-layer.open {
-      display: block;
-    }
-
-    .chart-live-layer .chart-host,
-    .chart-live-layer .overlay {
-      position: absolute;
-      inset: 0;
-    }
-
-    .overlay {
-      position: absolute;
-      inset: 0;
-      z-index: 2;
-      pointer-events: none;
-    }
-
-    .detail-grid {
-      display: grid;
-      grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-
-    .detail-card {
-      background: linear-gradient(180deg, #0e1e3a 0%, #0a162b 100%);
-      border: 1px solid #233857;
-      border-radius: 16px;
-      padding: 16px 18px;
-      box-shadow:
-        0 10px 20px rgba(2, 8, 18, 0.42),
-        inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    }
-
-    .detail-card-main {
-      border-color: rgba(54, 76, 111, 0.94);
-      background:
-        linear-gradient(90deg, var(--state-accent-soft), transparent 18%),
-        linear-gradient(180deg, #111f38 0%, #0b162b 100%);
-    }
-
-    .detail-card h3 {
-      margin: 0 0 10px;
-      font-size: 15px;
-    }
-
-    .detail-summary {
-      margin: 0;
-      color: #eef4ff;
-      line-height: 1.78;
-    }
-
-    .detail-summary-strong {
-      font-size: 17px;
-      line-height: 1.92;
-      letter-spacing: 0.01em;
-      padding: 14px 14px 15px;
-      border-radius: 13px;
-      background: rgba(9, 18, 35, 0.84);
-      border: 1px solid rgba(37, 56, 89, 0.8);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    }
-
-    .detail-metrics {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 14px;
-    }
-
-    .metric-chip {
-      border-radius: 999px;
-      border: 1px solid rgba(39, 59, 91, 0.82);
-      background: rgba(255, 255, 255, 0.02);
-      padding: 5px 10px;
-      display: inline-flex;
-      align-items: baseline;
-      gap: 6px;
-    }
-
-    .metric-chip-label {
-      color: var(--muted);
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 0;
-    }
-
-    .metric-chip-value {
-      color: #eef4ff;
       font-size: 12px;
-      line-height: 1.2;
-      font-weight: 600;
+      border-top: 1px solid rgba(80, 120, 170, .35);
+      padding-top: 10px;
     }
 
-    .levels-list {
-      display: grid;
-      gap: 9px;
-    }
-
-    .level-item {
-      display: grid;
-      gap: 3px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid rgba(36, 55, 86, 0.5);
-    }
-
-    .level-label {
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--muted);
-      font-size: 11px;
-    }
-
-    .level-value {
-      color: #eef4ff;
-      line-height: 1.48;
-      font-weight: 700;
-      font-size: 15px;
-      white-space: pre-line;
-    }
-
-    .level-item[data-level="entry"] .level-value { color: #fcd34d; }
-    .level-item[data-level="sl"] .level-value { color: #fb7185; }
-    .level-item[data-level="tp"] .level-value { color: #4ade80; }
-    .level-item[data-level="rr"] .level-value { color: #93c5fd; }
-
-    .level-item:last-child {
-      border-bottom: 0;
-      padding-bottom: 0;
-    }
-
-    .status-note {
-      margin-bottom: 18px;
-      padding: 12px 14px;
+    .empty, .error {
+      background: rgba(16, 38, 66, 0.9);
+      border: 1px solid var(--border);
       border-radius: 14px;
-      background: rgba(250, 204, 21, 0.08);
-      border: 1px solid rgba(250, 204, 21, 0.18);
-      color: #f9e58a;
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
-    .modal-card .status-note {
-      border-color: var(--state-accent-strong);
-      background: linear-gradient(180deg, rgba(12, 23, 43, 0.86) 0%, rgba(9, 17, 33, 0.9) 100%);
-      color: #dbeafe;
-    }
-
-    .analysis-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-
-    .analysis-block {
-      background: linear-gradient(180deg, #0c1a33 0%, #0a1529 100%);
-      border: 1px solid #1d2c47;
-      border-radius: 16px;
-      padding: 16px 18px;
-    }
-
-    .analysis-title {
-      font-size: 13px;
+      padding: 18px;
       color: var(--muted);
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
     }
 
-    .analysis-text {
-      margin: 0;
-      font-size: 15px;
-      line-height: 1.65;
-      color: #eef4ff;
-      white-space: pre-line;
+    .error {
+      color: #ffd6d6;
+      border-color: #7e3343;
     }
 
-    .scenario-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 12px;
-      margin-bottom: 14px;
+    .buy-text { color: var(--green); }
+    .sell-text { color: var(--red); }
+    .wait-text { color: var(--violet); }
+
+    @media (max-width: 1100px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
-    .scenario-card {
-      background: linear-gradient(180deg, #0c1a33 0%, #0a1529 100%);
-      border: 1px solid #223553;
-      border-radius: 16px;
-      padding: 16px 18px;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    }
-
-    .scenario-card h3 {
-      margin: 0 0 8px;
-      font-size: 14px;
-      color: #eef4ff;
-    }
-
-    .scenario-card p {
-      margin: 0;
-      color: #d7e0ee;
-      line-height: 1.7;
-      font-size: 14px;
-    }
-
-    .analysis-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: 10px;
-      padding: 5px 8px;
-      border-radius: 999px;
-      background: rgba(250, 204, 21, 0.08);
-      border: 1px solid rgba(250, 204, 21, 0.16);
-      color: #f9e58a;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-    }
-
-    @media (max-width: 900px) {
-      .detail-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .card {
-        box-shadow: 0 8px 18px rgba(1, 7, 18, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.03);
-      }
-    }
-
-    @media (max-width: 640px) {
-      .grid {
-        grid-template-columns: 1fr;
-      }
-
-      .modal-top {
-        align-items: flex-start;
-        padding: 10px 12px;
-      }
-
-      .modal-top h2 {
-        font-size: 19px;
-        white-space: normal;
-      }
-
-      .modal-sub {
-        white-space: normal;
-      }
-
-      .chart-wrap {
-        height: min(62vh, 520px);
-        min-height: 420px;
-      }
-      .mtf-strip,
-      .levels-inline { grid-template-columns: 1fr; }
-
-      .modal-card {
-        padding: 16px;
-      }
-
-      .modal-card,
-      .chart-wrap,
-      .detail-card {
-        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
-      }
-    }
-
-    @keyframes cardEnter {
-      from {
-        opacity: 0;
-        transform: translateY(6px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    @keyframes modalEnter {
-      from {
-        opacity: 0;
-        transform: translateY(10px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+    @media (max-width: 760px) {
+      .page { padding: 20px 14px 40px; }
+      .grid { grid-template-columns: 1fr; }
+      .stats { grid-template-columns: 1fr; }
+      .top { flex-direction: column; }
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="topbar">
-      <div class="topbar-left">
+  <main class="page">
+    <header class="top">
+      <div>
         <h1>AI-идеи по рынку</h1>
-        <p>Премиальный multi-timeframe обзор: один инструмент — одна идея, единый сигнал и чистый сценарий.</p>
+        <div class="subtitle">
+          Live цены через TwelveData WebSocket + REST fallback. Yahoo/Stooq отключены.
+        </div>
       </div>
-      <a class="home-link" href="/">На главную</a>
-    </div>
+      <a class="home" href="/">На главную</a>
+    </header>
 
-    <div class="toolbar">
-      <select id="symbol-filter">
+    <section class="controls">
+      <select id="pairFilter">
         <option value="ALL">Все пары</option>
       </select>
 
-      <select id="timeframe-filter">
-        <option value="ALL">Все ТФ</option>
+      <select id="signalFilter">
+        <option value="ALL">Все сигналы</option>
+        <option value="BUY">BUY</option>
+        <option value="SELL">SELL</option>
+        <option value="WAIT">WAIT</option>
       </select>
-    </div>
 
-    <div id="stats-grid" class="stats-grid"></div>
+      <button id="refreshBtn">Обновить</button>
+    </section>
 
-    <div id="ideas" class="grid"></div>
-  </div>
-
-  <div id="modal" class="modal">
-    <div id="modal-card" class="modal-card" data-direction="neutral">
-      <div class="modal-top">
-        <div class="modal-headline">
-          <h2 id="modal-title">Идея</h2>
-          <div id="modal-sub" class="modal-sub"></div>
-        </div>
-        <button id="close-modal" class="close-btn">Закрыть</button>
+    <section class="stats">
+      <div class="stat">
+        <div class="stat-label">BUY</div>
+        <div class="stat-value" id="buyCount">0</div>
       </div>
-
-      <div id="detail-warnings" class="detail-warnings" style="display:none;">
-        <h3 class="detail-warnings-title">Предупреждения по качеству данных</h3>
-        <ul id="detail-warnings-list" class="detail-warnings-list"></ul>
+      <div class="stat">
+        <div class="stat-label">SELL</div>
+        <div class="stat-value" id="sellCount">0</div>
       </div>
+      <div class="stat">
+        <div class="stat-label">WAIT</div>
+        <div class="stat-value" id="waitCount">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Источник</div>
+        <div class="stat-value" id="sourceCount">—</div>
+      </div>
+    </section>
 
-      <div class="detail-grid">
-        <section class="detail-card detail-card-main">
-          <h3>Основная идея (тезис сценария)</h3>
-          <p id="idea-summary" class="detail-summary detail-summary-strong"></p>
-          <div id="detail-metrics" class="detail-metrics"></div>
-        </section>
+    <section id="statusBox" class="empty">Загрузка сигналов...</section>
+    <section id="ideasGrid" class="grid"></section>
+  </main>
 
-        <section class="detail-card">
-          <h3>Уровни</h3>
-          <div class="levels-list">
-            <div class="level-item" data-level="entry"><div class="level-label">Entry</div><div id="level-entry" class="level-value"></div></div>
-            <div class="level-item" data-level="sl"><div class="level-label">SL</div><div id="level-sl" class="level-value"></div></div>
-            <div class="level-item" data-level="tp"><div class="level-label">TP</div><div id="level-tp" class="level-value"></div></div>
-            <div class="level-item" data-level="rr"><div class="level-label">RR</div><div id="level-rr" class="level-value"></div></div>
+  <script>
+    const state = {
+      ideas: [],
+      selectedPair: "ALL",
+      selectedSignal: "ALL",
+    };
+
+    const pairFilter = document.getElementById("pairFilter");
+    const signalFilter = document.getElementById("signalFilter");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const statusBox = document.getElementById("statusBox");
+    const ideasGrid = document.getElementById("ideasGrid");
+
+    pairFilter.addEventListener("change", () => {
+      state.selectedPair = pairFilter.value;
+      render();
+    });
+
+    signalFilter.addEventListener("change", () => {
+      state.selectedSignal = signalFilter.value;
+      render();
+    });
+
+    refreshBtn.addEventListener("click", () => {
+      loadSignals();
+    });
+
+    async function loadSignals() {
+      statusBox.style.display = "block";
+      statusBox.className = "empty";
+      statusBox.textContent = "Загрузка сигналов...";
+      ideasGrid.innerHTML = "";
+
+      try {
+        const response = await fetch("/api/signals", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          throw new Error("HTTP " + response.status);
+        }
+
+        const data = await response.json();
+        state.ideas = normalizeIdeas(data);
+        fillPairFilter(state.ideas);
+        render();
+      } catch (error) {
+        statusBox.style.display = "block";
+        statusBox.className = "error";
+        statusBox.textContent = "Не удалось загрузить /api/signals: " + error.message;
+      }
+    }
+
+    function normalizeIdeas(data) {
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data.signals)) return data.signals;
+      if (Array.isArray(data.ideas)) return data.ideas;
+      return [];
+    }
+
+    function fillPairFilter(ideas) {
+      const current = pairFilter.value || "ALL";
+      const symbols = Array.from(
+        new Set(
+          ideas
+            .map(item => normalizeSymbol(item.symbol || item.pair))
+            .filter(Boolean)
+        )
+      ).sort();
+
+      pairFilter.innerHTML = '<option value="ALL">Все пары</option>';
+
+      for (const symbol of symbols) {
+        const option = document.createElement("option");
+        option.value = symbol;
+        option.textContent = symbol;
+        pairFilter.appendChild(option);
+      }
+
+      if (symbols.includes(current)) {
+        pairFilter.value = current;
+      } else {
+        pairFilter.value = "ALL";
+        state.selectedPair = "ALL";
+      }
+    }
+
+    function render() {
+      const ideas = filteredIdeas();
+
+      updateStats(state.ideas);
+      ideasGrid.innerHTML = "";
+
+      if (!ideas.length) {
+        statusBox.style.display = "block";
+        statusBox.className = "empty";
+        statusBox.textContent = "Нет сигналов под выбранные фильтры.";
+        return;
+      }
+
+      statusBox.style.display = "none";
+
+      for (const idea of ideas) {
+        ideasGrid.appendChild(renderCard(idea));
+      }
+    }
+
+    function filteredIdeas() {
+      return state.ideas.filter(idea => {
+        const symbol = normalizeSymbol(idea.symbol || idea.pair);
+        const signal = normalizeSignal(idea.final_signal || idea.signal);
+
+        if (state.selectedPair !== "ALL" && symbol !== state.selectedPair) {
+          return false;
+        }
+
+        if (state.selectedSignal !== "ALL" && signal !== state.selectedSignal) {
+          return false;
+        }
+
+        return true;
+      });
+    }
+
+    function updateStats(ideas) {
+      const buy = ideas.filter(i => normalizeSignal(i.final_signal || i.signal) === "BUY").length;
+      const sell = ideas.filter(i => normalizeSignal(i.final_signal || i.signal) === "SELL").length;
+      const wait = ideas.filter(i => normalizeSignal(i.final_signal || i.signal) === "WAIT").length;
+      const ws = ideas.filter(i => i.source === "twelvedata_ws").length;
+      const rest = ideas.filter(i => i.source === "twelvedata_rest_quote").length;
+
+      document.getElementById("buyCount").textContent = buy;
+      document.getElementById("sellCount").textContent = sell;
+      document.getElementById("waitCount").textContent = wait;
+      document.getElementById("sourceCount").textContent = `WS ${ws} / REST ${rest}`;
+    }
+
+    function renderCard(idea) {
+      const symbol = normalizeSymbol(idea.symbol || idea.pair || "MARKET");
+      const signal = normalizeSignal(idea.final_signal || idea.signal);
+      const confidence = numberOrDash(idea.final_confidence ?? idea.confidence);
+      const source = idea.source || "unknown";
+      const dataStatus = idea.data_status || "unknown";
+      const price = idea.current_price ?? idea.price ?? idea.entry_price ?? idea.entry;
+      const dayChange = idea.day_change_percent;
+      const summary = idea.summary_ru || idea.summary || idea.short_text || "Описание сигнала отсутствует.";
+      const warning = idea.warning_ru || "";
+      const badgeClass = signal === "BUY" ? "badge-buy" : signal === "SELL" ? "badge-sell" : "badge-wait";
+      const signalClass = signal === "BUY" ? "buy-text" : signal === "SELL" ? "sell-text" : "wait-text";
+
+      const card = document.createElement("article");
+      card.className = "card";
+
+      card.innerHTML = `
+        <div class="card-head">
+          <div>
+            <div class="symbol">${escapeHtml(symbol)}</div>
+            <div class="signal-line">
+              Итоговый сигнал:
+              <span class="${signalClass}">${escapeHtml(signal)}</span>
+              · Уверенность: ${escapeHtml(String(confidence))}%
+            </div>
           </div>
-        </section>
-      </div>
-
-      <div id="detail-status" class="status-note"></div>
-
-      <div class="scenario-grid">
-        <section class="scenario-card">
-          <h3>Основной сценарий · 1–7 дней</h3>
-          <p id="scenario-primary"></p>
-        </section>
-        <section class="scenario-card">
-          <h3>Среднесрочный сценарий · 1–4 недели</h3>
-          <p id="scenario-swing"></p>
-        </section>
-        <section class="scenario-card">
-          <h3>Инвалидация</h3>
-          <p id="scenario-invalidation"></p>
-        </section>
-      </div>
-
-      <div class="chart-wrap">
-        <div id="chart-snapshot-layer" class="chart-snapshot-layer">
-          <img id="chart-snapshot-image" class="chart-snapshot-image" alt="Снапшот графика идеи" loading="lazy" />
+          <span class="badge ${badgeClass}">${escapeHtml(signal)}</span>
         </div>
-        <div id="chart-live-layer" class="chart-live-layer">
-          <div id="chart-host" class="chart-host"></div>
-          <canvas id="chart-overlay" class="overlay"></canvas>
-        </div>
-        <div id="chart-placeholder" class="chart-placeholder">
-          <strong>График недоступен</strong>
-          <span id="chart-placeholder-text">График недоступен</span>
-        </div>
-      </div>
 
-      <div class="analysis-grid" style="display:none;">
-        <div class="analysis-block">
-          <div class="analysis-title">Desk Narrative</div>
-          <p id="analysis-text" class="analysis-text"></p>
+        <div class="chip-row">
+          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">
+            ${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}
+          </span>
+          <span class="chip">${escapeHtml(dataStatus)}</span>
+          <span class="chip">LIVE</span>
+          ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
         </div>
-        <div class="analysis-block">
-          <div class="analysis-title">Trading Plan</div>
-          <p id="trading-plan-text" class="analysis-text"></p>
+
+        <div class="box">${escapeHtml(summary)}</div>
+
+        ${warning ? `<div class="box">${escapeHtml(warning)}</div>` : ""}
+
+        <div class="levels">
+          <div class="level entry">Price: ${formatValue(price)}</div>
+          <div class="level entry">Entry: ${formatValue(idea.entry ?? idea.entry_price)}</div>
+          <div class="level sl">SL: ${formatValue(idea.sl ?? idea.stop_loss)}</div>
+          <div class="level tp">TP: ${formatValue(idea.tp ?? idea.take_profit)}</div>
+          <div class="level rr">RR: ${formatValue(idea.rr ?? idea.risk_reward)}</div>
+          <div class="level">Day %: ${formatPercent(dayChange)}</div>
         </div>
-      </div>
 
-      <div id="analysis-sections" class="analysis-grid"></div>
-    </div>
-  </div>
+        <div class="footer">
+          <span>${escapeHtml(idea.source_symbol || symbol)}</span>
+          <span>${formatDate(idea.meaningful_updated_at || idea.updated_at)}</span>
+        </div>
+      `;
 
-  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="/static/js/chart-page.js"></script>
-  <script src="/static/js/chart-fallback-fix.js"></script>
+      return card;
+    }
+
+    function normalizeSignal(value) {
+      const signal = String(value || "WAIT").toUpperCase();
+
+      if (signal.includes("BUY")) return "BUY";
+      if (signal.includes("SELL")) return "SELL";
+      return "WAIT";
+    }
+
+    function normalizeSymbol(value) {
+      return String(value || "")
+        .toUpperCase()
+        .replace("/", "")
+        .replace("-", "")
+        .replace("_", "")
+        .replace(/\s+/g, "")
+        .trim();
+    }
+
+    function numberOrDash(value) {
+      if (value === null || value === undefined || value === "") return "—";
+      const number = Number(value);
+      if (!Number.isFinite(number)) return "—";
+      return Math.round(number);
+    }
+
+    function formatValue(value) {
+      if (value === null || value === undefined || value === "") return "—";
+      const number = Number(value);
+      if (!Number.isFinite(number)) return escapeHtml(String(value));
+
+      if (Math.abs(number) >= 100) return number.toFixed(3);
+      if (Math.abs(number) >= 10) return number.toFixed(4);
+      return number.toFixed(5);
+    }
+
+    function formatPercent(value) {
+      if (value === null || value === undefined || value === "") return "—";
+      const number = Number(value);
+      if (!Number.isFinite(number)) return "—";
+      return number.toFixed(3) + "%";
+    }
+
+    function formatDate(value) {
+      if (!value) return "—";
+
+      try {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "—";
+        return date.toLocaleString("ru-RU");
+      } catch {
+        return "—";
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    loadSignals();
+
+    setInterval(() => {
+      loadSignals();
+    }, 30000);
+  </script>
 </body>
 </html>
