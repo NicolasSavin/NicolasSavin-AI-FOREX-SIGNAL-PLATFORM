@@ -5,15 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AI-идеи по рынку</title>
 
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+
   <style>
     :root {
       --bg-0: #030712;
       --bg-1: #071426;
-      --bg-2: #0b2341;
-      --card-1: rgba(20, 52, 92, 0.95);
-      --card-2: rgba(8, 22, 42, 0.96);
-      --border: rgba(99, 157, 230, 0.32);
-      --border-strong: rgba(124, 184, 255, 0.62);
+      --card-1: rgba(20, 52, 92, 0.96);
+      --card-2: rgba(8, 22, 42, 0.97);
+      --border: rgba(99, 157, 230, 0.34);
+      --border-strong: rgba(124, 184, 255, 0.68);
       --text: #f4f8ff;
       --muted: #9db8da;
       --green: #31f59d;
@@ -21,36 +22,19 @@
       --yellow: #ffd84d;
       --blue: #45caff;
       --violet: #b9a7ff;
-      --shadow: rgba(0, 0, 0, 0.42);
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
       min-height: 100vh;
       color: var(--text);
-      font-family: Inter, Arial, Helvetica, sans-serif;
+      font-family: Arial, Helvetica, sans-serif;
       background:
-        radial-gradient(circle at 18% 4%, rgba(65, 139, 255, 0.28), transparent 32%),
-        radial-gradient(circle at 82% 14%, rgba(45, 245, 157, 0.12), transparent 28%),
-        radial-gradient(circle at 52% 100%, rgba(185, 167, 255, 0.12), transparent 34%),
+        radial-gradient(circle at 18% 4%, rgba(65,139,255,.28), transparent 32%),
+        radial-gradient(circle at 82% 14%, rgba(45,245,157,.12), transparent 28%),
         linear-gradient(145deg, var(--bg-0), var(--bg-1) 42%, #020814 100%);
-      overflow-x: hidden;
-    }
-
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background-image:
-        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
-      background-size: 44px 44px;
-      mask-image: linear-gradient(to bottom, rgba(0,0,0,0.55), transparent 75%);
     }
 
     .page {
@@ -62,7 +46,6 @@
     .hero {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
       gap: 18px;
       margin-bottom: 22px;
     }
@@ -71,8 +54,6 @@
       margin: 0 0 8px;
       font-size: clamp(28px, 3vw, 44px);
       letter-spacing: -0.04em;
-      line-height: 1.04;
-      text-shadow: 0 8px 30px rgba(69, 202, 255, 0.2);
     }
 
     .subtitle {
@@ -81,20 +62,15 @@
       line-height: 1.5;
     }
 
-    .home-link {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      height: 42px;
-      padding: 0 18px;
-      border-radius: 14px;
-      border: 1px solid var(--border);
+    .home-link, select, button {
+      background: linear-gradient(180deg, rgba(22,50,91,.95), rgba(10,27,51,.95));
       color: var(--text);
-      text-decoration: none;
-      background: linear-gradient(180deg, rgba(42, 82, 139, .9), rgba(17, 35, 64, .92));
-      box-shadow: 0 12px 30px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.12);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 11px 16px;
       font-weight: 800;
-      white-space: nowrap;
+      text-decoration: none;
+      cursor: pointer;
     }
 
     .controls {
@@ -104,55 +80,19 @@
       flex-wrap: wrap;
     }
 
-    select,
-    button {
-      height: 44px;
-      background: linear-gradient(180deg, rgba(22, 50, 91, .95), rgba(10, 27, 51, .95));
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 0 16px;
-      font-weight: 800;
-      box-shadow: 0 10px 22px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.08);
-      cursor: pointer;
-      outline: none;
-    }
-
-    button:hover,
-    select:hover,
-    .home-link:hover {
-      border-color: var(--border-strong);
-      filter: brightness(1.08);
-    }
-
     .stats {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 14px;
-      margin: 18px 0 18px;
+      margin: 18px 0;
     }
 
     .stat {
-      position: relative;
-      overflow: hidden;
-      background:
-        linear-gradient(135deg, rgba(28, 64, 113, .95), rgba(9, 24, 45, .96)),
-        radial-gradient(circle at top right, rgba(69, 202, 255, .18), transparent 42%);
+      background: linear-gradient(135deg, rgba(28,64,113,.95), rgba(9,24,45,.96));
       border: 1px solid var(--border);
       border-radius: 18px;
       padding: 16px;
-      min-height: 86px;
-      box-shadow: 0 18px 42px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.08);
-    }
-
-    .stat::after {
-      content: "";
-      position: absolute;
-      inset: auto -30px -48px auto;
-      width: 120px;
-      height: 120px;
-      background: radial-gradient(circle, rgba(69, 202, 255, .18), transparent 70%);
-      border-radius: 999px;
+      box-shadow: 0 18px 42px rgba(0,0,0,.28);
     }
 
     .stat-label {
@@ -167,65 +107,36 @@
       margin-top: 8px;
       font-size: 28px;
       font-weight: 950;
-      letter-spacing: -0.04em;
     }
 
     .grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 16px;
-      align-items: stretch;
     }
 
     .card {
-      position: relative;
-      overflow: hidden;
       min-height: 390px;
       background:
-        radial-gradient(circle at 85% 0%, rgba(69, 202, 255, .16), transparent 34%),
+        radial-gradient(circle at 85% 0%, rgba(69,202,255,.16), transparent 34%),
         linear-gradient(155deg, var(--card-1), var(--card-2) 68%);
       border: 1px solid var(--border);
       border-radius: 22px;
       padding: 17px;
-      box-shadow:
-        0 22px 54px var(--shadow),
-        inset 0 1px 0 rgba(255,255,255,.11);
+      box-shadow: 0 22px 54px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.11);
       cursor: pointer;
-      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+      transition: transform .18s ease, border-color .18s ease;
     }
 
     .card:hover {
-      transform: translateY(-4px) scale(1.006);
+      transform: translateY(-4px);
       border-color: var(--border-strong);
-      box-shadow:
-        0 28px 68px rgba(0,0,0,.5),
-        0 0 0 1px rgba(69, 202, 255, .08),
-        inset 0 1px 0 rgba(255,255,255,.13);
-    }
-
-    .card::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,.08) 45%, transparent 58%);
-      transform: translateX(-140%);
-      transition: transform .75s ease;
-    }
-
-    .card:hover::before {
-      transform: translateX(140%);
-    }
-
-    .card-content {
-      position: relative;
-      z-index: 1;
     }
 
     .card-head {
       display: flex;
       justify-content: space-between;
       gap: 12px;
-      align-items: flex-start;
       margin-bottom: 14px;
     }
 
@@ -249,25 +160,11 @@
       font-weight: 950;
       text-transform: uppercase;
       white-space: nowrap;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 12px 24px rgba(0,0,0,.24);
     }
 
-    .badge-buy {
-      color: #00150c;
-      background: linear-gradient(180deg, #54ffb5, var(--green));
-    }
-
-    .badge-sell {
-      color: #fff;
-      background: linear-gradient(180deg, #d93f5b, #8f2034);
-      border: 1px solid rgba(255, 95, 122, .75);
-    }
-
-    .badge-wait {
-      color: #efeaff;
-      background: linear-gradient(180deg, #5266bd, #293c78);
-      border: 1px solid rgba(185, 167, 255, .65);
-    }
+    .badge-buy { color: #00150c; background: linear-gradient(180deg, #54ffb5, var(--green)); }
+    .badge-sell { color: #fff; background: linear-gradient(180deg, #d93f5b, #8f2034); }
+    .badge-wait { color: #efeaff; background: linear-gradient(180deg, #5266bd, #293c78); }
 
     .buy-text { color: var(--green); }
     .sell-text { color: var(--red); }
@@ -284,44 +181,28 @@
       font-size: 11px;
       padding: 6px 10px;
       border-radius: 999px;
-      background: rgba(6, 24, 46, .88);
+      background: rgba(6,24,46,.88);
       color: #d7ecff;
-      border: 1px solid rgba(58, 112, 176, .55);
+      border: 1px solid rgba(58,112,176,.55);
       font-weight: 900;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
     }
 
-    .chip-live {
-      color: #d8fff0;
-      border-color: rgba(45, 245, 157, .75);
-      background: rgba(16, 80, 61, .45);
-    }
-
-    .chip-rest {
-      color: #fff3b2;
-      border-color: rgba(255, 216, 77, .75);
-      background: rgba(94, 75, 14, .42);
-    }
-
-    .chip-warn {
-      color: #ffdcdc;
-      border-color: rgba(255, 95, 122, .7);
-      background: rgba(90, 23, 39, .42);
-    }
+    .chip-live { color: #d8fff0; border-color: rgba(45,245,157,.75); }
+    .chip-rest { color: #fff3b2; border-color: rgba(255,216,77,.75); }
+    .chip-warn { color: #ffdcdc; border-color: rgba(255,95,122,.7); }
 
     .box {
-      background: rgba(3, 14, 28, .68);
-      border: 1px solid rgba(95, 145, 203, .34);
+      background: rgba(3,14,28,.68);
+      border: 1px solid rgba(95,145,203,.34);
       border-radius: 16px;
       padding: 13px;
       margin: 10px 0;
       color: #e8f3ff;
       font-size: 13px;
       line-height: 1.6;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
     }
 
-    .levels {
+    .levels, .modal-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 9px;
@@ -329,13 +210,12 @@
     }
 
     .level {
-      background: linear-gradient(180deg, rgba(7, 27, 52, .92), rgba(4, 17, 33, .94));
-      border: 1px solid rgba(71, 124, 187, .44);
+      background: linear-gradient(180deg, rgba(7,27,52,.92), rgba(4,17,33,.94));
+      border: 1px solid rgba(71,124,187,.44);
       border-radius: 12px;
       padding: 10px;
       font-size: 13px;
       font-weight: 950;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
     }
 
     .entry { color: var(--yellow); }
@@ -347,27 +227,24 @@
       margin-top: 13px;
       display: flex;
       justify-content: space-between;
-      gap: 10px;
       color: #b9d6f8;
       font-size: 12px;
-      border-top: 1px solid rgba(80, 120, 170, .35);
+      border-top: 1px solid rgba(80,120,170,.35);
       padding-top: 11px;
     }
 
-    .empty,
-    .error {
-      background: rgba(16, 38, 66, 0.9);
+    .empty, .error {
+      background: rgba(16,38,66,.9);
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 18px;
       color: var(--muted);
       margin-bottom: 14px;
-      box-shadow: 0 18px 42px rgba(0,0,0,.24);
     }
 
     .error {
       color: #ffd6d6;
-      border-color: rgba(255, 95, 122, .72);
+      border-color: rgba(255,95,122,.72);
     }
 
     .modal-backdrop {
@@ -377,29 +254,23 @@
       align-items: center;
       justify-content: center;
       padding: 24px;
-      background:
-        radial-gradient(circle at center, rgba(31, 82, 142, .28), transparent 48%),
-        rgba(0, 0, 0, .74);
+      background: rgba(0,0,0,.76);
       backdrop-filter: blur(10px);
       z-index: 999;
     }
 
-    .modal-backdrop.open {
-      display: flex;
-    }
+    .modal-backdrop.open { display: flex; }
 
     .modal {
-      width: min(1060px, 100%);
-      max-height: 92vh;
+      width: min(1180px, 100%);
+      max-height: 94vh;
       overflow: auto;
       background:
-        radial-gradient(circle at 90% 0%, rgba(69, 202, 255, .18), transparent 34%),
-        linear-gradient(160deg, rgba(24, 58, 103, .98), rgba(5, 17, 33, .98) 72%);
-      border: 1px solid rgba(124, 184, 255, .62);
+        radial-gradient(circle at 90% 0%, rgba(69,202,255,.18), transparent 34%),
+        linear-gradient(160deg, rgba(24,58,103,.98), rgba(5,17,33,.98) 72%);
+      border: 1px solid rgba(124,184,255,.62);
       border-radius: 26px;
-      box-shadow:
-        0 34px 110px rgba(0,0,0,.68),
-        inset 0 1px 0 rgba(255,255,255,.12);
+      box-shadow: 0 34px 110px rgba(0,0,0,.68);
       padding: 24px;
     }
 
@@ -407,24 +278,48 @@
       display: flex;
       justify-content: space-between;
       gap: 16px;
-      align-items: flex-start;
       margin-bottom: 16px;
     }
 
     .modal-title {
       font-size: clamp(24px, 3vw, 34px);
       margin: 0 0 6px;
-      letter-spacing: -0.04em;
     }
 
-    .close-btn {
-      height: 42px;
+    .chart-wrap {
+      margin: 16px 0;
+      border: 1px solid rgba(95,145,203,.42);
+      border-radius: 18px;
+      overflow: hidden;
+      background: rgba(2,10,20,.88);
+    }
+
+    .chart-toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 10px;
+      border-bottom: 1px solid rgba(95,145,203,.3);
+      background: rgba(8,25,48,.9);
+    }
+
+    .tf-btn {
+      height: 34px;
+      padding: 0 12px;
       border-radius: 999px;
-      padding: 0 16px;
-      background: linear-gradient(180deg, rgba(42, 82, 139, .9), rgba(17, 35, 64, .92));
-      border: 1px solid var(--border-strong);
-      color: var(--text);
-      font-weight: 900;
+    }
+
+    .chart {
+      height: 470px;
+      width: 100%;
+    }
+
+    .legend {
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      border-top: 1px solid rgba(95,145,203,.3);
     }
 
     .modal-section-title {
@@ -436,33 +331,18 @@
       font-weight: 950;
     }
 
-    .modal-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin: 12px 0;
-    }
-
-    .big-idea {
-      font-size: 15px;
-      line-height: 1.7;
-      padding: 16px;
-    }
-
     .diagnostics {
       display: none;
       margin-top: 12px;
     }
 
-    .diagnostics.open {
-      display: block;
-    }
+    .diagnostics.open { display: block; }
 
     pre {
       white-space: pre-wrap;
       word-break: break-word;
-      background: rgba(1, 8, 18, .9);
-      border: 1px solid rgba(95, 145, 203, .34);
+      background: rgba(1,8,18,.9);
+      border: 1px solid rgba(95,145,203,.34);
       border-radius: 16px;
       padding: 14px;
       color: #dceeff;
@@ -479,14 +359,9 @@
     @media (max-width: 760px) {
       .page { padding: 22px 14px 44px; }
       .hero { flex-direction: column; }
-      .grid,
-      .stats,
-      .modal-grid {
-        grid-template-columns: 1fr;
-      }
-      .modal-backdrop {
-        padding: 10px;
-      }
+      .grid, .stats, .modal-grid { grid-template-columns: 1fr; }
+      .modal-backdrop { padding: 10px; }
+      .chart { height: 380px; }
     }
   </style>
 </head>
@@ -497,44 +372,28 @@
       <div>
         <h1>AI-идеи по рынку</h1>
         <div class="subtitle">
-          Live цены через TwelveData WebSocket + REST fallback. Нажми на карточку, чтобы открыть полный обзор.
+          Live price + свечной график + разметка OB/FVG/ликвидности. Нажми на карточку.
         </div>
       </div>
       <a class="home-link" href="/">На главную</a>
     </header>
 
     <section class="controls">
-      <select id="pairFilter">
-        <option value="ALL">Все пары</option>
-      </select>
-
+      <select id="pairFilter"><option value="ALL">Все пары</option></select>
       <select id="signalFilter">
         <option value="ALL">Все сигналы</option>
         <option value="BUY">BUY</option>
         <option value="SELL">SELL</option>
         <option value="WAIT">WAIT</option>
       </select>
-
       <button id="refreshBtn">Обновить</button>
     </section>
 
     <section class="stats">
-      <div class="stat">
-        <div class="stat-label">BUY</div>
-        <div class="stat-value" id="buyCount">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">SELL</div>
-        <div class="stat-value" id="sellCount">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">WAIT</div>
-        <div class="stat-value" id="waitCount">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">Источник</div>
-        <div class="stat-value" id="sourceCount">—</div>
-      </div>
+      <div class="stat"><div class="stat-label">BUY</div><div class="stat-value" id="buyCount">0</div></div>
+      <div class="stat"><div class="stat-label">SELL</div><div class="stat-value" id="sellCount">0</div></div>
+      <div class="stat"><div class="stat-label">WAIT</div><div class="stat-value" id="waitCount">0</div></div>
+      <div class="stat"><div class="stat-label">Источник</div><div class="stat-value" id="sourceCount">—</div></div>
     </section>
 
     <section id="statusBox" class="empty">Загрузка сигналов...</section>
@@ -548,42 +407,28 @@
           <h2 id="modalTitle" class="modal-title">Сигнал</h2>
           <div id="modalSubtitle" class="subtitle"></div>
         </div>
-        <button id="closeModalBtn" class="close-btn">Закрыть</button>
+        <button id="closeModalBtn">Закрыть</button>
       </div>
-
       <div id="modalContent"></div>
     </div>
   </div>
 
   <script>
-    const state = {
-      ideas: [],
-      selectedPair: "ALL",
-      selectedSignal: "ALL",
-    };
+    const state = { ideas: [], selectedPair: "ALL", selectedSignal: "ALL", activeIdea: null, chart: null };
 
     const pairFilter = document.getElementById("pairFilter");
     const signalFilter = document.getElementById("signalFilter");
     const refreshBtn = document.getElementById("refreshBtn");
     const statusBox = document.getElementById("statusBox");
     const ideasGrid = document.getElementById("ideasGrid");
-
     const modalBackdrop = document.getElementById("modalBackdrop");
     const closeModalBtn = document.getElementById("closeModalBtn");
     const modalTitle = document.getElementById("modalTitle");
     const modalSubtitle = document.getElementById("modalSubtitle");
     const modalContent = document.getElementById("modalContent");
 
-    pairFilter.addEventListener("change", () => {
-      state.selectedPair = pairFilter.value;
-      render();
-    });
-
-    signalFilter.addEventListener("change", () => {
-      state.selectedSignal = signalFilter.value;
-      render();
-    });
-
+    pairFilter.addEventListener("change", () => { state.selectedPair = pairFilter.value; render(); });
+    signalFilter.addEventListener("change", () => { state.selectedSignal = signalFilter.value; render(); });
     refreshBtn.addEventListener("click", loadSignals);
     closeModalBtn.addEventListener("click", closeModal);
 
@@ -603,10 +448,7 @@
 
       try {
         const response = await fetch("/api/signals", { cache: "no-store" });
-
-        if (!response.ok) {
-          throw new Error("HTTP " + response.status);
-        }
+        if (!response.ok) throw new Error("HTTP " + response.status);
 
         const data = await response.json();
         state.ideas = normalizeIdeas(data);
@@ -628,16 +470,9 @@
 
     function fillPairFilter(ideas) {
       const current = pairFilter.value || "ALL";
-      const symbols = Array.from(
-        new Set(
-          ideas
-            .map((item) => normalizeSymbol(item.symbol || item.pair))
-            .filter(Boolean)
-        )
-      ).sort();
+      const symbols = Array.from(new Set(ideas.map((item) => normalizeSymbol(item.symbol || item.pair)).filter(Boolean))).sort();
 
       pairFilter.innerHTML = '<option value="ALL">Все пары</option>';
-
       for (const symbol of symbols) {
         const option = document.createElement("option");
         option.value = symbol;
@@ -645,9 +480,8 @@
         pairFilter.appendChild(option);
       }
 
-      if (symbols.includes(current)) {
-        pairFilter.value = current;
-      } else {
+      if (symbols.includes(current)) pairFilter.value = current;
+      else {
         pairFilter.value = "ALL";
         state.selectedPair = "ALL";
       }
@@ -655,7 +489,6 @@
 
     function render() {
       const ideas = filteredIdeas();
-
       updateStats(state.ideas);
       ideasGrid.innerHTML = "";
 
@@ -667,20 +500,15 @@
       }
 
       statusBox.style.display = "none";
-
-      for (const idea of ideas) {
-        ideasGrid.appendChild(renderCard(idea));
-      }
+      for (const idea of ideas) ideasGrid.appendChild(renderCard(idea));
     }
 
     function filteredIdeas() {
       return state.ideas.filter((idea) => {
         const symbol = normalizeSymbol(idea.symbol || idea.pair);
         const signal = normalizeSignal(idea.final_signal || idea.signal);
-
         if (state.selectedPair !== "ALL" && symbol !== state.selectedPair) return false;
         if (state.selectedSignal !== "ALL" && signal !== state.selectedSignal) return false;
-
         return true;
       });
     }
@@ -705,7 +533,6 @@
       const source = idea.source || "unknown";
       const dataStatus = idea.data_status || "unknown";
       const price = idea.current_price ?? idea.price ?? idea.entry_price ?? idea.entry;
-      const dayChange = idea.day_change_percent;
       const summary = idea.summary_ru || idea.summary || idea.short_text || "Описание сигнала отсутствует.";
       const warning = idea.warning_ru || "";
       const badgeClass = signal === "BUY" ? "badge-buy" : signal === "SELL" ? "badge-sell" : "badge-wait";
@@ -716,44 +543,40 @@
       card.tabIndex = 0;
 
       card.innerHTML = `
-        <div class="card-content">
-          <div class="card-head">
-            <div>
-              <div class="symbol">${escapeHtml(symbol)}</div>
-              <div class="signal-line">
-                Итоговый сигнал:
-                <span class="${signalClass}">${escapeHtml(signal)}</span>
-                · Уверенность: ${escapeHtml(String(confidence))}%
-              </div>
+        <div class="card-head">
+          <div>
+            <div class="symbol">${escapeHtml(symbol)}</div>
+            <div class="signal-line">
+              Итоговый сигнал:
+              <span class="${signalClass}">${escapeHtml(signal)}</span>
+              · Уверенность: ${escapeHtml(String(confidence))}%
             </div>
-            <span class="badge ${badgeClass}">${escapeHtml(signal)}</span>
           </div>
+          <span class="badge ${badgeClass}">${escapeHtml(signal)}</span>
+        </div>
 
-          <div class="chip-row">
-            <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">
-              ${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}
-            </span>
-            <span class="chip">${escapeHtml(dataStatus)}</span>
-            <span class="chip">${escapeHtml(idea.setup_quality || "LIVE")}</span>
-            ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
-          </div>
+        <div class="chip-row">
+          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}</span>
+          <span class="chip">${escapeHtml(dataStatus)}</span>
+          <span class="chip">${escapeHtml(idea.setup_quality || "LIVE")}</span>
+          ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
+        </div>
 
-          <div class="box">${escapeHtml(summary)}</div>
-          ${warning ? `<div class="box">${escapeHtml(warning)}</div>` : ""}
+        <div class="box">${escapeHtml(summary)}</div>
+        ${warning ? `<div class="box">${escapeHtml(warning)}</div>` : ""}
 
-          <div class="levels">
-            <div class="level entry">Price: ${formatValue(price)}</div>
-            <div class="level entry">Entry: ${formatValue(idea.entry ?? idea.entry_price)}</div>
-            <div class="level sl">SL: ${formatValue(idea.sl ?? idea.stop_loss)}</div>
-            <div class="level tp">TP: ${formatValue(idea.tp ?? idea.take_profit)}</div>
-            <div class="level rr">RR: ${formatValue(idea.rr ?? idea.risk_reward)}</div>
-            <div class="level">Day %: ${formatPercent(dayChange)}</div>
-          </div>
+        <div class="levels">
+          <div class="level entry">Price: ${formatValue(price)}</div>
+          <div class="level entry">Entry: ${formatValue(idea.entry ?? idea.entry_price)}</div>
+          <div class="level sl">SL: ${formatValue(idea.sl ?? idea.stop_loss)}</div>
+          <div class="level tp">TP: ${formatValue(idea.tp ?? idea.take_profit)}</div>
+          <div class="level rr">RR: ${formatValue(idea.rr ?? idea.risk_reward)}</div>
+          <div class="level">Day %: ${formatPercent(idea.day_change_percent)}</div>
+        </div>
 
-          <div class="footer">
-            <span>${escapeHtml(idea.source_symbol || symbol)}</span>
-            <span>${formatDate(idea.meaningful_updated_at || idea.updated_at)}</span>
-          </div>
+        <div class="footer">
+          <span>${escapeHtml(idea.source_symbol || symbol)}</span>
+          <span>${formatDate(idea.meaningful_updated_at || idea.updated_at)}</span>
         </div>
       `;
 
@@ -766,6 +589,8 @@
     }
 
     function openModal(idea) {
+      state.activeIdea = idea;
+
       const symbol = normalizeSymbol(idea.symbol || idea.pair || "MARKET");
       const signal = normalizeSignal(idea.final_signal || idea.signal);
       const source = idea.source || "unknown";
@@ -780,22 +605,28 @@
 
       modalContent.innerHTML = `
         <div class="chip-row">
-          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">
-            ${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}
-          </span>
+          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}</span>
           <span class="chip">${escapeHtml(dataStatus)}</span>
           <span class="chip">${escapeHtml(idea.setup_quality || "quality")}</span>
           <span class="chip">${escapeHtml(idea.risk_filter || "risk filter")}</span>
           ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
         </div>
 
-        <div class="modal-section-title">Основная идея</div>
-        <div class="box big-idea">${escapeHtml(summary)}</div>
+        <div class="modal-section-title">График и разметка</div>
+        <div class="chart-wrap">
+          <div class="chart-toolbar">
+            <button class="tf-btn" onclick="loadChartForActiveIdea('M15')">M15</button>
+            <button class="tf-btn" onclick="loadChartForActiveIdea('H1')">H1</button>
+            <button class="tf-btn" onclick="loadChartForActiveIdea('H4')">H4</button>
+          </div>
+          <div id="chartBox" class="chart"></div>
+          <div id="chartLegend" class="legend">Загрузка графика...</div>
+        </div>
 
-        ${warning ? `
-          <div class="modal-section-title">Предупреждение</div>
-          <div class="box">${escapeHtml(warning)}</div>
-        ` : ""}
+        <div class="modal-section-title">Основная идея</div>
+        <div class="box">${escapeHtml(summary)}</div>
+
+        ${warning ? `<div class="modal-section-title">Предупреждение</div><div class="box">${escapeHtml(warning)}</div>` : ""}
 
         <div class="modal-section-title">Торговые уровни</div>
         <div class="modal-grid">
@@ -817,13 +648,7 @@
           <div class="level">Updated: ${escapeHtml(formatDate(idea.meaningful_updated_at || idea.updated_at))}</div>
         </div>
 
-        <div class="modal-section-title">Режим сигнала</div>
-        <div class="box">
-          Это предварительный системный сигнал на основе live/REST данных TwelveData.
-          Полный candles engine, OB/FVG и новостной слой сейчас отключены для стабильности Render.
-        </div>
-
-        <button class="close-btn" id="diagnosticsToggle">Показать диагностику</button>
+        <button id="diagnosticsToggle">Показать диагностику</button>
         <div id="diagnosticsBox" class="diagnostics">
           <pre>${escapeHtml(JSON.stringify(idea.diagnostics || {}, null, 2))}</pre>
         </div>
@@ -832,81 +657,245 @@
       modalBackdrop.classList.add("open");
       document.body.style.overflow = "hidden";
 
-      const diagnosticsToggle = document.getElementById("diagnosticsToggle");
-      const diagnosticsBox = document.getElementById("diagnosticsBox");
-
-      diagnosticsToggle.addEventListener("click", () => {
-        diagnosticsBox.classList.toggle("open");
-        diagnosticsToggle.textContent = diagnosticsBox.classList.contains("open")
+      document.getElementById("diagnosticsToggle").addEventListener("click", () => {
+        const box = document.getElementById("diagnosticsBox");
+        box.classList.toggle("open");
+        document.getElementById("diagnosticsToggle").textContent = box.classList.contains("open")
           ? "Скрыть диагностику"
           : "Показать диагностику";
       });
+
+      setTimeout(() => loadChartForActiveIdea("M15"), 50);
+    }
+
+    async function loadChartForActiveIdea(tf) {
+      if (!state.activeIdea) return;
+
+      const symbol = normalizeSymbol(state.activeIdea.symbol || state.activeIdea.pair);
+      const chartBox = document.getElementById("chartBox");
+      const legend = document.getElementById("chartLegend");
+
+      chartBox.innerHTML = "";
+      legend.textContent = "Загрузка свечей и разметки...";
+
+      try {
+        const response = await fetch(`/api/candles/${symbol}?tf=${encodeURIComponent(tf)}&limit=160`, { cache: "no-store" });
+
+        if (!response.ok) {
+          legend.textContent = `График недоступен: endpoint /api/candles вернул HTTP ${response.status}. Нужно вернуть candles endpoint в app/main.py.`;
+          return;
+        }
+
+        const payload = await response.json();
+        const candles = Array.isArray(payload.candles) ? payload.candles : [];
+
+        if (!candles.length) {
+          legend.textContent = payload.warning_ru || "Свечи не получены.";
+          return;
+        }
+
+        drawChart(chartBox, legend, payload, state.activeIdea);
+      } catch (error) {
+        legend.textContent = "Ошибка загрузки графика: " + error.message;
+      }
+    }
+
+    function drawChart(container, legend, payload, idea) {
+      const chart = LightweightCharts.createChart(container, {
+        layout: {
+          background: { color: "#050e1c" },
+          textColor: "#b9d6f8",
+        },
+        grid: {
+          vertLines: { color: "rgba(120,160,210,0.08)" },
+          horzLines: { color: "rgba(120,160,210,0.08)" },
+        },
+        rightPriceScale: { borderColor: "rgba(120,160,210,0.25)" },
+        timeScale: { borderColor: "rgba(120,160,210,0.25)", timeVisible: true },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      });
+
+      state.chart = chart;
+
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: "#31f59d",
+        downColor: "#ff5f7a",
+        borderUpColor: "#31f59d",
+        borderDownColor: "#ff5f7a",
+        wickUpColor: "#31f59d",
+        wickDownColor: "#ff5f7a",
+      });
+
+      const candles = payload.candles.map((c) => ({
+        time: Number(c.time),
+        open: Number(c.open),
+        high: Number(c.high),
+        low: Number(c.low),
+        close: Number(c.close),
+      }));
+
+      candleSeries.setData(candles);
+
+      addPriceLine(candleSeries, idea.entry ?? idea.entry_price, "ENTRY", "#ffd84d");
+      addPriceLine(candleSeries, idea.sl ?? idea.stop_loss, "SL", "#ff5f7a");
+      addPriceLine(candleSeries, idea.tp ?? idea.take_profit, "TP", "#31f59d");
+      addAnnotations(chart, payload.annotations || {}, candles);
+
+      chart.timeScale().fitContent();
+
+      const ms = payload.market_structure || {};
+      legend.innerHTML = `
+        <b>${escapeHtml(payload.symbol || "")} ${escapeHtml(payload.timeframe || "")}</b> ·
+        Структура: ${escapeHtml(ms.trend || "neutral")} ·
+        Ликвидность рядом: ${escapeHtml(ms.near_liquidity || "none")} ·
+        FVG: ${ms.has_bullish_fvg ? "bullish " : ""}${ms.has_bearish_fvg ? "bearish" : ""}
+        <br>
+        Разметка: линии Entry/SL/TP, уровни Range High/Low/50%, зоны OB/FVG, точки ликвидности.
+      `;
+    }
+
+    function addPriceLine(series, price, title, color) {
+      const value = Number(price);
+      if (!Number.isFinite(value)) return;
+
+      series.createPriceLine({
+        price: value,
+        color,
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true,
+        title,
+      });
+    }
+
+    function addAnnotations(chart, annotations, candles) {
+      const firstTime = candles[0]?.time;
+      const lastTime = candles[candles.length - 1]?.time;
+      if (!firstTime || !lastTime) return;
+
+      const levels = annotations.levels || [];
+      for (const level of levels) {
+        const price = Number(level.price);
+        if (!Number.isFinite(price)) continue;
+
+        const line = chart.addLineSeries({
+          color: level.type === "support" ? "#31f59d" : level.type === "resistance" ? "#ff5f7a" : "#45caff",
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        line.setData([{ time: firstTime, value: price }, { time: lastTime, value: price }]);
+      }
+
+      const liquidity = annotations.liquidity || [];
+      for (const zone of liquidity.slice(-8)) {
+        const price = Number(zone.price);
+        if (!Number.isFinite(price)) continue;
+
+        const line = chart.addLineSeries({
+          color: zone.type === "buy_side_liquidity" ? "#ff5f7a" : "#31f59d",
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dotted,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        line.setData([{ time: firstTime, value: price }, { time: lastTime, value: price }]);
+      }
+
+      addZones(chart, annotations.imbalances || [], firstTime, lastTime, "FVG");
+      addZones(chart, annotations.order_blocks || [], firstTime, lastTime, "OB");
+    }
+
+    function addZones(chart, zones, firstTime, lastTime, prefix) {
+      for (const zone of zones.slice(-6)) {
+        const from = Number(zone.from);
+        const to = Number(zone.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
+
+        const top = Math.max(from, to);
+        const bottom = Math.min(from, to);
+        const mid = (top + bottom) / 2;
+        const isBullish = String(zone.type || "").includes("bullish");
+
+        const line = chart.addLineSeries({
+          color: isBullish ? "#31f59d" : "#ff5f7a",
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.LargeDashed,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        line.setData([{ time: firstTime, value: mid }, { time: lastTime, value: mid }]);
+
+        const topLine = chart.addLineSeries({
+          color: isBullish ? "rgba(49,245,157,0.45)" : "rgba(255,95,122,0.45)",
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dotted,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        const bottomLine = chart.addLineSeries({
+          color: isBullish ? "rgba(49,245,157,0.45)" : "rgba(255,95,122,0.45)",
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dotted,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        topLine.setData([{ time: firstTime, value: top }, { time: lastTime, value: top }]);
+        bottomLine.setData([{ time: firstTime, value: bottom }, { time: lastTime, value: bottom }]);
+      }
     }
 
     function closeModal() {
       modalBackdrop.classList.remove("open");
       document.body.style.overflow = "";
+      modalContent.innerHTML = "";
+      state.chart = null;
     }
 
     function normalizeSignal(value) {
       const signal = String(value || "WAIT").toUpperCase();
-
       if (signal.includes("BUY")) return "BUY";
       if (signal.includes("SELL")) return "SELL";
-
       return "WAIT";
     }
 
     function normalizeSymbol(value) {
-      return String(value || "")
-        .toUpperCase()
-        .replace("/", "")
-        .replace("-", "")
-        .replace("_", "")
-        .replace(/\s+/g, "")
-        .trim();
+      return String(value || "").toUpperCase().replace("/", "").replace("-", "").replace("_", "").replace(/\s+/g, "").trim();
     }
 
     function numberOrDash(value) {
       if (value === null || value === undefined || value === "") return "—";
-
       const number = Number(value);
-
       if (!Number.isFinite(number)) return "—";
-
       return Math.round(number);
     }
 
     function formatValue(value) {
       if (value === null || value === undefined || value === "") return "—";
-
       const number = Number(value);
-
       if (!Number.isFinite(number)) return escapeHtml(String(value));
-
       if (Math.abs(number) >= 100) return number.toFixed(3);
       if (Math.abs(number) >= 10) return number.toFixed(4);
-
       return number.toFixed(5);
     }
 
     function formatPercent(value) {
       if (value === null || value === undefined || value === "") return "—";
-
       const number = Number(value);
-
       if (!Number.isFinite(number)) return "—";
-
       return number.toFixed(3) + "%";
     }
 
     function formatDate(value) {
       if (!value) return "—";
-
       const date = new Date(value);
-
       if (Number.isNaN(date.getTime())) return "—";
-
       return date.toLocaleString("ru-RU");
     }
 
@@ -918,6 +907,8 @@
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
     }
+
+    window.loadChartForActiveIdea = loadChartForActiveIdea;
 
     loadSignals();
     setInterval(loadSignals, 30000);
