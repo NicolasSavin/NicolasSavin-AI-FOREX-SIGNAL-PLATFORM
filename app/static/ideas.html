@@ -9,19 +9,19 @@
 
   <style>
     :root {
-      --bg-0: #030712;
-      --bg-1: #071426;
-      --card-1: rgba(20, 52, 92, 0.96);
-      --card-2: rgba(8, 22, 42, 0.97);
-      --border: rgba(99, 157, 230, 0.34);
-      --border-strong: rgba(124, 184, 255, 0.68);
+      --bg: #06111f;
+      --panel: #102746;
+      --panel2: #07182d;
+      --border: rgba(95, 156, 230, .42);
+      --borderStrong: rgba(124, 184, 255, .75);
       --text: #f4f8ff;
-      --muted: #9db8da;
+      --muted: #9bb8d8;
       --green: #31f59d;
       --red: #ff5f7a;
       --yellow: #ffd84d;
       --blue: #45caff;
       --violet: #b9a7ff;
+      --orange: #ffb84d;
     }
 
     * { box-sizing: border-box; }
@@ -32,13 +32,13 @@
       color: var(--text);
       font-family: Arial, Helvetica, sans-serif;
       background:
-        radial-gradient(circle at 18% 4%, rgba(65,139,255,.28), transparent 32%),
-        radial-gradient(circle at 82% 14%, rgba(45,245,157,.12), transparent 28%),
-        linear-gradient(145deg, var(--bg-0), var(--bg-1) 42%, #020814 100%);
+        radial-gradient(circle at 15% 0%, rgba(54, 130, 255, .28), transparent 34%),
+        radial-gradient(circle at 90% 10%, rgba(45, 245, 157, .12), transparent 30%),
+        linear-gradient(145deg, #030814, #071426 45%, #020814);
     }
 
     .page {
-      max-width: 1480px;
+      max-width: 1500px;
       margin: 0 auto;
       padding: 34px 30px 70px;
     }
@@ -47,12 +47,13 @@
       display: flex;
       justify-content: space-between;
       gap: 18px;
+      align-items: flex-start;
       margin-bottom: 22px;
     }
 
     h1 {
       margin: 0 0 8px;
-      font-size: clamp(28px, 3vw, 44px);
+      font-size: clamp(30px, 3.2vw, 46px);
       letter-spacing: -0.04em;
     }
 
@@ -63,7 +64,7 @@
     }
 
     .home-link, select, button {
-      background: linear-gradient(180deg, rgba(22,50,91,.95), rgba(10,27,51,.95));
+      background: linear-gradient(180deg, #183a68, #0b1f3d);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 14px;
@@ -71,28 +72,31 @@
       font-weight: 800;
       text-decoration: none;
       cursor: pointer;
+      box-shadow: 0 12px 28px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.1);
     }
 
     .controls {
       display: flex;
       gap: 12px;
-      margin: 22px 0;
       flex-wrap: wrap;
+      margin: 22px 0;
     }
 
     .stats {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 14px;
       margin: 18px 0;
     }
 
     .stat {
-      background: linear-gradient(135deg, rgba(28,64,113,.95), rgba(9,24,45,.96));
+      background:
+        radial-gradient(circle at 90% 20%, rgba(69, 202, 255, .12), transparent 34%),
+        linear-gradient(135deg, rgba(28, 64, 113, .96), rgba(9, 24, 45, .98));
       border: 1px solid var(--border);
       border-radius: 18px;
       padding: 16px;
-      box-shadow: 0 18px 42px rgba(0,0,0,.28);
+      box-shadow: 0 18px 42px rgba(0,0,0,.30);
     }
 
     .stat-label {
@@ -116,21 +120,21 @@
     }
 
     .card {
-      min-height: 390px;
+      min-height: 420px;
       background:
-        radial-gradient(circle at 85% 0%, rgba(69,202,255,.16), transparent 34%),
-        linear-gradient(155deg, var(--card-1), var(--card-2) 68%);
+        radial-gradient(circle at 85% 0%, rgba(69,202,255,.16), transparent 35%),
+        linear-gradient(155deg, rgba(20,52,92,.96), rgba(7,22,42,.98) 70%);
       border: 1px solid var(--border);
       border-radius: 22px;
       padding: 17px;
       box-shadow: 0 22px 54px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.11);
       cursor: pointer;
-      transition: transform .18s ease, border-color .18s ease;
+      transition: .18s ease;
     }
 
     .card:hover {
       transform: translateY(-4px);
-      border-color: var(--border-strong);
+      border-color: var(--borderStrong);
     }
 
     .card-head {
@@ -141,7 +145,7 @@
     }
 
     .symbol {
-      font-size: 17px;
+      font-size: 18px;
       font-weight: 950;
       letter-spacing: .08em;
     }
@@ -165,10 +169,14 @@
     .badge-buy { color: #00150c; background: linear-gradient(180deg, #54ffb5, var(--green)); }
     .badge-sell { color: #fff; background: linear-gradient(180deg, #d93f5b, #8f2034); }
     .badge-wait { color: #efeaff; background: linear-gradient(180deg, #5266bd, #293c78); }
+    .badge-missed { color: #201000; background: linear-gradient(180deg, #ffd98a, var(--orange)); }
+    .badge-closed { color: #fff; background: linear-gradient(180deg, #708198, #36465d); }
 
     .buy-text { color: var(--green); }
     .sell-text { color: var(--red); }
     .wait-text { color: var(--violet); }
+    .missed-text { color: var(--orange); }
+    .closed-text { color: var(--muted); }
 
     .chip-row {
       display: flex;
@@ -190,9 +198,13 @@
     .chip-live { color: #d8fff0; border-color: rgba(45,245,157,.75); }
     .chip-rest { color: #fff3b2; border-color: rgba(255,216,77,.75); }
     .chip-warn { color: #ffdcdc; border-color: rgba(255,95,122,.7); }
+    .chip-entry { color: #fff3b2; border-color: rgba(255,216,77,.75); }
+    .chip-missed { color: #ffe2b0; border-color: rgba(255,184,77,.8); }
+    .chip-ok { color: #d8fff0; border-color: rgba(45,245,157,.75); }
+    .chip-closed { color: #d8e5f5; border-color: rgba(190,210,240,.55); }
 
     .box {
-      background: rgba(3,14,28,.68);
+      background: rgba(3,14,28,.72);
       border: 1px solid rgba(95,145,203,.34);
       border-radius: 16px;
       padding: 13px;
@@ -200,6 +212,8 @@
       color: #e8f3ff;
       font-size: 13px;
       line-height: 1.6;
+      max-height: 150px;
+      overflow: hidden;
     }
 
     .levels, .modal-grid {
@@ -223,6 +237,32 @@
     .sl { color: var(--red); }
     .rr { color: var(--blue); }
 
+    .trade-status {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.45;
+      border: 1px solid rgba(95,145,203,.34);
+      background: rgba(4, 18, 34, .72);
+    }
+
+    .trade-status.ok {
+      color: #d8fff0;
+      border-color: rgba(45,245,157,.55);
+    }
+
+    .trade-status.missed {
+      color: #ffe2b0;
+      border-color: rgba(255,184,77,.65);
+    }
+
+    .trade-status.closed {
+      color: #d8e5f5;
+      border-color: rgba(190,210,240,.45);
+    }
+
     .footer {
       margin-top: 13px;
       display: flex;
@@ -234,7 +274,7 @@
     }
 
     .empty, .error {
-      background: rgba(16,38,66,.9);
+      background: rgba(16,38,66,.92);
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 18px;
@@ -254,7 +294,7 @@
       align-items: center;
       justify-content: center;
       padding: 24px;
-      background: rgba(0,0,0,.76);
+      background: rgba(0,0,0,.78);
       backdrop-filter: blur(10px);
       z-index: 999;
     }
@@ -262,7 +302,7 @@
     .modal-backdrop.open { display: flex; }
 
     .modal {
-      width: min(1180px, 100%);
+      width: min(1240px, 100%);
       max-height: 94vh;
       overflow: auto;
       background:
@@ -284,6 +324,21 @@
     .modal-title {
       font-size: clamp(24px, 3vw, 34px);
       margin: 0 0 6px;
+    }
+
+    .modal-section-title {
+      margin: 20px 0 9px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .modal-text {
+      max-height: none;
+      overflow: visible;
+      font-size: 14px;
     }
 
     .chart-wrap {
@@ -310,11 +365,12 @@
     }
 
     .chart {
-      height: 470px;
+      height: 520px;
       width: 100%;
+      position: relative;
     }
 
-    .legend {
+    .chart-note {
       padding: 10px 12px;
       color: var(--muted);
       font-size: 12px;
@@ -322,20 +378,32 @@
       border-top: 1px solid rgba(95,145,203,.3);
     }
 
-    .modal-section-title {
-      margin: 20px 0 9px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: .1em;
+    .legend-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px;
+      border-top: 1px solid rgba(95,145,203,.3);
+      background: rgba(5,18,34,.74);
+    }
+
+    .legend-item {
+      border: 1px solid rgba(95,145,203,.28);
+      border-radius: 12px;
+      padding: 8px 10px;
       font-size: 12px;
-      font-weight: 950;
+      color: #dbeeff;
+      background: rgba(3,14,28,.55);
     }
 
-    .diagnostics {
-      display: none;
-      margin-top: 12px;
-    }
+    .legend-entry { color: var(--yellow); }
+    .legend-sl { color: var(--red); }
+    .legend-tp { color: var(--green); }
+    .legend-liq { color: var(--blue); }
+    .legend-ob { color: var(--violet); }
+    .legend-fvg { color: var(--orange); }
 
+    .diagnostics { display: none; margin-top: 12px; }
     .diagnostics.open { display: block; }
 
     pre {
@@ -354,14 +422,15 @@
     @media (max-width: 1120px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .legend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     @media (max-width: 760px) {
       .page { padding: 22px 14px 44px; }
       .hero { flex-direction: column; }
-      .grid, .stats, .modal-grid { grid-template-columns: 1fr; }
+      .grid, .stats, .modal-grid, .legend-grid { grid-template-columns: 1fr; }
       .modal-backdrop { padding: 10px; }
-      .chart { height: 380px; }
+      .chart { height: 390px; }
     }
   </style>
 </head>
@@ -372,7 +441,7 @@
       <div>
         <h1>AI-идеи по рынку</h1>
         <div class="subtitle">
-          Live price + свечной график + разметка OB/FVG/ликвидности. Нажми на карточку.
+          Идея создаётся от структуры рынка. Entry / SL / TP не меняются до завершения идеи.
         </div>
       </div>
       <a class="home-link" href="/">На главную</a>
@@ -385,6 +454,8 @@
         <option value="BUY">BUY</option>
         <option value="SELL">SELL</option>
         <option value="WAIT">WAIT</option>
+        <option value="MISSED">Момент упущен</option>
+        <option value="CLOSED">Архив</option>
       </select>
       <button id="refreshBtn">Обновить</button>
     </section>
@@ -393,7 +464,8 @@
       <div class="stat"><div class="stat-label">BUY</div><div class="stat-value" id="buyCount">0</div></div>
       <div class="stat"><div class="stat-label">SELL</div><div class="stat-value" id="sellCount">0</div></div>
       <div class="stat"><div class="stat-label">WAIT</div><div class="stat-value" id="waitCount">0</div></div>
-      <div class="stat"><div class="stat-label">Источник</div><div class="stat-value" id="sourceCount">—</div></div>
+      <div class="stat"><div class="stat-label">Архив</div><div class="stat-value" id="closedCount">0</div></div>
+      <div class="stat"><div class="stat-label">Winrate</div><div class="stat-value" id="winrateValue">—</div></div>
     </section>
 
     <section id="statusBox" class="empty">Загрузка сигналов...</section>
@@ -414,7 +486,16 @@
   </div>
 
   <script>
-    const state = { ideas: [], selectedPair: "ALL", selectedSignal: "ALL", activeIdea: null, chart: null };
+    const state = {
+      ideas: [],
+      archive: [],
+      selectedPair: "ALL",
+      selectedSignal: "ALL",
+      activeIdea: null,
+      chart: null,
+    };
+
+    const ENTRY_MAX_DISTANCE_PERCENT = 0.12;
 
     const pairFilter = document.getElementById("pairFilter");
     const signalFilter = document.getElementById("signalFilter");
@@ -427,8 +508,16 @@
     const modalSubtitle = document.getElementById("modalSubtitle");
     const modalContent = document.getElementById("modalContent");
 
-    pairFilter.addEventListener("change", () => { state.selectedPair = pairFilter.value; render(); });
-    signalFilter.addEventListener("change", () => { state.selectedSignal = signalFilter.value; render(); });
+    pairFilter.addEventListener("change", () => {
+      state.selectedPair = pairFilter.value;
+      render();
+    });
+
+    signalFilter.addEventListener("change", () => {
+      state.selectedSignal = signalFilter.value;
+      render();
+    });
+
     refreshBtn.addEventListener("click", loadSignals);
     closeModalBtn.addEventListener("click", closeModal);
 
@@ -447,17 +536,26 @@
       ideasGrid.innerHTML = "";
 
       try {
-        const response = await fetch("/api/signals", { cache: "no-store" });
-        if (!response.ok) throw new Error("HTTP " + response.status);
+        let response = await fetch("/api/signals", { cache: "no-store" });
+
+        if (!response.ok) {
+          response = await fetch("/api/ideas", { cache: "no-store" });
+        }
+
+        if (!response.ok) {
+          throw new Error("HTTP " + response.status);
+        }
 
         const data = await response.json();
-        state.ideas = normalizeIdeas(data);
-        fillPairFilter(state.ideas);
+        state.ideas = normalizeIdeas(data).map(enrichIdeaRuntimeStatus);
+        state.archive = normalizeArchive(data).map(enrichIdeaRuntimeStatus);
+
+        fillPairFilter([...state.ideas, ...state.archive]);
         render();
       } catch (error) {
         statusBox.style.display = "block";
         statusBox.className = "error";
-        statusBox.textContent = "Не удалось загрузить /api/signals: " + error.message;
+        statusBox.textContent = "Не удалось загрузить сигналы: " + error.message;
       }
     }
 
@@ -468,11 +566,20 @@
       return [];
     }
 
-    function fillPairFilter(ideas) {
+    function normalizeArchive(data) {
+      if (Array.isArray(data.archive)) return data.archive;
+      if (Array.isArray(data.closed_ideas)) return data.closed_ideas;
+      return [];
+    }
+
+        function fillPairFilter(ideas) {
       const current = pairFilter.value || "ALL";
-      const symbols = Array.from(new Set(ideas.map((item) => normalizeSymbol(item.symbol || item.pair)).filter(Boolean))).sort();
+      const symbols = Array.from(
+        new Set(ideas.map((item) => normalizeSymbol(item.symbol || item.pair)).filter(Boolean))
+      ).sort();
 
       pairFilter.innerHTML = '<option value="ALL">Все пары</option>';
+
       for (const symbol of symbols) {
         const option = document.createElement("option");
         option.value = symbol;
@@ -480,50 +587,144 @@
         pairFilter.appendChild(option);
       }
 
-      if (symbols.includes(current)) pairFilter.value = current;
-      else {
+      if (symbols.includes(current)) {
+        pairFilter.value = current;
+      } else {
         pairFilter.value = "ALL";
         state.selectedPair = "ALL";
       }
     }
 
     function render() {
-      const ideas = filteredIdeas();
-      updateStats(state.ideas);
+      const ideas = getFilteredIdeas();
+      updateStats();
+
       ideasGrid.innerHTML = "";
 
       if (!ideas.length) {
         statusBox.style.display = "block";
         statusBox.className = "empty";
-        statusBox.textContent = "Нет сигналов под выбранные фильтры.";
+        statusBox.textContent = "Нет идей под выбранные фильтры.";
         return;
       }
 
       statusBox.style.display = "none";
-      for (const idea of ideas) ideasGrid.appendChild(renderCard(idea));
+
+      for (const idea of ideas) {
+        ideasGrid.appendChild(renderCard(idea));
+      }
     }
 
-    function filteredIdeas() {
-      return state.ideas.filter((idea) => {
+    function getFilteredIdeas() {
+      const all = state.selectedSignal === "CLOSED"
+        ? state.archive
+        : [...state.ideas, ...state.archive];
+
+      return all.filter((idea) => {
         const symbol = normalizeSymbol(idea.symbol || idea.pair);
         const signal = normalizeSignal(idea.final_signal || idea.signal);
+        const runtime = idea.runtime_status || "active";
+
         if (state.selectedPair !== "ALL" && symbol !== state.selectedPair) return false;
-        if (state.selectedSignal !== "ALL" && signal !== state.selectedSignal) return false;
-        return true;
+
+        if (state.selectedSignal === "ALL") return runtime !== "closed";
+        if (state.selectedSignal === "MISSED") return runtime === "missed";
+        if (state.selectedSignal === "CLOSED") return runtime === "closed";
+
+        return signal === state.selectedSignal && runtime !== "closed";
       });
     }
 
-    function updateStats(ideas) {
-      const buy = ideas.filter((i) => normalizeSignal(i.final_signal || i.signal) === "BUY").length;
-      const sell = ideas.filter((i) => normalizeSignal(i.final_signal || i.signal) === "SELL").length;
-      const wait = ideas.filter((i) => normalizeSignal(i.final_signal || i.signal) === "WAIT").length;
-      const ws = ideas.filter((i) => i.source === "twelvedata_ws").length;
-      const rest = ideas.filter((i) => i.source === "twelvedata_rest_quote").length;
+    function updateStats() {
+      const active = state.ideas.filter((i) => i.runtime_status !== "closed");
+      const closed = state.archive.concat(state.ideas.filter((i) => i.runtime_status === "closed"));
+
+      const buy = active.filter((i) => normalizeSignal(i.final_signal || i.signal) === "BUY").length;
+      const sell = active.filter((i) => normalizeSignal(i.final_signal || i.signal) === "SELL").length;
+      const wait = active.filter((i) => normalizeSignal(i.final_signal || i.signal) === "WAIT").length;
+
+      const tp = closed.filter((i) => String(i.close_reason || i.status || "").toLowerCase().includes("tp")).length;
+      const sl = closed.filter((i) => String(i.close_reason || i.status || "").toLowerCase().includes("sl")).length;
+      const total = tp + sl;
+      const winrate = total > 0 ? `${Math.round((tp / total) * 100)}%` : "—";
 
       document.getElementById("buyCount").textContent = buy;
       document.getElementById("sellCount").textContent = sell;
       document.getElementById("waitCount").textContent = wait;
-      document.getElementById("sourceCount").textContent = `WS ${ws} / REST ${rest}`;
+      document.getElementById("closedCount").textContent = closed.length;
+      document.getElementById("winrateValue").textContent = winrate;
+    }
+
+    function enrichIdeaRuntimeStatus(idea) {
+      const current = Number(idea.current_price ?? idea.price);
+      const entry = Number(idea.entry ?? idea.entry_price);
+      const sl = Number(idea.sl ?? idea.stop_loss);
+      const tp = Number(idea.tp ?? idea.take_profit);
+      const signal = normalizeSignal(idea.final_signal || idea.signal);
+
+      const enriched = { ...idea };
+
+      if (String(idea.status || "").toLowerCase().includes("completed") ||
+          String(idea.status || "").toLowerCase().includes("closed") ||
+          String(idea.status || "").toLowerCase().includes("tp") ||
+          String(idea.status || "").toLowerCase().includes("sl")) {
+        enriched.runtime_status = "closed";
+        enriched.runtime_status_ru = "Идея завершена и находится в архиве.";
+        return enriched;
+      }
+
+      if (!Number.isFinite(current) || !Number.isFinite(entry)) {
+        enriched.runtime_status = "waiting";
+        enriched.runtime_status_ru = "Нет текущей цены — вход не подтверждён.";
+        return enriched;
+      }
+
+      if (Number.isFinite(tp) && signal === "BUY" && current >= tp) {
+        enriched.runtime_status = "closed";
+        enriched.close_reason = "TP";
+        enriched.runtime_status_ru = "TP достигнут. Идея должна быть перенесена в архив.";
+        return enriched;
+      }
+
+      if (Number.isFinite(sl) && signal === "BUY" && current <= sl) {
+        enriched.runtime_status = "closed";
+        enriched.close_reason = "SL";
+        enriched.runtime_status_ru = "SL достигнут. Идея должна быть перенесена в архив.";
+        return enriched;
+      }
+
+      if (Number.isFinite(tp) && signal === "SELL" && current <= tp) {
+        enriched.runtime_status = "closed";
+        enriched.close_reason = "TP";
+        enriched.runtime_status_ru = "TP достигнут. Идея должна быть перенесена в архив.";
+        return enriched;
+      }
+
+      if (Number.isFinite(sl) && signal === "SELL" && current >= sl) {
+        enriched.runtime_status = "closed";
+        enriched.close_reason = "SL";
+        enriched.runtime_status_ru = "SL достигнут. Идея должна быть перенесена в архив.";
+        return enriched;
+      }
+
+      const distancePercent = Math.abs(current - entry) / Math.max(Math.abs(entry), 0.00001) * 100;
+      enriched.entry_distance_percent = distancePercent;
+
+      if (distancePercent > ENTRY_MAX_DISTANCE_PERCENT) {
+        enriched.runtime_status = "missed";
+        enriched.runtime_status_ru = `Цена ушла от входа на ${distancePercent.toFixed(3)}%. Момент входа упущен, вход не рекомендован.`;
+        return enriched;
+      }
+
+      if (signal === "WAIT") {
+        enriched.runtime_status = "waiting";
+        enriched.runtime_status_ru = "Идея в ожидании. Вход пока не подтверждён.";
+        return enriched;
+      }
+
+      enriched.runtime_status = "active";
+      enriched.runtime_status_ru = `Идея актуальна. Цена рядом с Entry, вход допустим только с контролем риска. Отклонение: ${distancePercent.toFixed(3)}%.`;
+      return enriched;
     }
 
     function renderCard(idea) {
@@ -534,9 +735,9 @@
       const dataStatus = idea.data_status || "unknown";
       const price = idea.current_price ?? idea.price ?? idea.entry_price ?? idea.entry;
       const summary = idea.summary_ru || idea.summary || idea.short_text || "Описание сигнала отсутствует.";
-      const warning = idea.warning_ru || "";
-      const badgeClass = signal === "BUY" ? "badge-buy" : signal === "SELL" ? "badge-sell" : "badge-wait";
-      const signalClass = signal === "BUY" ? "buy-text" : signal === "SELL" ? "sell-text" : "wait-text";
+      const warning = humanizeWarning(idea.warning_ru || "");
+      const badgeClass = getBadgeClass(signal, idea.runtime_status);
+      const signalClass = getSignalClass(signal, idea.runtime_status);
 
       const card = document.createElement("article");
       card.className = "card";
@@ -552,14 +753,20 @@
               · Уверенность: ${escapeHtml(String(confidence))}%
             </div>
           </div>
-          <span class="badge ${badgeClass}">${escapeHtml(signal)}</span>
+          <span class="badge ${badgeClass}">${escapeHtml(getBadgeText(signal, idea.runtime_status))}</span>
         </div>
 
         <div class="chip-row">
-          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}</span>
+          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">
+            ${source === "twelvedata_ws" ? "LIVE WS" : "Резервная цена"}
+          </span>
           <span class="chip">${escapeHtml(dataStatus)}</span>
           <span class="chip">${escapeHtml(idea.setup_quality || "LIVE")}</span>
           ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
+        </div>
+
+        <div class="trade-status ${idea.runtime_status || "ok"}">
+          ${escapeHtml(idea.runtime_status_ru || "Статус идеи уточняется.")}
         </div>
 
         <div class="box">${escapeHtml(summary)}</div>
@@ -597,20 +804,32 @@
       const dataStatus = idea.data_status || "unknown";
       const confidence = numberOrDash(idea.final_confidence ?? idea.confidence);
       const summary = idea.summary_ru || idea.summary || idea.full_text || "Описание отсутствует.";
-      const warning = idea.warning_ru || "";
-      const signalClass = signal === "BUY" ? "buy-text" : signal === "SELL" ? "sell-text" : "wait-text";
+      const warning = humanizeWarning(idea.warning_ru || "");
+      const signalClass = getSignalClass(signal, idea.runtime_status);
 
       modalTitle.innerHTML = `${escapeHtml(symbol)} · <span class="${signalClass}">${escapeHtml(signal)}</span>`;
-      modalSubtitle.textContent = `Источник: ${source} · Статус данных: ${dataStatus} · Уверенность: ${confidence}%`;
+      modalSubtitle.textContent = `Источник: ${source === "twelvedata_ws" ? "Live WebSocket" : "Резервная цена REST"} · Статус данных: ${dataStatus} · Уверенность: ${confidence}%`;
 
       modalContent.innerHTML = `
         <div class="chip-row">
-          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}</span>
+          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">
+            ${source === "twelvedata_ws" ? "LIVE WS" : "Резервная цена"}
+          </span>
           <span class="chip">${escapeHtml(dataStatus)}</span>
           <span class="chip">${escapeHtml(idea.setup_quality || "quality")}</span>
           <span class="chip">${escapeHtml(idea.risk_filter || "risk filter")}</span>
           ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
         </div>
+
+        <div class="modal-section-title">Статус входа</div>
+        <div class="trade-status ${idea.runtime_status || "ok"}">
+          ${escapeHtml(idea.runtime_status_ru || "Статус идеи уточняется.")}
+        </div>
+
+        <div class="modal-section-title">Основная идея</div>
+        <div class="box modal-text">${escapeHtml(summary)}</div>
+
+        ${warning ? `<div class="modal-section-title">Источник цены</div><div class="box modal-text">${escapeHtml(warning)}</div>` : ""}
 
         <div class="modal-section-title">График и разметка</div>
         <div class="chart-wrap">
@@ -619,14 +838,19 @@
             <button class="tf-btn" onclick="loadChartForActiveIdea('H1')">H1</button>
             <button class="tf-btn" onclick="loadChartForActiveIdea('H4')">H4</button>
           </div>
+
+          <div class="legend-grid">
+            <div class="legend-item legend-entry">ENTRY — точка входа, фиксируется при создании идеи</div>
+            <div class="legend-item legend-sl">SL — уровень отмены идеи</div>
+            <div class="legend-item legend-tp">TP — цель идеи</div>
+            <div class="legend-item legend-liq">Liquidity — зоны, где могут стоять стопы</div>
+            <div class="legend-item legend-ob">OB — возможная зона крупного игрока</div>
+            <div class="legend-item legend-fvg">FVG — дисбаланс/быстрое движение цены</div>
+          </div>
+
           <div id="chartBox" class="chart"></div>
-          <div id="chartLegend" class="legend">Загрузка графика...</div>
+          <div id="chartLegend" class="chart-note">Загрузка графика...</div>
         </div>
-
-        <div class="modal-section-title">Основная идея</div>
-        <div class="box">${escapeHtml(summary)}</div>
-
-        ${warning ? `<div class="modal-section-title">Предупреждение</div><div class="box">${escapeHtml(warning)}</div>` : ""}
 
         <div class="modal-section-title">Торговые уровни</div>
         <div class="modal-grid">
@@ -665,7 +889,7 @@
           : "Показать диагностику";
       });
 
-      setTimeout(() => loadChartForActiveIdea("M15"), 50);
+      setTimeout(() => loadChartForActiveIdea("M15"), 100);
     }
 
     async function loadChartForActiveIdea(tf) {
@@ -682,7 +906,7 @@
         const response = await fetch(`/api/candles/${symbol}?tf=${encodeURIComponent(tf)}&limit=160`, { cache: "no-store" });
 
         if (!response.ok) {
-          legend.textContent = `График недоступен: endpoint /api/candles вернул HTTP ${response.status}. Нужно вернуть candles endpoint в app/main.py.`;
+          legend.textContent = `График недоступен: /api/candles вернул HTTP ${response.status}.`;
           return;
         }
 
@@ -690,7 +914,7 @@
         const candles = Array.isArray(payload.candles) ? payload.candles : [];
 
         if (!candles.length) {
-          legend.textContent = payload.warning_ru || "Свечи не получены.";
+          legend.textContent = humanizeWarning(payload.warning_ru || "Свечи не получены.");
           return;
         }
 
@@ -701,6 +925,13 @@
     }
 
     function drawChart(container, legend, payload, idea) {
+      container.innerHTML = "";
+
+      if (!window.LightweightCharts) {
+        legend.textContent = "Библиотека графика не загрузилась. Проверь интернет/CDN.";
+        return;
+      }
+
       const chart = LightweightCharts.createChart(container, {
         layout: {
           background: { color: "#050e1c" },
@@ -727,18 +958,25 @@
       });
 
       const candles = payload.candles.map((c) => ({
-        time: Number(c.time),
+        time: normalizeCandleTime(c.time),
         open: Number(c.open),
         high: Number(c.high),
         low: Number(c.low),
         close: Number(c.close),
-      }));
+      })).filter((c) =>
+        Number.isFinite(c.time) &&
+        Number.isFinite(c.open) &&
+        Number.isFinite(c.high) &&
+        Number.isFinite(c.low) &&
+        Number.isFinite(c.close)
+      );
 
       candleSeries.setData(candles);
 
-      addPriceLine(candleSeries, idea.entry ?? idea.entry_price, "ENTRY", "#ffd84d");
-      addPriceLine(candleSeries, idea.sl ?? idea.stop_loss, "SL", "#ff5f7a");
-      addPriceLine(candleSeries, idea.tp ?? idea.take_profit, "TP", "#31f59d");
+      addPriceLine(candleSeries, idea.entry ?? idea.entry_price, "ENTRY", "#ffd84d", 3);
+      addPriceLine(candleSeries, idea.sl ?? idea.stop_loss, "SL", "#ff5f7a", 3);
+      addPriceLine(candleSeries, idea.tp ?? idea.take_profit, "TP", "#31f59d", 3);
+
       addAnnotations(chart, payload.annotations || {}, candles);
 
       chart.timeScale().fitContent();
@@ -750,18 +988,18 @@
         Ликвидность рядом: ${escapeHtml(ms.near_liquidity || "none")} ·
         FVG: ${ms.has_bullish_fvg ? "bullish " : ""}${ms.has_bearish_fvg ? "bearish" : ""}
         <br>
-        Разметка: линии Entry/SL/TP, уровни Range High/Low/50%, зоны OB/FVG, точки ликвидности.
+        Разметка: толстые линии Entry/SL/TP, пунктирные уровни ликвидности, зоны OB/FVG как границы дисбаланса.
       `;
     }
 
-    function addPriceLine(series, price, title, color) {
+    function addPriceLine(series, price, title, color, width = 2) {
       const value = Number(price);
       if (!Number.isFinite(value)) return;
 
       series.createPriceLine({
         price: value,
         color,
-        lineWidth: 2,
+        lineWidth: width,
         lineStyle: LightweightCharts.LineStyle.Solid,
         axisLabelVisible: true,
         title,
@@ -769,18 +1007,18 @@
     }
 
     function addAnnotations(chart, annotations, candles) {
-      const firstTime = candles[0]?.time;
-      const lastTime = candles[candles.length - 1]?.time;
-      if (!firstTime || !lastTime) return;
+      if (!candles.length) return;
 
-      const levels = annotations.levels || [];
-      for (const level of levels) {
+      const firstTime = candles[0].time;
+      const lastTime = candles[candles.length - 1].time;
+
+      for (const level of annotations.levels || []) {
         const price = Number(level.price);
         if (!Number.isFinite(price)) continue;
 
         const line = chart.addLineSeries({
           color: level.type === "support" ? "#31f59d" : level.type === "resistance" ? "#ff5f7a" : "#45caff",
-          lineWidth: 1,
+          lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           priceLineVisible: false,
           lastValueVisible: false,
@@ -789,14 +1027,13 @@
         line.setData([{ time: firstTime, value: price }, { time: lastTime, value: price }]);
       }
 
-      const liquidity = annotations.liquidity || [];
-      for (const zone of liquidity.slice(-8)) {
+      for (const zone of (annotations.liquidity || []).slice(-10)) {
         const price = Number(zone.price);
         if (!Number.isFinite(price)) continue;
 
         const line = chart.addLineSeries({
-          color: zone.type === "buy_side_liquidity" ? "#ff5f7a" : "#31f59d",
-          lineWidth: 1,
+          color: zone.type === "buy_side_liquidity" ? "#45caff" : "#b9a7ff",
+          lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Dotted,
           priceLineVisible: false,
           lastValueVisible: false,
@@ -805,12 +1042,12 @@
         line.setData([{ time: firstTime, value: price }, { time: lastTime, value: price }]);
       }
 
-      addZones(chart, annotations.imbalances || [], firstTime, lastTime, "FVG");
       addZones(chart, annotations.order_blocks || [], firstTime, lastTime, "OB");
+      addZones(chart, annotations.imbalances || [], firstTime, lastTime, "FVG");
     }
 
-    function addZones(chart, zones, firstTime, lastTime, prefix) {
-      for (const zone of zones.slice(-6)) {
+    function addZones(chart, zones, firstTime, lastTime, typeLabel) {
+      for (const zone of zones.slice(-8)) {
         const from = Number(zone.from);
         const to = Number(zone.to);
         if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
@@ -819,27 +1056,28 @@
         const bottom = Math.min(from, to);
         const mid = (top + bottom) / 2;
         const isBullish = String(zone.type || "").includes("bullish");
+        const color = typeLabel === "OB"
+          ? (isBullish ? "#b9a7ff" : "#ff9fb0")
+          : (isBullish ? "#ffb84d" : "#ff7a4d");
 
-        const line = chart.addLineSeries({
-          color: isBullish ? "#31f59d" : "#ff5f7a",
+        const topLine = chart.addLineSeries({
+          color,
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.LargeDashed,
           priceLineVisible: false,
           lastValueVisible: false,
         });
 
-        line.setData([{ time: firstTime, value: mid }, { time: lastTime, value: mid }]);
-
-        const topLine = chart.addLineSeries({
-          color: isBullish ? "rgba(49,245,157,0.45)" : "rgba(255,95,122,0.45)",
-          lineWidth: 1,
-          lineStyle: LightweightCharts.LineStyle.Dotted,
+        const bottomLine = chart.addLineSeries({
+          color,
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.LargeDashed,
           priceLineVisible: false,
           lastValueVisible: false,
         });
 
-        const bottomLine = chart.addLineSeries({
-          color: isBullish ? "rgba(49,245,157,0.45)" : "rgba(255,95,122,0.45)",
+        const midLine = chart.addLineSeries({
+          color,
           lineWidth: 1,
           lineStyle: LightweightCharts.LineStyle.Dotted,
           priceLineVisible: false,
@@ -848,6 +1086,7 @@
 
         topLine.setData([{ time: firstTime, value: top }, { time: lastTime, value: top }]);
         bottomLine.setData([{ time: firstTime, value: bottom }, { time: lastTime, value: bottom }]);
+        midLine.setData([{ time: firstTime, value: mid }, { time: lastTime, value: mid }]);
       }
     }
 
@@ -858,6 +1097,45 @@
       state.chart = null;
     }
 
+    function getBadgeClass(signal, runtimeStatus) {
+      if (runtimeStatus === "closed") return "badge-closed";
+      if (runtimeStatus === "missed") return "badge-missed";
+      if (signal === "BUY") return "badge-buy";
+      if (signal === "SELL") return "badge-sell";
+      return "badge-wait";
+    }
+
+    function getBadgeText(signal, runtimeStatus) {
+      if (runtimeStatus === "closed") return "ARCHIVE";
+      if (runtimeStatus === "missed") return "MISSED";
+      return signal;
+    }
+
+    function getSignalClass(signal, runtimeStatus) {
+      if (runtimeStatus === "closed") return "closed-text";
+      if (runtimeStatus === "missed") return "missed-text";
+      if (signal === "BUY") return "buy-text";
+      if (signal === "SELL") return "sell-text";
+      return "wait-text";
+    }
+
+    function humanizeWarning(text) {
+      const value = String(text || "");
+      if (!value) return "";
+
+      const lower = value.toLowerCase();
+
+      if (lower.includes("credits") || lower.includes("limit") || lower.includes("quota")) {
+        return "TwelveData лимит на сегодня исчерпан. Свежие REST-свечи/цены временно недоступны до обновления лимита.";
+      }
+
+      if (lower.includes("rest fallback") || lower.includes("not websocket")) {
+        return "Резервная цена: WebSocket сейчас не прислал live-тик, поэтому система взяла цену через TwelveData REST.";
+      }
+
+      return value;
+    }
+
     function normalizeSignal(value) {
       const signal = String(value || "WAIT").toUpperCase();
       if (signal.includes("BUY")) return "BUY";
@@ -866,7 +1144,22 @@
     }
 
     function normalizeSymbol(value) {
-      return String(value || "").toUpperCase().replace("/", "").replace("-", "").replace("_", "").replace(/\s+/g, "").trim();
+      return String(value || "")
+        .toUpperCase()
+        .replace("/", "")
+        .replace("-", "")
+        .replace("_", "")
+        .replace(/\s+/g, "")
+        .trim();
+    }
+
+    function normalizeCandleTime(value) {
+      if (typeof value === "number") return value;
+      const asNumber = Number(value);
+      if (Number.isFinite(asNumber)) return asNumber;
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+      return NaN;
     }
 
     function numberOrDash(value) {
