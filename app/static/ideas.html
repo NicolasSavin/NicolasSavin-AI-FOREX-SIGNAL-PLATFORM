@@ -8,7 +8,6 @@
     :root {
       --bg: #07111f;
       --panel: #0d1d34;
-      --panel2: #102642;
       --border: #25446e;
       --text: #f4f8ff;
       --muted: #9bb7d8;
@@ -34,35 +33,8 @@
       padding: 28px 28px 60px;
     }
 
-    .top {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 16px;
-      margin-bottom: 22px;
-    }
-
-    h1 {
-      margin: 0 0 8px;
-      font-size: 30px;
-      line-height: 1.1;
-    }
-
-    .subtitle {
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .home {
-      color: var(--text);
-      text-decoration: none;
-      background: #132849;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 10px 16px;
-      font-weight: 700;
-      white-space: nowrap;
-    }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    .subtitle { color: var(--muted); font-size: 14px; }
 
     .controls {
       display: flex;
@@ -78,9 +50,8 @@
       border-radius: 12px;
       padding: 10px 14px;
       font-weight: 700;
+      cursor: pointer;
     }
-
-    button { cursor: pointer; }
 
     .stats {
       display: grid;
@@ -105,8 +76,8 @@
 
     .stat-value {
       margin-top: 6px;
-      font-size: 22px;
-      font-weight: 800;
+      font-size: 24px;
+      font-weight: 900;
     }
 
     .grid {
@@ -121,6 +92,13 @@
       border-radius: 16px;
       padding: 16px;
       box-shadow: 0 18px 40px rgba(0,0,0,.28);
+      cursor: pointer;
+      transition: transform .15s ease, border-color .15s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: #4f8dd8;
     }
 
     .card-head {
@@ -131,10 +109,7 @@
       margin-bottom: 12px;
     }
 
-    .symbol {
-      font-weight: 900;
-      letter-spacing: .04em;
-    }
+    .symbol { font-weight: 900; letter-spacing: .04em; }
 
     .signal-line {
       margin-top: 4px;
@@ -148,34 +123,14 @@
       font-size: 12px;
       font-weight: 900;
       text-transform: uppercase;
-      border: 1px solid transparent;
       white-space: nowrap;
     }
 
-    .badge-buy {
-      color: #00140a;
-      background: var(--green);
-      border-color: #8cffca;
-    }
+    .badge-buy { color: #00140a; background: var(--green); }
+    .badge-sell { color: white; background: #8a2133; border: 1px solid var(--red); }
+    .badge-wait { color: var(--violet); background: #273868; border: 1px solid #5368b7; }
 
-    .badge-sell {
-      color: white;
-      background: #7a1d2c;
-      border-color: var(--red);
-    }
-
-    .badge-wait {
-      color: var(--violet);
-      background: #273868;
-      border-color: #5368b7;
-    }
-
-    .chip-row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin: 12px 0;
-    }
+    .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 
     .chip {
       font-size: 11px;
@@ -187,20 +142,9 @@
       font-weight: 800;
     }
 
-    .chip-live {
-      color: #d8fff0;
-      border-color: #1abf7a;
-    }
-
-    .chip-rest {
-      color: #fff3b2;
-      border-color: #b48a00;
-    }
-
-    .chip-warn {
-      color: #ffdcdc;
-      border-color: #87414e;
-    }
+    .chip-live { color: #d8fff0; border-color: #1abf7a; }
+    .chip-rest { color: #fff3b2; border-color: #b48a00; }
+    .chip-warn { color: #ffdcdc; border-color: #87414e; }
 
     .box {
       background: rgba(5, 17, 32, .74);
@@ -262,6 +206,80 @@
     .sell-text { color: var(--red); }
     .wait-text { color: var(--violet); }
 
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .72);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 999;
+    }
+
+    .modal-backdrop.open { display: flex; }
+
+    .modal {
+      width: min(980px, 100%);
+      max-height: 92vh;
+      overflow: auto;
+      background: linear-gradient(180deg, #132b4c, #071426);
+      border: 1px solid #4b77b5;
+      border-radius: 20px;
+      box-shadow: 0 30px 90px rgba(0,0,0,.55);
+      padding: 22px;
+    }
+
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+
+    .modal-title {
+      font-size: 26px;
+      font-weight: 900;
+      margin: 0;
+    }
+
+    .close-btn {
+      border-radius: 999px;
+      padding: 9px 13px;
+      background: #10213d;
+      border: 1px solid #4b77b5;
+    }
+
+    .modal-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .modal-section-title {
+      margin: 18px 0 8px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #06111f;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      color: #dceeff;
+      font-size: 12px;
+      max-height: 260px;
+      overflow: auto;
+    }
+
     @media (max-width: 1100px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -269,74 +287,65 @@
 
     @media (max-width: 760px) {
       .page { padding: 20px 14px 40px; }
-      .grid { grid-template-columns: 1fr; }
-      .stats { grid-template-columns: 1fr; }
-      .top { flex-direction: column; }
+      .grid, .stats, .modal-grid { grid-template-columns: 1fr; }
+      .modal-backdrop { padding: 10px; }
     }
   </style>
 </head>
 <body>
   <main class="page">
-    <header class="top">
-      <div>
-        <h1>AI-идеи по рынку</h1>
-        <div class="subtitle">
-          Live цены через TwelveData WebSocket + REST fallback. Yahoo/Stooq отключены.
-        </div>
-      </div>
-      <a class="home" href="/">На главную</a>
-    </header>
+    <h1>AI-идеи по рынку</h1>
+    <div class="subtitle">Live цены через TwelveData WebSocket + REST fallback. Нажми на карточку, чтобы открыть полный обзор.</div>
 
     <section class="controls">
-      <select id="pairFilter">
-        <option value="ALL">Все пары</option>
-      </select>
-
+      <select id="pairFilter"><option value="ALL">Все пары</option></select>
       <select id="signalFilter">
         <option value="ALL">Все сигналы</option>
         <option value="BUY">BUY</option>
         <option value="SELL">SELL</option>
         <option value="WAIT">WAIT</option>
       </select>
-
       <button id="refreshBtn">Обновить</button>
     </section>
 
     <section class="stats">
-      <div class="stat">
-        <div class="stat-label">BUY</div>
-        <div class="stat-value" id="buyCount">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">SELL</div>
-        <div class="stat-value" id="sellCount">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">WAIT</div>
-        <div class="stat-value" id="waitCount">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">Источник</div>
-        <div class="stat-value" id="sourceCount">—</div>
-      </div>
+      <div class="stat"><div class="stat-label">BUY</div><div class="stat-value" id="buyCount">0</div></div>
+      <div class="stat"><div class="stat-label">SELL</div><div class="stat-value" id="sellCount">0</div></div>
+      <div class="stat"><div class="stat-label">WAIT</div><div class="stat-value" id="waitCount">0</div></div>
+      <div class="stat"><div class="stat-label">Источник</div><div class="stat-value" id="sourceCount">—</div></div>
     </section>
 
     <section id="statusBox" class="empty">Загрузка сигналов...</section>
     <section id="ideasGrid" class="grid"></section>
   </main>
 
+  <div id="modalBackdrop" class="modal-backdrop">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div>
+          <h2 id="modalTitle" class="modal-title">Сигнал</h2>
+          <div id="modalSubtitle" class="subtitle"></div>
+        </div>
+        <button id="closeModalBtn" class="close-btn">Закрыть</button>
+      </div>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
   <script>
-    const state = {
-      ideas: [],
-      selectedPair: "ALL",
-      selectedSignal: "ALL",
-    };
+    const state = { ideas: [], selectedPair: "ALL", selectedSignal: "ALL" };
 
     const pairFilter = document.getElementById("pairFilter");
     const signalFilter = document.getElementById("signalFilter");
     const refreshBtn = document.getElementById("refreshBtn");
     const statusBox = document.getElementById("statusBox");
     const ideasGrid = document.getElementById("ideasGrid");
+
+    const modalBackdrop = document.getElementById("modalBackdrop");
+    const closeModalBtn = document.getElementById("closeModalBtn");
+    const modalTitle = document.getElementById("modalTitle");
+    const modalSubtitle = document.getElementById("modalSubtitle");
+    const modalContent = document.getElementById("modalContent");
 
     pairFilter.addEventListener("change", () => {
       state.selectedPair = pairFilter.value;
@@ -348,8 +357,15 @@
       render();
     });
 
-    refreshBtn.addEventListener("click", () => {
-      loadSignals();
+    refreshBtn.addEventListener("click", loadSignals);
+    closeModalBtn.addEventListener("click", closeModal);
+
+    modalBackdrop.addEventListener("click", event => {
+      if (event.target === modalBackdrop) closeModal();
+    });
+
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") closeModal();
     });
 
     async function loadSignals() {
@@ -359,13 +375,8 @@
       ideasGrid.innerHTML = "";
 
       try {
-        const response = await fetch("/api/signals", {
-          cache: "no-store",
-        });
-
-        if (!response.ok) {
-          throw new Error("HTTP " + response.status);
-        }
+        const response = await fetch("/api/signals", { cache: "no-store" });
+        if (!response.ok) throw new Error("HTTP " + response.status);
 
         const data = await response.json();
         state.ideas = normalizeIdeas(data);
@@ -387,16 +398,9 @@
 
     function fillPairFilter(ideas) {
       const current = pairFilter.value || "ALL";
-      const symbols = Array.from(
-        new Set(
-          ideas
-            .map(item => normalizeSymbol(item.symbol || item.pair))
-            .filter(Boolean)
-        )
-      ).sort();
+      const symbols = Array.from(new Set(ideas.map(i => normalizeSymbol(i.symbol || i.pair)).filter(Boolean))).sort();
 
       pairFilter.innerHTML = '<option value="ALL">Все пары</option>';
-
       for (const symbol of symbols) {
         const option = document.createElement("option");
         option.value = symbol;
@@ -414,7 +418,6 @@
 
     function render() {
       const ideas = filteredIdeas();
-
       updateStats(state.ideas);
       ideasGrid.innerHTML = "";
 
@@ -436,15 +439,8 @@
       return state.ideas.filter(idea => {
         const symbol = normalizeSymbol(idea.symbol || idea.pair);
         const signal = normalizeSignal(idea.final_signal || idea.signal);
-
-        if (state.selectedPair !== "ALL" && symbol !== state.selectedPair) {
-          return false;
-        }
-
-        if (state.selectedSignal !== "ALL" && signal !== state.selectedSignal) {
-          return false;
-        }
-
+        if (state.selectedPair !== "ALL" && symbol !== state.selectedPair) return false;
+        if (state.selectedSignal !== "ALL" && signal !== state.selectedSignal) return false;
         return true;
       });
     }
@@ -477,31 +473,25 @@
 
       const card = document.createElement("article");
       card.className = "card";
+      card.tabIndex = 0;
 
       card.innerHTML = `
         <div class="card-head">
           <div>
             <div class="symbol">${escapeHtml(symbol)}</div>
-            <div class="signal-line">
-              Итоговый сигнал:
-              <span class="${signalClass}">${escapeHtml(signal)}</span>
-              · Уверенность: ${escapeHtml(String(confidence))}%
-            </div>
+            <div class="signal-line">Итоговый сигнал: <span class="${signalClass}">${escapeHtml(signal)}</span> · Уверенность: ${escapeHtml(String(confidence))}%</div>
           </div>
           <span class="badge ${badgeClass}">${escapeHtml(signal)}</span>
         </div>
 
         <div class="chip-row">
-          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">
-            ${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}
-          </span>
+          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}</span>
           <span class="chip">${escapeHtml(dataStatus)}</span>
           <span class="chip">LIVE</span>
           ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
         </div>
 
         <div class="box">${escapeHtml(summary)}</div>
-
         ${warning ? `<div class="box">${escapeHtml(warning)}</div>` : ""}
 
         <div class="levels">
@@ -519,25 +509,84 @@
         </div>
       `;
 
+      card.addEventListener("click", () => openModal(idea));
+      card.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") openModal(idea);
+      });
+
       return card;
+    }
+
+    function openModal(idea) {
+      const symbol = normalizeSymbol(idea.symbol || idea.pair || "MARKET");
+      const signal = normalizeSignal(idea.final_signal || idea.signal);
+      const source = idea.source || "unknown";
+      const dataStatus = idea.data_status || "unknown";
+      const confidence = numberOrDash(idea.final_confidence ?? idea.confidence);
+      const summary = idea.summary_ru || idea.summary || idea.full_text || "Описание отсутствует.";
+      const warning = idea.warning_ru || "";
+
+      modalTitle.textContent = `${symbol} · ${signal}`;
+      modalSubtitle.textContent = `Источник: ${source} · Статус данных: ${dataStatus} · Уверенность: ${confidence}%`;
+
+      modalContent.innerHTML = `
+        <div class="chip-row">
+          <span class="chip ${source === "twelvedata_ws" ? "chip-live" : "chip-rest"}">${source === "twelvedata_ws" ? "LIVE WS" : "REST fallback"}</span>
+          <span class="chip">${escapeHtml(dataStatus)}</span>
+          <span class="chip">${escapeHtml(idea.direction || idea.bias || "neutral")}</span>
+          ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
+        </div>
+
+        <div class="modal-section-title">Основная идея</div>
+        <div class="box">${escapeHtml(summary)}</div>
+
+        ${warning ? `
+          <div class="modal-section-title">Предупреждение</div>
+          <div class="box">${escapeHtml(warning)}</div>
+        ` : ""}
+
+        <div class="modal-section-title">Торговые уровни</div>
+        <div class="modal-grid">
+          <div class="level entry">Price: ${formatValue(idea.current_price ?? idea.price)}</div>
+          <div class="level entry">Entry: ${formatValue(idea.entry ?? idea.entry_price)}</div>
+          <div class="level sl">SL: ${formatValue(idea.sl ?? idea.stop_loss)}</div>
+          <div class="level tp">TP: ${formatValue(idea.tp ?? idea.take_profit)}</div>
+          <div class="level rr">RR: ${formatValue(idea.rr ?? idea.risk_reward)}</div>
+          <div class="level">Day %: ${formatPercent(idea.day_change_percent)}</div>
+        </div>
+
+        <div class="modal-section-title">Данные сигнала</div>
+        <div class="modal-grid">
+          <div class="level">Signal: ${escapeHtml(signal)}</div>
+          <div class="level">Confidence: ${escapeHtml(String(confidence))}%</div>
+          <div class="level">Status: ${escapeHtml(idea.status || "—")}</div>
+          <div class="level">Symbol: ${escapeHtml(symbol)}</div>
+          <div class="level">Source symbol: ${escapeHtml(idea.source_symbol || "—")}</div>
+          <div class="level">Updated: ${escapeHtml(formatDate(idea.meaningful_updated_at || idea.updated_at))}</div>
+        </div>
+
+        <div class="modal-section-title">Диагностика</div>
+        <pre>${escapeHtml(JSON.stringify(idea.diagnostics || {}, null, 2))}</pre>
+      `;
+
+      modalBackdrop.classList.add("open");
+      document.body.style.overflow = "hidden";
+    }
+
+    function closeModal() {
+      modalBackdrop.classList.remove("open");
+      document.body.style.overflow = "";
     }
 
     function normalizeSignal(value) {
       const signal = String(value || "WAIT").toUpperCase();
-
       if (signal.includes("BUY")) return "BUY";
       if (signal.includes("SELL")) return "SELL";
       return "WAIT";
     }
 
     function normalizeSymbol(value) {
-      return String(value || "")
-        .toUpperCase()
-        .replace("/", "")
-        .replace("-", "")
-        .replace("_", "")
-        .replace(/\s+/g, "")
-        .trim();
+      return String(value || "").toUpperCase().replace("/", "").replace("-", "").replace("_", "").replace(/\s+/g, "").trim();
     }
 
     function numberOrDash(value) {
@@ -551,7 +600,6 @@
       if (value === null || value === undefined || value === "") return "—";
       const number = Number(value);
       if (!Number.isFinite(number)) return escapeHtml(String(value));
-
       if (Math.abs(number) >= 100) return number.toFixed(3);
       if (Math.abs(number) >= 10) return number.toFixed(4);
       return number.toFixed(5);
@@ -566,14 +614,9 @@
 
     function formatDate(value) {
       if (!value) return "—";
-
-      try {
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return "—";
-        return date.toLocaleString("ru-RU");
-      } catch {
-        return "—";
-      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "—";
+      return date.toLocaleString("ru-RU");
     }
 
     function escapeHtml(value) {
@@ -586,10 +629,7 @@
     }
 
     loadSignals();
-
-    setInterval(() => {
-      loadSignals();
-    }, 30000);
+    setInterval(loadSignals, 30000);
   </script>
 </body>
 </html>
