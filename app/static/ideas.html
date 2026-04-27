@@ -120,7 +120,7 @@
     }
 
     .card {
-      min-height: 420px;
+      min-height: 430px;
       background:
         radial-gradient(circle at 85% 0%, rgba(69,202,255,.16), transparent 35%),
         linear-gradient(155deg, rgba(20,52,92,.96), rgba(7,22,42,.98) 70%);
@@ -135,6 +135,31 @@
     .card:hover {
       transform: translateY(-4px);
       border-color: var(--borderStrong);
+    }
+
+    .card.pulse-green { animation: pulseGreen 1.1s ease-in-out 3; }
+    .card.pulse-blue { animation: pulseBlue 1.1s ease-in-out 3; }
+    .card.pulse-red { animation: pulseRed 1.1s ease-in-out 3; }
+    .card.pulse-orange { animation: pulseOrange 1.1s ease-in-out 3; }
+
+    @keyframes pulseGreen {
+      0%, 100% { box-shadow: 0 22px 54px rgba(0,0,0,.42); }
+      50% { box-shadow: 0 0 0 3px rgba(49,245,157,.42), 0 0 40px rgba(49,245,157,.42); }
+    }
+
+    @keyframes pulseBlue {
+      0%, 100% { box-shadow: 0 22px 54px rgba(0,0,0,.42); }
+      50% { box-shadow: 0 0 0 3px rgba(69,202,255,.42), 0 0 40px rgba(69,202,255,.42); }
+    }
+
+    @keyframes pulseRed {
+      0%, 100% { box-shadow: 0 22px 54px rgba(0,0,0,.42); }
+      50% { box-shadow: 0 0 0 3px rgba(255,95,122,.42), 0 0 40px rgba(255,95,122,.42); }
+    }
+
+    @keyframes pulseOrange {
+      0%, 100% { box-shadow: 0 22px 54px rgba(0,0,0,.42); }
+      50% { box-shadow: 0 0 0 3px rgba(255,184,77,.42), 0 0 40px rgba(255,184,77,.42); }
     }
 
     .card-head {
@@ -198,10 +223,6 @@
     .chip-live { color: #d8fff0; border-color: rgba(45,245,157,.75); }
     .chip-rest { color: #fff3b2; border-color: rgba(255,216,77,.75); }
     .chip-warn { color: #ffdcdc; border-color: rgba(255,95,122,.7); }
-    .chip-entry { color: #fff3b2; border-color: rgba(255,216,77,.75); }
-    .chip-missed { color: #ffe2b0; border-color: rgba(255,184,77,.8); }
-    .chip-ok { color: #d8fff0; border-color: rgba(45,245,157,.75); }
-    .chip-closed { color: #d8e5f5; border-color: rgba(190,210,240,.55); }
 
     .box {
       background: rgba(3,14,28,.72);
@@ -215,6 +236,23 @@
       max-height: 150px;
       overflow: hidden;
     }
+
+    .trade-status {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.45;
+      background: rgba(4, 18, 34, .72);
+      border: 1px solid rgba(95,145,203,.34);
+    }
+
+    .trade-status.green { color: #d8fff0; border-color: rgba(45,245,157,.75); }
+    .trade-status.orange { color: #ffe2b0; border-color: rgba(255,184,77,.75); }
+    .trade-status.blue { color: #cdefff; border-color: rgba(69,202,255,.75); }
+    .trade-status.red { color: #ffd6d6; border-color: rgba(255,95,122,.75); }
+    .trade-status.violet { color: #efeaff; border-color: rgba(185,167,255,.75); }
 
     .levels, .modal-grid {
       display: grid;
@@ -236,32 +274,6 @@
     .tp { color: var(--green); }
     .sl { color: var(--red); }
     .rr { color: var(--blue); }
-
-    .trade-status {
-      margin-top: 10px;
-      padding: 10px 12px;
-      border-radius: 14px;
-      font-size: 13px;
-      font-weight: 900;
-      line-height: 1.45;
-      border: 1px solid rgba(95,145,203,.34);
-      background: rgba(4, 18, 34, .72);
-    }
-
-    .trade-status.ok {
-      color: #d8fff0;
-      border-color: rgba(45,245,157,.55);
-    }
-
-    .trade-status.missed {
-      color: #ffe2b0;
-      border-color: rgba(255,184,77,.65);
-    }
-
-    .trade-status.closed {
-      color: #d8e5f5;
-      border-color: rgba(190,210,240,.45);
-    }
 
     .footer {
       margin-top: 13px;
@@ -285,6 +297,23 @@
     .error {
       color: #ffd6d6;
       border-color: rgba(255,95,122,.72);
+    }
+
+    .event-banner {
+      display: none;
+      margin-bottom: 14px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      font-weight: 900;
+      line-height: 1.45;
+      background: rgba(8, 25, 48, .96);
+      border: 1px solid var(--border);
+    }
+
+    .event-banner.show { display: block; animation: bannerPulse 1s ease-in-out 2; }
+
+    @keyframes bannerPulse {
+      50% { transform: scale(1.01); border-color: var(--borderStrong); }
     }
 
     .modal-backdrop {
@@ -364,20 +393,6 @@
       border-radius: 999px;
     }
 
-    .chart {
-      height: 520px;
-      width: 100%;
-      position: relative;
-    }
-
-    .chart-note {
-      padding: 10px 12px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.5;
-      border-top: 1px solid rgba(95,145,203,.3);
-    }
-
     .legend-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -396,12 +411,19 @@
       background: rgba(3,14,28,.55);
     }
 
-    .legend-entry { color: var(--yellow); }
-    .legend-sl { color: var(--red); }
-    .legend-tp { color: var(--green); }
-    .legend-liq { color: var(--blue); }
-    .legend-ob { color: var(--violet); }
-    .legend-fvg { color: var(--orange); }
+    .chart {
+      height: 520px;
+      width: 100%;
+      position: relative;
+    }
+
+    .chart-note {
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      border-top: 1px solid rgba(95,145,203,.3);
+    }
 
     .diagnostics { display: none; margin-top: 12px; }
     .diagnostics.open { display: block; }
@@ -441,7 +463,7 @@
       <div>
         <h1>AI-идеи по рынку</h1>
         <div class="subtitle">
-          Идея создаётся от структуры рынка. Entry / SL / TP не меняются до завершения идеи.
+          Entry / SL / TP фиксируются. Описание обновляется только при важном событии: вход, TP, SL, отмена или упущенный вход.
         </div>
       </div>
       <a class="home-link" href="/">На главную</a>
@@ -459,6 +481,8 @@
       </select>
       <button id="refreshBtn">Обновить</button>
     </section>
+
+    <section id="eventBanner" class="event-banner"></section>
 
     <section class="stats">
       <div class="stat"><div class="stat-label">BUY</div><div class="stat-value" id="buyCount">0</div></div>
@@ -486,22 +510,25 @@
   </div>
 
   <script>
+    const POLL_INTERVAL_MS = 120000;
+    const IMPORTANT_STATUSES = new Set(["ACTIVE", "MISSED", "CLOSED_TP", "CLOSED_SL", "WAIT"]);
+
     const state = {
       ideas: [],
       archive: [],
+      previous: {},
       selectedPair: "ALL",
       selectedSignal: "ALL",
       activeIdea: null,
       chart: null,
     };
 
-    const ENTRY_MAX_DISTANCE_PERCENT = 0.12;
-
     const pairFilter = document.getElementById("pairFilter");
     const signalFilter = document.getElementById("signalFilter");
     const refreshBtn = document.getElementById("refreshBtn");
     const statusBox = document.getElementById("statusBox");
     const ideasGrid = document.getElementById("ideasGrid");
+    const eventBanner = document.getElementById("eventBanner");
     const modalBackdrop = document.getElementById("modalBackdrop");
     const closeModalBtn = document.getElementById("closeModalBtn");
     const modalTitle = document.getElementById("modalTitle");
@@ -518,7 +545,7 @@
       render();
     });
 
-    refreshBtn.addEventListener("click", loadSignals);
+    refreshBtn.addEventListener("click", () => loadSignals(true));
     closeModalBtn.addEventListener("click", closeModal);
 
     modalBackdrop.addEventListener("click", (event) => {
@@ -529,11 +556,12 @@
       if (event.key === "Escape") closeModal();
     });
 
-    async function loadSignals() {
-      statusBox.style.display = "block";
-      statusBox.className = "empty";
-      statusBox.textContent = "Загрузка сигналов...";
-      ideasGrid.innerHTML = "";
+    async function loadSignals(manual = false) {
+      if (manual) {
+        statusBox.style.display = "block";
+        statusBox.className = "empty";
+        statusBox.textContent = "Обновление сигналов...";
+      }
 
       try {
         let response = await fetch("/api/signals", { cache: "no-store" });
@@ -542,21 +570,131 @@
           response = await fetch("/api/ideas", { cache: "no-store" });
         }
 
-        if (!response.ok) {
-          throw new Error("HTTP " + response.status);
-        }
+        if (!response.ok) throw new Error("HTTP " + response.status);
 
         const data = await response.json();
-        state.ideas = normalizeIdeas(data).map(enrichIdeaRuntimeStatus);
-        state.archive = normalizeArchive(data).map(enrichIdeaRuntimeStatus);
+
+        const newIdeas = normalizeIdeas(data);
+        const newArchive = normalizeArchive(data);
+
+        detectImportantEvents(newIdeas, newArchive);
+
+        state.ideas = newIdeas;
+        state.archive = newArchive;
 
         fillPairFilter([...state.ideas, ...state.archive]);
         render();
+
+        if (manual) statusBox.style.display = "none";
       } catch (error) {
         statusBox.style.display = "block";
         statusBox.className = "error";
         statusBox.textContent = "Не удалось загрузить сигналы: " + error.message;
       }
+    }
+
+    function detectImportantEvents(newIdeas, newArchive) {
+      const all = [...newIdeas, ...newArchive];
+
+      for (const idea of all) {
+        const id = idea.id || idea.idea_id || idea.symbol;
+        const old = state.previous[id];
+        const status = idea.runtime_status || idea.status || "WAIT";
+
+        if (!old) {
+          state.previous[id] = { status };
+          continue;
+        }
+
+        if (old.status !== status && IMPORTANT_STATUSES.has(status)) {
+          const text = buildEventExplanation(idea, old.status, status);
+          showEvent(text, idea.runtime_color || statusToColor(status));
+          playAlert(status);
+          markCardAnimated(id, idea.runtime_color || statusToColor(status));
+        }
+
+        state.previous[id] = { status };
+      }
+    }
+
+    function buildEventExplanation(idea, oldStatus, newStatus) {
+      const symbol = normalizeSymbol(idea.symbol || idea.pair);
+      const signal = normalizeSignal(idea.final_signal || idea.signal);
+      const price = formatValue(idea.current_price ?? idea.price);
+      const entry = formatValue(idea.entry ?? idea.entry_price);
+      const sl = formatValue(idea.sl ?? idea.stop_loss);
+      const tp = formatValue(idea.tp ?? idea.take_profit);
+
+      if (newStatus === "ACTIVE") {
+        return `${symbol}: идея стала актуальной. Цена рядом с Entry ${entry}. Можно рассматривать вход только с контролем риска. Текущая цена ${price}.`;
+      }
+
+      if (newStatus === "MISSED") {
+        return `${symbol}: момент входа упущен. Цена сильно ушла от Entry ${entry}. Вход не рекомендован, потому что риск стал хуже исходного сценария.`;
+      }
+
+      if (newStatus === "CLOSED_TP") {
+        return `${symbol}: достигнут TP ${tp}. Идея закрыта в плюс и должна уйти в архив. Движение подтвердило сценарий ${signal}.`;
+      }
+
+      if (newStatus === "CLOSED_SL") {
+        return `${symbol}: достигнут SL ${sl}. Идея закрыта в минус и должна уйти в архив. Сценарий отменён рынком.`;
+      }
+
+      return `${symbol}: статус изменился с ${oldStatus} на ${newStatus}.`;
+    }
+
+    function showEvent(text, color) {
+      eventBanner.textContent = text;
+      eventBanner.className = "event-banner show";
+      eventBanner.style.borderColor = cssColor(color);
+      eventBanner.style.color = cssColor(color);
+
+      setTimeout(() => {
+        eventBanner.className = "event-banner";
+      }, 10000);
+    }
+
+    function playAlert(status) {
+      try {
+        const audio = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+
+        const frequency =
+          status === "CLOSED_TP" ? 880 :
+          status === "CLOSED_SL" ? 220 :
+          status === "MISSED" ? 440 :
+          660;
+
+        oscillator.frequency.value = frequency;
+        oscillator.type = "sine";
+        gain.gain.value = 0.08;
+
+        oscillator.connect(gain);
+        gain.connect(audio.destination);
+
+        oscillator.start();
+
+        setTimeout(() => {
+          oscillator.stop();
+          audio.close();
+        }, 300);
+      } catch (error) {}
+    }
+
+    function markCardAnimated(id, color) {
+      setTimeout(() => {
+        const card = document.querySelector(`[data-idea-id="${CSS.escape(id)}"]`);
+        if (!card) return;
+
+        card.classList.remove("pulse-green", "pulse-blue", "pulse-red", "pulse-orange");
+        card.classList.add(`pulse-${normalizePulseColor(color)}`);
+
+        setTimeout(() => {
+          card.classList.remove("pulse-green", "pulse-blue", "pulse-red", "pulse-orange");
+        }, 4000);
+      }, 100);
     }
 
     function normalizeIdeas(data) {
@@ -572,11 +710,9 @@
       return [];
     }
 
-        function fillPairFilter(ideas) {
+    function fillPairFilter(ideas) {
       const current = pairFilter.value || "ALL";
-      const symbols = Array.from(
-        new Set(ideas.map((item) => normalizeSymbol(item.symbol || item.pair)).filter(Boolean))
-      ).sort();
+      const symbols = Array.from(new Set(ideas.map((item) => normalizeSymbol(item.symbol || item.pair)).filter(Boolean))).sort();
 
       pairFilter.innerHTML = '<option value="ALL">Все пары</option>';
 
@@ -587,9 +723,8 @@
         pairFilter.appendChild(option);
       }
 
-      if (symbols.includes(current)) {
-        pairFilter.value = current;
-      } else {
+      if (symbols.includes(current)) pairFilter.value = current;
+      else {
         pairFilter.value = "ALL";
         state.selectedPair = "ALL";
       }
@@ -598,7 +733,6 @@
     function render() {
       const ideas = getFilteredIdeas();
       updateStats();
-
       ideasGrid.innerHTML = "";
 
       if (!ideas.length) {
@@ -623,125 +757,53 @@
       return all.filter((idea) => {
         const symbol = normalizeSymbol(idea.symbol || idea.pair);
         const signal = normalizeSignal(idea.final_signal || idea.signal);
-        const runtime = idea.runtime_status || "active";
+        const runtime = idea.runtime_status || idea.status || "WAIT";
 
         if (state.selectedPair !== "ALL" && symbol !== state.selectedPair) return false;
-
-        if (state.selectedSignal === "ALL") return runtime !== "closed";
-        if (state.selectedSignal === "MISSED") return runtime === "missed";
-        if (state.selectedSignal === "CLOSED") return runtime === "closed";
-
-        return signal === state.selectedSignal && runtime !== "closed";
+        if (state.selectedSignal === "ALL") return !String(runtime).startsWith("CLOSED");
+        if (state.selectedSignal === "MISSED") return runtime === "MISSED";
+        if (state.selectedSignal === "CLOSED") return String(runtime).startsWith("CLOSED");
+        return signal === state.selectedSignal && !String(runtime).startsWith("CLOSED");
       });
     }
 
     function updateStats() {
-      const active = state.ideas.filter((i) => i.runtime_status !== "closed");
-      const closed = state.archive.concat(state.ideas.filter((i) => i.runtime_status === "closed"));
+      const active = state.ideas.filter((i) => !String(i.runtime_status || i.status || "").startsWith("CLOSED"));
+      const closed = state.archive.concat(state.ideas.filter((i) => String(i.runtime_status || i.status || "").startsWith("CLOSED")));
 
       const buy = active.filter((i) => normalizeSignal(i.final_signal || i.signal) === "BUY").length;
       const sell = active.filter((i) => normalizeSignal(i.final_signal || i.signal) === "SELL").length;
       const wait = active.filter((i) => normalizeSignal(i.final_signal || i.signal) === "WAIT").length;
 
-      const tp = closed.filter((i) => String(i.close_reason || i.status || "").toLowerCase().includes("tp")).length;
-      const sl = closed.filter((i) => String(i.close_reason || i.status || "").toLowerCase().includes("sl")).length;
+      const tp = closed.filter((i) => String(i.result || i.close_reason || i.status || "").includes("TP")).length;
+      const sl = closed.filter((i) => String(i.result || i.close_reason || i.status || "").includes("SL")).length;
       const total = tp + sl;
-      const winrate = total > 0 ? `${Math.round((tp / total) * 100)}%` : "—";
 
       document.getElementById("buyCount").textContent = buy;
       document.getElementById("sellCount").textContent = sell;
       document.getElementById("waitCount").textContent = wait;
       document.getElementById("closedCount").textContent = closed.length;
-      document.getElementById("winrateValue").textContent = winrate;
-    }
-
-    function enrichIdeaRuntimeStatus(idea) {
-      const current = Number(idea.current_price ?? idea.price);
-      const entry = Number(idea.entry ?? idea.entry_price);
-      const sl = Number(idea.sl ?? idea.stop_loss);
-      const tp = Number(idea.tp ?? idea.take_profit);
-      const signal = normalizeSignal(idea.final_signal || idea.signal);
-
-      const enriched = { ...idea };
-
-      if (String(idea.status || "").toLowerCase().includes("completed") ||
-          String(idea.status || "").toLowerCase().includes("closed") ||
-          String(idea.status || "").toLowerCase().includes("tp") ||
-          String(idea.status || "").toLowerCase().includes("sl")) {
-        enriched.runtime_status = "closed";
-        enriched.runtime_status_ru = "Идея завершена и находится в архиве.";
-        return enriched;
-      }
-
-      if (!Number.isFinite(current) || !Number.isFinite(entry)) {
-        enriched.runtime_status = "waiting";
-        enriched.runtime_status_ru = "Нет текущей цены — вход не подтверждён.";
-        return enriched;
-      }
-
-      if (Number.isFinite(tp) && signal === "BUY" && current >= tp) {
-        enriched.runtime_status = "closed";
-        enriched.close_reason = "TP";
-        enriched.runtime_status_ru = "TP достигнут. Идея должна быть перенесена в архив.";
-        return enriched;
-      }
-
-      if (Number.isFinite(sl) && signal === "BUY" && current <= sl) {
-        enriched.runtime_status = "closed";
-        enriched.close_reason = "SL";
-        enriched.runtime_status_ru = "SL достигнут. Идея должна быть перенесена в архив.";
-        return enriched;
-      }
-
-      if (Number.isFinite(tp) && signal === "SELL" && current <= tp) {
-        enriched.runtime_status = "closed";
-        enriched.close_reason = "TP";
-        enriched.runtime_status_ru = "TP достигнут. Идея должна быть перенесена в архив.";
-        return enriched;
-      }
-
-      if (Number.isFinite(sl) && signal === "SELL" && current >= sl) {
-        enriched.runtime_status = "closed";
-        enriched.close_reason = "SL";
-        enriched.runtime_status_ru = "SL достигнут. Идея должна быть перенесена в архив.";
-        return enriched;
-      }
-
-      const distancePercent = Math.abs(current - entry) / Math.max(Math.abs(entry), 0.00001) * 100;
-      enriched.entry_distance_percent = distancePercent;
-
-      if (distancePercent > ENTRY_MAX_DISTANCE_PERCENT) {
-        enriched.runtime_status = "missed";
-        enriched.runtime_status_ru = `Цена ушла от входа на ${distancePercent.toFixed(3)}%. Момент входа упущен, вход не рекомендован.`;
-        return enriched;
-      }
-
-      if (signal === "WAIT") {
-        enriched.runtime_status = "waiting";
-        enriched.runtime_status_ru = "Идея в ожидании. Вход пока не подтверждён.";
-        return enriched;
-      }
-
-      enriched.runtime_status = "active";
-      enriched.runtime_status_ru = `Идея актуальна. Цена рядом с Entry, вход допустим только с контролем риска. Отклонение: ${distancePercent.toFixed(3)}%.`;
-      return enriched;
+      document.getElementById("winrateValue").textContent = total > 0 ? `${Math.round((tp / total) * 100)}%` : "—";
     }
 
     function renderCard(idea) {
+      const id = idea.id || idea.idea_id || idea.symbol;
       const symbol = normalizeSymbol(idea.symbol || idea.pair || "MARKET");
       const signal = normalizeSignal(idea.final_signal || idea.signal);
       const confidence = numberOrDash(idea.final_confidence ?? idea.confidence);
       const source = idea.source || "unknown";
       const dataStatus = idea.data_status || "unknown";
       const price = idea.current_price ?? idea.price ?? idea.entry_price ?? idea.entry;
-      const summary = idea.summary_ru || idea.summary || idea.short_text || "Описание сигнала отсутствует.";
+      const summary = idea.summary_ru || idea.summary || idea.ai_explanation || idea.full_text || "Описание отсутствует.";
       const warning = humanizeWarning(idea.warning_ru || "");
-      const badgeClass = getBadgeClass(signal, idea.runtime_status);
-      const signalClass = getSignalClass(signal, idea.runtime_status);
+      const runtime = idea.runtime_status || idea.status || "WAIT";
+      const color = idea.runtime_color || statusToColor(runtime);
 
       const card = document.createElement("article");
       card.className = "card";
       card.tabIndex = 0;
+      card.dataset.ideaId = id;
+      card.style.borderColor = cssColor(color);
 
       card.innerHTML = `
         <div class="card-head">
@@ -749,11 +811,11 @@
             <div class="symbol">${escapeHtml(symbol)}</div>
             <div class="signal-line">
               Итоговый сигнал:
-              <span class="${signalClass}">${escapeHtml(signal)}</span>
+              <span class="${getSignalClass(signal, runtime)}">${escapeHtml(signal)}</span>
               · Уверенность: ${escapeHtml(String(confidence))}%
             </div>
           </div>
-          <span class="badge ${badgeClass}">${escapeHtml(getBadgeText(signal, idea.runtime_status))}</span>
+          <span class="badge ${getBadgeClass(signal, runtime)}">${escapeHtml(getBadgeText(signal, runtime))}</span>
         </div>
 
         <div class="chip-row">
@@ -761,12 +823,11 @@
             ${source === "twelvedata_ws" ? "LIVE WS" : "Резервная цена"}
           </span>
           <span class="chip">${escapeHtml(dataStatus)}</span>
-          <span class="chip">${escapeHtml(idea.setup_quality || "LIVE")}</span>
           ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
         </div>
 
-        <div class="trade-status ${idea.runtime_status || "ok"}">
-          ${escapeHtml(idea.runtime_status_ru || "Статус идеи уточняется.")}
+        <div class="trade-status ${color}">
+          ${escapeHtml(idea.runtime_text || idea.runtime_status_text || "Статус идеи уточняется.")}
         </div>
 
         <div class="box">${escapeHtml(summary)}</div>
@@ -778,12 +839,12 @@
           <div class="level sl">SL: ${formatValue(idea.sl ?? idea.stop_loss)}</div>
           <div class="level tp">TP: ${formatValue(idea.tp ?? idea.take_profit)}</div>
           <div class="level rr">RR: ${formatValue(idea.rr ?? idea.risk_reward)}</div>
-          <div class="level">Day %: ${formatPercent(idea.day_change_percent)}</div>
+          <div class="level">Status: ${escapeHtml(runtime)}</div>
         </div>
 
         <div class="footer">
           <span>${escapeHtml(idea.source_symbol || symbol)}</span>
-          <span>${formatDate(idea.meaningful_updated_at || idea.updated_at)}</span>
+          <span>${formatDate(idea.meaningful_updated_at || idea.updated_at || idea.created_at)}</span>
         </div>
       `;
 
@@ -803,11 +864,12 @@
       const source = idea.source || "unknown";
       const dataStatus = idea.data_status || "unknown";
       const confidence = numberOrDash(idea.final_confidence ?? idea.confidence);
-      const summary = idea.summary_ru || idea.summary || idea.full_text || "Описание отсутствует.";
+      const summary = idea.summary_ru || idea.summary || idea.ai_explanation || idea.full_text || "Описание отсутствует.";
       const warning = humanizeWarning(idea.warning_ru || "");
-      const signalClass = getSignalClass(signal, idea.runtime_status);
+      const runtime = idea.runtime_status || idea.status || "WAIT";
+      const color = idea.runtime_color || statusToColor(runtime);
 
-      modalTitle.innerHTML = `${escapeHtml(symbol)} · <span class="${signalClass}">${escapeHtml(signal)}</span>`;
+      modalTitle.innerHTML = `${escapeHtml(symbol)} · <span class="${getSignalClass(signal, runtime)}">${escapeHtml(signal)}</span>`;
       modalSubtitle.textContent = `Источник: ${source === "twelvedata_ws" ? "Live WebSocket" : "Резервная цена REST"} · Статус данных: ${dataStatus} · Уверенность: ${confidence}%`;
 
       modalContent.innerHTML = `
@@ -816,14 +878,12 @@
             ${source === "twelvedata_ws" ? "LIVE WS" : "Резервная цена"}
           </span>
           <span class="chip">${escapeHtml(dataStatus)}</span>
-          <span class="chip">${escapeHtml(idea.setup_quality || "quality")}</span>
-          <span class="chip">${escapeHtml(idea.risk_filter || "risk filter")}</span>
           ${warning ? '<span class="chip chip-warn">warning</span>' : ""}
         </div>
 
         <div class="modal-section-title">Статус входа</div>
-        <div class="trade-status ${idea.runtime_status || "ok"}">
-          ${escapeHtml(idea.runtime_status_ru || "Статус идеи уточняется.")}
+        <div class="trade-status ${color}">
+          ${escapeHtml(idea.runtime_text || idea.runtime_status_text || "Статус идеи уточняется.")}
         </div>
 
         <div class="modal-section-title">Основная идея</div>
@@ -840,12 +900,12 @@
           </div>
 
           <div class="legend-grid">
-            <div class="legend-item legend-entry">ENTRY — точка входа, фиксируется при создании идеи</div>
-            <div class="legend-item legend-sl">SL — уровень отмены идеи</div>
-            <div class="legend-item legend-tp">TP — цель идеи</div>
-            <div class="legend-item legend-liq">Liquidity — зоны, где могут стоять стопы</div>
-            <div class="legend-item legend-ob">OB — возможная зона крупного игрока</div>
-            <div class="legend-item legend-fvg">FVG — дисбаланс/быстрое движение цены</div>
+            <div class="legend-item" style="color:#ffd84d">ENTRY — фиксированная точка входа</div>
+            <div class="legend-item" style="color:#ff5f7a">SL — отмена идеи</div>
+            <div class="legend-item" style="color:#31f59d">TP — цель идеи</div>
+            <div class="legend-item" style="color:#45caff">Liquidity — вероятные стопы</div>
+            <div class="legend-item" style="color:#b9a7ff">OB — зона крупного игрока</div>
+            <div class="legend-item" style="color:#ffb84d">FVG — дисбаланс движения</div>
           </div>
 
           <div id="chartBox" class="chart"></div>
@@ -859,17 +919,7 @@
           <div class="level sl">SL: ${formatValue(idea.sl ?? idea.stop_loss)}</div>
           <div class="level tp">TP: ${formatValue(idea.tp ?? idea.take_profit)}</div>
           <div class="level rr">RR: ${formatValue(idea.rr ?? idea.risk_reward)}</div>
-          <div class="level">Day %: ${formatPercent(idea.day_change_percent)}</div>
-        </div>
-
-        <div class="modal-section-title">Данные сигнала</div>
-        <div class="modal-grid">
-          <div class="level">Signal: ${escapeHtml(signal)}</div>
-          <div class="level">Confidence: ${escapeHtml(String(confidence))}%</div>
-          <div class="level">Status: ${escapeHtml(idea.status || "—")}</div>
-          <div class="level">Symbol: ${escapeHtml(symbol)}</div>
-          <div class="level">Source symbol: ${escapeHtml(idea.source_symbol || "—")}</div>
-          <div class="level">Updated: ${escapeHtml(formatDate(idea.meaningful_updated_at || idea.updated_at))}</div>
+          <div class="level">Status: ${escapeHtml(runtime)}</div>
         </div>
 
         <button id="diagnosticsToggle">Показать диагностику</button>
@@ -977,7 +1027,7 @@
       addPriceLine(candleSeries, idea.sl ?? idea.stop_loss, "SL", "#ff5f7a", 3);
       addPriceLine(candleSeries, idea.tp ?? idea.take_profit, "TP", "#31f59d", 3);
 
-      addAnnotations(chart, payload.annotations || {}, candles);
+      addAnnotations(chart, payload.annotations || {}, candles, candleSeries);
 
       chart.timeScale().fitContent();
 
@@ -985,10 +1035,9 @@
       legend.innerHTML = `
         <b>${escapeHtml(payload.symbol || "")} ${escapeHtml(payload.timeframe || "")}</b> ·
         Структура: ${escapeHtml(ms.trend || "neutral")} ·
-        Ликвидность рядом: ${escapeHtml(ms.near_liquidity || "none")} ·
-        FVG: ${ms.has_bullish_fvg ? "bullish " : ""}${ms.has_bearish_fvg ? "bearish" : ""}
+        Ликвидность рядом: ${escapeHtml(ms.near_liquidity || "none")}
         <br>
-        Разметка: толстые линии Entry/SL/TP, пунктирные уровни ликвидности, зоны OB/FVG как границы дисбаланса.
+        На графике оставлены только ключевые уровни и последние зоны, чтобы не было нагромождения.
       `;
     }
 
@@ -1006,18 +1055,21 @@
       });
     }
 
-    function addAnnotations(chart, annotations, candles) {
+    function addAnnotations(chart, annotations, candles, candleSeries) {
       if (!candles.length) return;
 
-      const firstTime = candles[0].time;
+      const firstTime = candles[Math.max(0, candles.length - 80)].time;
       const lastTime = candles[candles.length - 1].time;
 
-      for (const level of annotations.levels || []) {
+      for (const level of (annotations.levels || []).slice(0, 3)) {
         const price = Number(level.price);
         if (!Number.isFinite(price)) continue;
 
         const line = chart.addLineSeries({
-          color: level.type === "support" ? "#31f59d" : level.type === "resistance" ? "#ff5f7a" : "#45caff",
+          color:
+            level.type === "support" ? "#31f59d" :
+            level.type === "resistance" ? "#ff5f7a" :
+            "#45caff",
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           priceLineVisible: false,
@@ -1027,7 +1079,7 @@
         line.setData([{ time: firstTime, value: price }, { time: lastTime, value: price }]);
       }
 
-      for (const zone of (annotations.liquidity || []).slice(-10)) {
+      for (const zone of (annotations.liquidity || []).slice(-4)) {
         const price = Number(zone.price);
         if (!Number.isFinite(price)) continue;
 
@@ -1042,36 +1094,54 @@
         line.setData([{ time: firstTime, value: price }, { time: lastTime, value: price }]);
       }
 
-      addZones(chart, annotations.order_blocks || [], firstTime, lastTime, "OB");
-      addZones(chart, annotations.imbalances || [], firstTime, lastTime, "FVG");
+      addCleanZones(chart, annotations.order_blocks || [], firstTime, lastTime, "OB");
+      addCleanZones(chart, annotations.imbalances || [], firstTime, lastTime, "FVG");
+
+      const markers = [];
+      for (const pattern of annotations.patterns || []) {
+        markers.push({
+          time: normalizeCandleTime(pattern.time),
+          position: String(pattern.type || "").includes("bullish") ? "belowBar" : "aboveBar",
+          color: String(pattern.type || "").includes("bullish") ? "#31f59d" : "#ff5f7a",
+          shape: String(pattern.type || "").includes("bullish") ? "arrowUp" : "arrowDown",
+          text: pattern.label || pattern.type || "pattern",
+        });
+      }
+
+      candleSeries.setMarkers(markers.filter((m) => Number.isFinite(m.time)));
     }
 
-    function addZones(chart, zones, firstTime, lastTime, typeLabel) {
-      for (const zone of zones.slice(-8)) {
+    function addCleanZones(chart, zones, firstTime, lastTime, typeLabel) {
+      const selected = zones.slice(-2);
+
+      for (const zone of selected) {
         const from = Number(zone.from);
         const to = Number(zone.to);
+
         if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
 
         const top = Math.max(from, to);
         const bottom = Math.min(from, to);
         const mid = (top + bottom) / 2;
         const isBullish = String(zone.type || "").includes("bullish");
-        const color = typeLabel === "OB"
-          ? (isBullish ? "#b9a7ff" : "#ff9fb0")
-          : (isBullish ? "#ffb84d" : "#ff7a4d");
+
+        const color =
+          typeLabel === "OB"
+            ? isBullish ? "#b9a7ff" : "#ff9fb0"
+            : isBullish ? "#ffb84d" : "#ff7a4d";
 
         const topLine = chart.addLineSeries({
           color,
-          lineWidth: 2,
-          lineStyle: LightweightCharts.LineStyle.LargeDashed,
+          lineWidth: 3,
+          lineStyle: LightweightCharts.LineStyle.Solid,
           priceLineVisible: false,
           lastValueVisible: false,
         });
 
         const bottomLine = chart.addLineSeries({
           color,
-          lineWidth: 2,
-          lineStyle: LightweightCharts.LineStyle.LargeDashed,
+          lineWidth: 3,
+          lineStyle: LightweightCharts.LineStyle.Solid,
           priceLineVisible: false,
           lastValueVisible: false,
         });
@@ -1098,22 +1168,22 @@
     }
 
     function getBadgeClass(signal, runtimeStatus) {
-      if (runtimeStatus === "closed") return "badge-closed";
-      if (runtimeStatus === "missed") return "badge-missed";
+      if (String(runtimeStatus).startsWith("CLOSED")) return "badge-closed";
+      if (runtimeStatus === "MISSED") return "badge-missed";
       if (signal === "BUY") return "badge-buy";
       if (signal === "SELL") return "badge-sell";
       return "badge-wait";
     }
 
     function getBadgeText(signal, runtimeStatus) {
-      if (runtimeStatus === "closed") return "ARCHIVE";
-      if (runtimeStatus === "missed") return "MISSED";
+      if (String(runtimeStatus).startsWith("CLOSED")) return "ARCHIVE";
+      if (runtimeStatus === "MISSED") return "MISSED";
       return signal;
     }
 
     function getSignalClass(signal, runtimeStatus) {
-      if (runtimeStatus === "closed") return "closed-text";
-      if (runtimeStatus === "missed") return "missed-text";
+      if (String(runtimeStatus).startsWith("CLOSED")) return "closed-text";
+      if (runtimeStatus === "MISSED") return "missed-text";
       if (signal === "BUY") return "buy-text";
       if (signal === "SELL") return "sell-text";
       return "wait-text";
@@ -1129,11 +1199,32 @@
         return "TwelveData лимит на сегодня исчерпан. Свежие REST-свечи/цены временно недоступны до обновления лимита.";
       }
 
-      if (lower.includes("rest fallback") || lower.includes("not websocket")) {
+      if (lower.includes("rest fallback") || lower.includes("not websocket") || lower.includes("резервная цена")) {
         return "Резервная цена: WebSocket сейчас не прислал live-тик, поэтому система взяла цену через TwelveData REST.";
       }
 
       return value;
+    }
+
+    function statusToColor(status) {
+      if (status === "ACTIVE") return "green";
+      if (status === "MISSED") return "orange";
+      if (status === "CLOSED_TP") return "blue";
+      if (status === "CLOSED_SL") return "red";
+      return "violet";
+    }
+
+    function normalizePulseColor(color) {
+      if (["green", "blue", "red", "orange"].includes(color)) return color;
+      return "blue";
+    }
+
+    function cssColor(color) {
+      if (color === "green") return "#31f59d";
+      if (color === "blue") return "#45caff";
+      if (color === "red") return "#ff5f7a";
+      if (color === "orange") return "#ffb84d";
+      return "#b9a7ff";
     }
 
     function normalizeSignal(value) {
@@ -1203,8 +1294,8 @@
 
     window.loadChartForActiveIdea = loadChartForActiveIdea;
 
-    loadSignals();
-    setInterval(loadSignals, 30000);
+    loadSignals(true);
+    setInterval(() => loadSignals(false), POLL_INTERVAL_MS);
   </script>
 </body>
 </html>
