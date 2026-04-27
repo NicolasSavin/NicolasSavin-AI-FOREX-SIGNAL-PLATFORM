@@ -26,7 +26,7 @@ _rest_price_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 app = FastAPI(
     title="NicolasSavin AI FOREX SIGNAL PLATFORM",
-    version="ws-ideas-fallback-1.0",
+    version="ws-signals-1.0",
 )
 
 if STATIC_DIR.exists():
@@ -53,7 +53,7 @@ async def health(request: Request):
         {
             "status": "ok",
             "version": app.version,
-            "mode": "ws-with-rest-fallback",
+            "mode": "ws-signals-with-rest-fallback",
             "time_utc": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -70,7 +70,7 @@ async def home_page():
         {
             "status": "ok",
             "message": "AI FOREX SIGNAL PLATFORM",
-            "mode": "ws-with-rest-fallback",
+            "mode": "ws-signals-with-rest-fallback",
         }
     )
 
@@ -86,7 +86,7 @@ async def ideas_page():
         {
             "status": "ok",
             "message": "ideas page unavailable",
-            "mode": "ws-with-rest-fallback",
+            "mode": "ws-signals-with-rest-fallback",
         }
     )
 
@@ -111,9 +111,29 @@ def live_price(symbol: str):
     return _get_price_with_fallback(symbol)
 
 
+@app.get("/api/twelvedata-status")
+def twelvedata_status():
+    ws = twelvedata_ws_service.health()
+
+    return {
+        "status": "ok",
+        "ws_enabled": ws.get("enabled"),
+        "ws_connected": ws.get("connected"),
+        "ws_cached_symbols": ws.get("cached_symbol_names"),
+        "rest_cache_symbols": sorted(_rest_price_cache.keys()),
+        "rest_cache_ttl_seconds": REST_PRICE_CACHE_TTL_SECONDS,
+        "last_ws_error": ws.get("last_error"),
+        "cooldown_until_utc": ws.get("cooldown_until_utc"),
+        "limit_hint_ru": (
+            "Если в warning_ru появляется credits, quota, rate limit или too many, "
+            "значит TwelveData лимит достигнут."
+        ),
+    }
+
+
 @app.get("/ideas/market")
 def ideas_market():
-    ideas = [_build_live_wait_idea(symbol) for symbol in DEFAULT_PAIRS]
+    ideas = [_build_signal_idea(symbol) for symbol in DEFAULT_PAIRS]
 
     return {
         "updated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -127,7 +147,7 @@ def ideas_market():
         },
         "market": [_build_market_contract(symbol) for symbol in DEFAULT_PAIRS],
         "diagnostics": {
-            "mode": "ws_with_rest_fallback",
+            "mode": "ws_signals_with_rest_fallback",
             "primary_source": "twelvedata_ws",
             "fallback_source": "twelvedata_rest_quote",
             "yahoo_disabled": True,
@@ -139,7 +159,7 @@ def ideas_market():
 
 @app.get("/api/ideas")
 def api_ideas():
-    ideas = [_build_live_wait_idea(symbol) for symbol in DEFAULT_PAIRS]
+    ideas = [_build_signal_idea(symbol) for symbol in DEFAULT_PAIRS]
 
     return {
         "ideas": ideas,
@@ -148,16 +168,39 @@ def api_ideas():
             "timeframes": ["LIVE"],
         },
         "diagnostics": {
-            "mode": "ws_with_rest_fallback",
+            "mode": "ws_signals_with_rest_fallback",
             "primary_source": "twelvedata_ws",
             "fallback_source": "twelvedata_rest_quote",
-            "generated_count": 0,
-            "fallback_count": len(ideas),
+            "generated_count": len(ideas),
+            "fallback_count": len(
+                [item for item in ideas if item.get("data_status") == "rest_fallback"]
+            ),
             "yahoo_disabled": True,
             "stooq_disabled": True,
             "auto_generation_disabled": True,
         },
     }
+
+
+@app.get("/api/signals")
+@app.get("/signals/live")
+@app.get("/api/signals/active")
+def api_signals():
+    signals = [_build_signal_idea(symbol) for symbol in DEFAULT_PAIRS]
+
+    return {
+        "signals": signals,
+        "status": "ok",
+        "source": "twelvedata_ws_with_rest_fallback",
+        "mode": "simple_live_signals",
+    }
+
+
+@app.get("/api/signals/{symbol}")
+@app.get("/api/signals/lookup/{symbol}")
+@app.get("/api/legacy/signals/{symbol}")
+def api_signal(symbol: str):
+    return _build_signal_idea(symbol)
 
 
 @app.get("/api/price/{symbol}")
@@ -174,7 +217,43 @@ def api_market(symbols: str | None = None):
     return {
         "market": [_build_market_contract(symbol) for symbol in requested],
         "source": "twelvedata_ws_with_rest_fallback",
-        "mode": "ws_with_rest_fallback",
+        "mode": "ws_signals_with_rest_fallback",
+    }
+
+
+@app.get("/api/analytics/capabilities")
+def analytics_capabilities():
+    return {
+        "enabled": True,
+        "mode": "simple_live_signals",
+        "features": [
+            "live_price",
+            "rest_fallback",
+            "day_change_percent_signal",
+            "basic_entry_sl_tp",
+        ],
+        "disabled": [
+            "candles_engine",
+            "yahoo",
+            "stooq",
+            "heavy_background_generation",
+        ],
+    }
+
+
+@app.get("/api/analytics/signals/{symbol}")
+def analytics_signal(symbol: str):
+    idea = _build_signal_idea(symbol)
+
+    return {
+        "symbol": _normalize_symbol(symbol),
+        "enabled": True,
+        "mode": "simple_live_signals",
+        "signal": idea,
+        "note_ru": (
+            "Это простой live-сигнал по текущей цене и дневному изменению. "
+            "Полный candles/smart-money engine пока отключён для стабильности Render."
+        ),
     }
 
 
@@ -186,40 +265,6 @@ def api_market(symbols: str | None = None):
 @app.get("/api/canonical/chart/{symbol}/{tf}")
 def chart_disabled(symbol: str, tf: str | None = None):
     return []
-
-
-@app.get("/signals/live")
-@app.get("/api/signals")
-@app.get("/api/signals/active")
-def signals_disabled():
-    return {
-        "signals": [],
-        "status": "disabled",
-        "reason": "signals_engine_disabled_in_ws_fallback_mode",
-        "source": "twelvedata_ws_with_rest_fallback",
-    }
-
-
-@app.get("/api/analytics/capabilities")
-def analytics_capabilities_disabled():
-    return {
-        "enabled": False,
-        "mode": "ws_with_rest_fallback",
-        "reason": "analytics_disabled_until_market_data_layer_is_stable",
-    }
-
-
-@app.get("/api/analytics/signals/{symbol}")
-def analytics_signal_disabled(symbol: str):
-    price = _get_price_with_fallback(symbol)
-
-    return {
-        "symbol": _normalize_symbol(symbol),
-        "enabled": False,
-        "mode": "ws_with_rest_fallback",
-        "price": price,
-        "reason": "analytics_disabled_until_signal_engine_is_reconnected",
-    }
 
 
 @app.get("/news", include_in_schema=False)
@@ -239,7 +284,7 @@ def news_disabled():
         "items": [],
         "news": [],
         "status": "disabled",
-        "reason": "news_disabled_in_ws_fallback_mode",
+        "reason": "news_disabled_in_simple_live_signal_mode",
     }
 
 
@@ -279,58 +324,69 @@ def heatmap_disabled():
     }
 
 
-def _build_live_wait_idea(symbol: str) -> dict[str, Any]:
+def _build_signal_idea(symbol: str) -> dict[str, Any]:
     normalized = _normalize_symbol(symbol)
     price_payload = _get_price_with_fallback(normalized)
 
-    price = price_payload.get("price")
+    price = _safe_float(price_payload.get("price"))
     data_status = price_payload.get("data_status")
     is_live = bool(price_payload.get("is_live_market_data"))
+    source = price_payload.get("source") or "twelvedata"
+    day_change_percent = _safe_float(price_payload.get("day_change_percent"))
 
-    entry = _safe_float(price)
+    signal, direction, confidence, reason_ru = _simple_signal_logic(
+        symbol=normalized,
+        price=price,
+        day_change_percent=day_change_percent,
+        data_status=str(data_status or ""),
+    )
+
+    entry = price
     sl = None
     tp = None
+    rr = None
 
-    if entry is not None:
-        sl, tp = _default_levels(normalized, entry)
+    if entry is not None and signal in {"BUY", "SELL"}:
+        sl, tp = _levels_for_signal(normalized, entry, signal)
+        rr = 1.0
 
-    warning = price_payload.get("warning_ru")
-
-    if is_live:
-        summary = (
-            f"{normalized}: live price получен из TwelveData WebSocket. "
-            "Сейчас идея переведена в режим ожидания: направление не форсируется, "
-            "пока не подключён полный candles/signal engine."
-        )
     elif entry is not None:
+        sl, tp = _default_levels(normalized, entry)
+        rr = 1.0
+
+    source_text = _source_text_ru(source=source, data_status=str(data_status or ""))
+
+    if signal == "BUY":
         summary = (
-            f"{normalized}: live WebSocket price пока недоступен, "
-            "но цена получена через TwelveData REST fallback. "
-            "Идея остаётся в режиме ожидания без полноценного торгового подтверждения."
+            f"{normalized}: предварительный BUY. {reason_ru} "
+            f"{source_text} Это не финальный вход: нужен контроль риска и подтверждение."
+        )
+    elif signal == "SELL":
+        summary = (
+            f"{normalized}: предварительный SELL. {reason_ru} "
+            f"{source_text} Это не финальный вход: нужен контроль риска и подтверждение."
         )
     else:
         summary = (
-            f"{normalized}: цена пока недоступна. "
-            "Идея остаётся в режиме ожидания без торгового подтверждения."
+            f"{normalized}: режим ожидания. {reason_ru} "
+            f"{source_text} Направление не форсируется без сильного подтверждения."
         )
 
-    confidence = 35 if is_live else 25 if entry is not None else 20
-
     return {
-        "id": f"{normalized.lower()}-ws-live",
-        "idea_id": f"{normalized.lower()}-ws-live",
+        "id": f"{normalized.lower()}-simple-live",
+        "idea_id": f"{normalized.lower()}-simple-live",
         "symbol": normalized,
         "pair": normalized,
         "timeframe": "LIVE",
         "tf": "LIVE",
-        "signal": "WAIT",
-        "final_signal": "WAIT",
-        "direction": "neutral",
-        "bias": "neutral",
+        "signal": signal,
+        "final_signal": signal,
+        "direction": direction,
+        "bias": direction,
         "confidence": confidence,
         "final_confidence": confidence,
-        "status": "waiting",
-        "source": price_payload.get("source") or "twelvedata",
+        "status": "active" if signal in {"BUY", "SELL"} else "waiting",
+        "source": source,
         "data_status": data_status,
         "is_live_market_data": is_live,
         "source_symbol": price_payload.get("source_symbol"),
@@ -342,8 +398,9 @@ def _build_live_wait_idea(symbol: str) -> dict[str, Any]:
         "sl": sl,
         "take_profit": tp,
         "tp": tp,
-        "risk_reward": 1.0 if entry is not None else None,
-        "rr": 1.0 if entry is not None else None,
+        "risk_reward": rr,
+        "rr": rr,
+        "day_change_percent": day_change_percent,
         "summary": summary,
         "summary_ru": summary,
         "short_text": summary,
@@ -351,16 +408,16 @@ def _build_live_wait_idea(symbol: str) -> dict[str, Any]:
         "unified_narrative": summary,
         "full_text": summary,
         "compact_summary": summary,
-        "warning_ru": warning,
+        "warning_ru": price_payload.get("warning_ru"),
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "meaningful_updated_at": datetime.now(timezone.utc).isoformat(),
-        "tags": [normalized, "LIVE", "WAIT", "TWELVEDATA"],
+        "tags": [normalized, "LIVE", signal, "TWELVEDATA"],
         "timeframe_ideas": {
             "LIVE": {
                 "symbol": normalized,
                 "timeframe": "LIVE",
-                "signal": "WAIT",
-                "direction": "neutral",
+                "signal": signal,
+                "direction": direction,
                 "confidence": confidence,
                 "current_price": price,
                 "summary_ru": summary,
@@ -369,13 +426,85 @@ def _build_live_wait_idea(symbol: str) -> dict[str, Any]:
         "timeframes_available": ["LIVE"],
         "market_contract": _build_market_contract(normalized),
         "diagnostics": {
-            "mode": "ws_with_rest_fallback",
+            "mode": "simple_live_signals",
             "price_payload": price_payload,
+            "day_change_percent": day_change_percent,
             "candles_disabled": True,
             "yahoo_disabled": True,
             "stooq_disabled": True,
+            "signal_logic": "day_change_percent_threshold",
         },
     }
+
+
+def _simple_signal_logic(
+    *,
+    symbol: str,
+    price: float | None,
+    day_change_percent: float | None,
+    data_status: str,
+) -> tuple[str, str, int, str]:
+    if price is None:
+        return (
+            "WAIT",
+            "neutral",
+            15,
+            "Цена недоступна, поэтому сигнал не формируется.",
+        )
+
+    if day_change_percent is None:
+        confidence = 35 if data_status == "real" else 25
+        return (
+            "WAIT",
+            "neutral",
+            confidence,
+            "Есть текущая цена, но нет дневного изменения для оценки импульса.",
+        )
+
+    abs_change = abs(day_change_percent)
+
+    if abs_change < 0.05:
+        return (
+            "WAIT",
+            "neutral",
+            30,
+            f"Дневное изменение слабое ({day_change_percent:.3f}%), импульс не выражен.",
+        )
+
+    if day_change_percent > 0:
+        confidence = _confidence_from_change(abs_change, data_status)
+        return (
+            "BUY",
+            "bullish",
+            confidence,
+            f"Дневной импульс положительный ({day_change_percent:.3f}%). Покупатели удерживают преимущество.",
+        )
+
+    confidence = _confidence_from_change(abs_change, data_status)
+    return (
+        "SELL",
+        "bearish",
+        confidence,
+        f"Дневной импульс отрицательный ({day_change_percent:.3f}%). Продавцы удерживают преимущество.",
+    )
+
+
+def _confidence_from_change(abs_change: float, data_status: str) -> int:
+    base = 45
+
+    if abs_change >= 0.10:
+        base += 8
+
+    if abs_change >= 0.25:
+        base += 7
+
+    if abs_change >= 0.50:
+        base += 5
+
+    if data_status == "real":
+        base += 5
+
+    return max(20, min(base, 70))
 
 
 def _build_market_contract(symbol: str) -> dict[str, Any]:
@@ -573,6 +702,32 @@ def _to_twelvedata_symbol(symbol: str) -> str:
     return mapping.get(normalized, normalized)
 
 
+def _levels_for_signal(symbol: str, entry: float, signal: str) -> tuple[float, float]:
+    if symbol == "XAUUSD":
+        distance = 2.0
+        precision = 2
+    elif symbol.endswith("JPY"):
+        distance = 0.20
+        precision = 3
+    else:
+        distance = 0.0020
+        precision = 5
+
+    if signal == "BUY":
+        return (
+            round(entry - distance, precision),
+            round(entry + distance, precision),
+        )
+
+    if signal == "SELL":
+        return (
+            round(entry + distance, precision),
+            round(entry - distance, precision),
+        )
+
+    return _default_levels(symbol, entry)
+
+
 def _default_levels(symbol: str, entry: float) -> tuple[float, float]:
     if symbol == "XAUUSD":
         sl_distance = 2.0
@@ -591,6 +746,16 @@ def _default_levels(symbol: str, entry: float) -> tuple[float, float]:
         round(entry - sl_distance, precision),
         round(entry + tp_distance, precision),
     )
+
+
+def _source_text_ru(*, source: str, data_status: str) -> str:
+    if source == "twelvedata_ws" and data_status == "real":
+        return "Цена получена из live WebSocket."
+
+    if source == "twelvedata_rest_quote":
+        return "Цена получена через резервный TwelveData REST fallback."
+
+    return "Источник цены ограничен, поэтому сигнал считается предварительным."
 
 
 def _parse_symbols(symbols: str | None) -> list[str]:
