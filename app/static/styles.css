@@ -2028,6 +2028,28 @@ a { color: inherit; }
   50% { box-shadow: 0 0 20px rgba(139, 92, 246, 0.35), inset 0 0 20px rgba(76, 201, 240, 0.2); }
 }
 
+.app-version-block {
+  margin-top: 40px;
+  padding: 12px 16px;
+  font-size: 11px;
+  opacity: 0.6;
+  color: rgba(200, 220, 255, 0.6);
+  text-align: center;
+}
+
+.app-version-line {
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.app-changelog div {
+  margin: 2px 0;
+}
+
+.app-version-block:hover {
+  opacity: 0.85;
+}
+
 @media (max-width: 860px) {
   .calendar-guide-grid {
     grid-template-columns: 1fr;
