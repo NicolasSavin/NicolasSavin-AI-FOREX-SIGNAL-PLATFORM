@@ -545,6 +545,15 @@
       border-bottom: 1px solid rgba(95,145,203,.3);
       background: rgba(8,25,48,.9);
     }
+    .sentiment-badge {
+      margin: 10px 10px 0;
+      padding: 6px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(18, 27, 42, .72);
+      color: var(--text);
+      font-size: 12px;
+    }
 
     .tf-btn {
       height: 34px;
@@ -1111,6 +1120,7 @@
 
           <div class="modal-section-title">Основная идея</div>
           <div class="box modal-text">${escapeHtml(pickText(idea))}</div>
+          ${renderSmartMoneyContext(idea)}
           ${renderFundamentalContext(idea)}
           <div class="status-reason">${escapeHtml(statusReason)}</div>
 
@@ -1129,6 +1139,7 @@
 
         <div class="ideas-modal__bottom">
           <div class="chart-wrap">
+            ${renderSentimentBadge(idea)}
             <div class="chart-toolbar">
               <button class="tf-btn" data-tf="M15">M15</button>
               <button class="tf-btn" data-tf="H1">H1</button>
@@ -1877,6 +1888,29 @@
         idea.description_ru ||
         "Описание идеи отсутствует."
       );
+    }
+
+    function renderSentimentBadge(idea) {
+      const sentiment = idea && typeof idea.sentiment === "object" ? idea.sentiment : null;
+      if (!sentiment || String(sentiment.data_status || "").toLowerCase() === "unavailable") {
+        return `<div class="sentiment-badge">Sentiment: нет данных</div>`;
+      }
+      const longPct = Number(sentiment.long_pct);
+      const shortPct = Number(sentiment.short_pct);
+      if (!Number.isFinite(longPct) || !Number.isFinite(shortPct)) {
+        return `<div class="sentiment-badge">Sentiment: нет данных</div>`;
+      }
+      return `<div class="sentiment-badge">Sentiment: Long ${escapeHtml(longPct.toFixed(0))}% / Short ${escapeHtml(shortPct.toFixed(0))}%</div>`;
+    }
+
+    function renderSmartMoneyContext(idea) {
+      const context = idea && typeof idea.smart_money_context === "object" ? idea.smart_money_context : null;
+      if (!context) return "";
+      const lines = [context.summary_ru, context.crowd_risk_ru, context.liquidity_alignment_ru]
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+      if (!lines.length) return "";
+      return `<div class="box modal-text">${escapeHtml(lines.join(" "))}</div>`;
     }
 
     function normalizeSymbol(value) {

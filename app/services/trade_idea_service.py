@@ -1347,6 +1347,7 @@ class TradeIdeaService:
         action = signal.get("action", "NO_TRADE")
         bias = "bullish" if action == "BUY" else "bearish" if action == "SELL" else "neutral"
         signal_sentiment = signal.get("sentiment") or {}
+        signal_smart_money_context = signal.get("smart_money_context") if isinstance(signal.get("smart_money_context"), dict) else None
         created_at = existing.get("created_at") if existing else now.isoformat()
         version = int(existing.get("version", 1)) + 1 if existing else 1
         entry_value = self._extract_numeric(signal.get("entry"))
@@ -1653,6 +1654,7 @@ class TradeIdeaService:
             "latest_close": latest_close,
             "current_price": latest_close,
             "sentiment": signal_sentiment,
+            "smart_money_context": signal_smart_money_context,
             "rationale": rationale,
             "created_at": created_at,
             "updated_at": now.isoformat(),
@@ -4776,6 +4778,7 @@ class TradeIdeaService:
     ) -> dict[str, Any]:
         market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
         sentiment = row.get("sentiment") if isinstance(row.get("sentiment"), dict) else {}
+        smart_money_context = row.get("smart_money_context") if isinstance(row.get("smart_money_context"), dict) else {}
         current_price = cls._extract_level(market_context, "current_price")
         daily_change = cls._extract_level(row, "daily_change_percent", "daily_change")
         entry = cls._extract_level(row, "entry", "entry_zone")
@@ -4924,6 +4927,7 @@ class TradeIdeaService:
     ) -> list[dict[str, Any]]:
         market_context = row.get("market_context") if isinstance(row.get("market_context"), dict) else {}
         sentiment = row.get("sentiment") if isinstance(row.get("sentiment"), dict) else {}
+        smart_money_context = row.get("smart_money_context") if isinstance(row.get("smart_money_context"), dict) else {}
         entry = cls._extract_level(row, "entry", "entry_zone")
         stop_loss = cls._extract_level(row, "stopLoss", "stop_loss")
         take_profit = cls._extract_level(row, "takeProfit", "take_profit")
@@ -4934,6 +4938,9 @@ class TradeIdeaService:
         sentiment_source = sentiment.get("source")
         sentiment_status = sentiment.get("data_status")
         sentiment_conf = sentiment.get("confidence")
+        sentiment_long = sentiment.get("long_pct")
+        sentiment_short = sentiment.get("short_pct")
+        sentiment_bias = sentiment.get("bias")
         sections: list[dict[str, Any]] = []
 
         def add_section(key: str, title: str, content: str, *, is_proxy: bool = False) -> None:
@@ -4989,10 +4996,24 @@ class TradeIdeaService:
         if sentiment and sentiment_status != "unavailable":
             bias = sentiment.get("contrarian_bias") or sentiment.get("sentiment_score") or "neutral"
             sentiment_text = f"Сентиментальный слой показывает bias {bias}."
+            if sentiment_long not in (None, "") and sentiment_short not in (None, ""):
+                sentiment_text += f" Retail positioning: Long {round(float(sentiment_long), 1)}% / Short {round(float(sentiment_short), 1)}%."
+            if sentiment_bias:
+                sentiment_text += f" Crowd bias: {sentiment_bias}."
             if sentiment_conf not in (None, ""):
                 sentiment_text += f" Confidence модели: {round(float(sentiment_conf) * 100)}%."
             if sentiment_source:
                 sentiment_text += f" Источник: {sentiment_source}."
+            if smart_money_context:
+                summary_ru = str(smart_money_context.get("summary_ru") or "").strip()
+                crowd_risk_ru = str(smart_money_context.get("crowd_risk_ru") or "").strip()
+                liquidity_alignment_ru = str(smart_money_context.get("liquidity_alignment_ru") or "").strip()
+                if summary_ru:
+                    sentiment_text += f" {summary_ru}"
+                if crowd_risk_ru:
+                    sentiment_text += f" {crowd_risk_ru}"
+                if liquidity_alignment_ru:
+                    sentiment_text += f" {liquidity_alignment_ru}"
             add_section("sentiment", "Сентимент / positioning", sentiment_text, is_proxy="mock" in str(sentiment_source).lower())
 
         liquidity_text = analysis.get("liquidity_ru") or f"Ближайшая ликвидность стоит у {target}. Пока {stop_loss} держится, сценарий на движение к цели остаётся в силе."

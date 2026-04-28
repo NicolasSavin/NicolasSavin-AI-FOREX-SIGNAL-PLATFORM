@@ -8,6 +8,8 @@ def test_mock_sentiment_returns_supported_contract() -> None:
 
     assert snapshot.symbol == "EURUSD"
     assert snapshot.data_status == "mock"
+    assert snapshot.bias in {"crowd_long", "crowd_short", "neutral"}
+    assert snapshot.warning is None
     assert -1.0 <= snapshot.sentiment_score <= 1.0
     assert 0.0 <= snapshot.confidence <= 1.0
 
@@ -33,5 +35,7 @@ def test_external_provider_falls_back_safely_without_base_url() -> None:
 
     assert snapshot.symbol == "GBPUSD"
     assert snapshot.data_status == "unavailable"
+    assert snapshot.bias == "neutral"
+    assert snapshot.warning == "sentiment_unavailable"
     assert snapshot.sentiment_score == 0.0
     assert snapshot.confidence == 0.0

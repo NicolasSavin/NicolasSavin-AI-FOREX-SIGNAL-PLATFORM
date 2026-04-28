@@ -274,6 +274,11 @@ class SignalEngine:
 
         sentiment_alignment = self._sentiment_alignment(action, sentiment)
         sentiment_delta = self._sentiment_delta(sentiment_alignment, sentiment)
+        smart_money_context = self._smart_money_context(
+            sentiment=sentiment,
+            mtf_features=mtf_features,
+            action=action,
+        )
         confidence += sentiment_delta
         confidence = max(20, min(confidence, 92))
         signal_threshold = PROFESSIONAL_MIN_CONFIDENCE if analysis_mode == "professional" else FALLBACK_MIN_CONFIDENCE
@@ -384,6 +389,7 @@ class SignalEngine:
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, action, mtf_pattern_summary),
             "sentiment": sentiment,
+            "smart_money_context": smart_money_context,
             "chart_patterns": mtf_patterns,
             "pattern_summary": mtf_pattern_summary,
             "pattern_signal_impact": pattern_impact,
@@ -419,6 +425,7 @@ class SignalEngine:
                 "patternAlignment": pattern_impact.get("patternAlignmentWithSignal", "neutral"),
                 "sentimentAlignment": sentiment_alignment,
                 "sentimentImpact": round(sentiment_delta / 100, 4),
+                "smart_money_context": smart_money_context,
                 "setup_quality": validation_state,
                 "weak_reasons": weak_reasons,
                 "scenario_type": scenario_type,
@@ -505,6 +512,7 @@ class SignalEngine:
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, action, pattern_summary or {}),
             "sentiment": snapshot.get("sentiment") or {},
+            "smart_money_context": snapshot.get("smart_money_context"),
             "chart_patterns": chart_patterns or [],
             "pattern_summary": pattern_summary or {},
             "pattern_signal_impact": pattern_impact,
@@ -620,6 +628,7 @@ class SignalEngine:
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, "NO_TRADE", summary),
             "sentiment": snapshot.get("sentiment") or {},
+            "smart_money_context": snapshot.get("smart_money_context"),
             "chart_patterns": chart_patterns or [],
             "pattern_summary": summary,
             "pattern_signal_impact": impact,
@@ -708,6 +717,7 @@ class SignalEngine:
             "created_at_utc": signal_time,
             "idea_id": self._idea_id(symbol, timeframe, "NO_TRADE", summary),
             "sentiment": snapshot.get("sentiment") or {},
+            "smart_money_context": snapshot.get("smart_money_context"),
             "chart_patterns": chart_patterns or [],
             "pattern_summary": summary,
             "pattern_signal_impact": impact,
@@ -830,6 +840,47 @@ class SignalEngine:
         if alignment == "conflicts":
             return -scaled
         return 0
+
+    @staticmethod
+    def _smart_money_context(*, sentiment: dict, mtf_features: dict, action: str) -> dict | None:
+        if not isinstance(sentiment, dict) or sentiment.get("data_status") == "unavailable":
+            return None
+        bias = str(sentiment.get("bias") or "neutral").lower()
+        if bias not in {"crowd_long", "crowd_short", "neutral"}:
+            bias = "neutral"
+        liquidity_sweep = bool(mtf_features.get("liquidity_sweep"))
+        order_block = str(mtf_features.get("order_block") or "").lower()
+        has_fvg = bool(mtf_features.get("fvg"))
+        has_enough_data = any((liquidity_sweep, bool(order_block), has_fvg))
+        if not has_enough_data:
+            return None
+
+        if bias == "crowd_long":
+            bearish_zone = order_block == "bearish" or has_fvg or liquidity_sweep
+            if bearish_zone:
+                modifier = -4 if action == "BUY" else 1
+                return {
+                    "summary_ru": "Толпа перегружена в long, поэтому smart-money контекст отмечает риск выноса лонгов и возврата цены вниз.",
+                    "crowd_risk_ru": "При crowd_long вероятен long squeeze: поздние покупатели могут стать топливом для резкого отката.",
+                    "liquidity_alignment_ru": "Если цена снимает buy-side ликвидность и реагирует от bearish OB/FVG, это усиливает сценарий разворота вниз.",
+                    "confidence_modifier": modifier,
+                }
+        if bias == "crowd_short":
+            bullish_zone = order_block == "bullish" or has_fvg or liquidity_sweep
+            if bullish_zone:
+                modifier = -4 if action == "SELL" else 1
+                return {
+                    "summary_ru": "Толпа перегружена в short, поэтому smart-money контекст отмечает риск выноса шортов и импульса вверх.",
+                    "crowd_risk_ru": "При crowd_short вероятен short squeeze: агрессивные продавцы могут ускорить движение вверх.",
+                    "liquidity_alignment_ru": "Если цена снимает sell-side ликвидность и удерживается над bullish OB/FVG, это усиливает сценарий разворота вверх.",
+                    "confidence_modifier": modifier,
+                }
+        return {
+            "summary_ru": "Сентимент нейтрален: smart-money контекст не добавляет сильного перекоса.",
+            "crowd_risk_ru": "Экстремума в позиционировании толпы нет, поэтому риск squeeze оценивается как умеренный.",
+            "liquidity_alignment_ru": "Приоритет остаётся за HTF/OB/FVG/Liquidity структурой без дополнительного перекоса от толпы.",
+            "confidence_modifier": 0,
+        }
 
     @staticmethod
     def _resolve_data_quality(*, htf: dict, mtf: dict, ltf: dict) -> str:
