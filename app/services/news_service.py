@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import html
+import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from hashlib import sha1
 from time import time
 from typing import Any
@@ -219,6 +222,9 @@ PUBLIC_RSS_SOURCES = [
     {"name": "Investing.com", "url": "https://www.investing.com/rss/news_285.rss"},
 ]
 
+XAI_TIMEOUT_SECONDS = 15
+XAI_MODEL = "grok-3-mini"
+
 
 def strip_html(value: str) -> str:
     decoded = html.unescape(str(value or ""))
@@ -382,6 +388,74 @@ def build_market_explanation(title: str, summary: str) -> dict[str, Any]:
     }
 
 
+def parse_entry_datetime(entry: dict, fallback: datetime) -> tuple[str, datetime]:
+    for key in ("published_parsed", "updated_parsed"):
+        parsed_value = entry.get(key)
+        if parsed_value:
+            try:
+                dt = datetime(*parsed_value[:6], tzinfo=timezone.utc)
+                return dt.isoformat(), dt
+            except Exception:
+                continue
+
+    for key in ("published", "updated"):
+        raw = entry.get(key)
+        if not raw:
+            continue
+        try:
+            dt = parsedate_to_datetime(str(raw))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            dt_utc = dt.astimezone(timezone.utc)
+            return dt_utc.isoformat(), dt_utc
+        except Exception:
+            continue
+
+    return fallback.isoformat(), fallback
+
+
+def rewrite_news_with_xai(title: str, summary: str) -> dict[str, str] | None:
+    api_key = (os.getenv("XAI_API_KEY") or "").strip()
+    if not api_key:
+        return None
+
+    prompt = (
+        "Ты редактор финансовых новостей. Перепиши заголовок и краткую сводку на русском языке. "
+        "Не добавляй факты, цифры, прогнозы или цитаты, которых нет во входном тексте. "
+        "Верни только JSON с ключами title_ru и summary_ru."
+    )
+    user_content = f"TITLE: {strip_html(title)}\nSUMMARY: {strip_html(summary)[:900]}"
+    try:
+        response = requests.post(
+            "https://api.x.ai/v1/chat/completions",
+            timeout=XAI_TIMEOUT_SECONDS,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": XAI_MODEL,
+                "temperature": 0.1,
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                "response_format": {"type": "json_object"},
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        content = payload.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+        parsed = json.loads(content) if isinstance(content, str) else {}
+        title_ru = strip_html(str(parsed.get("title_ru") or "")).strip()
+        summary_ru = strip_html(str(parsed.get("summary_ru") or "")).strip()
+        if title_ru and summary_ru:
+            return {"title_ru": title_ru, "summary_ru": summary_ru}
+    except Exception:
+        return None
+    return None
+
+
 def fetch_public_news(limit: int = 12) -> dict[str, Any]:
     now_utc = datetime.now(timezone.utc)
     now_ts = time()
@@ -392,33 +466,48 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
         return cached_payload
 
     items: list[dict[str, Any]] = []
-    failed_sources = 0
+    sources_attempted: list[str] = []
+    sources_ok: list[str] = []
+    sources_failed: list[str] = []
 
     for source in PUBLIC_RSS_SOURCES:
+        source_name = source["name"]
+        sources_attempted.append(source_name)
         try:
             response = requests.get(source["url"], timeout=RSS_TIMEOUT_SECONDS, headers={"User-Agent": "Mozilla/5.0"})
             response.raise_for_status()
             feed = feedparser.parse(response.content)
             entries = getattr(feed, "entries", [])[: max(limit, 12)]
+            if not entries:
+                sources_failed.append(source_name)
+                continue
+            source_had_item = False
             for entry in entries:
                 try:
                     title = str(entry.get("title") or "Новость без заголовка").strip()
                     summary = str(entry.get("summary") or entry.get("description") or "").strip()
                     enriched = build_market_explanation(title=title, summary=summary)
-                    published_raw = entry.get("published") or entry.get("updated") or now_utc.isoformat()
+                    published_iso, _ = parse_entry_datetime(entry=entry, fallback=now_utc)
                     image_url = extract_news_image(entry)
                     fallback_image = pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"])
                     safe_image_url = image_url or fallback_image
                     image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
                     story = build_long_news_story(title=title, source_summary=summary, markets=enriched["markets"], tone=enriched["tone"])
+                    rewrite = rewrite_news_with_xai(title=title, summary=summary)
+                    title_ru = rewrite["title_ru"] if rewrite else strip_html(title)
+                    summary_ru = rewrite["summary_ru"] if rewrite else enriched["summary"]
+                    writer = "grok" if rewrite else "local_fallback"
                 except Exception:
                     title = str(entry.get("title") or "Новость без заголовка").strip()
                     summary = str(entry.get("summary") or entry.get("description") or "").strip()
-                    published_raw = entry.get("published") or entry.get("updated") or now_utc.isoformat()
+                    published_iso, _ = parse_entry_datetime(entry=entry, fallback=now_utc)
                     enriched = build_market_explanation(title=title, summary=summary)
                     safe_image_url = pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"])
                     image_alt = "Иллюстрация новости"
                     basic_summary = strip_html(summary)[:350] or "Источник сообщил о событии, детали уточняются."
+                    title_ru = strip_html(title)
+                    summary_ru = enriched["summary"]
+                    writer = "local_fallback"
                     story = {
                         "what_happened_ru": f"Что случилось: {strip_html(title)}. {basic_summary}",
                         "why_it_matters_ru": "Почему это важно: рынок пересматривает ожидания по ставкам и риску.",
@@ -426,18 +515,28 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         "grok_style_comment_ru": "Комментарий в популярном стиле и с лёгким юмором: волатильность любит внезапные сюжеты.",
                         "long_story_ru": f"Что случилось: {strip_html(title)}. {basic_summary}",
                     }
+                source_had_item = True
+                source_url = str(entry.get("link") or "").strip() or None
                 items.append(
                     {
-                        "title": title,
-                        "source": source["name"],
-                        "url": entry.get("link"),
-                        "published_at": str(published_raw),
-                        "summary": enriched["summary"],
+                        "title": title_ru,
+                        "source": source_name,
+                        "url": source_url,
+                        "published_at": published_iso,
+                        "summary": summary_ru,
                         "impact": enriched["impact"],
                         "markets": enriched["markets"],
                         "tone": enriched["tone"],
                         "image_url": safe_image_url,
                         "image_alt": image_alt,
+                        "title_original": strip_html(title),
+                        "title_ru": title_ru,
+                        "source_url": source_url,
+                        "summary_source": strip_html(summary)[:1200],
+                        "summary_ru": summary_ru,
+                        "is_real_source": True,
+                        "data_origin": "rss",
+                        "writer": writer,
                         "what_happened_ru": story["what_happened_ru"],
                         "why_it_matters_ru": story["why_it_matters_ru"],
                         "what_next_ru": story["what_next_ru"],
@@ -445,8 +544,12 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         "long_story_ru": story["long_story_ru"],
                     }
                 )
+            if source_had_item:
+                sources_ok.append(source_name)
+            else:
+                sources_failed.append(source_name)
         except Exception:
-            failed_sources += 1
+            sources_failed.append(source_name)
             continue
 
     deduped: list[dict[str, Any]] = []
@@ -458,11 +561,56 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
         seen.add(key)
         deduped.append(item)
 
+    final_items = deduped[:limit]
+    if not final_items:
+        fallback_items: list[dict[str, Any]] = []
+        for idx in range(limit):
+            title = f"Рыночное обновление #{idx + 1}"
+            summary = "Публичные RSS-источники временно недоступны. Проверьте ленту позже для подтверждённых публикаций."
+            enriched = build_market_explanation(title=title, summary=summary)
+            fallback_items.append(
+                {
+                    "title": title,
+                    "source": "Fallback",
+                    "url": None,
+                    "published_at": now_utc.isoformat(),
+                    "summary": enriched["summary"],
+                    "impact": enriched["impact"],
+                    "markets": enriched["markets"],
+                    "tone": enriched["tone"],
+                    "image_url": pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"]),
+                    "image_alt": "Fallback иллюстрация новости",
+                    "title_original": title,
+                    "title_ru": title,
+                    "source_url": None,
+                    "summary_source": summary,
+                    "summary_ru": enriched["summary"],
+                    "is_real_source": False,
+                    "data_origin": "fallback",
+                    "writer": "local_fallback",
+                    "what_happened_ru": f"Что случилось: {summary}",
+                    "why_it_matters_ru": "Почему это важно: без подтверждённых новостей нельзя делать выводы о направлении рынка.",
+                    "what_next_ru": "К чему может привести: дождитесь публикаций из реальных источников RSS.",
+                    "grok_style_comment_ru": "Комментарий: это fallback-контент, а не подтверждённая новость.",
+                    "long_story_ru": f"{summary} Это fallback-контент, созданный локально.",
+                }
+            )
+        final_items = fallback_items
+
+    real_items_count = sum(1 for item in final_items if item.get("is_real_source") is True)
+    fallback_items_count = len(final_items) - real_items_count
     payload: dict[str, Any] = {
-        "items": deduped[:limit],
+        "items": final_items,
         "updated_at_utc": now_utc.isoformat(),
+        "diagnostics": {
+            "real_items_count": real_items_count,
+            "fallback_items_count": fallback_items_count,
+            "sources_attempted": sources_attempted,
+            "sources_ok": sorted(set(sources_ok)),
+            "sources_failed": sorted(set(sources_failed)),
+        },
     }
-    if failed_sources == len(PUBLIC_RSS_SOURCES):
+    if real_items_count == 0:
         payload["warning"] = "Новости временно недоступны. Источники не ответили."
 
     NEWS_CACHE["updated_at"] = now_ts

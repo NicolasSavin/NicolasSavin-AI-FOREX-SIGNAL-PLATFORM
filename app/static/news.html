@@ -99,6 +99,11 @@
           const card = document.createElement("article");
           card.className = "news-card";
           const longStory = item.long_story_ru || item.summary || "Описание недоступно.";
+          const originBadge =
+            item.is_real_source === true
+              ? '<span class="news-source-badge">Источник: RSS</span>'
+              : '<span class="news-source-badge">Fallback</span>';
+          const writerBadge = item.writer === "grok" ? '<span class="news-source-badge">Автор: Grok</span>' : "";
           card.innerHTML = `
             <div class="news-card__image-wrap news-image-wrap">
               <img
@@ -114,6 +119,8 @@
               <div class="news-chip-row">
                 <span class="news-chip">${escapeHtml(item.tone || "neutral")}</span>
                 <span class="news-chip">${formatDate(item.published_at)}</span>
+                ${originBadge}
+                ${writerBadge}
               </div>
             </div>
             <section class="news-detail-box">
