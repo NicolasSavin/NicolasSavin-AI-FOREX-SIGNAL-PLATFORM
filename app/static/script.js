@@ -60,6 +60,95 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+function inferCalendarImpact(event) {
+  const title = String(event?.title || '').toLowerCase();
+  const description = String(event?.description_ru || '').toLowerCase();
+  const currency = String(event?.currency || '').toUpperCase();
+  const sourceText = `${title} ${description}`;
+
+  const mappings = [
+    {
+      keys: ['cpi', 'инфляц', 'pce'],
+      affected: ['USD', 'XAUUSD', 'US500'],
+      effect: 'Инфляция выше ожиданий часто усиливает USD и давит на золото/акции.',
+      humor: 'Если инфляция снова «сюрприз», рынок делает вид, что удивлён в сотый раз.',
+    },
+    {
+      keys: ['ставк', 'rate', 'fomc', 'ecb', 'boe', 'boj'],
+      affected: ['валюта регулятора', 'облигации', 'фондовые индексы'],
+      effect: 'Решения по ставке меняют ожидания доходности и переоценивают риск.',
+      humor: 'Одна фраза главы ЦБ может двигать графики быстрее, чем десять индикаторов.',
+    },
+    {
+      keys: ['nfp', 'занятост', 'payroll', 'безработиц'],
+      affected: ['USD', 'EURUSD', 'золото'],
+      effect: 'Сильный рынок труда обычно поддерживает валюту и повышает волатильность на релизе.',
+      humor: 'На NFP спреды иногда расширяются так, будто брокер тоже волнуется.',
+    },
+    {
+      keys: ['gdp', 'ввп', 'pmi', 'делов'],
+      affected: ['валюта страны', 'фондовый индекс страны'],
+      effect: 'Показатели роста уточняют ожидания по экономике и процентным ставкам.',
+      humor: 'PMI ниже 50 часто звучит как «кофе остыл, но работать надо».',
+    },
+    {
+      keys: ['retail', 'рознич', 'consumer', 'потреб'],
+      affected: ['валюта страны', 'ритейл-сектор', 'индексы'],
+      effect: 'Потребительская активность влияет на прогнозы роста и аппетит к риску.',
+      humor: 'Если потребитель экономит, рынок резко вспоминает слово «рецессия».',
+    },
+  ];
+
+  const matched = mappings.find((mapping) => mapping.keys.some((key) => sourceText.includes(key)));
+  const defaultAffected = currency
+    ? [currency, `${currency}-кроссы`, 'индексы риска']
+    : ['основные FX-пары', 'золото', 'фондовые индексы'];
+
+  return {
+    affected: matched?.affected || defaultAffected,
+    effect: matched?.effect || 'Тип влияния зависит от отклонения факта от прогноза и рыночного консенсуса.',
+    humor: matched?.humor || 'Без паники: сначала факт и контекст, потом эмоции и кнопка «вход».',
+  };
+}
+
+function renderCalendarEvents(rows) {
+  if (!calendarList) return;
+  calendarList.classList.add('calendar-list');
+  calendarList.innerHTML = '';
+
+  if (!rows.length) {
+    const li = document.createElement('li');
+    li.textContent = 'События календаря пока недоступны.';
+    calendarList.appendChild(li);
+    return;
+  }
+
+  rows.forEach((event) => {
+    const impact = inferCalendarImpact(event);
+    const li = document.createElement('li');
+    li.className = 'calendar-event';
+    const eventTime = event.time_utc ? formatUpdatedAt(event.time_utc) : 'время не указано';
+    const currency = event.currency ? String(event.currency).toUpperCase() : 'несколько валют';
+
+    li.innerHTML = `
+      <article>
+        <div class="calendar-event__top">
+          <strong>${escapeHtml(event.title || 'Событие')}</strong>
+          <span class="impact-badge impact-badge--medium">${escapeHtml(currency)}</span>
+        </div>
+        <p class="calendar-event__time">🕒 ${escapeHtml(eventTime)}</p>
+        <p class="calendar-event__description">${escapeHtml(event.description_ru || 'Описание отсутствует.')}</p>
+        <div class="calendar-event__impact">
+          <p><strong>На что влияет:</strong> ${escapeHtml(impact.affected.join(' • '))}</p>
+          <p><strong>Как обычно реагирует рынок:</strong> ${escapeHtml(impact.effect)}</p>
+          <p><strong>Grok-комментарий:</strong> ${escapeHtml(impact.humor)}</p>
+        </div>
+      </article>
+    `;
+    calendarList.appendChild(li);
+  });
+}
+
 function renderList(id, rows, mapper, emptyMessage = 'Данные пока недоступны.') {
   const el = document.getElementById(id);
   if (!el) return;
@@ -592,7 +681,7 @@ async function loadCalendarSection() {
 
   try {
     const calendar = await getJson('/calendar/events');
-    renderList('calendarList', calendar.events || [], (event) => `${event.title}: ${event.description_ru}`, 'События календаря пока недоступны.');
+    renderCalendarEvents(calendar.events || []);
   } catch {
     renderList('calendarList', [], () => '', 'Экономический календарь временно недоступен.');
   }
