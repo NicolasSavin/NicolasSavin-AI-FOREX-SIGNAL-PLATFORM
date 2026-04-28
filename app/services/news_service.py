@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from hashlib import sha1
+from time import time
+from typing import Any
 
+import feedparser
+import requests
 from app.schemas.contracts import NewsIngestRequest, NewsItemResponse, NewsListResponse
 from app.services.storage.json_storage import JsonStorage
 from backend.news_provider import MarketNewsProvider
@@ -196,3 +200,132 @@ class NewsService:
     @staticmethod
     def _digest(value: str) -> str:
         return sha1(value.encode("utf-8")).hexdigest()[:12]
+
+
+RSS_TIMEOUT_SECONDS = 8
+NEWS_CACHE: dict[str, Any] = {
+    "updated_at": None,
+    "payload": None,
+}
+NEWS_CACHE_TTL_SECONDS = 900
+PUBLIC_RSS_SOURCES = [
+    {"name": "Reuters Markets", "url": "https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best"},
+    {"name": "CNBC Markets", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html"},
+    {"name": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"},
+    {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex"},
+    {"name": "FXStreet", "url": "https://www.fxstreet.com/rss/news"},
+    {"name": "Investing.com", "url": "https://www.investing.com/rss/news_285.rss"},
+]
+
+
+def build_market_explanation(title: str, summary: str) -> dict[str, Any]:
+    text = f"{title} {summary}".lower()
+
+    markets: list[str] = []
+    tone = "neutral"
+    impact_parts: list[str] = []
+
+    if any(x in text for x in ["fed", "federal reserve", "powell", "rate", "inflation", "cpi", "pce", "fomc"]):
+        markets += ["USD", "XAUUSD", "EURUSD", "GBPUSD"]
+        tone = "hawkish" if any(x in text for x in ["higher", "hot", "sticky", "above forecast"]) else "neutral"
+        impact_parts.append("Фокус на ставках ФРС: доллар может реагировать сильнее остальных валют, а золото — нервничать.")
+
+    if any(x in text for x in ["risk", "stocks", "equities", "nasdaq", "s&p", "wall street"]):
+        markets += ["USD", "XAUUSD"]
+        if tone == "neutral":
+            tone = "risk_off" if any(x in text for x in ["selloff", "drop", "fall", "fear"]) else "risk_on"
+        impact_parts.append("Риск-сентимент влияет на спрос на доллар и золото.")
+
+    if any(x in text for x in ["oil", "brent", "crude", "energy"]):
+        markets += ["USD", "XAUUSD"]
+        impact_parts.append("Нефть влияет на инфляционные ожидания, а значит — на ожидания по ставкам.")
+
+    if any(x in text for x in ["ecb", "euro", "eurozone", "lagarde"]):
+        markets += ["EURUSD"]
+        tone = "dovish" if any(x in text for x in ["cut", "slowdown", "weak"]) else tone
+        impact_parts.append("Новости по ЕЦБ могут двигать EURUSD.")
+
+    if any(x in text for x in ["boe", "pound", "sterling", "uk", "bank of england"]):
+        markets += ["GBPUSD"]
+        impact_parts.append("Новости по Банку Англии и Британии важны для GBPUSD.")
+
+    markets = list(dict.fromkeys(markets)) or ["USD", "EURUSD", "GBPUSD", "XAUUSD"]
+
+    impact = " ".join(impact_parts) or "Новость формирует общий фундаментальный фон: рынок оценивает ставки, инфляцию и аппетит к риску."
+
+    summary_ru = (
+        "Что случилось: "
+        + title.strip()
+        + "\n\n"
+        + "Почему это важно: эта новость может повлиять на ожидания по ставкам, доллар, золото и общий аппетит к риску. "
+        + "Рынок, как обычно, сначала пугается, потом делает вид, что всё было очевидно.\n\n"
+        + "К чему может привести: "
+        + impact
+    )
+
+    return {
+        "summary": summary_ru,
+        "impact": impact,
+        "markets": markets,
+        "tone": tone,
+    }
+
+
+def fetch_public_news(limit: int = 12) -> dict[str, Any]:
+    now_utc = datetime.now(timezone.utc)
+    now_ts = time()
+    cached_at = NEWS_CACHE.get("updated_at")
+    cached_payload = NEWS_CACHE.get("payload")
+
+    if isinstance(cached_at, float) and cached_payload and now_ts - cached_at < NEWS_CACHE_TTL_SECONDS:
+        return cached_payload
+
+    items: list[dict[str, Any]] = []
+    failed_sources = 0
+
+    for source in PUBLIC_RSS_SOURCES:
+        try:
+            response = requests.get(source["url"], timeout=RSS_TIMEOUT_SECONDS, headers={"User-Agent": "Mozilla/5.0"})
+            response.raise_for_status()
+            feed = feedparser.parse(response.content)
+            entries = getattr(feed, "entries", [])[: max(limit, 12)]
+            for entry in entries:
+                title = str(entry.get("title") or "Новость без заголовка").strip()
+                summary = str(entry.get("summary") or entry.get("description") or "").strip()
+                enriched = build_market_explanation(title=title, summary=summary)
+                published_raw = entry.get("published") or entry.get("updated") or now_utc.isoformat()
+                items.append(
+                    {
+                        "title": title,
+                        "source": source["name"],
+                        "url": entry.get("link"),
+                        "published_at": str(published_raw),
+                        "summary": enriched["summary"],
+                        "impact": enriched["impact"],
+                        "markets": enriched["markets"],
+                        "tone": enriched["tone"],
+                    }
+                )
+        except Exception:
+            failed_sources += 1
+            continue
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        key = f'{item.get("title", "")}|{item.get("url", "")}'
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+
+    payload: dict[str, Any] = {
+        "items": deduped[:limit],
+        "updated_at_utc": now_utc.isoformat(),
+    }
+    if failed_sources == len(PUBLIC_RSS_SOURCES):
+        payload["warning"] = "Новости временно недоступны. Источники не ответили."
+
+    NEWS_CACHE["updated_at"] = now_ts
+    NEWS_CACHE["payload"] = payload
+    return payload
