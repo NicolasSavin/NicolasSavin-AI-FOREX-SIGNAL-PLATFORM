@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.services.htf_context_filter import HtfContextFilter
+from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
 
 
@@ -114,6 +115,19 @@ def api_archive():
 @app.get("/api/stats")
 def api_stats():
     return build_stats()
+
+
+@app.get("/api/news")
+def api_news(limit: int = 12):
+    safe_limit = min(max(limit, 1), 30)
+    try:
+        return fetch_public_news(limit=safe_limit)
+    except Exception:
+        return {
+            "items": [],
+            "updated_at_utc": now_utc(),
+            "warning": "Новости временно недоступны. Источники не ответили.",
+        }
 
 
 @app.get("/api/live-price/{symbol}")

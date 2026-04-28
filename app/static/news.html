@@ -31,14 +31,14 @@
           <div class="panel-heading compact news-panel__heading">
             <div>
               <p class="section-kicker">Поток новостей</p>
-              <h2>Интеллектуальная лента новостей</h2>
+              <h2>Фундаментальные новости простым языком</h2>
               <p class="section-text">
-                Лента показывает ограниченное число самых свежих новостей в более компактном формате, чтобы быстрее оценивать фон рынка.
+                Объясняем, что произошло, почему это важно и как это может повлиять на USD, золото и риск-сентимент.
               </p>
             </div>
             <div class="news-panel__meta">
               <span class="panel-meta" id="newsUpdatedAt">Обновление: —</span>
-              <span class="panel-meta">На странице отображаются только последние 12 новостей</span>
+              <button class="news-link-button" id="refreshNewsButton" type="button">Обновить</button>
             </div>
           </div>
           <div class="news-list" id="newsList"></div>
@@ -46,6 +46,105 @@
       </main>
     </div>
 
-    <script src="/static/script.js"></script>
+    <script>
+      const newsList = document.getElementById("newsList");
+      const newsUpdatedAt = document.getElementById("newsUpdatedAt");
+      const refreshButton = document.getElementById("refreshNewsButton");
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function formatDate(value) {
+        if (!value) return "—";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString("ru-RU", { timeZone: "UTC" }) + " UTC";
+      }
+
+      function buildMarkets(markets) {
+        const list = Array.isArray(markets) ? markets : [];
+        if (!list.length) return '<span class="news-chip news-chip--muted">Нет меток</span>';
+        return list.map((item) => `<span class="news-chip">${escapeHtml(item)}</span>`).join("");
+      }
+
+      function renderState(title, text) {
+        newsList.innerHTML = `
+          <article class="news-card news-card--empty">
+            <p class="news-card__title">${escapeHtml(title)}</p>
+            <p class="news-card__text">${escapeHtml(text)}</p>
+          </article>
+        `;
+      }
+
+      function renderNews(payload) {
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        newsUpdatedAt.textContent = `Обновление: ${formatDate(payload?.updated_at_utc)}`;
+
+        if (!items.length) {
+          renderState(
+            "Свежих новостей пока нет",
+            payload?.warning || "Источники молчат. Рынок, похоже, делает глубокий вдох перед новым движением."
+          );
+          return;
+        }
+
+        newsList.innerHTML = "";
+        items.forEach((item) => {
+          const card = document.createElement("article");
+          card.className = "news-card";
+          card.innerHTML = `
+            <div class="news-card__header news-card__header--stacked">
+              <p class="news-card__eyebrow">${escapeHtml(item.source || "Источник")}</p>
+              <h3 class="news-card__title">${escapeHtml(item.title || "Новость без заголовка")}</h3>
+              <div class="news-chip-row">
+                <span class="news-chip">${escapeHtml(item.tone || "neutral")}</span>
+                <span class="news-chip">${formatDate(item.published_at)}</span>
+              </div>
+            </div>
+            <section class="news-detail-box">
+              <h4>Разбор</h4>
+              <p class="news-card__text">${escapeHtml(item.summary || "Описание недоступно.").replace(/\n/g, "<br/>")}</p>
+            </section>
+            <section class="news-detail-box news-detail-box--impact">
+              <h4>Рыночный эффект</h4>
+              <p class="news-card__text">${escapeHtml(item.impact || "Фон нейтральный.")}</p>
+            </section>
+            <div class="news-card__assets">
+              <span class="news-label">Рынки под прицелом</span>
+              <div class="news-chip-row">${buildMarkets(item.markets)}</div>
+            </div>
+            <div class="news-card__footer">
+              ${
+                item.url
+                  ? `<a class="news-link-button" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">Читать источник</a>`
+                  : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'
+              }
+            </div>
+          `;
+          newsList.appendChild(card);
+        });
+      }
+
+      async function loadNews() {
+        renderState("Загрузка...", "Собираем новости из открытых RSS-источников.");
+        try {
+          const response = await fetch("/api/news", { cache: "no-store" });
+          const payload = await response.json();
+          renderNews(payload);
+        } catch (error) {
+          newsUpdatedAt.textContent = "Обновление: ошибка загрузки";
+          renderState("Новости временно недоступны", "Не удалось получить данные. Попробуйте обновить позже.");
+        }
+      }
+
+      refreshButton.addEventListener("click", loadNews);
+      loadNews();
+    </script>
   </body>
 </html>
