@@ -8,7 +8,7 @@
   </head>
   <body data-page="calendar">
     <div class="page-shell">
-      <header class="site-header">
+      <header class="site-header calendar-hero">
         <div>
           <p class="eyebrow">Календарь</p>
           <h1>Экономический календарь</h1>
@@ -37,12 +37,13 @@
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel calendar-events-panel">
           <div class="panel-heading compact">
             <div>
               <p class="section-kicker">События</p>
               <h2>События и ожидаемое влияние</h2>
             </div>
+            <span class="panel-meta" id="calendarState">Ожидание загрузки...</span>
           </div>
           <ul class="data-list" id="calendarList"></ul>
         </section>

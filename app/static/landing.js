@@ -27,6 +27,16 @@ function buildMarqueeItems(signals) {
   });
 }
 
+
+function renderMarquee(items) {
+  if (!quoteTrack) return;
+  const safeItems = Array.isArray(items) && items.length ? items : ['Котировки временно недоступны'];
+  const sequence = [...safeItems, ...safeItems];
+  quoteTrack.innerHTML = sequence
+    .map((item) => `<span class="quote-item">✦ ${String(item)}</span>`)
+    .join('');
+}
+
 async function loadQuotes() {
   try {
     const response = await fetch('/api/signals');
@@ -37,9 +47,7 @@ async function loadQuotes() {
     const payload = await response.json();
     const signals = Array.isArray(payload.signals) ? payload.signals : [];
     const items = buildMarqueeItems(signals);
-    const marqueeText = `✦ ${items.join('   ✦   ')} ✦`;
-
-    quoteTrack.textContent = `${marqueeText}   ${marqueeText}`;
+    renderMarquee(items);
     tickerUpdatedAt.textContent = `Обновление: ${formatDateTime(payload.updated_at_utc)}`;
 
     const hasProxy = signals.some((signal) => !['real', 'delayed'].includes(String(signal.data_status || '')));
@@ -47,7 +55,7 @@ async function loadQuotes() {
       ? 'Источник: /api/signals. Метки real/delayed — рыночные данные, proxy — прокси-метрика (не реальная котировка).'
       : 'Источник: /api/signals. Используются рыночные данные (real/delayed).';
   } catch {
-    quoteTrack.textContent = 'Не удалось загрузить котировки. Проверьте API /api/signals.';
+    renderMarquee(['Не удалось загрузить котировки. Проверьте API /api/signals.']);
     tickerUpdatedAt.textContent = 'Обновление: ошибка загрузки';
     quoteDisclaimer.textContent = 'Источник: /api/signals недоступен.';
   }
