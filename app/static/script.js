@@ -2,6 +2,7 @@ const ticker = document.getElementById('ticker');
 const signalsGrid = document.getElementById('signalsGrid');
 const ideasList = document.getElementById('ideasList');
 const calendarList = document.getElementById('calendarList');
+const calendarState = document.getElementById('calendarState');
 const heatmapList = document.getElementById('heatmapList');
 const newsList = document.getElementById('newsList');
 const newsUpdatedAt = document.getElementById('newsUpdatedAt');
@@ -111,17 +112,43 @@ function inferCalendarImpact(event) {
   };
 }
 
+function getCalendarBadgeClass(event) {
+  const value = String(event?.impact || event?.importance || '').toLowerCase();
+  if (value.includes('high') || value.includes('выс')) return 'impact-badge--high';
+  if (value.includes('low') || value.includes('низ')) return 'impact-badge--low';
+  if (value.includes('med') || value.includes('сред')) return 'impact-badge--medium';
+  return 'impact-badge--unknown';
+}
+
+function setCalendarState(state, message) {
+  if (!calendarState) return;
+  calendarState.className = `panel-meta calendar-state calendar-state--${state}`;
+  calendarState.textContent = message;
+}
+
+function renderCalendarStatusCard(kind, title, description) {
+  if (!calendarList) return;
+  calendarList.classList.add('calendar-list');
+  calendarList.innerHTML = `
+    <li class="calendar-status calendar-status--${kind}">
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(description)}</p>
+    </li>
+  `;
+}
+
 function renderCalendarEvents(rows) {
   if (!calendarList) return;
   calendarList.classList.add('calendar-list');
   calendarList.innerHTML = '';
 
   if (!rows.length) {
-    const li = document.createElement('li');
-    li.textContent = 'События календаря пока недоступны.';
-    calendarList.appendChild(li);
+    setCalendarState('empty', 'Событий пока нет');
+    renderCalendarStatusCard('empty', 'Пока событий нет', 'Новые публикации появятся здесь автоматически после обновления API.');
     return;
   }
+
+  setCalendarState('ready', `Событий: ${rows.length}`);
 
   rows.forEach((event) => {
     const impact = inferCalendarImpact(event);
@@ -134,7 +161,7 @@ function renderCalendarEvents(rows) {
       <article>
         <div class="calendar-event__top">
           <strong>${escapeHtml(event.title || 'Событие')}</strong>
-          <span class="impact-badge impact-badge--medium">${escapeHtml(currency)}</span>
+          <span class="impact-badge ${getCalendarBadgeClass(event)}">${escapeHtml(currency)}</span>
         </div>
         <p class="calendar-event__time">🕒 ${escapeHtml(eventTime)}</p>
         <p class="calendar-event__description">${escapeHtml(event.description_ru || 'Описание отсутствует.')}</p>
@@ -677,13 +704,15 @@ async function loadIdeasSection() {
 
 async function loadCalendarSection() {
   if (!calendarList) return;
-  renderList('calendarList', [], () => '', 'Загрузка календаря...');
+  setCalendarState('loading', 'Загрузка...');
+  renderCalendarStatusCard('loading', 'Загрузка календаря...', 'Получаем события и оценку влияния рынка.');
 
   try {
     const calendar = await getJson('/calendar/events');
     renderCalendarEvents(calendar.events || []);
   } catch {
-    renderList('calendarList', [], () => '', 'Экономический календарь временно недоступен.');
+    setCalendarState('error', 'Ошибка загрузки');
+    renderCalendarStatusCard('error', 'Календарь временно недоступен', 'Не удалось получить данные из /calendar/events. Попробуйте обновить страницу.');
   }
 }
 
