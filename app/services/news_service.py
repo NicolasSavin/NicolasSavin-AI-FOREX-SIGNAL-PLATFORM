@@ -230,6 +230,10 @@ XAI_TIMEOUT_SECONDS = 15
 XAI_MODEL = os.getenv("XAI_MODEL", "grok-2-latest").strip()
 XAI_API_KEY = os.getenv("XAI_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+BING_IMAGE_SEARCH_KEY = os.getenv("BING_IMAGE_SEARCH_KEY", "").strip()
+SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
+GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID", "").strip()
+GOOGLE_SEARCH_API_KEY = os.getenv("GOOGLE_SEARCH_API_KEY", "").strip()
 GENERATED_NEWS_DIR = os.path.join("app", "static", "generated-news")
 
 
@@ -300,11 +304,83 @@ def _source_hash(value: str) -> str:
     return sha1(value.encode("utf-8")).hexdigest()[:16]
 
 
+def _looks_like_image_url(url: str) -> bool:
+    lowered = str(url or "").strip().lower()
+    if not lowered.startswith(("http://", "https://")):
+        return False
+    image_ext = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".avif")
+    return any(ext in lowered for ext in image_ext) or "image" in lowered
+
+
+def find_open_web_image(query: str) -> str | None:
+    clean_query = strip_html(query)[:220].strip()
+    if not clean_query:
+        return None
+    cache_key = _source_hash(f"web_image::{clean_query.lower()}")
+    cached = IMAGE_CACHE.get(cache_key)
+    if cached and time() - cached.get("ts", 0) < IMAGE_CACHE_TTL_SECONDS:
+        cached_url = str(cached.get("url") or "").strip()
+        return cached_url if _looks_like_image_url(cached_url) else None
+
+    def _cache_result(value: str | None) -> str | None:
+        IMAGE_CACHE[cache_key] = {"ts": time(), "url": value or "", "source": "web_search"}
+        return value
+
+    try:
+        if BING_IMAGE_SEARCH_KEY:
+            response = requests.get(
+                "https://api.bing.microsoft.com/v7.0/images/search",
+                timeout=RSS_TIMEOUT_SECONDS,
+                headers={"Ocp-Apim-Subscription-Key": BING_IMAGE_SEARCH_KEY},
+                params={"q": clean_query, "safeSearch": "Moderate", "count": 5},
+            )
+            response.raise_for_status()
+            rows = response.json().get("value") or []
+            for row in rows:
+                candidate = str(row.get("contentUrl") or row.get("thumbnailUrl") or "").strip()
+                if _looks_like_image_url(candidate):
+                    return _cache_result(candidate)
+        if SERPAPI_KEY:
+            response = requests.get(
+                "https://serpapi.com/search.json",
+                timeout=RSS_TIMEOUT_SECONDS,
+                params={"engine": "google_images", "q": clean_query, "api_key": SERPAPI_KEY},
+            )
+            response.raise_for_status()
+            rows = response.json().get("images_results") or []
+            for row in rows:
+                candidate = str(row.get("original") or row.get("thumbnail") or "").strip()
+                if _looks_like_image_url(candidate):
+                    return _cache_result(candidate)
+        if GOOGLE_CSE_ID and GOOGLE_SEARCH_API_KEY:
+            response = requests.get(
+                "https://www.googleapis.com/customsearch/v1",
+                timeout=RSS_TIMEOUT_SECONDS,
+                params={
+                    "key": GOOGLE_SEARCH_API_KEY,
+                    "cx": GOOGLE_CSE_ID,
+                    "q": clean_query,
+                    "searchType": "image",
+                    "num": 5,
+                    "safe": "active",
+                },
+            )
+            response.raise_for_status()
+            rows = response.json().get("items") or []
+            for row in rows:
+                candidate = str(row.get("link") or "").strip()
+                if _looks_like_image_url(candidate):
+                    return _cache_result(candidate)
+    except Exception:
+        return None
+    return _cache_result(None)
+
+
 def _local_writer_payload(title: str, summary: str, markets: list[str], tone: str) -> dict[str, str]:
     clean_title = strip_html(title)[:220] or "Рыночное обновление"
-    clean_summary = strip_html(summary)[:900] or "Источник сообщил о новом событии, подробности ограничены."
+    clean_summary = strip_html(summary)[:1500] or "Источник сообщил о новом событии, подробности ограничены."
     mk = ", ".join(markets[:4] or ["USD", "EURUSD", "XAUUSD"])
-    style_id = int(sha1(clean_title.encode("utf-8")).hexdigest(), 16) % 8
+    style_id = int(sha1(clean_title.encode("utf-8")).hexdigest(), 16) % 10
     openings = [
         f"Если коротко, на ленте случилось вот что: {clean_title}.",
         f"Рынок проснулся от заголовка: {clean_title}.",
@@ -314,40 +390,38 @@ def _local_writer_payload(title: str, summary: str, markets: list[str], tone: st
         f"Свежий инфоповод для терминалов: {clean_title}.",
         f"Фон на рынке поменялся после новости: {clean_title}.",
         f"Пока кто-то пил кофе, вышла новость: {clean_title}.",
+        f"Лента снова подкинула повод открыть терминал: {clean_title}.",
+        f"Сцена дня на финансовом рынке началась так: {clean_title}.",
     ]
-    humor_bank = [
-        "Шутка дня: график сделал резкий жест, а потом такой — «я просто потянулся».",
-        "Небольшой рыночный юмор: волатильность сегодня пришла без приглашения, но с фанфарами.",
-        "Ирония момента: новости меняются быстрее, чем вкладки в терминале.",
-        "Лёгкий комментарий: рынку бы в отпуск, но календарь снова прислал дедлайн.",
-        "Юмор на полях: даже калькулятор ставок сегодня работает на повышенных оборотах.",
-        "С улыбкой: когда выходит важный релиз, даже спокойные активы вспоминают о драме.",
-        "Финансовый мем: «мы всё учли» — сказали участники рынка перед очередным сюрпризом.",
-        "Коротко и смешно: рынок снова в режиме «сначала реакция, потом чтение мелкого шрифта».",
+    paragraph_templates = [
+        "Сухим языком это звучит как обычный апдейт, но для рынка это сигнал: ожидания участников пришлось немного перенастроить. Когда в заголовке появляется такая тема, торговые столы обычно пересматривают вероятности по ставкам и спросу на риск.",
+        "Для новичка это можно объяснить просто: рынок живёт ожиданиями будущего. Новость меняет не цену сама по себе, а то, как люди теперь оценивают следующий шаг регуляторов, компаний и крупных фондов.",
+        f"Поэтому в центре внимания оказываются {mk}. В такие дни сначала виден резкий эмоциональный импульс, а затем более спокойная фаза: участники перечитывают формулировки и сравнивают их с предыдущими релизами.",
+        "Самое интересное — контекст. Если фон и до этого был напряжённым, любая новая деталь действует как лишняя ложка эспрессо: все бодрятся, но у некоторых дрожит рука на кнопке.",
+        "Почему это важно на практике: из подобных новостей складывается общий сценарий недели. Именно он влияет на то, где рынок готов рисковать, а где предпочитает переждать в более защитных инструментах.",
+        "Комичный момент в том, что графики нередко реагируют быстрее людей: свеча уже улетела, а лента в терминале ещё догружает второе предложение. Но через несколько минут рынок обычно возвращается к фактам и пересобирает оценку.",
+        "Здесь полезно смотреть не только на первый рывок цены, но и на то, удержится ли движение после остывания эмоций. Если импульс поддерживается новыми подтверждениями, реакция может закрепиться и перейти в более устойчивый режим.",
+        "Что дальше обычно мониторят: следующие релизы по инфляции и занятости, комментарии центробанков и поведение доходностей. Эти маркеры помогают понять, был ли это разовый шум или начало более длинной переоценки.",
+        "Главный вывод для читателя без профжаргона: новость не даёт готового торгового сигнала, но заметно меняет фон. А фон, как погода в море, часто определяет, пойдёт рынок ровно или снова начнёт качать.",
+        "Если подвести итог с улыбкой: рынок снова напомнил, что любит драмы, но уважает дисциплину. Чем спокойнее и системнее читать такие события, тем меньше шансов перепутать важный сдвиг с шумом одного заголовка.",
     ]
-    why_variants = [
-        f"Почему это важно: новость меняет ожидания по макрофону, поэтому в фокусе {mk}.",
-        f"Почему это имеет вес: такие сигналы двигают оценку рисков и доходностей для {mk}.",
-        f"Почему за этим следят: фон по ставкам и аппетиту к риску напрямую отражается на {mk}.",
-        f"Почему это не просто шум: перерасчёт ожиданий обычно проходит через ключевые активы {mk}.",
-    ]
-    impact_variants = [
-        f"Рынок может реагировать через переоценку ожиданий по ставкам, инфляции и спросу на защитные активы в зоне {mk}.",
-        f"Возможная реакция: повышение чувствительности к статистике и комментариям регуляторов по инструментам {mk}.",
-        f"На практике это часто усиливает волатильность: сначала быстрый импульс, затем уточнение сценариев для {mk}.",
-        f"Потенциальный эффект — сдвиг в балансе «риск/защита», который участники обычно считывают по {mk}.",
-    ]
-    what_next = (
-        "Что дальше: участники рынка обычно ждут подтверждения от следующих релизов и официальных комментариев, "
-        "чтобы отделить разовый шум от устойчивого тренда ожиданий."
-    )
-    what_happened = f"{openings[style_id]} {clean_summary}"
-    why_it_matters = why_variants[style_id % len(why_variants)]
-    market_impact = impact_variants[(style_id + (1 if tone == 'hawkish' else 0)) % len(impact_variants)]
-    humor = humor_bank[style_id]
-    full_text = f"{what_happened}\n\n{why_it_matters}\n\n{market_impact}\n\n{what_next}\n\n{humor}"
+    offset = (style_id + (1 if tone == "hawkish" else 2 if tone == "risk_off" else 0)) % len(paragraph_templates)
+    paragraphs = [f"{openings[style_id]} {clean_summary}"]
+    for idx in range(6):
+        paragraphs.append(paragraph_templates[(offset + idx) % len(paragraph_templates)])
+    full_text = "\n\n".join(paragraphs)
+    if len(clean_summary) > 180:
+        while len(full_text) < 1200:
+            paragraphs.append(paragraph_templates[(offset + len(paragraphs)) % len(paragraph_templates)])
+            full_text = "\n\n".join(paragraphs[:8])
+            if len(paragraphs) >= 8:
+                break
+    what_happened = paragraphs[0]
+    why_it_matters = paragraphs[2] if len(paragraphs) > 2 else paragraphs[1]
+    market_impact = paragraphs[3] if len(paragraphs) > 3 else paragraphs[-1]
+    humor = "Лёгкий рыночный юмор встроен в основной текст без отдельного блока."
     return {
-        "preview_ru": f"{openings[style_id]} {clean_summary[:170]}",
+        "preview_ru": f"{clean_title}. {clean_summary[:130]}",
         "full_text_ru": full_text,
         "what_happened_ru": what_happened,
         "why_it_matters_ru": why_it_matters,
@@ -436,9 +510,17 @@ def rewrite_news_with_xai(title: str, summary: str, markets: list[str]) -> dict[
         return cached.get("payload")
 
     user_content = (
-        f"title: {strip_html(title)}\n"
-        f"summary: {strip_html(summary)[:1100]}\n"
-        f"markets: {', '.join(markets[:5])}"
+        f"Source title: {strip_html(title)}\n"
+        f"Source summary: {strip_html(summary)[:1400]}\n"
+        "Source: RSS\n"
+        f"Markets: {', '.join(markets[:5])}\n\n"
+        "Return JSON:\n"
+        "{\n"
+        '  "title_ru": "short Russian headline",\n'
+        '  "preview_ru": "one short Russian sentence, max 160 characters",\n'
+        '  "full_text_ru": "6-9 short paragraphs, 1800-3000 characters, humorous and clear, no separate humor block",\n'
+        '  "markets_ru": ["..."]\n'
+        "}"
     )
     try:
         response = requests.post(
@@ -454,12 +536,20 @@ def rewrite_news_with_xai(title: str, summary: str, markets: list[str]) -> dict[
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You rewrite financial news in Russian for a forex analytics website. "
-                        "Use only the facts from the provided source title and summary. "
-                        "Do not invent numbers, dates, quotes, forecasts, or claims. "
-                        "Write every article in a unique style. Avoid repeating sentence patterns. "
-                        "Explain:\n1. what happened,\n2. why it matters,\n3. what markets may react,\n4. what could happen next,\n5. one light humorous comment.\n"
-                        "Style: smart, popular, vivid, accessible, lightly humorous.\nNo direct trading advice.\nReturn valid JSON only.",
+                        "content": "You are a witty Russian financial news explainer for a forex analytics website.\n"
+                        "Use ONLY facts from the provided title and summary. Do not invent numbers, quotes, dates, or claims.\n"
+                        "Write in Russian.\n"
+                        "Every article must be unique: vary structure, openings, metaphors, rhythm, and jokes.\n"
+                        "Explain the news so a beginner understands it.\n"
+                        "Make it lively, funny, and useful, but not clownish.\n"
+                        "Explain:\n"
+                        "- what happened,\n"
+                        "- why it matters,\n"
+                        "- how it may affect USD, EURUSD, GBPUSD, XAUUSD, oil, stocks or risk sentiment when relevant,\n"
+                        "- what traders may watch next.\n"
+                        "Do not give direct trading advice.\n"
+                        "Do not use headings for every paragraph unless needed.\n"
+                        "Return valid JSON only.",
                     },
                     {"role": "user", "content": user_content},
                 ],
@@ -470,15 +560,28 @@ def rewrite_news_with_xai(title: str, summary: str, markets: list[str]) -> dict[
         payload = response.json()
         content = payload.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         parsed = json.loads(content) if isinstance(content, str) else {}
+        full_text = strip_html(str(parsed.get("full_text_ru") or "")).strip()
+        if 1800 <= len(full_text) <= 3200:
+            pass
+        elif len(full_text) < 1200:
+            return None
         cleaned = {
-            "preview_ru": strip_html(str(parsed.get("preview_ru") or "")).strip(),
-            "full_text_ru": strip_html(str(parsed.get("full_text_ru") or "")).strip(),
+            "preview_ru": strip_html(str(parsed.get("preview_ru") or "")).strip()[:160],
+            "full_text_ru": full_text,
             "what_happened_ru": strip_html(str(parsed.get("what_happened_ru") or "")).strip(),
             "why_it_matters_ru": strip_html(str(parsed.get("why_it_matters_ru") or "")).strip(),
             "market_impact_ru": strip_html(str(parsed.get("market_impact_ru") or "")).strip(),
             "humor_ru": strip_html(str(parsed.get("humor_ru") or "")).strip(),
         }
-        if all(cleaned.values()):
+        if cleaned["preview_ru"] and cleaned["full_text_ru"]:
+            if not cleaned["what_happened_ru"]:
+                cleaned["what_happened_ru"] = cleaned["full_text_ru"][:260]
+            if not cleaned["why_it_matters_ru"]:
+                cleaned["why_it_matters_ru"] = "Рынок пересматривает ожидания после публикации этой новости."
+            if not cleaned["market_impact_ru"]:
+                cleaned["market_impact_ru"] = f"Реакция обычно проходит через {', '.join(markets[:4])}."
+            if not cleaned["humor_ru"]:
+                cleaned["humor_ru"] = "Лёгкий юмор уже встроен в основной текст."
             REWRITE_CACHE[cache_key] = {"ts": time(), "payload": cleaned}
             return cleaned
     except Exception:
@@ -506,16 +609,21 @@ def _placeholder_svg_for_title(title: str) -> str:
     return f"/static/generated-news/{slug}.svg"
 
 
-def _resolve_news_image(title: str, summary: str, entry: dict, diagnostics: dict[str, Any]) -> tuple[str, str]:
+def _resolve_news_image(title: str, summary: str, source: str, entry: dict, diagnostics: dict[str, Any]) -> tuple[str, str]:
     cache_key = _source_hash(strip_html(title) or "news")
     cached = IMAGE_CACHE.get(cache_key)
     if cached and time() - cached.get("ts", 0) < IMAGE_CACHE_TTL_SECONDS:
         return cached.get("url"), cached.get("source")
 
     source_image = extract_news_image(entry)
-    if source_image:
+    if source_image and _looks_like_image_url(source_image):
         IMAGE_CACHE[cache_key] = {"ts": time(), "url": source_image, "source": "source"}
         return source_image, "source"
+    web_query = f"{strip_html(title)} {strip_html(source)} market news"
+    open_web_image = find_open_web_image(web_query)
+    if open_web_image:
+        IMAGE_CACHE[cache_key] = {"ts": time(), "url": open_web_image, "source": "web_search"}
+        return open_web_image, "web_search"
     fallback = pick_fallback_news_image(title=title, summary=summary, markets=[])
     if OPENAI_API_KEY:
         generated = _placeholder_svg_for_title(title)
@@ -559,7 +667,13 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     summary = str(entry.get("summary") or entry.get("description") or "").strip()
                     enriched = build_market_explanation(title=title, summary=summary)
                     published_iso, _ = parse_entry_datetime(entry=entry, fallback=now_utc)
-                    safe_image_url, image_source = _resolve_news_image(title=title, summary=summary, entry=entry, diagnostics=diagnostics)
+                    safe_image_url, image_source = _resolve_news_image(
+                        title=title,
+                        summary=summary,
+                        source=source_name,
+                        entry=entry,
+                        diagnostics=diagnostics,
+                    )
                     image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
                     rewrite = rewrite_news_with_xai(title=title, summary=summary, markets=enriched["markets"])
                     story = rewrite or _local_writer_payload(title=title, summary=summary, markets=enriched["markets"], tone=enriched["tone"])
