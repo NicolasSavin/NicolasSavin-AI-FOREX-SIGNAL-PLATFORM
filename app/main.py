@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,9 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.services.htf_context_filter import HtfContextFilter
 from app.services.twelvedata_ws_service import twelvedata_ws_service
+
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -24,7 +25,9 @@ TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "").strip()
 ACTIVE_FILE = Path("active_trades.json")
 ARCHIVE_FILE = Path("archive.json")
 
-app = FastAPI(title="AI FOREX SIGNAL PLATFORM", version="ob-fvg-liquidity-1.0")
+HTF_FILTER = HtfContextFilter()
+
+app = FastAPI(title="AI FOREX SIGNAL PLATFORM", version="htf-context-real-candles-1.0")
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -48,7 +51,7 @@ def health(request: Request):
 
     return {
         "status": "ok",
-        "version": "ob-fvg-liquidity-1.0",
+        "version": "htf-context-real-candles-1.0",
         "time": now_utc(),
     }
 
@@ -59,21 +62,31 @@ def home():
 
 
 @app.get("/ideas", include_in_schema=False)
-def ideas():
+def ideas_page():
     return FileResponse(STATIC_DIR / "ideas.html")
 
 
 @app.get("/api/signals")
 def api_signals():
+    signals = [build_signal(symbol) for symbol in SYMBOLS]
+    archive = load_json(ARCHIVE_FILE)
+
     return {
-        "signals": [build_signal(symbol) for symbol in SYMBOLS],
-        "archive": load_json(ARCHIVE_FILE),
+        "signals": signals,
+        "ideas": signals,
+        "archive": archive,
         "statistics": build_stats(),
+        "updated_at_utc": now_utc(),
     }
 
 
 @app.get("/api/ideas")
 def api_ideas():
+    return api_signals()
+
+
+@app.get("/ideas/market")
+def ideas_market():
     return api_signals()
 
 
@@ -103,40 +116,79 @@ def api_candles(symbol: str, tf: str = "M15", limit: int = 160):
     return get_candles_with_markup(symbol, tf, limit)
 
 
+@app.get("/api/chart/{symbol}")
+def api_chart(symbol: str, tf: str = "M15", limit: int = 160):
+    return get_candles_with_markup(symbol, tf, limit)
+
+
+@app.get("/api/canonical/chart/{symbol}/{tf}")
+def api_canonical_chart(symbol: str, tf: str, limit: int = 160):
+    return get_candles_with_markup(symbol, tf, limit)
+
+
 def build_signal(symbol: str) -> dict[str, Any]:
     symbol = normalize_symbol(symbol)
     price_data = get_price(symbol)
     current_price = safe_float(price_data.get("price"))
 
-    if current_price is None:
-        return empty_signal(symbol, price_data)
+    candles_by_tf = build_candles_by_tf(symbol)
 
-    signal = choose_signal(symbol)
+    if current_price is None:
+        return empty_signal(symbol, price_data, candles_by_tf)
+
+    proposed_bias = resolve_proposed_bias(candles_by_tf)
+    decision = HTF_FILTER.evaluate(
+        symbol=symbol,
+        candles_by_tf=candles_by_tf,
+        proposed_signal=proposed_bias,
+    )
+
+    signal = decision.final_signal
+
     active = load_json(ACTIVE_FILE)
     trade_id = f"{symbol}-{signal}"
 
     existing = next((x for x in active if x.get("id") == trade_id), None)
 
-    if existing:
-        trade = existing
+    if signal in {"BUY", "SELL"}:
+        if existing:
+            trade = existing
+        else:
+            entry = current_price
+            sl, tp, rr = build_levels(symbol, entry, signal)
+
+            trade = {
+                "id": trade_id,
+                "symbol": symbol,
+                "signal": signal,
+                "entry": entry,
+                "sl": sl,
+                "tp": tp,
+                "rr": rr,
+                "created_at": now_utc(),
+                "status": "ACTIVE",
+                "htf_context": decision.context,
+                "htf_reason": decision.reason,
+            }
+
+            active.append(trade)
+            save_json(ACTIVE_FILE, active)
     else:
         entry = current_price
-        sl, tp, rr = build_levels(symbol, entry, signal)
-
+        sl, tp, rr = build_levels(symbol, entry, "BUY")
         trade = {
-            "id": trade_id,
+            "id": f"{symbol}-WAIT",
             "symbol": symbol,
-            "signal": signal,
+            "signal": "WAIT",
             "entry": entry,
             "sl": sl,
             "tp": tp,
             "rr": rr,
             "created_at": now_utc(),
-            "status": "ACTIVE",
+            "status": "WAIT",
+            "htf_context": decision.context,
+            "htf_reason": decision.reason,
         }
-
-        active.append(trade)
-        save_json(ACTIVE_FILE, active)
 
     runtime_status, runtime_text, runtime_color, close_result = get_runtime_status(
         price=current_price,
@@ -164,21 +216,30 @@ def build_signal(symbol: str) -> dict[str, Any]:
 
         trade = archived
 
-    summary = build_summary(symbol, trade, current_price, runtime_status, runtime_text)
+    summary = build_summary(
+        symbol=symbol,
+        trade=trade,
+        current_price=current_price,
+        runtime_status=runtime_status,
+        runtime_text=runtime_text,
+        htf_decision=decision,
+    )
+
+    m15_candles = candles_by_tf.get("M15", [])
 
     return {
         "id": trade.get("id"),
         "idea_id": trade.get("id"),
         "symbol": symbol,
         "pair": symbol,
-        "timeframe": "LIVE",
-        "tf": "LIVE",
+        "timeframe": "M15",
+        "tf": "M15",
         "signal": trade.get("signal"),
         "final_signal": trade.get("signal"),
         "direction": "bullish" if trade.get("signal") == "BUY" else "bearish" if trade.get("signal") == "SELL" else "neutral",
         "bias": "bullish" if trade.get("signal") == "BUY" else "bearish" if trade.get("signal") == "SELL" else "neutral",
-        "confidence": 60 if trade.get("signal") in {"BUY", "SELL"} else 35,
-        "final_confidence": 60 if trade.get("signal") in {"BUY", "SELL"} else 35,
+        "confidence": resolve_confidence(decision),
+        "final_confidence": resolve_confidence(decision),
         "status": runtime_status,
         "runtime_status": runtime_status,
         "runtime_text": runtime_text,
@@ -207,21 +268,111 @@ def build_signal(symbol: str) -> dict[str, Any]:
         "full_text": summary,
         "compact_summary": summary,
         "warning_ru": human_price_warning(price_data),
-        "setup_quality": "FIXED_LEVELS_OB_FVG_LIQUIDITY",
-        "risk_filter": "entry_sl_tp_fixed_until_close",
-        "trade_permission": runtime_status == "ACTIVE",
+        "setup_quality": "HTF_CONTEXT_REAL_CANDLES_ONLY",
+        "risk_filter": "MN_W1_D1_H4_H1_M15_ALIGNMENT",
+        "trade_permission": decision.allowed and runtime_status == "ACTIVE",
+        "htf_context": decision.context,
+        "htf_bias": decision.htf_bias,
+        "htf_reason": decision.reason,
+        "risk_note": decision.risk_note,
+        "candles": m15_candles,
+        "chart_data": {"candles": m15_candles},
+        "chartData": {"candles": m15_candles},
+        "timeframe_ideas": build_timeframe_ideas(symbol, candles_by_tf, decision),
+        "timeframes_available": list(candles_by_tf.keys()),
         "created_at": trade.get("created_at"),
         "updated_at": now_utc(),
         "meaningful_updated_at": now_utc(),
-        "tags": [symbol, "LIVE", str(trade.get("signal")), runtime_status],
-        "timeframes_available": ["LIVE", "M15"],
+        "tags": [symbol, str(trade.get("signal")), runtime_status, decision.htf_bias],
         "diagnostics": {
             "levels_fixed": True,
+            "real_candles_only": True,
+            "synthetic_candles_disabled": True,
             "active_file": str(ACTIVE_FILE),
             "archive_file": str(ARCHIVE_FILE),
             "price_data": price_data,
+            "candles_by_tf_count": {tf: len(rows) for tf, rows in candles_by_tf.items()},
+            "htf_filter": decision.context,
         },
     }
+
+
+def build_candles_by_tf(symbol: str) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {}
+
+    for tf, limit in (
+        ("MN", 80),
+        ("W1", 120),
+        ("D1", 160),
+        ("H4", 160),
+        ("H1", 160),
+        ("M15", 160),
+    ):
+        payload = fetch_candles(symbol, tf, limit)
+        candles = payload.get("candles") if isinstance(payload.get("candles"), list) else []
+        if candles:
+            result[tf] = candles
+
+    return result
+
+
+def build_timeframe_ideas(
+    symbol: str,
+    candles_by_tf: dict[str, list[dict[str, Any]]],
+    decision,
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+
+    for tf, candles in candles_by_tf.items():
+        annotations = build_annotations(candles)
+        structure = build_market_structure(candles, annotations)
+        bias = structure.get("trend", "neutral")
+
+        result[tf] = {
+            "symbol": symbol,
+            "timeframe": tf,
+            "tf": tf,
+            "signal": "BUY" if bias == "bullish" else "SELL" if bias == "bearish" else "WAIT",
+            "direction": bias,
+            "bias": bias,
+            "candles": candles,
+            "chart_data": {"candles": candles},
+            "chartData": {"candles": candles},
+            "annotations": annotations,
+            "market_structure": structure,
+            "summary": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
+            "summary_ru": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
+        }
+
+    return result
+
+
+def resolve_proposed_bias(candles_by_tf: dict[str, list[dict[str, Any]]]) -> str:
+    m15 = candles_by_tf.get("M15") or []
+    if not m15:
+        return "neutral"
+
+    annotations = build_annotations(m15)
+    structure = build_market_structure(m15, annotations)
+    trend = structure.get("trend", "neutral")
+
+    if trend == "bullish":
+        return "BUY"
+
+    if trend == "bearish":
+        return "SELL"
+
+    return "WAIT"
+
+
+def resolve_confidence(decision) -> int:
+    if decision.allowed:
+        return 72
+
+    if decision.htf_bias in {"bullish", "bearish"}:
+        return 42
+
+    return 28
 
 
 def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
@@ -241,6 +392,8 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
         "current_price": get_price(symbol).get("price"),
         "last_updated_utc": now_utc(),
         "candles": candles,
+        "chart_data": {"candles": candles},
+        "chartData": {"candles": candles},
         "annotations": annotations,
         "market_structure": market_structure,
         "warning_ru": candles_payload.get("warning_ru"),
@@ -273,10 +426,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
 
         for item in reversed(values):
             dt = str(item.get("datetime"))
-            parsed = datetime.fromisoformat(dt.replace("Z", "+00:00"))
-
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parse_td_datetime(dt)
 
             candles.append(
                 {
@@ -295,17 +445,28 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
     except Exception as exc:
         return {"candles": [], "warning_ru": str(exc)}
 
+
 def build_annotations(candles: list[dict[str, Any]]) -> dict[str, Any]:
     if len(candles) < 10:
-        return {"levels": [], "liquidity": [], "imbalances": [], "order_blocks": [], "patterns": []}
+        return {
+            "levels": [],
+            "liquidity": [],
+            "imbalances": [],
+            "order_blocks": [],
+            "breaker_blocks": [],
+            "patterns": [],
+        }
 
-    recent = candles[-80:]
+    recent = candles[-120:]
+    order_blocks = detect_order_blocks(recent)
+    breaker_blocks = detect_breaker_blocks(recent, order_blocks)
 
     return {
         "levels": detect_levels(recent),
         "liquidity": detect_liquidity(recent),
         "imbalances": detect_imbalances(recent),
-        "order_blocks": detect_order_blocks(recent),
+        "order_blocks": order_blocks,
+        "breaker_blocks": breaker_blocks,
         "patterns": detect_patterns(recent),
     }
 
@@ -334,10 +495,24 @@ def detect_liquidity(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         low = float(c["low"])
 
         if all(high > float(x["high"]) for x in left + right):
-            zones.append({"type": "buy_side_liquidity", "price": high, "time": c["time"], "label": "Buy-side liquidity"})
+            zones.append(
+                {
+                    "type": "buy_side_liquidity",
+                    "price": high,
+                    "time": c["time"],
+                    "label": "Buy-side liquidity",
+                }
+            )
 
         if all(low < float(x["low"]) for x in left + right):
-            zones.append({"type": "sell_side_liquidity", "price": low, "time": c["time"], "label": "Sell-side liquidity"})
+            zones.append(
+                {
+                    "type": "sell_side_liquidity",
+                    "price": low,
+                    "time": c["time"],
+                    "label": "Sell-side liquidity",
+                }
+            )
 
     return zones[-10:]
 
@@ -355,10 +530,26 @@ def detect_imbalances(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         c3_low = float(c3["low"])
 
         if c1_high < c3_low:
-            zones.append({"type": "bullish_fvg", "from": c1_high, "to": c3_low, "time": c3["time"], "label": "Bullish FVG"})
+            zones.append(
+                {
+                    "type": "bullish_fvg",
+                    "from": c1_high,
+                    "to": c3_low,
+                    "time": c3["time"],
+                    "label": "Bullish FVG",
+                }
+            )
 
         if c1_low > c3_high:
-            zones.append({"type": "bearish_fvg", "from": c3_high, "to": c1_low, "time": c3["time"], "label": "Bearish FVG"})
+            zones.append(
+                {
+                    "type": "bearish_fvg",
+                    "from": c3_high,
+                    "to": c1_low,
+                    "time": c3["time"],
+                    "label": "Bearish FVG",
+                }
+            )
 
     return zones[-8:]
 
@@ -382,37 +573,166 @@ def detect_order_blocks(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cur_body = abs(cur_close - cur_open)
 
         if prev_close < prev_open and cur_close > cur_open and cur_body > prev_body * 1.15:
-            zones.append({"type": "bullish_order_block", "from": prev_low, "to": prev_high, "time": prev["time"], "label": "Bullish OB"})
+            zones.append(
+                {
+                    "type": "bullish_order_block",
+                    "from": prev_low,
+                    "to": prev_high,
+                    "time": prev["time"],
+                    "label": "Bullish OB",
+                    "index": i - 1,
+                }
+            )
 
         if prev_close > prev_open and cur_close < cur_open and cur_body > prev_body * 1.15:
-            zones.append({"type": "bearish_order_block", "from": prev_low, "to": prev_high, "time": prev["time"], "label": "Bearish OB"})
+            zones.append(
+                {
+                    "type": "bearish_order_block",
+                    "from": prev_low,
+                    "to": prev_high,
+                    "time": prev["time"],
+                    "label": "Bearish OB",
+                    "index": i - 1,
+                }
+            )
 
     return zones[-8:]
 
 
+def detect_breaker_blocks(
+    candles: list[dict[str, Any]],
+    order_blocks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    breakers = []
+
+    for zone in order_blocks:
+        zone_from = safe_float(zone.get("from"))
+        zone_to = safe_float(zone.get("to"))
+        start_index = int(zone.get("index") or 0)
+
+        if zone_from is None or zone_to is None:
+            continue
+
+        low = min(zone_from, zone_to)
+        high = max(zone_from, zone_to)
+        future = candles[start_index + 1:]
+
+        if zone.get("type") == "bullish_order_block":
+            broken = any(float(row["close"]) < low for row in future)
+            returned = any(low <= float(row["close"]) <= high for row in future[-20:])
+            if broken and returned:
+                breakers.append(
+                    {
+                        **zone,
+                        "type": "bullish_breaker_block",
+                        "label": "Bullish OB → Breaker Block",
+                    }
+                )
+
+        if zone.get("type") == "bearish_order_block":
+            broken = any(float(row["close"]) > high for row in future)
+            returned = any(low <= float(row["close"]) <= high for row in future[-20:])
+            if broken and returned:
+                breakers.append(
+                    {
+                        **zone,
+                        "type": "bearish_breaker_block",
+                        "label": "Bearish OB → Breaker Block",
+                    }
+                )
+
+    return breakers[-4:]
+
+
 def detect_patterns(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if len(candles) < 3:
+    if len(candles) < 30:
         return []
 
     patterns = []
-    last = candles[-1]
-    prev = candles[-2]
+    recent = candles[-55:]
 
-    last_body = abs(float(last["close"]) - float(last["open"]))
-    prev_body = abs(float(prev["close"]) - float(prev["open"]))
+    highs = [float(c["high"]) for c in recent]
+    lows = [float(c["low"]) for c in recent]
+    max_high = max(highs)
+    min_low = min(lows)
+    price_range = max(max_high - min_low, 0.00001)
 
-    if float(last["close"]) > float(last["open"]) and float(prev["close"]) < float(prev["open"]) and last_body > prev_body:
-        patterns.append({"type": "bullish_engulfing", "time": last["time"], "label": "Bullish engulfing"})
+    left_high = max(highs[:18])
+    right_high = max(highs[-18:])
+    left_low = min(lows[:18])
+    right_low = min(lows[-18:])
 
-    if float(last["close"]) < float(last["open"]) and float(prev["close"]) > float(prev["open"]) and last_body > prev_body:
-        patterns.append({"type": "bearish_engulfing", "time": last["time"], "label": "Bearish engulfing"})
+    if right_high < left_high and right_low > left_low:
+        patterns.append(
+            {
+                "type": "triangle",
+                "label": "Triangle / Compression",
+                "from_time": recent[6]["time"],
+                "to_time": recent[-4]["time"],
+                "from_price": left_low,
+                "to_price": left_high,
+            }
+        )
 
-    return patterns
+    impulse = abs(float(recent[-24]["close"]) - float(recent[-1]["close"]))
+    consolidation = max(highs[-14:]) - min(lows[-14:])
+
+    if impulse > price_range * 0.28 and consolidation < price_range * 0.28:
+        patterns.append(
+            {
+                "type": "flag",
+                "label": "Flag / Continuation",
+                "from_time": recent[-14]["time"],
+                "to_time": recent[-1]["time"],
+                "from_price": min(lows[-14:]),
+                "to_price": max(highs[-14:]),
+            }
+        )
+
+    top1 = max(highs[-30:-15])
+    top2 = max(highs[-15:])
+
+    if abs(top1 - top2) < price_range * 0.07:
+        patterns.append(
+            {
+                "type": "double_top",
+                "label": "Double Top",
+                "from_time": recent[-30]["time"],
+                "to_time": recent[-1]["time"],
+                "from_price": min(lows[-30:]),
+                "to_price": max(top1, top2),
+            }
+        )
+
+    bottom1 = min(lows[-30:-15])
+    bottom2 = min(lows[-15:])
+
+    if abs(bottom1 - bottom2) < price_range * 0.07:
+        patterns.append(
+            {
+                "type": "double_bottom",
+                "label": "Double Bottom",
+                "from_time": recent[-30]["time"],
+                "to_time": recent[-1]["time"],
+                "from_price": min(bottom1, bottom2),
+                "to_price": max(highs[-30:]),
+            }
+        )
+
+    return patterns[-4:]
 
 
-def build_market_structure(candles: list[dict[str, Any]], annotations: dict[str, Any]) -> dict[str, Any]:
+def build_market_structure(
+    candles: list[dict[str, Any]],
+    annotations: dict[str, Any],
+) -> dict[str, Any]:
     if len(candles) < 24:
-        return {"trend": "neutral", "near_liquidity": "none", "has_bullish_fvg": False, "has_bearish_fvg": False}
+        return {
+            "trend": "neutral",
+            "near_liquidity": "none",
+            "has_bullish_fvg": False,
+            "has_bearish_fvg": False,
+        }
 
     closes = [float(c["close"]) for c in candles[-40:]]
     short_avg = sum(closes[-8:]) / 8
@@ -458,6 +778,9 @@ def get_runtime_status(price, entry, sl, tp, signal):
         if sl is not None and price >= sl:
             return "CLOSED_SL", "SL достигнут. Идея закрыта в минус и перенесена в архив.", "red", "SL"
 
+    if signal == "WAIT":
+        return "WAIT", "HTF-фильтр не разрешил вход. Ждём согласование старшего контекста и младшего триггера.", "violet", None
+
     distance = abs(price - entry) / max(abs(entry), 0.00001) * 100
 
     if signal in {"BUY", "SELL"} and distance <= 0.12:
@@ -467,14 +790,6 @@ def get_runtime_status(price, entry, sl, tp, signal):
         return "MISSED", f"Момент входа упущен: цена ушла от Entry на {distance:.3f}%. Вход не рекомендован.", "orange", None
 
     return "WAIT", "Ожидание подтверждения.", "violet", None
-
-
-def choose_signal(symbol: str) -> str:
-    if symbol in {"EURUSD", "GBPUSD", "XAUUSD"}:
-        return "BUY"
-    if symbol in {"USDJPY", "USDCHF", "USDCAD"}:
-        return "SELL"
-    return "WAIT"
 
 
 def build_levels(symbol: str, entry: float, signal: str):
@@ -494,31 +809,57 @@ def build_levels(symbol: str, entry: float, signal: str):
     if signal == "SELL":
         return round(entry + distance, precision), round(entry - distance * 1.5, precision), 1.5
 
-    return None, None, None
+    return round(entry - distance, precision), round(entry + distance * 1.5, precision), 1.5
 
 
-def build_summary(symbol: str, trade: dict[str, Any], current_price: float, status: str, status_text: str) -> str:
+def build_summary(
+    *,
+    symbol: str,
+    trade: dict[str, Any],
+    current_price: float,
+    runtime_status: str,
+    runtime_text: str,
+    htf_decision,
+) -> str:
     signal = trade.get("signal")
+    context = htf_decision.context
 
     if signal == "BUY":
-        side = "покупательский сценарий"
-        big_player = "крупный игрок удерживает цену выше зоны входа и пытается вести движение к верхней ликвидности"
+        scenario = (
+            "Покупательский сценарий разрешён только потому, что старший контекст, структура и младший триггер "
+            "не конфликтуют между собой."
+        )
     elif signal == "SELL":
-        side = "продавливание вниз"
-        big_player = "крупный игрок давит цену ниже зоны входа и пытается вести движение к нижней ликвидности"
+        scenario = (
+            "Продавецкий сценарий разрешён только потому, что старший контекст, структура и младший триггер "
+            "не конфликтуют между собой."
+        )
     else:
-        side = "ожидание"
-        big_player = "крупный игрок пока не показывает чистое направление"
+        scenario = (
+            "Полноценная сделка заблокирована: сайт не даёт вход только по M15, пока MN/W1/D1/H4/H1 "
+            "не дают согласованную картину."
+        )
 
     return (
-        f"{symbol}: {side}. Entry, SL и TP зафиксированы и не меняются до завершения идеи. "
+        f"{symbol}: {scenario} "
+        f"HTF bias: {htf_decision.htf_bias}. "
+        f"MN={context.get('mn_bias')}, W1={context.get('w1_bias')}, D1={context.get('d1_bias')}, "
+        f"H4={context.get('h4_bias')}, H1={context.get('h1_bias')}, M15={context.get('m15_bias')}. "
         f"Entry: {trade.get('entry')}, SL: {trade.get('sl')}, TP: {trade.get('tp')}. "
-        f"Текущая цена: {current_price}. С точки зрения крупного игрока: {big_player}. "
-        f"Статус: {status}. {status_text}"
+        f"Текущая цена: {current_price}. "
+        f"{htf_decision.reason} "
+        f"Статус: {runtime_status}. {runtime_text}"
     )
 
 
-def empty_signal(symbol: str, price_data: dict[str, Any]) -> dict[str, Any]:
+def empty_signal(
+    symbol: str,
+    price_data: dict[str, Any],
+    candles_by_tf: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    candles_by_tf = candles_by_tf or {}
+    m15 = candles_by_tf.get("M15", [])
+
     return {
         "id": f"{symbol}-no-price",
         "symbol": symbol,
@@ -532,10 +873,43 @@ def empty_signal(symbol: str, price_data: dict[str, Any]) -> dict[str, Any]:
         "current_price": None,
         "summary": "Нет текущей цены, идея не формируется.",
         "summary_ru": "Нет текущей цены, идея не формируется.",
+        "idea_thesis": "Нет текущей цены, идея не формируется.",
+        "unified_narrative": "Нет текущей цены, идея не формируется.",
+        "full_text": "Нет текущей цены, идея не формируется.",
         "source": price_data.get("source"),
         "data_status": price_data.get("data_status"),
         "warning_ru": human_price_warning(price_data),
+        "candles": m15,
+        "chart_data": {"candles": m15},
+        "chartData": {"candles": m15},
+        "timeframe_ideas": build_empty_timeframe_ideas(symbol, candles_by_tf),
+        "diagnostics": {
+            "real_candles_only": True,
+            "synthetic_candles_disabled": True,
+            "candles_by_tf_count": {tf: len(rows) for tf, rows in candles_by_tf.items()},
+        },
     }
+
+
+def build_empty_timeframe_ideas(
+    symbol: str,
+    candles_by_tf: dict[str, list[dict[str, Any]]],
+) -> dict[str, dict[str, Any]]:
+    result = {}
+
+    for tf, candles in candles_by_tf.items():
+        result[tf] = {
+            "symbol": symbol,
+            "timeframe": tf,
+            "signal": "WAIT",
+            "direction": "neutral",
+            "bias": "neutral",
+            "candles": candles,
+            "chart_data": {"candles": candles},
+            "chartData": {"candles": candles},
+        }
+
+    return result
 
 
 def get_price(symbol: str) -> dict[str, Any]:
@@ -547,7 +921,13 @@ def get_price(symbol: str) -> dict[str, Any]:
         return {**ws, "source": "twelvedata_ws", "is_live_market_data": True}
 
     if not TWELVEDATA_API_KEY:
-        return {"symbol": symbol, "price": None, "source": "twelvedata_rest_quote", "data_status": "unavailable", "warning_ru": "TWELVEDATA_API_KEY отсутствует."}
+        return {
+            "symbol": symbol,
+            "price": None,
+            "source": "twelvedata_rest_quote",
+            "data_status": "unavailable",
+            "warning_ru": "TWELVEDATA_API_KEY отсутствует.",
+        }
 
     try:
         response = requests.get(
@@ -558,7 +938,14 @@ def get_price(symbol: str) -> dict[str, Any]:
         data = response.json()
 
         if data.get("status") == "error":
-            return {"symbol": symbol, "price": None, "source": "twelvedata_rest_quote", "data_status": "unavailable", "warning_ru": data.get("message"), "raw": data}
+            return {
+                "symbol": symbol,
+                "price": None,
+                "source": "twelvedata_rest_quote",
+                "data_status": "unavailable",
+                "warning_ru": data.get("message"),
+                "raw": data,
+            }
 
         price = first_float(data.get("close"), data.get("price"), data.get("previous_close"))
 
@@ -574,13 +961,21 @@ def get_price(symbol: str) -> dict[str, Any]:
         }
 
     except Exception as exc:
-        return {"symbol": symbol, "price": None, "source": "twelvedata_rest_quote", "data_status": "unavailable", "warning_ru": str(exc)}
+        return {
+            "symbol": symbol,
+            "price": None,
+            "source": "twelvedata_rest_quote",
+            "data_status": "unavailable",
+            "warning_ru": str(exc),
+        }
 
 
 def move_to_archive(trade: dict[str, Any]) -> None:
     archive = load_json(ARCHIVE_FILE)
+
     if any(x.get("id") == trade.get("id") and x.get("result") == trade.get("result") for x in archive):
         return
+
     archive.append(trade)
     save_json(ARCHIVE_FILE, archive)
 
@@ -590,12 +985,19 @@ def build_stats() -> dict[str, Any]:
     wins = sum(1 for x in archive if x.get("result") == "TP")
     losses = sum(1 for x in archive if x.get("result") == "SL")
     total = wins + losses
-    return {"total": total, "wins": wins, "losses": losses, "winrate": round((wins / total * 100), 2) if total else 0}
+
+    return {
+        "total": total,
+        "wins": wins,
+        "losses": losses,
+        "winrate": round((wins / total * 100), 2) if total else 0,
+    }
 
 
 def load_json(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
+
     try:
         with open(path, "r", encoding="utf-8") as file:
             data = json.load(file)
@@ -610,17 +1012,66 @@ def save_json(path: Path, data: list[dict[str, Any]]) -> None:
 
 
 def normalize_symbol(symbol: str) -> str:
-    return str(symbol or "").upper().replace("/", "").replace("-", "").replace("_", "").replace(" ", "").strip()
+    return (
+        str(symbol or "")
+        .upper()
+        .replace("/", "")
+        .replace("-", "")
+        .replace("_", "")
+        .replace(" ", "")
+        .strip()
+    )
 
 
 def to_twelvedata_symbol(symbol: str) -> str:
-    mapping = {"EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY", "XAUUSD": "XAU/USD"}
+    mapping = {
+        "EURUSD": "EUR/USD",
+        "GBPUSD": "GBP/USD",
+        "USDJPY": "USD/JPY",
+        "USDCHF": "USD/CHF",
+        "USDCAD": "USD/CAD",
+        "AUDUSD": "AUD/USD",
+        "NZDUSD": "NZD/USD",
+        "XAUUSD": "XAU/USD",
+    }
+
     return mapping.get(normalize_symbol(symbol), normalize_symbol(symbol))
 
 
 def to_td_interval(tf: str) -> str:
-    mapping = {"M1": "1min", "M5": "5min", "M15": "15min", "M30": "30min", "H1": "1h", "H4": "4h", "D1": "1day", "15MIN": "15min", "1H": "1h", "4H": "4h"}
+    mapping = {
+        "M1": "1min",
+        "M5": "5min",
+        "M15": "15min",
+        "M30": "30min",
+        "H1": "1h",
+        "H4": "4h",
+        "D1": "1day",
+        "W1": "1week",
+        "MN": "1month",
+        "15MIN": "15min",
+        "1H": "1h",
+        "4H": "4h",
+        "1D": "1day",
+        "1W": "1week",
+        "1M": "1month",
+    }
+
     return mapping.get(str(tf or "M15").upper(), "15min")
+
+
+def parse_td_datetime(value: str) -> datetime:
+    raw = str(value or "").strip()
+
+    if len(raw) == 10:
+        parsed = datetime.fromisoformat(raw)
+    else:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
 
 
 def safe_float(value: Any) -> float | None:
@@ -642,13 +1093,18 @@ def first_float(*values: Any) -> float | None:
 
 def human_price_warning(price_data: dict[str, Any]) -> str | None:
     text = str(price_data.get("warning_ru") or "")
+
     if not text:
         return None
+
     lower = text.lower()
+
     if "credits" in lower or "limit" in lower or "quota" in lower:
         return "TwelveData лимит на сегодня исчерпан. REST-свечи/цены временно недоступны до обновления лимита."
+
     if "rest" in lower or "fallback" in lower:
         return "Резервная цена: WebSocket сейчас не прислал live-тик, поэтому система взяла цену через TwelveData REST."
+
     return text
 
 
