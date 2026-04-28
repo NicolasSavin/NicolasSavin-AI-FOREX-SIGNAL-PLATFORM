@@ -1872,6 +1872,7 @@ a { color: inherit; }
 
 .calendar-state--loading { color: #8fe9ff; border-color: rgba(76, 201, 240, 0.35); }
 .calendar-state--ready { color: #86efac; border-color: rgba(34, 197, 94, 0.38); }
+.calendar-state--warning { color: #fde68a; border-color: rgba(245, 158, 11, 0.38); }
 .calendar-state--empty { color: #fde68a; border-color: rgba(251, 191, 36, 0.38); }
 .calendar-state--error { color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); }
 

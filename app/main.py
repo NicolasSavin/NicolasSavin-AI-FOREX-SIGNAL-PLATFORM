@@ -23,6 +23,8 @@ STATIC_DIR = BASE_DIR / "static"
 SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "").strip()
+TRADING_ECONOMICS_KEY = os.getenv("TRADING_ECONOMICS_KEY", "").strip()
+FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
 
 CANDLE_CACHE: dict[str, dict[str, Any]] = {}
 CANDLE_CACHE_TTL_SECONDS = 900
@@ -95,6 +97,9 @@ def get_fallback_calendar_events() -> list[dict[str, Any]]:
             "humor_ru": "Иногда рынок реагирует на CPI так бурно, будто кто-то резко прибавил громкость прямо на релизе.",
             "assets": ["USD", "XAUUSD", "US500"],
             "is_educational": True,
+            "status": "educational",
+            "released_label_ru": "Образовательный ориентир",
+            "time_label_ru": "Нет реального времени: подключите провайдер экономического календаря",
         },
         {
             "title": "Решение ФРС по ставке",
@@ -107,6 +112,9 @@ def get_fallback_calendar_events() -> list[dict[str, Any]]:
             "humor_ru": "Пара фраз на пресс-конференции иногда двигает рынок быстрее, чем пачка индикаторов.",
             "assets": ["USD", "US500", "XAUUSD"],
             "is_educational": True,
+            "status": "educational",
+            "released_label_ru": "Образовательный ориентир",
+            "time_label_ru": "Нет реального времени: подключите провайдер экономического календаря",
         },
     ]
 
@@ -129,6 +137,143 @@ def _parse_utc_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _detect_impact(raw: Any) -> str:
+    text = str(raw or "").strip().lower()
+    if text in {"3", "high", "высокий", "bull3"}:
+        return "high"
+    if text in {"2", "medium", "med", "средний", "bull2"}:
+        return "medium"
+    if text in {"1", "low", "низкий", "bull1"}:
+        return "low"
+    if "high" in text or "выс" in text:
+        return "high"
+    if "med" in text or "сред" in text:
+        return "medium"
+    if "low" in text or "низ" in text:
+        return "low"
+    return "medium"
+
+
+def _build_assets(currency: str) -> list[str]:
+    base = ["EURUSD", "GBPUSD", "XAUUSD"]
+    code = str(currency or "").upper().strip()
+    if not code:
+        return ["EURUSD", "GBPUSD", "XAUUSD"]
+    assets = [code]
+    if code not in {"USD"}:
+        assets.append(f"{code}USD")
+    assets.extend(base)
+    deduped: list[str] = []
+    for item in assets:
+        if item and item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def _build_real_event_text(title: str, currency: str, impact: str) -> str:
+    impact_ru = {"high": "высокой", "medium": "средней", "low": "умеренной"}.get(impact, "умеренной")
+    cur = currency or "рынка"
+    return (
+        f"{title} — важный макроотчёт для {cur}: он помогает понять текущее состояние экономики и ожидания по ставкам. "
+        f"Если факт заметно отклонится от прогноза, на валютных парах и золоте возможен импульс {impact_ru} волатильности; "
+        "рынок в такие минуты двигается быстро, будто кто-то нажал кнопку «ускорение x2»."
+    )
+
+
+def _normalize_real_provider_event(event: dict[str, Any], now: datetime) -> dict[str, Any] | None:
+    event_dt = _parse_utc_datetime(event.get("time_utc"))
+    if event_dt is None:
+        return None
+    title = str(event.get("title") or "Экономическое событие").strip()
+    currency = str(event.get("currency") or "").upper().strip()
+    impact = _detect_impact(event.get("impact"))
+    status = "released" if event_dt <= now else "upcoming"
+    released_label_ru = "Уже вышло" if status == "released" else "Ожидается"
+    return {
+        "title": title,
+        "country": str(event.get("country") or "").strip() or "—",
+        "currency": currency or "—",
+        "impact": impact,
+        "time_utc": event_dt.isoformat().replace("+00:00", "Z"),
+        "time_label_ru": event_dt.strftime("%d.%m.%Y, %H:%M UTC"),
+        "status": status,
+        "released_label_ru": released_label_ru,
+        "actual": event.get("actual"),
+        "forecast": event.get("forecast"),
+        "previous": event.get("previous"),
+        "full_text_ru": _build_real_event_text(title, currency, impact),
+        "assets": _build_assets(currency),
+    }
+
+
+def _fetch_tradingeconomics_calendar(now: datetime) -> list[dict[str, Any]]:
+    if not TRADING_ECONOMICS_KEY:
+        return []
+    start = now.strftime("%Y-%m-%d")
+    end = now.strftime("%Y-%m-%d")
+    url = f"https://api.tradingeconomics.com/calendar/country/all/{start}/{end}"
+    response = requests.get(url, params={"c": TRADING_ECONOMICS_KEY, "f": "json"}, timeout=10)
+    response.raise_for_status()
+    raw_events = response.json()
+    if not isinstance(raw_events, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for row in raw_events:
+        if not isinstance(row, dict):
+            continue
+        normalized_event = _normalize_real_provider_event(
+            {
+                "title": row.get("Event") or row.get("Category"),
+                "country": row.get("Country"),
+                "currency": row.get("Currency"),
+                "impact": row.get("Importance") or row.get("ImportanceCode") or row.get("ImportanceText"),
+                "time_utc": row.get("DateUtc") or row.get("Date") or row.get("ReferenceDate"),
+                "actual": row.get("Actual"),
+                "forecast": row.get("Forecast"),
+                "previous": row.get("Previous"),
+            },
+            now,
+        )
+        if normalized_event:
+            normalized.append(normalized_event)
+    normalized.sort(key=lambda item: str(item.get("time_utc") or ""))
+    return normalized
+
+
+def _fetch_fmp_calendar(now: datetime) -> list[dict[str, Any]]:
+    if not FMP_API_KEY:
+        return []
+    start = now.strftime("%Y-%m-%d")
+    end = now.strftime("%Y-%m-%d")
+    url = "https://financialmodelingprep.com/stable/economic-calendar"
+    response = requests.get(url, params={"from": start, "to": end, "apikey": FMP_API_KEY}, timeout=10)
+    response.raise_for_status()
+    raw_events = response.json()
+    if not isinstance(raw_events, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for row in raw_events:
+        if not isinstance(row, dict):
+            continue
+        normalized_event = _normalize_real_provider_event(
+            {
+                "title": row.get("event") or row.get("title"),
+                "country": row.get("country"),
+                "currency": row.get("currency"),
+                "impact": row.get("impact") or row.get("importance"),
+                "time_utc": row.get("date") or row.get("dateUtc") or row.get("timestamp"),
+                "actual": row.get("actual"),
+                "forecast": row.get("estimate") or row.get("forecast"),
+                "previous": row.get("previous"),
+            },
+            now,
+        )
+        if normalized_event:
+            normalized.append(normalized_event)
+    normalized.sort(key=lambda item: str(item.get("time_utc") or ""))
+    return normalized
+
+
 def _build_calendar_full_text(event: dict[str, Any]) -> str:
     if event.get("full_text_ru"):
         return str(event["full_text_ru"])
@@ -149,13 +294,19 @@ def _normalize_calendar_event(event: dict[str, Any], now: datetime) -> dict[str,
 
     if event_dt is not None:
         normalized["time_utc"] = event_dt.isoformat().replace("+00:00", "Z")
-        normalized["status"] = "released" if event_dt < now else "upcoming"
-        normalized["time_label_ru"] = normalized.get("time_label_ru") or event_dt.strftime("%d.%m.%Y %H:%M UTC")
+        normalized["status"] = "released" if event_dt <= now else "upcoming"
+        normalized["released_label_ru"] = normalized.get("released_label_ru") or (
+            "Уже вышло" if normalized["status"] == "released" else "Ожидается"
+        )
+        normalized["time_label_ru"] = normalized.get("time_label_ru") or event_dt.strftime("%d.%m.%Y, %H:%M UTC")
     else:
         normalized["time_utc"] = None
-        normalized["status"] = "unknown"
-        normalized["time_label_ru"] = (
-            "Образовательный ориентир: точное время не указано"
+        normalized["status"] = "educational" if is_educational else "unknown"
+        normalized["released_label_ru"] = normalized.get("released_label_ru") or (
+            "Образовательный ориентир" if is_educational else "Время не указано"
+        )
+        normalized["time_label_ru"] = normalized.get("time_label_ru") or (
+            "Нет реального времени: подключите провайдер экономического календаря"
             if is_educational
             else "Точное время выхода не указано"
         )
@@ -166,12 +317,39 @@ def _normalize_calendar_event(event: dict[str, Any], now: datetime) -> dict[str,
 
 def build_calendar_payload() -> dict[str, Any]:
     now = datetime.now(timezone.utc)
-    events = [_normalize_calendar_event(event, now) for event in get_fallback_calendar_events()]
+    provider = "fallback"
+    warning: str | None = None
+    events: list[dict[str, Any]] = []
+
+    try:
+        events = _fetch_tradingeconomics_calendar(now)
+        if events:
+            provider = "tradingeconomics"
+    except Exception:
+        warning = "Trading Economics временно недоступен."
+
+    if not events:
+        try:
+            fmp_events = _fetch_fmp_calendar(now)
+            if fmp_events:
+                events = fmp_events
+                provider = "fmp"
+                warning = None
+        except Exception:
+            warning = "FMP временно недоступен."
+
+    if not events:
+        events = [_normalize_calendar_event(event, now) for event in get_fallback_calendar_events()]
+
+    data_origin = "real_provider" if provider != "fallback" else "fallback"
     return {
         "events": events,
         "items": events,
         "updated_at_utc": now_utc(),
-        "status": "fallback",
+        "status": data_origin,
+        "data_origin": data_origin,
+        "provider": provider,
+        "warning": warning if data_origin == "fallback" else None,
     }
 
 
