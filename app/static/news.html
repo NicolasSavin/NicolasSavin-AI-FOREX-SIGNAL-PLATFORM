@@ -45,11 +45,20 @@
         </section>
       </main>
     </div>
+    <dialog class="news-modal" id="newsModal">
+      <article class="news-modal__card">
+        <button class="news-modal__close" id="newsModalClose" type="button" aria-label="Закрыть">✕</button>
+        <div id="newsModalBody"></div>
+      </article>
+    </dialog>
 
     <script>
       const newsList = document.getElementById("newsList");
       const newsUpdatedAt = document.getElementById("newsUpdatedAt");
       const refreshButton = document.getElementById("refreshNewsButton");
+      const newsModal = document.getElementById("newsModal");
+      const newsModalClose = document.getElementById("newsModalClose");
+      const newsModalBody = document.getElementById("newsModalBody");
 
       function escapeHtml(value) {
         return String(value || "")
@@ -71,6 +80,48 @@
         const list = Array.isArray(markets) ? markets : [];
         if (!list.length) return '<span class="news-chip news-chip--muted">Нет меток</span>';
         return list.map((item) => `<span class="news-chip">${escapeHtml(item)}</span>`).join("");
+      }
+
+      function writerBadge(item) {
+        if (item.writer === "grok") return '<span class="news-source-badge">Grok</span>';
+        return '<span class="news-source-badge">Fallback writer</span>';
+      }
+
+      function imageHtml(item, big = false) {
+        const wrapClass = big ? "news-image-wrap news-image-wrap--big" : "news-image-wrap";
+        return `
+          <div class="${wrapClass}">
+            <img
+              src="${escapeHtml(item.image_url || "")}"
+              alt="${escapeHtml(item.image_alt || item.title_ru || "Иллюстрация новости")}"
+              loading="lazy"
+              onerror="this.closest('.news-image-wrap').classList.add('is-fallback'); this.remove();"
+            />
+          </div>
+        `;
+      }
+
+      function renderExpanded(item) {
+        const title = item.title_ru || item.title || "Новость без заголовка";
+        const fullText = item.full_text_ru || item.long_story_ru || item.summary || "Описание недоступно.";
+        newsModalBody.innerHTML = `
+          ${imageHtml(item, true)}
+          <p class="news-card__eyebrow">${escapeHtml(item.source || "Источник")} · ${formatDate(item.published_at)}</p>
+          <h3 class="news-card__title">${escapeHtml(title)}</h3>
+          <div class="news-chip-row">
+            ${buildMarkets(item.markets || item.assets)}
+            <span class="news-chip">${escapeHtml(item.image_source || "placeholder")}</span>
+            ${writerBadge(item)}
+          </div>
+          <section class="news-detail-box"><h4>Полная версия</h4><p class="news-card__story">${escapeHtml(fullText)}</p></section>
+          <section class="news-detail-box"><h4>Что произошло</h4><p>${escapeHtml(item.what_happened_ru || "—")}</p></section>
+          <section class="news-detail-box"><h4>Почему это важно</h4><p>${escapeHtml(item.why_it_matters_ru || "—")}</p></section>
+          <section class="news-detail-box news-detail-box--impact"><h4>Возможная реакция рынка</h4><p>${escapeHtml(item.market_impact_ru || item.impact || "—")}</p></section>
+          <section class="news-detail-box"><h4>С лёгким юмором</h4><p>${escapeHtml(item.humor_ru || item.grok_style_comment_ru || "—")}</p></section>
+          <div class="news-card__footer">
+            ${item.source_url ? `<a class="news-link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'}
+          </div>
+        `;
       }
 
       function renderState(title, text) {
@@ -97,56 +148,45 @@
         newsList.innerHTML = "";
         items.forEach((item) => {
           const card = document.createElement("article");
-          card.className = "news-card";
-          const longStory = item.long_story_ru || item.summary || "Описание недоступно.";
+          card.className = "news-card news-card--compact";
+          card.setAttribute("tabindex", "0");
           const originBadge =
             item.is_real_source === true
               ? '<span class="news-source-badge">Источник: RSS</span>'
               : '<span class="news-source-badge">Fallback</span>';
-          const writerBadge = item.writer === "grok" ? '<span class="news-source-badge">Автор: Grok</span>' : "";
           card.innerHTML = `
-            <div class="news-card__image-wrap news-image-wrap">
-              <img
-                src="${escapeHtml(item.image_url || "")}"
-                alt="${escapeHtml(item.image_alt || item.title || "Иллюстрация новости")}"
-                loading="lazy"
-                onerror="this.closest('.news-image-wrap').classList.add('is-fallback'); this.remove();"
-              />
-            </div>
+            ${imageHtml(item)}
             <div class="news-card__header news-card__header--stacked">
               <p class="news-card__eyebrow">${escapeHtml(item.source || "Источник")}</p>
-              <h3 class="news-card__title">${escapeHtml(item.title || "Новость без заголовка")}</h3>
+              <h3 class="news-card__title">${escapeHtml(item.title_ru || item.title || "Новость без заголовка")}</h3>
               <div class="news-chip-row">
                 <span class="news-chip">${escapeHtml(item.tone || "neutral")}</span>
                 <span class="news-chip">${formatDate(item.published_at)}</span>
+                <span class="news-chip">${escapeHtml(item.image_source || "placeholder")}</span>
                 ${originBadge}
-                ${writerBadge}
+                ${writerBadge(item)}
               </div>
             </div>
-            <section class="news-detail-box">
-              <h4>Коротко</h4>
-              <p class="news-card__text">${escapeHtml(item.summary || "Описание недоступно.")}</p>
-            </section>
-            <section class="news-detail-box">
-              <h4>Подробно (в популярном стиле, с лёгким юмором)</h4>
-              <p class="news-card__story">${escapeHtml(longStory)}</p>
-            </section>
-            <section class="news-detail-box news-detail-box--impact">
-              <h4>Рыночный эффект</h4>
-              <p class="news-card__text">${escapeHtml(item.impact || "Фон нейтральный.")}</p>
-            </section>
+            <section class="news-detail-box"><h4>Коротко</h4><p class="news-card__text">${escapeHtml(item.preview_ru || item.summary || "Описание недоступно.")}</p></section>
             <div class="news-card__assets">
               <span class="news-label">Рынки под прицелом</span>
               <div class="news-chip-row">${buildMarkets(item.markets)}</div>
             </div>
             <div class="news-card__footer">
-              ${
-                item.url
-                  ? `<a class="news-link-button" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">Читать источник</a>`
-                  : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'
-              }
+              <button class="news-link-button" type="button">Читать разбор</button>
             </div>
           `;
+          card.addEventListener("click", () => {
+            renderExpanded(item);
+            newsModal.showModal();
+          });
+          card.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              renderExpanded(item);
+              newsModal.showModal();
+            }
+          });
           newsList.appendChild(card);
         });
       }
@@ -164,6 +204,10 @@
       }
 
       refreshButton.addEventListener("click", loadNews);
+      newsModalClose.addEventListener("click", () => newsModal.close());
+      newsModal.addEventListener("click", (event) => {
+        if (event.target === newsModal) newsModal.close();
+      });
       loadNews();
     </script>
     <script src="/static/nav.js"></script>

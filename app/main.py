@@ -176,6 +176,8 @@ def api_news(limit: int = 12):
                 "sources_attempted": [],
                 "sources_ok": [],
                 "sources_failed": [],
+                "grok_used_count": 0,
+                "generated_images_count": 0,
             },
             "warning": "Новости временно недоступны. Источники не ответили.",
         }
