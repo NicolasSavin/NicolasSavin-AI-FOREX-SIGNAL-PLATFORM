@@ -84,34 +84,44 @@
       margin: 22px 0;
     }
 
-    .stats {
+    .stats,
+    .ideas-stats {
       display: grid;
       grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 14px;
+      gap: 10px;
       margin: 18px 0;
     }
 
-    .stat {
+    .stat,
+    .ideas-stat-card {
       background:
         radial-gradient(circle at 90% 20%, rgba(69,202,255,.12), transparent 34%),
-        linear-gradient(135deg, rgba(28,64,113,.96), rgba(9,24,45,.98));
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 16px;
-      box-shadow: 0 18px 42px rgba(0,0,0,.30);
+        linear-gradient(145deg, rgba(18,43,78,.92), rgba(6,18,36,.96));
+      border: 1px solid rgba(95,156,230,.25);
+      border-radius: 14px;
+      padding: 10px 12px;
+      min-height: 60px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      box-shadow: 0 12px 28px rgba(0,0,0,.28);
     }
 
-    .stat-label {
+    .stat-label,
+    .ideas-stat-card__label {
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       text-transform: uppercase;
       letter-spacing: .08em;
       font-weight: 900;
+      opacity: .7;
+      margin-bottom: 4px;
     }
 
-    .stat-value {
-      margin-top: 8px;
-      font-size: 28px;
+    .stat-value,
+    .ideas-stat-card__value {
+      margin-top: 0;
+      font-size: 20px;
       font-weight: 950;
     }
 
@@ -119,6 +129,38 @@
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 16px;
+    }
+
+    .ideas-archive {
+      margin-top: 28px;
+      padding: 18px;
+      border-radius: 18px;
+      background: linear-gradient(145deg, rgba(10,20,40,.9), rgba(5,12,24,.95));
+      border: 1px solid rgba(255,255,255,.06);
+    }
+
+    .ideas-archive__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .ideas-archive__header h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .ideas-archive__list {
+      display: grid;
+      gap: 10px;
+      opacity: 0.75;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .idea-card--archived {
+      opacity: 0.6;
+      filter: grayscale(0.3);
     }
 
     .card {
@@ -527,7 +569,7 @@
 
 
     @media (max-width: 1120px) {
-      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid, .ideas-archive__list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .legend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -535,7 +577,7 @@
     @media (max-width: 760px) {
       .page { padding: 22px 14px 44px; }
       .hero { flex-direction: column; }
-      .grid, .stats, .modal-grid, .legend-grid { grid-template-columns: 1fr; }
+      .grid, .stats, .modal-grid, .legend-grid, .ideas-archive__list { grid-template-columns: 1fr; }
       .chart { height: 390px; }
     }
   </style>
@@ -565,16 +607,24 @@
       <button id="refreshBtn">Обновить</button>
     </section>
 
-    <section class="stats">
-      <div class="stat"><div class="stat-label">BUY</div><div class="stat-value" id="buyCount">0</div></div>
-      <div class="stat"><div class="stat-label">SELL</div><div class="stat-value" id="sellCount">0</div></div>
-      <div class="stat"><div class="stat-label">WAIT</div><div class="stat-value" id="waitCount">0</div></div>
-      <div class="stat"><div class="stat-label">Архив</div><div class="stat-value" id="closedCount">0</div></div>
-      <div class="stat"><div class="stat-label">Всего</div><div class="stat-value" id="totalCount">0</div></div>
+    <section class="stats ideas-stats">
+      <div class="stat ideas-stat-card"><div class="stat-label ideas-stat-card__label">BUY</div><div class="stat-value ideas-stat-card__value" id="buyCount">0</div></div>
+      <div class="stat ideas-stat-card"><div class="stat-label ideas-stat-card__label">SELL</div><div class="stat-value ideas-stat-card__value" id="sellCount">0</div></div>
+      <div class="stat ideas-stat-card"><div class="stat-label ideas-stat-card__label">WAIT</div><div class="stat-value ideas-stat-card__value" id="waitCount">0</div></div>
+      <div class="stat ideas-stat-card"><div class="stat-label ideas-stat-card__label">Архив</div><div class="stat-value ideas-stat-card__value" id="closedCount">0</div></div>
+      <div class="stat ideas-stat-card"><div class="stat-label ideas-stat-card__label">Всего</div><div class="stat-value ideas-stat-card__value" id="totalCount">0</div></div>
     </section>
 
     <section id="statusBox" class="empty">Загрузка идей...</section>
     <section id="ideasGrid" class="grid"></section>
+    <section class="ideas-archive">
+      <div class="ideas-archive__header">
+        <h2>Архив идей</h2>
+        <span id="archiveCount">0</span>
+      </div>
+
+      <div id="archiveList" class="ideas-archive__list"></div>
+    </section>
   </main>
 
   <div id="modalBackdrop" class="modal-backdrop ideas-modal">
@@ -614,6 +664,7 @@
     const refreshBtn = document.getElementById("refreshBtn");
     const statusBox = document.getElementById("statusBox");
     const ideasGrid = document.getElementById("ideasGrid");
+    const archiveList = document.getElementById("archiveList");
     const modalBackdrop = document.getElementById("modalBackdrop");
     const closeModalBtn = document.getElementById("closeModalBtn");
     const modalTitle = document.getElementById("modalTitle");
@@ -685,23 +736,38 @@
     }
 
     function render() {
-      const ideas = getFilteredIdeas();
+      const { activeIdeas, archivedIdeas } = getFilteredIdeas();
       updateStats();
 
       ideasGrid.innerHTML = "";
+      renderArchive(archivedIdeas);
 
-      if (!ideas.length) {
+      if (!activeIdeas.length) {
         statusBox.style.display = "block";
         statusBox.className = "empty";
         statusBox.textContent = "Нет идей под выбранные фильтры.";
-        return;
+      } else {
+        statusBox.style.display = "none";
       }
 
-      statusBox.style.display = "none";
-
-      for (const idea of ideas) {
+      for (const idea of activeIdeas) {
         ideasGrid.appendChild(renderCard(idea));
       }
+    }
+
+    function isIdeaExpired(idea) {
+      if (!idea) return false;
+
+      if (idea.status === "closed" || idea.status === "expired") return true;
+
+      if (idea.created_at && idea.ttl_minutes) {
+        const created = new Date(idea.created_at).getTime();
+        const now = Date.now();
+        const ttl = idea.ttl_minutes * 60 * 1000;
+        return now - created > ttl;
+      }
+
+      return false;
     }
 
     function getFilteredIdeas() {
@@ -709,22 +775,57 @@
         ? state.archive
         : [...state.ideas, ...state.archive];
 
-      return all.filter((idea) => {
+      const filtered = all.filter((idea) => {
         const symbol = normalizeSymbol(idea.symbol || idea.pair);
         const signal = normalizeSignal(idea.final_signal || idea.signal || idea.direction || idea.bias);
         const status = String(idea.status || "").toLowerCase();
-        const isClosed = ["tp_hit", "sl_hit", "archived", "closed"].some((x) => status.includes(x));
+        const isClosed = ["tp_hit", "sl_hit", "archived", "closed", "expired"].some((x) => status.includes(x)) || isIdeaExpired(idea);
 
         if (state.selectedPair !== "ALL" && symbol !== state.selectedPair) return false;
         if (state.selectedSignal === "ALL") return !isClosed;
         if (state.selectedSignal === "CLOSED") return isClosed;
         return signal === state.selectedSignal && !isClosed;
       });
+
+      const activeIdeas = [];
+      const archivedIdeas = [];
+
+      filtered.forEach((idea) => {
+        if (isArchivedIdea(idea)) {
+          archivedIdeas.push(idea);
+        } else {
+          activeIdeas.push(idea);
+        }
+      });
+
+      return { activeIdeas, archivedIdeas };
+    }
+
+    function isArchivedIdea(idea) {
+      const status = String(idea?.status || "").toLowerCase();
+      const isClosedByStatus = ["tp_hit", "sl_hit", "archived", "closed", "expired"].some((x) => status.includes(x));
+      return isClosedByStatus || isIdeaExpired(idea);
+    }
+
+    function renderArchive(archivedIdeas) {
+      const count = document.getElementById("archiveCount");
+      if (!archiveList) return;
+
+      archiveList.innerHTML = "";
+
+      for (const idea of archivedIdeas) {
+        const card = renderCard(idea);
+        card.classList.add("idea-card--archived");
+        archiveList.appendChild(card);
+      }
+
+      if (count) count.textContent = archivedIdeas.length;
     }
 
     function updateStats() {
-      const active = state.ideas;
-      const archive = state.archive;
+      const allIdeas = [...state.ideas, ...state.archive];
+      const active = allIdeas.filter((idea) => !isArchivedIdea(idea));
+      const archive = allIdeas.filter((idea) => isArchivedIdea(idea));
 
       const buy = active.filter((i) => normalizeSignal(i.final_signal || i.signal || i.direction || i.bias) === "BUY").length;
       const sell = active.filter((i) => normalizeSignal(i.final_signal || i.signal || i.direction || i.bias) === "SELL").length;
