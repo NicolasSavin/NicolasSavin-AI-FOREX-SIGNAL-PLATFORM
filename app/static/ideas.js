@@ -127,17 +127,30 @@ function resolveVisibleNarrative(idea) {
 }
 
 function renderChartBlock(idea, chartImageUrl) {
+  const sentimentBadge = buildSentimentBadge(idea?.sentiment);
   if (chartImageUrl) {
     return `<div class="idea-chart-wrap">
+      ${sentimentBadge}
       <img class="idea-chart-image" src="${escapeHtml(chartImageUrl)}?t=${Date.now()}" alt="${escapeHtml(idea.title || "chart")}" />
     </div>`;
   }
   const fallbackCandles = idea?.chartData?.candles || idea?.chart_data?.candles || [];
   const fallbackSvg = buildFallbackSvg(fallbackCandles);
   if (fallbackSvg) {
-    return `<div class="idea-chart-wrap">${fallbackSvg}</div>`;
+    return `<div class="idea-chart-wrap">${sentimentBadge}${fallbackSvg}</div>`;
   }
   return `<div class="idea-chart-missing">Снапшот графика недоступен (${escapeHtml(idea.chartSnapshotStatus || idea.chart_snapshot_status || "no_data")}).</div>`;
+}
+
+function buildSentimentBadge(sentiment) {
+  const longPct = Number(sentiment?.long_pct);
+  const shortPct = Number(sentiment?.short_pct);
+  if (!Number.isFinite(longPct) || !Number.isFinite(shortPct)) return "";
+  const extreme = Math.max(longPct, shortPct) > 70;
+  return `<div class="idea-sentiment-badge ${extreme ? "idea-sentiment-badge-warn" : ""}">
+    ${extreme ? '<span class="idea-sentiment-icon" aria-hidden="true">⚠️</span>' : ""}
+    Long ${escapeHtml(longPct.toFixed(0))}% / Short ${escapeHtml(shortPct.toFixed(0))}%
+  </div>`;
 }
 
 function buildFallbackSvg(candles) {
