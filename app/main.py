@@ -378,6 +378,7 @@ def api_signals():
         "ideas": signals,
         "archive": archive,
         "statistics": build_stats(),
+        "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
         "updated_at_utc": now_utc(),
     }
 
@@ -463,7 +464,7 @@ def api_debug_candles(symbol: str, tf: str, limit: int = 160):
         "interval": payload.get("interval"),
         "cache_status": payload.get("cache_status"),
         "warning_ru": payload.get("warning_ru"),
-        "attempts": payload.get("attempts"),
+        "raw_error": payload.get("raw_error"),
         "first": candles[0] if candles else None,
         "last": candles[-1] if candles else None,
     }
@@ -590,6 +591,8 @@ def build_signal(symbol: str) -> dict[str, Any]:
         "runtime_color": runtime_color,
         "source": price_data.get("source"),
         "data_status": price_data.get("data_status"),
+        "metric_status": "proxy",
+        "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
         "is_live_market_data": bool(price_data.get("is_live_market_data")),
         "source_symbol": to_twelvedata_symbol(symbol),
         "current_price": current_price,
@@ -734,6 +737,8 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
         "cache_status": candles_payload.get("cache_status"),
         "source": "twelvedata_time_series",
         "data_status": "real" if candles else "unavailable",
+        "metric_status": "proxy",
+        "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
         "current_price": get_price(symbol).get("price"),
         "last_updated_utc": now_utc(),
         "candles": candles,
@@ -744,6 +749,7 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
         "warning_ru": candles_payload.get("warning_ru"),
         "diagnostics": {
             "attempts": candles_payload.get("attempts"),
+            "raw_error": candles_payload.get("raw_error"),
             "cache_status": candles_payload.get("cache_status"),
             "provider": candles_payload.get("provider"),
         },
@@ -790,64 +796,6 @@ def parse_td_values(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return candles
 
 
-def fetch_stooq_fallback(symbol: str, tf: str, limit: int = 160) -> dict[str, Any] | None:
-    normalized = normalize_symbol(symbol)
-    if tf.upper() != "M15":
-        return None
-
-    mapping = {
-        "EURUSD": "eurusd",
-        "GBPUSD": "gbpusd",
-        "USDJPY": "usdjpy",
-        "XAUUSD": "xauusd",
-    }
-    stooq_symbol = mapping.get(normalized)
-    if not stooq_symbol:
-        return None
-
-    try:
-        response = requests.get(f"https://stooq.com/q/d/l/?s={stooq_symbol}&i=15", timeout=8)
-        response.raise_for_status()
-        rows = [line.strip() for line in response.text.splitlines() if line.strip()]
-        if len(rows) <= 1:
-            return None
-
-        candles: list[dict[str, Any]] = []
-        for row in rows[1:]:
-            parts = row.split(",")
-            if len(parts) < 6:
-                continue
-            dt = f"{parts[0]} {parts[1]}"
-            parsed = parse_td_datetime(dt)
-            candles.append(
-                {
-                    "time": int(parsed.timestamp()),
-                    "datetime": dt,
-                    "open": float(parts[2]),
-                    "high": float(parts[3]),
-                    "low": float(parts[4]),
-                    "close": float(parts[5]),
-                    "volume": float(parts[6]) if len(parts) > 6 and parts[6] else 0.0,
-                }
-            )
-
-        candles = candles[-limit:]
-        if not candles:
-            return None
-
-        return {
-            "candles": candles,
-            "warning_ru": "TwelveData временно недоступен, показаны реальные свечи из Stooq.",
-            "provider": "stooq_fallback",
-            "source_symbol": stooq_symbol,
-            "interval": "15m",
-            "cache_status": "live",
-            "attempts": 0,
-        }
-    except Exception:
-        return None
-
-
 def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
     normalized_symbol = normalize_symbol(symbol)
     source_symbol = to_twelvedata_symbol(normalized_symbol)
@@ -873,6 +821,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
             "interval": interval,
             "cache_status": "empty",
             "attempts": 0,
+            "raw_error": "TWELVEDATA_API_KEY отсутствует.",
         }
 
     attempts = 0
@@ -912,6 +861,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
                             "interval": interval,
                             "cache_status": "live",
                             "attempts": attempts,
+                            "raw_error": None,
                         }
                         set_cached_candles(cache_key, payload)
                         return payload
@@ -932,13 +882,8 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
             "cache_status": "stale_fallback",
             "warning_ru": "TwelveData временно недоступен, показаны последние реальные свечи из кеша.",
             "attempts": attempts,
+            "raw_error": last_error,
         }
-
-    stooq_payload = fetch_stooq_fallback(normalized_symbol, tf, limit)
-    if stooq_payload:
-        stooq_payload["attempts"] = attempts
-        set_cached_candles(cache_key, stooq_payload)
-        return stooq_payload
 
     return {
         "candles": [],
@@ -948,6 +893,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
         "interval": interval,
         "cache_status": "empty",
         "attempts": attempts,
+        "raw_error": last_error,
     }
 
 
@@ -1383,6 +1329,8 @@ def empty_signal(
         "full_text": "Нет текущей цены, идея не формируется.",
         "source": price_data.get("source"),
         "data_status": price_data.get("data_status"),
+        "metric_status": "unavailable",
+        "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
         "warning_ru": human_price_warning(price_data),
         "candles": m15,
         "chart_data": {"candles": m15},
@@ -1459,7 +1407,7 @@ def get_price(symbol: str) -> dict[str, Any]:
             "source_symbol": to_twelvedata_symbol(symbol),
             "price": price,
             "source": "twelvedata_rest_quote",
-            "data_status": "rest_fallback" if price is not None else "unavailable",
+            "data_status": "delayed" if price is not None else "unavailable",
             "is_live_market_data": False,
             "warning_ru": "Резервная цена: WebSocket сейчас не прислал live-тик, поэтому система взяла цену через TwelveData REST.",
             "raw": data,
@@ -1541,18 +1489,18 @@ def to_twelvedata_symbol(symbol: str) -> str:
 
 
 def to_td_interval(tf: str) -> str:
-    tf = str(tf or "").upper().strip()
-
-    mapping = {
+    tf = str(tf or "M15").upper().strip()
+    return {
+        "M1": "1min",
+        "M5": "5min",
         "M15": "15min",
+        "M30": "30min",
         "H1": "1h",
         "H4": "4h",
         "D1": "1day",
         "W1": "1week",
         "MN": "1month",
-    }
-
-    return mapping.get(tf, "15min")
+    }.get(tf, "15min")
 
 
 def parse_td_datetime(value: str) -> datetime:

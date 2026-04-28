@@ -82,14 +82,6 @@
         return list.map((item) => `<span class="news-chip">${escapeHtml(item)}</span>`).join("");
       }
 
-      function imageSourceLabel(item) {
-        const source = String(item.image_source || "").toLowerCase();
-        if (source === "source") return "Изображение из источника";
-        if (source === "web_search") return "Изображение по теме";
-        if (source === "generated") return "AI-иллюстрация";
-        return "";
-      }
-
       function imageHtml(item, big = false) {
         const wrapClass = big ? "news-image-wrap news-image-wrap--big" : "news-image-wrap";
         return `
@@ -107,15 +99,11 @@
       function renderExpanded(item) {
         const title = item.title_ru || item.title || "Новость без заголовка";
         const fullText = item.full_text_ru || item.long_story_ru || item.summary || "Описание недоступно.";
-        const imageLabel = imageSourceLabel(item);
         newsModalBody.innerHTML = `
           ${imageHtml(item, true)}
           <p class="news-card__eyebrow">Источник: ${escapeHtml(item.source || "Источник")} · ${formatDate(item.published_at)}</p>
           <h3 class="news-card__title">${escapeHtml(title)}</h3>
-          <div class="news-chip-row">
-            ${buildMarkets(item.markets || item.assets)}
-            ${imageLabel ? `<span class="news-chip">${escapeHtml(imageLabel)}</span>` : ""}
-          </div>
+          <div class="news-chip-row">${buildMarkets(item.markets || item.assets)}</div>
           <section class="news-modal__body"><p class="news-modal__story">${escapeHtml(fullText)}</p></section>
           <div class="news-card__footer">
             ${item.source_url ? `<a class="news-link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'}
@@ -149,7 +137,6 @@
           const card = document.createElement("article");
           card.className = "news-card news-card--compact";
           card.setAttribute("tabindex", "0");
-          const imageLabel = imageSourceLabel(item);
           card.innerHTML = `
             ${imageHtml(item)}
             <div class="news-card__header news-card__header--stacked">
@@ -159,7 +146,7 @@
             <section class="news-detail-box"><h4>Коротко</h4><p class="news-card__text">${escapeHtml(item.preview_ru || item.summary || "Описание недоступно.")}</p></section>
             <div class="news-card__assets">
               <span class="news-label">Рынки под прицелом</span>
-              <div class="news-chip-row">${buildMarkets(item.markets)}${imageLabel ? `<span class="news-chip">${escapeHtml(imageLabel)}</span>` : ""}</div>
+              <div class="news-chip-row">${buildMarkets(item.markets)}</div>
             </div>
             <div class="news-card__footer">
               <button class="news-link-button" type="button">Читать разбор</button>
