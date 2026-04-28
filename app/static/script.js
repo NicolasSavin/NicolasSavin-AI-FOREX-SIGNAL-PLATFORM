@@ -121,12 +121,21 @@ function getCalendarBadgeClass(event) {
 }
 
 function getCalendarStatusMeta(event) {
+  if (event?.released_label_ru) {
+    const known = String(event.released_label_ru);
+    if (known === 'Уже вышло') return { label: known, className: 'calendar-status-badge--released' };
+    if (known === 'Ожидается') return { label: known, className: 'calendar-status-badge--upcoming' };
+    return { label: known, className: 'calendar-status-badge--unknown' };
+  }
   const status = String(event?.status || '').toLowerCase();
   if (status === 'released') {
     return { label: 'Уже вышло', className: 'calendar-status-badge--released' };
   }
   if (status === 'upcoming') {
     return { label: 'Ожидается', className: 'calendar-status-badge--upcoming' };
+  }
+  if (status === 'educational') {
+    return { label: 'Образовательный ориентир', className: 'calendar-status-badge--unknown' };
   }
   return { label: 'Время не указано', className: 'calendar-status-badge--unknown' };
 }
@@ -167,7 +176,7 @@ function renderCalendarStatusCard(kind, title, description) {
   `;
 }
 
-function renderCalendarEvents(rows) {
+function renderCalendarEvents(rows, options = {}) {
   if (!calendarList) return;
   calendarList.classList.add('calendar-list');
   calendarList.innerHTML = '';
@@ -178,7 +187,9 @@ function renderCalendarEvents(rows) {
     return;
   }
 
-  setCalendarState('ready', `Событий: ${rows.length}`);
+  const state = options.state || 'ready';
+  const message = options.message || `Событий: ${rows.length}`;
+  setCalendarState(state, message);
 
   rows.forEach((event) => {
     const li = document.createElement('li');
@@ -763,7 +774,12 @@ async function loadCalendarSection() {
       calendar = await getJson('/api/calendar');
     }
     const rows = calendar.events || calendar.items || [];
-    renderCalendarEvents(rows);
+    const fallbackNotice = 'Показан образовательный календарь. Чтобы видеть реальные даты и время выхода, подключите провайдер календаря.';
+    const isFallback = calendar.data_origin === 'fallback';
+    renderCalendarEvents(rows, {
+      state: isFallback ? 'warning' : 'ready',
+      message: isFallback ? (calendar.warning || fallbackNotice) : `Событий: ${rows.length}`,
+    });
   } catch {
     setCalendarState('error', 'Ошибка загрузки');
     renderCalendarStatusCard('error', 'Календарь временно недоступен', 'Не удалось получить данные из /calendar/events. Попробуйте обновить страницу.');
