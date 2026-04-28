@@ -1075,6 +1075,11 @@ function collectIdeaWarnings(idea) {
   const snapshotStatus = normalizeWhitespace(idea?.chartSnapshotStatus || idea?.chart_snapshot_status).toLowerCase();
   const chartStatus = normalizeWhitespace(idea?.chart_status || idea?.chartStatus).toLowerCase();
   const confidence = Number(idea?.confidence);
+  const cacheWarning = normalizeWhitespace(
+    idea?.warning_ru
+    || idea?.chartData?.warning_ru
+    || idea?.chart_data?.warning_ru,
+  );
 
   if (provider === "yahoo_finance" || fallbackUsed) warnings.push("⚠️ Используется Yahoo fallback — анализ упрощён");
   if (dataQuality === "medium" || dataQuality === "low") warnings.push("⚠️ Качество данных снижено");
@@ -1082,6 +1087,7 @@ function collectIdeaWarnings(idea) {
   if ((snapshotStatus && snapshotStatus !== "ok") || chartStatus.includes("fallback")) {
     warnings.push("⚠️ График построен в fallback-режиме");
   }
+  if (cacheWarning) warnings.push(`⚠️ ${cacheWarning}`);
   if (Number.isFinite(confidence) && confidence < 50) warnings.push("⚠️ Низкая уверенность");
   return warnings;
 }
