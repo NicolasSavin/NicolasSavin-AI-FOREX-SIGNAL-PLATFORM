@@ -346,6 +346,51 @@ a { color: inherit; }
   border-radius: 18px;
 }
 
+.calendar-list {
+  gap: 14px;
+}
+
+.calendar-event {
+  background: rgba(10, 24, 41, 0.9);
+  border: 1px solid rgba(104, 143, 191, 0.2);
+  padding: 18px 18px 16px;
+}
+
+.calendar-event article {
+  display: grid;
+  gap: 10px;
+}
+
+.calendar-event__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.calendar-event__time,
+.calendar-event__description,
+.calendar-event__impact p {
+  margin: 0;
+}
+
+.calendar-event__description {
+  color: #dbeafe;
+}
+
+.calendar-event__impact {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(76, 201, 240, 0.15);
+  background: rgba(7, 17, 30, 0.82);
+}
+
+.calendar-event__impact strong {
+  color: #e5f2ff;
+}
+
 .news-card {
   padding: 18px;
   border-radius: 22px;
