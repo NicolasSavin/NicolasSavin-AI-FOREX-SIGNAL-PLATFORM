@@ -29,6 +29,8 @@ class SentimentSnapshot(BaseModel):
     sentiment_score: float = Field(ge=-1.0, le=1.0)
     confidence: float = Field(ge=0.0, le=1.0)
     data_status: SentimentDataStatus
+    bias: Literal["crowd_long", "crowd_short", "neutral"] = "neutral"
+    warning: str | None = None
 
 
 class BaseSentimentProvider(ABC):
@@ -46,12 +48,15 @@ class BaseSentimentProvider(ABC):
 
         retail_bias: RetailBias = "neutral"
         contrarian_bias: ContrarianBias = "neutral"
+        bias: Literal["crowd_long", "crowd_short", "neutral"] = "neutral"
         if long_pct >= 65:
             retail_bias = "bullish"
             contrarian_bias = "bearish"
+            bias = "crowd_long"
         elif short_pct >= 65:
             retail_bias = "bearish"
             contrarian_bias = "bullish"
+            bias = "crowd_short"
 
         imbalance = abs(long_pct - short_pct) / 100
         score = 0.0
@@ -72,6 +77,7 @@ class BaseSentimentProvider(ABC):
             score = 0.0
             contrarian_bias = "neutral"
             retail_bias = "neutral"
+            bias = "neutral"
 
         return SentimentSnapshot(
             symbol=symbol.upper(),
@@ -88,6 +94,8 @@ class BaseSentimentProvider(ABC):
             sentiment_score=round(max(-1.0, min(1.0, score)), 4),
             confidence=round(max(0.0, min(1.0, confidence)), 4),
             data_status=data_status,
+            bias=bias,
+            warning=None if data_status != "unavailable" else "sentiment_unavailable",
         )
 
 
