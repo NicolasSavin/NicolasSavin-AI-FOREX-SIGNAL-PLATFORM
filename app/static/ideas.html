@@ -439,7 +439,7 @@
 
     .ideas-modal__top {
       flex: 0 0 auto;
-      max-height: 45vh;
+      max-height: min(45vh, calc(100vh - 420px));
       overflow-y: auto;
       min-height: 0;
       padding-right: 4px;
@@ -447,7 +447,7 @@
 
     .ideas-modal__bottom {
       flex: 1;
-      min-height: 0;
+      min-height: 360px;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -460,7 +460,7 @@
       overflow: hidden;
       background: rgba(2,10,20,.88);
       flex: 1;
-      min-height: 0;
+      min-height: 340px;
       display: flex;
       flex-direction: column;
     }
@@ -513,7 +513,7 @@
 
     .ideas-modal__chart {
       flex: 1;
-      min-height: 300px;
+      min-height: 320px;
       width: 100%;
     }
 
@@ -1050,6 +1050,13 @@
 
       container.innerHTML = "";
 
+      const getChartSize = () => {
+        const rect = container.getBoundingClientRect();
+        const width = Math.max(Math.round(rect.width || container.clientWidth || 0), 320);
+        const height = Math.max(Math.round(rect.height || container.clientHeight || 0), 320);
+        return { width, height };
+      };
+
       const renderSeq = ++state.candlesRequestSeq;
       let candles = getCandlesForIdea(idea, state.currentTf);
       if (!candles.length) {
@@ -1072,9 +1079,10 @@
         return;
       }
 
+      const chartSize = getChartSize();
       const chart = LightweightCharts.createChart(container, {
-        width: container.clientWidth,
-        height: container.clientHeight,
+        width: chartSize.width,
+        height: chartSize.height,
         layout: {
           background: { color: "#07111f" },
           textColor: "#9bb8d8",
@@ -1115,7 +1123,7 @@
 
       const redrawOverlay = () => addIdeaOverlay(container, chart, series, candles, idea);
 
-      state.overlaySyncCleanup = bindOverlayToChart(container, chart, redrawOverlay);
+      state.overlaySyncCleanup = bindOverlayToChart(container, chart, redrawOverlay, getChartSize);
       requestAnimationFrame(redrawOverlay);
     }
 
@@ -1158,7 +1166,7 @@
       return [];
     }
 
-    function bindOverlayToChart(container, chart, redrawOverlay) {
+    function bindOverlayToChart(container, chart, redrawOverlay, getChartSize) {
       if (!container || !chart || typeof redrawOverlay !== "function") return null;
 
       let rafId = null;
@@ -1173,22 +1181,38 @@
       const handleRangeChange = () => requestRedraw();
       chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
 
-      const handleWindowResize = () => {
+      const resizeChartToContainer = () => {
+        const nextSize = typeof getChartSize === "function"
+          ? getChartSize()
+          : { width: Math.max(container.clientWidth, 320), height: Math.max(container.clientHeight, 320) };
         chart.applyOptions({
-          width: container.clientWidth,
-          height: container.clientHeight,
+          width: nextSize.width,
+          height: nextSize.height,
         });
         requestRedraw();
       };
+      const handleWindowResize = () => resizeChartToContainer();
       window.addEventListener("resize", handleWindowResize);
+      document.addEventListener("fullscreenchange", handleWindowResize);
+
+      let resizeObserver = null;
+      if (typeof ResizeObserver === "function") {
+        resizeObserver = new ResizeObserver(() => resizeChartToContainer());
+        resizeObserver.observe(container);
+      }
 
       return () => {
         if (rafId !== null) {
           cancelAnimationFrame(rafId);
           rafId = null;
         }
+        if (resizeObserver) {
+          resizeObserver.disconnect();
+          resizeObserver = null;
+        }
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
         window.removeEventListener("resize", handleWindowResize);
+        document.removeEventListener("fullscreenchange", handleWindowResize);
       };
     }
 
