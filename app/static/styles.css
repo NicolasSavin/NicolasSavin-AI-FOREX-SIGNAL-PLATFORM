@@ -1880,9 +1880,7 @@ a { color: inherit; }
 }
 
 .calendar-widget-panel {
-  border-color: rgba(108, 169, 255, 0.3);
-  background: linear-gradient(155deg, rgba(8, 23, 44, 0.92), rgba(28, 17, 54, 0.88));
-  box-shadow: 0 18px 45px rgba(8, 20, 40, 0.42), inset 0 1px 0 rgba(160, 222, 255, 0.1);
+  overflow: hidden;
 }
 
 .calendar-explainer {
@@ -1904,41 +1902,41 @@ a { color: inherit; }
 
 .calendar-guide-grid {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  margin-bottom: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0;
 }
 
 .calendar-guide-card {
-  border-radius: 14px;
-  border: 1px solid rgba(118, 191, 255, 0.28);
-  padding: 14px;
-  background: linear-gradient(155deg, rgba(10, 27, 48, 0.86), rgba(25, 14, 50, 0.78));
-  box-shadow: 0 10px 26px rgba(5, 14, 30, 0.3), inset 0 0 22px rgba(76, 201, 240, 0.07);
+  padding: 16px;
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(18,43,78,.92), rgba(6,18,36,.96));
+  border: 1px solid rgba(95,156,230,.35);
+  box-shadow: 0 16px 42px rgba(0,0,0,.28);
 }
 
-.calendar-guide-card h3 {
-  margin: 0 0 8px;
-  font-size: 1rem;
-  color: #c9e7ff;
+.calendar-guide-card strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #f4f8ff;
 }
 
 .calendar-guide-card p {
   margin: 0;
-  color: var(--muted);
-  line-height: 1.55;
+  color: rgba(220,235,255,.78);
+  line-height: 1.6;
 }
 
 .tradays-widget-wrap {
-  border-radius: 16px;
-  border: 1px solid rgba(122, 193, 255, 0.28);
-  background: linear-gradient(145deg, rgba(7, 18, 32, 0.92), rgba(12, 26, 46, 0.9));
-  padding: 12px;
-  box-shadow: 0 0 26px rgba(76, 201, 240, 0.12);
+  min-height: 650px;
+  border-radius: 20px;
+  overflow: hidden;
+  background: rgba(3,14,28,.88);
+  border: 1px solid rgba(95,156,230,.35);
 }
 
 .tradays-widget-wrap #economicCalendarWidget {
-  min-height: 420px;
+  min-height: 650px;
 }
 
 .tradays-fallback {
@@ -2030,16 +2028,8 @@ a { color: inherit; }
   50% { box-shadow: 0 0 20px rgba(139, 92, 246, 0.35), inset 0 0 20px rgba(76, 201, 240, 0.2); }
 }
 
-@media (max-width: 720px) {
-  .calendar-explainer {
-    padding: 14px;
-  }
-
-  .tradays-widget-wrap {
-    padding: 8px;
-  }
-
-  .tradays-widget-wrap #economicCalendarWidget {
-    min-height: 360px;
+@media (max-width: 860px) {
+  .calendar-guide-grid {
+    grid-template-columns: 1fr;
   }
 }
