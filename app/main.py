@@ -212,6 +212,13 @@ def api_news(limit: int = 12):
         return {
             "items": [],
             "updated_at_utc": now_utc(),
+            "diagnostics": {
+                "real_items_count": 0,
+                "fallback_items_count": 0,
+                "sources_attempted": [],
+                "sources_ok": [],
+                "sources_failed": [],
+            },
             "warning": "Новости временно недоступны. Источники не ответили.",
         }
 
