@@ -279,38 +279,45 @@
       border-color: rgba(255,95,122,.72);
     }
 
-    .modal-backdrop {
+    .modal-backdrop,
+    .ideas-modal {
       position: fixed;
       inset: 0;
+      z-index: 9999;
       display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      background: rgba(0,0,0,.78);
+      align-items: stretch;
+      justify-content: stretch;
+      background: rgba(2, 8, 20, 0.85);
       backdrop-filter: blur(10px);
-      z-index: 999;
     }
 
-    .modal-backdrop.open { display: flex; }
+    .modal-backdrop.open,
+    .ideas-modal.open { display: flex; }
 
-    .modal {
-      width: min(1240px, 100%);
-      max-height: 94vh;
-      overflow: auto;
-      background:
-        radial-gradient(circle at 90% 0%, rgba(69,202,255,.18), transparent 34%),
-        linear-gradient(160deg, rgba(24,58,103,.98), rgba(5,17,33,.98) 72%);
-      border: 1px solid rgba(124,184,255,.62);
-      border-radius: 26px;
-      box-shadow: 0 34px 110px rgba(0,0,0,.68);
-      padding: 24px;
+    .modal,
+    .ideas-modal__content {
+      width: 100%;
+      height: 100%;
+      border-radius: 0;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: linear-gradient(145deg, rgba(6,18,36,.98), rgba(3,10,22,.98));
+      display: flex;
+      flex-direction: column;
+      border: none;
+      box-shadow: none;
     }
 
-    .modal-head {
+    .modal-head,
+    .ideas-modal__header {
       display: flex;
       justify-content: space-between;
       gap: 16px;
-      margin-bottom: 16px;
+      margin: 0;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      flex-shrink: 0;
     }
 
     .modal-title {
@@ -333,12 +340,29 @@
       font-size: 14px;
     }
 
+    .ideas-modal__body {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      padding: 16px 20px 20px;
+    }
+
+    .ideas-modal__body > * {
+      min-height: 0;
+    }
+
     .chart-wrap {
       margin: 16px 0;
       border: 1px solid rgba(95,145,203,.42);
       border-radius: 18px;
       overflow: hidden;
       background: rgba(2,10,20,.88);
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
 
     .chart-toolbar {
@@ -381,6 +405,12 @@
       position: relative;
     }
 
+    .ideas-modal__body .chart {
+      flex: 1;
+      min-height: 0;
+      height: 100%;
+    }
+
     .chart-note {
       padding: 10px 12px;
       color: var(--muted);
@@ -396,6 +426,69 @@
       z-index: 20;
     }
 
+    .zone-ob {
+      fill: rgba(255, 99, 132, 0.22);
+      stroke: rgba(255, 99, 132, 0.6);
+      stroke-width: 1.2;
+      filter: drop-shadow(0 0 18px rgba(255, 99, 132, 0.35));
+    }
+
+    .zone-breaker {
+      fill: rgba(255, 206, 86, 0.22);
+      stroke: rgba(255, 206, 86, 0.6);
+      stroke-width: 1.2;
+      filter: drop-shadow(0 0 18px rgba(255, 206, 86, 0.35));
+    }
+
+    .zone-fvg {
+      fill: rgba(54, 162, 235, 0.22);
+      stroke: rgba(54, 162, 235, 0.6);
+      stroke-width: 1.2;
+      filter: drop-shadow(0 0 18px rgba(54, 162, 235, 0.35));
+    }
+
+    .zone-liquidity {
+      stroke: rgba(75, 192, 192, 0.85);
+      stroke-width: 2.1;
+      filter: drop-shadow(0 0 14px rgba(75, 192, 192, 0.35));
+    }
+
+    .zone-label {
+      font-size: 11px;
+      font-weight: 900;
+      fill: #ffffff;
+      paint-order: stroke;
+      stroke: rgba(0,0,0,.62);
+      stroke-width: 1.4;
+    }
+
+    .zone-ob + .zone-label {
+      fill: rgba(255, 99, 132, 0.98);
+    }
+
+    .zone-breaker + .zone-label {
+      fill: rgba(255, 206, 86, 0.98);
+      stroke: rgba(26, 18, 0, 0.7);
+    }
+
+    .zone-fvg + .zone-label {
+      fill: rgba(54, 162, 235, 0.98);
+    }
+
+    .zone-liquidity + .zone-label {
+      fill: rgba(75, 192, 192, 0.98);
+    }
+
+    .chart-grid line {
+      stroke: rgba(255,255,255,.06);
+    }
+
+    .chart-axis text {
+      fill: rgba(220,235,255,.7);
+      font-size: 11px;
+    }
+
+
     @media (max-width: 1120px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -406,7 +499,6 @@
       .page { padding: 22px 14px 44px; }
       .hero { flex-direction: column; }
       .grid, .stats, .modal-grid, .legend-grid { grid-template-columns: 1fr; }
-      .modal-backdrop { padding: 10px; }
       .chart { height: 390px; }
     }
   </style>
@@ -448,16 +540,18 @@
     <section id="ideasGrid" class="grid"></section>
   </main>
 
-  <div id="modalBackdrop" class="modal-backdrop">
-    <div class="modal" role="dialog" aria-modal="true">
-      <div class="modal-head">
+  <div id="modalBackdrop" class="modal-backdrop ideas-modal">
+    <div class="modal ideas-modal__content" role="dialog" aria-modal="true">
+      <div class="modal-head ideas-modal__header">
         <div>
           <h2 id="modalTitle" class="modal-title">Идея</h2>
           <div id="modalSubtitle" class="subtitle"></div>
         </div>
         <button id="closeModalBtn">Закрыть</button>
       </div>
-      <div id="modalContent"></div>
+      <div class="ideas-modal__body">
+        <div id="modalContent"></div>
+      </div>
     </div>
   </div>
 
@@ -700,7 +794,7 @@
             <div class="legend-item" style="color:var(--pattern)">Pattern — графический паттерн</div>
           </div>
 
-          <div id="ideaChart" class="chart"></div>
+          <div id="ideaChart" class="chart ideas-modal__chart"></div>
 
           <div class="chart-note" id="chartNote">
             Разметка строится только по реальным свечам. Фейковые свечи отключены.
@@ -962,6 +1056,12 @@
     function drawZone(svg, x1, y1, x2, y2, stroke, fill, label) {
       if (![x1, y1, x2, y2].every(Number.isFinite)) return;
 
+      const zoneClass = label.includes("Breaker")
+        ? "zone-breaker"
+        : label.includes("FVG")
+          ? "zone-fvg"
+          : "zone-ob";
+
       const x = Math.min(x1, x2);
       const y = Math.min(y1, y2);
       const w = Math.max(Math.abs(x2 - x1), 46);
@@ -975,6 +1075,7 @@
       rect.setAttribute("fill", fill);
       rect.setAttribute("stroke", stroke);
       rect.setAttribute("stroke-width", "1.4");
+      rect.setAttribute("class", zoneClass);
       svg.appendChild(rect);
 
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -983,6 +1084,7 @@
       text.setAttribute("fill", stroke);
       text.setAttribute("font-size", "13");
       text.setAttribute("font-weight", "900");
+      text.setAttribute("class", "zone-label");
       text.textContent = label;
       svg.appendChild(text);
     }
@@ -998,6 +1100,7 @@
       line.setAttribute("stroke", color);
       line.setAttribute("stroke-width", "2");
       line.setAttribute("stroke-dasharray", "2 7");
+      line.setAttribute("class", "zone-liquidity");
       svg.appendChild(line);
 
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -1006,6 +1109,7 @@
       text.setAttribute("fill", color);
       text.setAttribute("font-size", "13");
       text.setAttribute("font-weight", "900");
+      text.setAttribute("class", "zone-label");
       text.textContent = label;
       svg.appendChild(text);
     }
