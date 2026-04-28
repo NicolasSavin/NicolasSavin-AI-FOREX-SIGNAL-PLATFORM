@@ -368,6 +368,13 @@ a { color: inherit; }
   align-items: center;
 }
 
+.calendar-event__badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .calendar-event__time,
 .calendar-event__description,
 .calendar-event__impact p {
@@ -385,6 +392,12 @@ a { color: inherit; }
   border-radius: 14px;
   border: 1px solid rgba(76, 201, 240, 0.15);
   background: rgba(7, 17, 30, 0.82);
+}
+
+.calendar-event__assets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .calendar-event__impact strong {

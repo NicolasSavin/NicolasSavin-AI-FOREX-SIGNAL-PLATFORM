@@ -82,6 +82,87 @@ def calendar_page():
     return FileResponse(STATIC_DIR / "calendar.html")
 
 
+def get_fallback_calendar_events() -> list[dict[str, Any]]:
+    return [
+        {
+            "title": "CPI / PCE — инфляция США",
+            "time_utc": None,
+            "currency": "USD",
+            "impact": "high",
+            "description_ru": "Главный термометр инфляции. Если цифры горячее ожиданий, рынок начинает думать, что ФРС будет держать ставки выше дольше.",
+            "why_important_ru": "Инфляция напрямую влияет на ожидания по ставке ФРС. А ставка ФРС — это топливо для доллара, золота и фондовых индексов.",
+            "market_impact_ru": "Высокая инфляция обычно поддерживает USD и может давить на XAUUSD и риск-активы. Слабая инфляция может ослаблять доллар и помогать золоту.",
+            "humor_ru": "Если инфляция снова выше прогноза, рынок делает лицо «ну кто бы мог подумать» — уже примерно в сотый раз.",
+            "assets": ["USD", "EURUSD", "GBPUSD", "XAUUSD", "US500"],
+        },
+        {
+            "title": "FOMC / Решение ФРС по ставке",
+            "time_utc": None,
+            "currency": "USD",
+            "impact": "high",
+            "description_ru": "ФРС решает, насколько дорогими будут деньги. Для рынка это как главный судья матча: свистнул — и все побежали.",
+            "why_important_ru": "Решение по ставке и тон заявления меняют ожидания доходности. Чем жёстче ФРС, тем больше поддержки может получить доллар.",
+            "market_impact_ru": "Жёсткий тон: плюс для USD, давление на золото и акции. Мягкий тон: доллар может просесть, риск-активы получают шанс на отскок.",
+            "humor_ru": "Одна фраза Пауэлла иногда двигает рынок сильнее, чем три индикатора, две линии тренда и один очень уверенный трейдер.",
+            "assets": ["USD", "XAUUSD", "EURUSD", "GBPUSD", "NASDAQ", "US500"],
+        },
+        {
+            "title": "NFP — занятость в США",
+            "time_utc": None,
+            "currency": "USD",
+            "impact": "high",
+            "description_ru": "Отчёт по рабочим местам показывает, насколько сильна экономика США. Это один из самых волатильных релизов месяца.",
+            "why_important_ru": "Сильный рынок труда даёт ФРС повод не спешить со снижением ставок. Слабый рынок труда может усилить ожидания смягчения политики.",
+            "market_impact_ru": "Сильный NFP часто поддерживает USD. Слабый NFP может давить на доллар и поддерживать золото.",
+            "humor_ru": "На NFP графики иногда двигаются так, будто терминал тоже выпил двойной эспрессо.",
+            "assets": ["USD", "EURUSD", "GBPUSD", "XAUUSD"],
+        },
+        {
+            "title": "ECB Rate Decision — ставка ЕЦБ",
+            "time_utc": None,
+            "currency": "EUR",
+            "impact": "medium",
+            "description_ru": "ЕЦБ задаёт тон для евро. Важна не только ставка, но и то, насколько уверенно регулятор говорит о будущем.",
+            "why_important_ru": "Если ЕЦБ звучит жёстко, евро может получить поддержку. Если мягко — EURUSD может оказаться под давлением.",
+            "market_impact_ru": "Основная реакция обычно в EURUSD и европейских индексах.",
+            "humor_ru": "Иногда рынок слушает Лагард так внимательно, будто там спрятан пароль от следующего тренда.",
+            "assets": ["EUR", "EURUSD", "DAX"],
+        },
+        {
+            "title": "Bank of England — решение по ставке",
+            "time_utc": None,
+            "currency": "GBP",
+            "impact": "medium",
+            "description_ru": "Банк Англии влияет на фунт через ставку, прогнозы инфляции и тон комментариев.",
+            "why_important_ru": "GBPUSD чувствителен к разнице ожиданий между Банком Англии и ФРС.",
+            "market_impact_ru": "Жёсткий BoE может поддержать GBPUSD. Мягкий BoE может ослабить фунт.",
+            "humor_ru": "Фунт после заседаний BoE иногда ведёт себя как британская погода: вроде всё понятно, но зонт лучше держать рядом.",
+            "assets": ["GBP", "GBPUSD", "UK100"],
+        },
+    ]
+
+
+def build_calendar_payload() -> dict[str, Any]:
+    now = now_utc()
+    events = get_fallback_calendar_events()
+    return {
+        "events": events,
+        "items": events,
+        "updated_at_utc": now,
+        "warning": "Показан базовый фундаментальный календарь: внешний источник временно недоступен или не настроен.",
+    }
+
+
+@app.get("/calendar/events")
+def calendar_events():
+    return build_calendar_payload()
+
+
+@app.get("/api/calendar")
+def api_calendar():
+    return build_calendar_payload()
+
+
 @app.get("/heatmap/page", include_in_schema=False)
 def heatmap_page():
     return FileResponse(STATIC_DIR / "heatmap.html")

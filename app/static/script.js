@@ -151,24 +151,50 @@ function renderCalendarEvents(rows) {
   setCalendarState('ready', `Событий: ${rows.length}`);
 
   rows.forEach((event) => {
-    const impact = inferCalendarImpact(event);
     const li = document.createElement('li');
     li.className = 'calendar-event';
     const eventTime = event.time_utc ? formatUpdatedAt(event.time_utc) : 'время не указано';
     const currency = event.currency ? String(event.currency).toUpperCase() : 'несколько валют';
+    const impact = inferCalendarImpact(event);
+    const whyImportant = event.why_important_ru || 'Событие помогает понять ожидания по ставкам и экономическому циклу.';
+    const marketImpact = event.market_impact_ru || impact.effect;
+    const humor = event.humor_ru || impact.humor;
+    const assets = Array.isArray(event.assets) ? event.assets : impact.affected;
+    const safeAssets = assets.length ? assets : ['FX', 'XAUUSD', 'US500'];
+    const impactLabel = String(event.impact || event.importance || 'unknown').toLowerCase();
+    const impactRu = impactLabel.includes('high')
+      ? 'Высокий'
+      : impactLabel.includes('med')
+        ? 'Средний'
+        : impactLabel.includes('low')
+          ? 'Низкий'
+          : 'Неизвестный';
 
     li.innerHTML = `
       <article>
         <div class="calendar-event__top">
           <strong>${escapeHtml(event.title || 'Событие')}</strong>
-          <span class="impact-badge ${getCalendarBadgeClass(event)}">${escapeHtml(currency)}</span>
+          <div class="calendar-event__badges">
+            <span class="impact-badge ${getCalendarBadgeClass(event)}">${escapeHtml(impactRu)}</span>
+            <span class="impact-badge impact-badge--unknown">${escapeHtml(currency)}</span>
+          </div>
         </div>
         <p class="calendar-event__time">🕒 ${escapeHtml(eventTime)}</p>
-        <p class="calendar-event__description">${escapeHtml(event.description_ru || 'Описание отсутствует.')}</p>
         <div class="calendar-event__impact">
-          <p><strong>На что влияет:</strong> ${escapeHtml(impact.affected.join(' • '))}</p>
-          <p><strong>Как обычно реагирует рынок:</strong> ${escapeHtml(impact.effect)}</p>
-          <p><strong>Grok-комментарий:</strong> ${escapeHtml(impact.humor)}</p>
+          <p><strong>Что это:</strong></p>
+          <p>${escapeHtml(event.description_ru || 'Описание отсутствует.')}</p>
+          <p><strong>Почему важно:</strong></p>
+          <p>${escapeHtml(whyImportant)}</p>
+          <p><strong>Возможное влияние:</strong></p>
+          <p>${escapeHtml(marketImpact)}</p>
+          <p><strong>С юмором:</strong></p>
+          <p>${escapeHtml(humor)}</p>
+        </div>
+        <div class="calendar-event__assets">
+          ${safeAssets.map((asset) => `<span class="news-chip">${escapeHtml(asset)}</span>`).join('')}
+        </div>
+        <div class="calendar-event__impact">
+          <p><strong>Затронутые активы:</strong> ${escapeHtml(safeAssets.join(' • '))}</p>
         </div>
       </article>
     `;
@@ -708,8 +734,14 @@ async function loadCalendarSection() {
   renderCalendarStatusCard('loading', 'Загрузка календаря...', 'Получаем события и оценку влияния рынка.');
 
   try {
-    const calendar = await getJson('/calendar/events');
-    renderCalendarEvents(calendar.events || []);
+    let calendar;
+    try {
+      calendar = await getJson('/calendar/events');
+    } catch {
+      calendar = await getJson('/api/calendar');
+    }
+    const rows = calendar.events || calendar.items || [];
+    renderCalendarEvents(rows);
   } catch {
     setCalendarState('error', 'Ошибка загрузки');
     renderCalendarStatusCard('error', 'Календарь временно недоступен', 'Не удалось получить данные из /calendar/events. Попробуйте обновить страницу.');
