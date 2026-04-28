@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha1
 import json
 import logging
@@ -73,6 +73,10 @@ CHART_OVERLAY_ALIASES = {
 SNAPSHOT_RETRY_INTERVAL_SECONDS = int(os.getenv("IDEAS_SNAPSHOT_RETRY_INTERVAL_SECONDS", "1800"))
 NARRATIVE_REFRESH_COOLDOWN_SECONDS = int(os.getenv("IDEAS_NARRATIVE_REFRESH_COOLDOWN_SECONDS", "300"))
 MIN_IDEA_CANDLES_REQUIRED = max(2, int(os.getenv("IDEAS_MIN_CANDLES_REQUIRED", "20")))
+FUNDAMENTAL_BASE_URL = os.getenv("IDEAS_FUNDAMENTAL_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+FUNDAMENTAL_REQUEST_TIMEOUT_SECONDS = float(os.getenv("IDEAS_FUNDAMENTAL_TIMEOUT_SECONDS", "2.5"))
+FUNDAMENTAL_UPCOMING_WINDOW_HOURS = int(os.getenv("IDEAS_FUNDAMENTAL_UPCOMING_HOURS", "12"))
+FUNDAMENTAL_RECENT_WINDOW_HOURS = int(os.getenv("IDEAS_FUNDAMENTAL_RECENT_HOURS", "6"))
 logger = logging.getLogger(__name__)
 GENERIC_NARRATIVE_PHRASES = (
     "рынок давят продавцы",
@@ -177,6 +181,7 @@ class TradeIdeaService:
         active_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES]
         archived_ideas = [idea for idea in payload.get("ideas", []) if str(idea.get("status")).lower() in CLOSED_STATUSES]
         combined_active_ideas = self._combine_ideas_by_instrument(active_ideas)
+        combined_active_ideas = self._attach_fundamental_context(combined_active_ideas)
         if not combined_active_ideas and not archived_ideas:
             combined_active_ideas = self._build_contextual_wait_ideas(
                 reason="no_active_ideas_after_refresh",
@@ -191,6 +196,164 @@ class TradeIdeaService:
         }
         self.legacy_store.write(legacy)
         return legacy
+
+    @staticmethod
+    def _parse_iso_utc(value: Any) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @staticmethod
+    def _is_high_impact_event(event: dict[str, Any]) -> bool:
+        raw_impact = str(event.get("impact") or event.get("importance") or "").strip().lower()
+        if any(token in raw_impact for token in ("high", "высок", "3", "!!!")):
+            return True
+        numeric_impact = TradeIdeaService._extract_numeric(event.get("importance") or event.get("impact"))
+        return bool(numeric_impact is not None and numeric_impact >= 3)
+
+    @staticmethod
+    def _event_brief_ru(event: dict[str, Any]) -> str:
+        title = str(event.get("title") or event.get("event") or "Макро-событие").strip()
+        currency = str(event.get("currency") or "").strip().upper()
+        time_label = str(event.get("time_label_ru") or event.get("time_utc") or "").strip()
+        impact = str(event.get("impact") or "").strip()
+        suffix = f" ({currency})" if currency else ""
+        impact_suffix = f", impact: {impact}" if impact else ""
+        return f"{title}{suffix} — {time_label}{impact_suffix}".strip()
+
+    @staticmethod
+    def _normalize_news_sentiment(tone: str) -> int:
+        lowered = str(tone or "").strip().lower()
+        if lowered in {"negative", "bearish", "risk_off", "risk-off", "пессимистичный"}:
+            return -2
+        if lowered in {"positive", "bullish", "risk_on", "risk-on", "оптимистичный"}:
+            return 2
+        if lowered in {"mixed", "neutral", "нейтральный"}:
+            return 0
+        return 0
+
+    def get_fundamental_context(self) -> dict[str, Any]:
+        context: dict[str, Any] = {
+            "high_impact_upcoming": [],
+            "recent_events": [],
+            "news_sentiment": "neutral",
+            "volatility_bias": "normal",
+            "risk_mode": "neutral",
+        }
+        now = datetime.now(timezone.utc)
+        upcoming_end = now + timedelta(hours=max(6, FUNDAMENTAL_UPCOMING_WINDOW_HOURS))
+        recent_start = now - timedelta(hours=max(3, FUNDAMENTAL_RECENT_WINDOW_HOURS))
+
+        try:
+            calendar_resp = requests.get(
+                f"{FUNDAMENTAL_BASE_URL}/calendar/events",
+                timeout=FUNDAMENTAL_REQUEST_TIMEOUT_SECONDS,
+            )
+            calendar_payload = calendar_resp.json() if calendar_resp.ok else {}
+            calendar_items = calendar_payload.get("events") or calendar_payload.get("items") or []
+            for item in calendar_items:
+                if not isinstance(item, dict):
+                    continue
+                event_at = self._parse_iso_utc(item.get("time_utc"))
+                if event_at is None:
+                    continue
+                if self._is_high_impact_event(item) and now <= event_at <= upcoming_end:
+                    context["high_impact_upcoming"].append(self._event_brief_ru(item))
+                if recent_start <= event_at < now:
+                    context["recent_events"].append(self._event_brief_ru(item))
+        except Exception as exc:
+            logger.warning("ideas_fundamental_calendar_unavailable reason=%s", exc)
+
+        sentiment_score = 0
+        try:
+            news_resp = requests.get(
+                f"{FUNDAMENTAL_BASE_URL}/api/news?limit=12",
+                timeout=FUNDAMENTAL_REQUEST_TIMEOUT_SECONDS,
+            )
+            news_payload = news_resp.json() if news_resp.ok else {}
+            news_items = news_payload.get("items") or news_payload.get("news") or []
+            for item in news_items:
+                if not isinstance(item, dict):
+                    continue
+                tone = str(item.get("tone") or "").strip()
+                sentiment_score += self._normalize_news_sentiment(tone)
+                text = " ".join(
+                    str(item.get(key) or "").lower()
+                    for key in ("title", "title_ru", "summary", "summary_ru", "preview_ru")
+                )
+                if any(token in text for token in ("inflation", "cpi", "geopolit", "recession", "crisis", "risk-off", "стресс")):
+                    sentiment_score -= 1
+                if any(token in text for token in ("growth", "soft landing", "stimulus", "risk-on", "рост", "смягчение")):
+                    sentiment_score += 1
+        except Exception as exc:
+            logger.warning("ideas_fundamental_news_unavailable reason=%s", exc)
+
+        if sentiment_score <= -4:
+            context["news_sentiment"] = "negative"
+            context["risk_mode"] = "risk_off"
+        elif sentiment_score >= 4:
+            context["news_sentiment"] = "positive"
+            context["risk_mode"] = "risk_on"
+        else:
+            context["news_sentiment"] = "neutral"
+            context["risk_mode"] = "neutral"
+
+        if context["high_impact_upcoming"]:
+            context["volatility_bias"] = "high"
+        elif len(context["recent_events"]) >= 4:
+            context["volatility_bias"] = "normal"
+        else:
+            context["volatility_bias"] = "low" if context["news_sentiment"] == "neutral" else "normal"
+        return context
+
+    def _attach_fundamental_context(self, ideas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not ideas:
+            return ideas
+        try:
+            context = self.get_fundamental_context()
+        except Exception as exc:
+            logger.warning("ideas_fundamental_context_failed reason=%s", exc)
+            return ideas
+        has_upcoming = bool(context.get("high_impact_upcoming"))
+        risk_mode = str(context.get("risk_mode") or "neutral")
+        volatility = str(context.get("volatility_bias") or "normal")
+        event_warning = (
+            f"Перед релизом: {context['high_impact_upcoming'][0]}. Волатильность может резко вырасти."
+            if has_upcoming
+            else "В ближайшие часы критичных макро-релизов не обнаружено."
+        )
+        risk_note = {
+            "risk_off": "Фундаментальный фон в режиме risk-off: спрос на доллар и защитные активы может усиливаться.",
+            "risk_on": "Фундаментальный фон в режиме risk-on: аппетит к риску растёт, защитный спрос может слабеть.",
+        }.get(risk_mode, "Фундаментальный фон смешанный, рынок больше реагирует на локальные триггеры цены.")
+        summary = (
+            f"Макро-контекст: волатильность {volatility}, режим {risk_mode}, "
+            f"последние события: {len(context.get('recent_events') or [])}."
+        )
+        for idea in ideas:
+            idea["fundamental_context"] = {
+                "summary_ru": summary,
+                "risk_note_ru": risk_note,
+                "event_warning_ru": event_warning,
+            }
+            if has_upcoming:
+                base_confidence = self._extract_numeric(idea.get("confidence"))
+                if base_confidence is not None:
+                    idea["confidence"] = int(max(1, round(base_confidence * 0.85)))
+                base_final_confidence = self._extract_numeric(idea.get("final_confidence"))
+                if base_final_confidence is not None:
+                    idea["final_confidence"] = int(max(1, round(base_final_confidence * 0.85)))
+                note = str(idea.get("note") or "").strip()
+                extra = "Ожидается важный макроэкономический релиз."
+                if extra not in note:
+                    idea["note"] = f"{note} {extra}".strip()
+        return ideas
 
     @staticmethod
     def _normalize_direction(value: Any) -> str:
@@ -946,7 +1109,7 @@ class TradeIdeaService:
         if not normalized:
             logger.warning("openrouter_normalization_failed")
             return []
-        return normalized
+        return self._attach_fundamental_context(normalized)
 
     def list_api_ideas(self) -> list[dict[str, Any]]:
         return self.build_api_ideas()
