@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import logging
 import os
@@ -12,55 +13,69 @@ from app.core.env import get_openrouter_api_key, get_openrouter_model
 
 
 logger = logging.getLogger(__name__)
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-REQUIRED_FIELDS = (
+
+REQUIRED_TEXT_FIELDS = (
     "idea_thesis",
     "headline",
     "summary",
+    "short_text",
+    "full_text",
+    "unified_narrative",
     "cause",
     "confirmation",
     "risk",
     "invalidation",
     "target_logic",
     "update_explanation",
-    "short_text",
-    "full_text",
-    "unified_narrative",
 )
-STRUCTURED_SCHEMA = {
-    "summary_structured": ("signal", "situation", "cause", "effect", "action", "risk_note"),
-    "trade_plan_structured": ("entry_trigger", "entry_zone", "stop_loss", "take_profit", "invalidation"),
-    "market_structure_structured": ("bias", "structure", "liquidity", "zone", "confluence"),
+
+REQUIRED_STRUCTURED_FIELDS = {
+    "summary_structured": (
+        "signal",
+        "situation",
+        "cause",
+        "effect",
+        "action",
+        "risk_note",
+    ),
+    "trade_plan_structured": (
+        "entry_trigger",
+        "entry_zone",
+        "stop_loss",
+        "take_profit",
+        "invalidation",
+    ),
+    "market_structure_structured": (
+        "bias",
+        "structure",
+        "liquidity",
+        "zone",
+        "confluence",
+    ),
 }
-SMC_REQUIRED_TOKENS = ("ликвидност", "sweep", "bos", "choch", "order block", "fvg")
-SMART_MONEY_ACTOR_TOKENS = ("крупн", "смарт", "smart money", "крупного игрока", "крупный участник")
-CONFIRMATION_TOKENS = ("объ", "дельт", "cumdelta", "диверген")
-NO_CONFIRMATION_TOKENS = ("нет подтвержден", "без подтвержден", "подтверждений недостаточно")
-RISK_TOKENS = ("инвалид", "слом", "отмена", "fail", "риск")
-BANNED_PHRASES = (
-    "строится вокруг",
-    "в рамках",
-    "может привести",
-    "по текущей структуре",
-    "сценарий описан прямо",
-)
-WEAK_CAUSE_PHRASES = ("после коррекции",)
-FORBIDDEN_SYSTEM_TOKENS = ("none", "fallback", "idea_created", "status created", "debug", "schema", "payload")
-GENERIC_NARRATIVE_PHRASES = (
-    "рынок давят продавцы",
-    "структура описана как continuation",
-    "снятия ликвидности (none)",
-    "структурных подтверждений недостаточно",
-)
 
 
 @dataclass
 class NarrativeResult:
-    data: dict[str, str]
+    data: dict[str, Any]
     source: str
 
 
 class IdeaNarrativeLLMService:
+    """
+    Grok/OpenRouter = аналитик.
+    Backend = контролёр и валидатор.
+
+    Этот сервис НЕ должен сам придумывать полноценную идею.
+    Он:
+    1. отправляет факты в Grok/OpenRouter;
+    2. требует строгий JSON;
+    3. проверяет уникальность и качество текста;
+    4. если LLM не справился — возвращает честный fallback без выдуманной аналитики.
+    """
+
     def __init__(self) -> None:
         self.api_key = (get_openrouter_api_key() or "").strip()
         self.model = get_openrouter_model()
@@ -75,36 +90,31 @@ class IdeaNarrativeLLMService:
         delta: dict[str, Any] | None = None,
     ) -> NarrativeResult:
         fallback = self._fallback(facts=facts, event_type=event_type, delta=delta)
-        payload = {
-            "event_type": event_type,
-            "facts": facts,
-            "previous_narrative_summary": previous_summary or "",
-            "delta": delta or {},
-        }
 
         if not self.api_key:
             logger.warning("idea_narrative_llm_missing_api_key")
             return NarrativeResult(data=fallback, source="fallback")
 
-        prompt = self._build_prompt(payload, strict=False)
-        result = self._request_llm(prompt=prompt)
-        if result:
-            return NarrativeResult(data=result, source="llm")
+        payload = {
+            "event_type": event_type,
+            "facts": self._compact_facts(facts),
+            "previous_narrative_summary": previous_summary or "",
+            "delta": delta or {},
+            "uniqueness_seed": self._uniqueness_seed(facts),
+        }
 
-        retry_prompt = self._build_prompt(payload, strict=True)
-        retry_result = self._request_llm(prompt=retry_prompt)
-        if retry_result:
-            return NarrativeResult(data=retry_result, source="llm")
+        first = self._request_llm(prompt=self._build_prompt(payload, strict=False))
+        if first:
+            return NarrativeResult(data=first, source="llm")
+
+        second = self._request_llm(prompt=self._build_prompt(payload, strict=True))
+        if second:
+            return NarrativeResult(data=second, source="llm")
 
         logger.warning("idea_narrative_llm_fallback_used event_type=%s", event_type)
         return NarrativeResult(data=fallback, source="fallback")
 
     def _request_llm(self, *, prompt: str) -> dict[str, Any] | None:
-        logger.info(
-            "idea_narrative_llm_request_started model=%s prompt_payload_size=%s",
-            self.model,
-            len(prompt),
-        )
         try:
             response = requests.post(
                 OPENROUTER_URL,
@@ -118,221 +128,337 @@ class IdeaNarrativeLLMService:
                         {
                             "role": "system",
                             "content": (
-                                "Ты трейдинг-аналитик. Пиши только на русском языке. "
-                                "Запрещены английские слова в текстовых полях. "
-                                "Нельзя выдумывать уровни/направление/статус. "
-                                "Возвращай только JSON-объект без markdown."
+                                "Ты профессиональный SMC/ICT Forex-аналитик уровня desk analyst. "
+                                "Ты анализируешь рынок с точки зрения крупного игрока: ликвидность, "
+                                "накопление, распределение, ордерблоки, breaker block, FVG, BOS, CHoCH, "
+                                "dealing range, premium/discount, снятие стопов и реакция цены. "
+                                "Ты не выдумываешь уровни. Ты используешь только факты из payload. "
+                                "Ответ строго JSON без markdown."
                             ),
                         },
-                        {"role": "user", "content": prompt},
+                        {
+                            "role": "user",
+                            "content": prompt,
+                        },
                     ],
-                    "temperature": 0.2,
+                    "temperature": 0.72,
+                    "top_p": 0.9,
                 },
                 timeout=self.timeout,
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
             parsed = self._parse_json(content)
-            if parsed:
-                logger.info("idea_narrative_llm_success")
-                return parsed
-            logger.warning("idea_narrative_llm_invalid_json")
-            return None
+
+            if not parsed:
+                logger.warning("idea_narrative_llm_invalid_json_or_quality")
+                return None
+
+            logger.info("idea_narrative_llm_success model=%s", self.model)
+            return parsed
+
         except Exception:
             logger.exception("idea_narrative_llm_failure")
             return None
 
-    @staticmethod
-    def _parse_json(content: Any) -> dict[str, Any] | None:
+    def _parse_json(self, content: Any) -> dict[str, Any] | None:
         if not isinstance(content, str):
             return None
+
         text = content.strip()
+
         if text.startswith("```"):
-            text = text.strip("`")
-            text = text.replace("json", "", 1).strip()
+            text = text.strip("`").strip()
+            if text.lower().startswith("json"):
+                text = text[4:].strip()
+
         try:
             raw = json.loads(text)
         except json.JSONDecodeError:
             return None
+
         if not isinstance(raw, dict):
             return None
+
         result: dict[str, Any] = {}
-        for field in REQUIRED_FIELDS:
-            if field == "idea_thesis":
-                continue
+
+        for field in REQUIRED_TEXT_FIELDS:
             value = raw.get(field)
             if not isinstance(value, str) or not value.strip():
                 return None
-            result[field] = value.strip()
-        idea_thesis = raw.get("idea_thesis")
-        if isinstance(idea_thesis, str) and idea_thesis.strip():
-            result["idea_thesis"] = idea_thesis.strip()
-        else:
-            result["idea_thesis"] = str(result.get("unified_narrative") or result.get("full_text") or "").strip()
-        if not result["idea_thesis"]:
-            return None
-        raw_signal = str(raw.get("signal") or "").strip().upper()
-        result["signal"] = raw_signal if raw_signal in {"BUY", "SELL", "WAIT"} else "WAIT"
-        result["risk_note"] = str(raw.get("risk_note") or "").strip()
+            result[field] = self._clean_visible_text(value)
 
-        for group_key, fields in STRUCTURED_SCHEMA.items():
-            group_value = raw.get(group_key)
-            if not isinstance(group_value, dict):
+        for group_name, fields in REQUIRED_STRUCTURED_FIELDS.items():
+            group = raw.get(group_name)
+            if not isinstance(group, dict):
                 return None
-            group_result: dict[str, str] = {}
+
+            cleaned_group: dict[str, str] = {}
             for field in fields:
-                value = group_value.get(field)
+                value = group.get(field)
                 if not isinstance(value, str) or not value.strip():
                     return None
-                group_result[field] = value.strip()
-            result[group_key] = group_result
+                cleaned_group[field] = self._clean_visible_text(value)
 
-        joined = " ".join(str(result[field]) for field in REQUIRED_FIELDS if field in result).casefold()
-        if any(phrase in joined for phrase in BANNED_PHRASES):
+            result[group_name] = cleaned_group
+
+        signal = str(raw.get("signal") or "").strip().upper()
+        result["signal"] = signal if signal in {"BUY", "SELL", "WAIT"} else "WAIT"
+        result["risk_note"] = self._clean_visible_text(raw.get("risk_note") or result["risk"])
+
+        if not self._quality_ok(result):
             return None
-        if any(phrase in joined for phrase in WEAK_CAUSE_PHRASES):
-            return None
-        narrative_text = f"{result['unified_narrative']} {result['full_text']}".casefold()
-        if any(phrase in narrative_text for phrase in GENERIC_NARRATIVE_PHRASES):
-            return None
-        if not any(token in narrative_text for token in SMC_REQUIRED_TOKENS):
-            return None
-        if not any(token in narrative_text for token in SMART_MONEY_ACTOR_TOKENS):
-            return None
-        has_confirmation = any(token in narrative_text for token in CONFIRMATION_TOKENS)
-        has_no_confirmation = any(token in narrative_text for token in NO_CONFIRMATION_TOKENS)
-        if not (has_confirmation or has_no_confirmation):
-            return None
-        if not any(token in narrative_text for token in RISK_TOKENS):
-            return None
-        if any(token in narrative_text for token in FORBIDDEN_SYSTEM_TOKENS):
-            return None
+
         return result
+
+    def _quality_ok(self, data: dict[str, Any]) -> bool:
+        joined = " ".join(
+            str(data.get(field) or "")
+            for field in REQUIRED_TEXT_FIELDS
+        ).casefold()
+
+        banned = (
+            "none",
+            "fallback",
+            "debug",
+            "schema",
+            "payload",
+            "status created",
+            "idea_created",
+            "данных достаточно для любого входа",
+            "гарантирован",
+            "без риска",
+            "точно пойдет",
+        )
+
+        if any(token in joined for token in banned):
+            return False
+
+        required_any = (
+            "ликвид",
+            "liquidity",
+            "sweep",
+            "стоп",
+            "ордерблок",
+            "order block",
+            "breaker",
+            "брейкер",
+            "fvg",
+            "имбаланс",
+            "bos",
+            "choch",
+            "структур",
+        )
+
+        if not any(token in joined for token in required_any):
+            return False
+
+        smart_money_any = (
+            "крупн",
+            "smart money",
+            "крупный игрок",
+            "крупный участник",
+            "маркетмейкер",
+            "позици",
+            "накоплен",
+            "распределен",
+        )
+
+        if not any(token in joined for token in smart_money_any):
+            return False
+
+        if len(str(data.get("idea_thesis") or "")) < 220:
+            return False
+
+        if len(str(data.get("unified_narrative") or "")) < 180:
+            return False
+
+        return True
+
+    @staticmethod
+    def _clean_visible_text(value: Any) -> str:
+        text = str(value or "").strip()
+        text = text.replace("```json", "").replace("```", "").strip()
+        text = " ".join(text.split())
+        return text
+
+    @staticmethod
+    def _compact_facts(facts: dict[str, Any]) -> dict[str, Any]:
+        compact = dict(facts or {})
+
+        candles = compact.get("candles")
+        if isinstance(candles, list):
+            compact["candles"] = candles[-80:]
+
+        for key in (
+            "raw",
+            "debug",
+            "logs",
+            "diagnostics",
+            "prompt",
+            "system",
+        ):
+            compact.pop(key, None)
+
+        return compact
+
+    @staticmethod
+    def _uniqueness_seed(facts: dict[str, Any]) -> str:
+        base = {
+            "symbol": facts.get("symbol"),
+            "timeframe": facts.get("timeframe"),
+            "direction": facts.get("direction") or facts.get("bias"),
+            "entry": facts.get("entry"),
+            "sl": facts.get("sl") or facts.get("stop_loss"),
+            "tp": facts.get("tp") or facts.get("take_profit"),
+            "structure": facts.get("structure_state"),
+            "liquidity": facts.get("liquidity_sweep"),
+            "zone": facts.get("key_zone"),
+        }
+        raw = json.dumps(base, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
     @staticmethod
     def _build_prompt(payload: dict[str, Any], *, strict: bool) -> str:
-        banned = list(BANNED_PHRASES)
-        strict_line = "Ошибочный формат недопустим." if strict else "Формат обязателен."
+        strict_text = (
+            "Это повторная попытка. Любое нарушение формата или шаблонный текст недопустим."
+            if strict
+            else "Формат обязателен."
+        )
+
         return (
-            "Сформируй объяснение торговой идеи только из переданных фактов.\n"
-            "Запрещено придумывать новые уровни, направление, статус или причины вне фактов.\n"
-            "Ты пишешь как SMC/ICT-трейдер: простые слова, короткие предложения, дружелюбный тон для трейдера.\n"
-            "Все текстовые поля только на русском языке, без английских слов и кальки.\n"
-            "Тон естественный: как комментарий реального аналитика, а не шаблонный авто-текст.\n"
-            "Do not use the same wording across symbols. Write a unique explanation for this exact instrument and levels.\n"
-            "idea_thesis — ГЛАВНЫЙ единый блок объяснения для трейдера.\n"
-            "idea_thesis должен быть цельным, читабельным и объяснять: что происходит, почему сетап существует, что подтверждает, что ослабляет, какое действие и где инвалидация.\n"
-            "unified_narrative должен содержать 3-6 коротких естественных предложений.\n"
-            "Обязательно объясни: что происходит сейчас, почему это происходит, что из этого следует, и что делать трейдеру дальше.\n"
-            "unified_narrative верни ОДНИМ связным текстом без секций и подзаголовков.\n"
-            "Запрещены машинные шаблоны в формате 'Ситуация: ... Причина: ... Следствие: ... Действие: ...'.\n"
-            "Запрещены слова/фрагменты для видимого текста: None, fallback, idea_created, status created, debug.\n"
-            "Каждый смысловой шаг должен быть выражен короткими предложениями, без повторов символа/таймфрейма и без воды.\n"
-            f"Запрещённые фразы: {', '.join(banned)}.\n"
-            "Если в фактах нет liquidity_sweep / structure_state / key_zone / location — явно напиши: "
-            "\"структурных подтверждений недостаточно\".\n"
-            "Если SMC-факты неполные, добавь: \"структурная база слабая, идея основана на вторичных факторах\".\n"
-            "Нельзя использовать формулировку \"после коррекции\"; используй только: "
-            "\"после снятия ликвидности\", \"после ложного пробоя\", \"после возврата в order block\".\n"
-            "Логическая цепочка обязательна минимум одна: "
-            "например, liquidity sweep → sellers/buyers entered → continuation/reversal expected.\n"
-            "Обязательно раскрой поведение крупного участника (Smart Money): где снята ликвидность, где он вошёл, идёт набор позиции или распределение.\n"
-            "Обязательно поясни контекст структуры: это continuation или reaction/reversal, внутри dealing range или уже есть выход со сломом структуры.\n"
-            "Если в фактах есть CHoCH/BOS — укажи это явно; если нет, прямо напиши, что структура без подтверждённого слома.\n"
-            "Добавь подтверждение через объём/дельту/cumdelta/дивергенцию либо честно укажи, что подтверждения не хватает.\n"
-            "Причинно-следственная связь обязательна: действие крупного игрока -> реакция цены -> торговое решение.\n"
-            "Если в facts передан массив candles, обязательно учитывай свечную структуру, ликвидность и дисбалансы.\n"
-            "Для WAIT обязательно верни рабочий план через trigger и укажи наблюдаемую рабочую зону/ликвидность в narrative.\n"
-            "CAUSE должен описывать: liquidity sweep / реакцию от зоны / BOS-CHoCH / imbalance.\n"
-            "EFFECT должен описывать: continuation или reversal и статус структуры.\n"
-            "ACTION должен описывать: buy/sell/wait, условие входа, и когда no trade.\n"
-            "Обязательно объясни уровни: почему вход в зоне OB/FVG/ликвидности, почему SL за снятой ликвидностью "
-            "или по инвалидации структуры, почему TP на следующем пуле ликвидности/заполнении имбаланса.\n"
-            "В unified_narrative обязательно должен встретиться минимум один термин: liquidity/ликвидность/sweep/BOS/CHoCH/order block/FVG.\n"
-            "Каждое текстовое поле должно быть лаконичным и без длинных абзацев.\n"
-            "signal верни строго как BUY, SELL или WAIT.\n"
-            "risk_note верни короткой фразой, без системных меток.\n"
-            "В structured-полях не повторяй в каждом поле символ/таймфрейм, если это не нужно для смысла.\n"
-            "Не разбивай главную идею на мини-карточки вида цена/bias/confidence/context — это должен быть один связный тезис idea_thesis.\n"
-            "Ответ должен быть ВАЛИДНЫМ JSON и только JSON, без markdown, комментариев и префиксов.\n"
-            "Верни только JSON с ключами: "
-            + ", ".join(REQUIRED_FIELDS)
-            + ", signal, risk_note, summary_structured, trade_plan_structured, market_structure_structured"
-            + f". {strict_line}\n\n"
-            + "Структура обязательна:\n"
-            + json.dumps(STRUCTURED_SCHEMA, ensure_ascii=False)
-            + "\n\n"
+            "Составь УНИКАЛЬНУЮ торговую идею по переданным фактам.\n\n"
+            "Главное правило: Grok/OpenRouter является аналитиком, сайт только контролирует результат.\n"
+            "Не пиши шаблонный текст. Не используй одинаковые фразы для разных инструментов.\n"
+            "Описание должно быть как комментарий профессионального трейдера, который смотрит на рынок "
+            "глазами крупного игрока.\n\n"
+
+            "Обязательно объясни:\n"
+            "1. Что сейчас делает цена.\n"
+            "2. Где могла быть снята ликвидность.\n"
+            "3. Где крупный игрок мог набирать или распределять позицию.\n"
+            "4. Есть ли OB, FVG, breaker block, BOS/CHoCH или их отсутствие.\n"
+            "5. Почему entry расположен именно там.\n"
+            "6. Почему SL является инвалидацией идеи.\n"
+            "7. Почему TP находится на следующей ликвидности или зоне дисбаланса.\n"
+            "8. Что должно подтвердить сценарий.\n"
+            "9. Что отменит сценарий.\n\n"
+
+            "Очень важно про ордерблоки:\n"
+            "- Если цена пробила order block и затем вернулась к нему с другой стороны, называй его breaker block.\n"
+            "- Если зона ещё не пробита, называй её order block.\n"
+            "- Если данных недостаточно, честно скажи, что зона не подтверждена.\n\n"
+
+            "Очень важно про графические паттерны:\n"
+            "- Если видишь сжатие цены, укажи triangle/compression.\n"
+            "- Если есть импульс и боковая консолидация, укажи flag/continuation.\n"
+            "- Если есть две близкие вершины, укажи double top.\n"
+            "- Если есть два близких минимума, укажи double bottom.\n"
+            "- Если паттерн слабый, напиши, что графический паттерн не является главным основанием идеи.\n\n"
+
+            "Запрещено:\n"
+            "- придумывать новые уровни;\n"
+            "- обещать прибыль;\n"
+            "- писать 'точно', 'гарантированно', 'без риска';\n"
+            "- использовать системные слова: None, fallback, debug, payload, schema;\n"
+            "- писать одинаковую формулировку для разных идей;\n"
+            "- делать текст из сухих секций вида 'Ситуация / Причина / Следствие'.\n\n"
+
+            "Верни строго JSON. Без markdown. Без пояснений вокруг JSON.\n\n"
+
+            "Обязательные ключи верхнего уровня:\n"
+            "idea_thesis, headline, summary, short_text, full_text, unified_narrative, "
+            "cause, confirmation, risk, invalidation, target_logic, update_explanation, "
+            "signal, risk_note, summary_structured, trade_plan_structured, market_structure_structured.\n\n"
+
+            "signal строго один из: BUY, SELL, WAIT.\n\n"
+
+            "summary_structured обязан иметь поля:\n"
+            "signal, situation, cause, effect, action, risk_note.\n\n"
+
+            "trade_plan_structured обязан иметь поля:\n"
+            "entry_trigger, entry_zone, stop_loss, take_profit, invalidation.\n\n"
+
+            "market_structure_structured обязан иметь поля:\n"
+            "bias, structure, liquidity, zone, confluence.\n\n"
+
+            "idea_thesis — главный текст для блока 'Основная идея'. "
+            "Он должен быть 4-7 предложений, живой, конкретный, без воды.\n"
+            "unified_narrative — связное объяснение 3-6 предложений.\n"
+            "short_text — короткая версия в одну строку.\n\n"
+            f"{strict_text}\n\n"
+            "PAYLOAD:\n"
             + json.dumps(payload, ensure_ascii=False)
         )
 
     @staticmethod
-    def _fallback(*, facts: dict[str, Any], event_type: str, delta: dict[str, Any] | None) -> dict[str, str]:
+    def _fallback(
+        *,
+        facts: dict[str, Any],
+        event_type: str,
+        delta: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         symbol = str(facts.get("symbol") or "Инструмент")
         timeframe = str(facts.get("timeframe") or "H1")
-        direction = str(facts.get("direction") or "neutral")
+        direction = str(facts.get("direction") or facts.get("bias") or "neutral").lower()
         status = str(facts.get("status") or "waiting")
         entry = facts.get("entry")
-        sl = facts.get("sl")
-        tp = facts.get("tp")
-        rr = facts.get("rr")
-        delta_text = json.dumps(delta or {}, ensure_ascii=False)
-        short = f"{symbol} {timeframe}: {direction}, статус {status}."
-        liquidity = str(facts.get("liquidity_sweep") or "").strip()
-        structure = str(facts.get("structure_state") or "unknown")
-        key_zone = str(facts.get("key_zone") or "").strip()
-        location = str(facts.get("location") or "unknown")
-        target_liquidity = str(facts.get("target_liquidity") or tp or "не определён")
-        invalidation_logic = str(facts.get("invalidation_logic") or f"пробой уровня SL {sl}")
-        liquidity_phrase = (
-            f"после снятия ликвидности ({liquidity})"
-            if liquidity and liquidity.lower() not in {"none", "unknown"}
-            else "без явного снятия ликвидности"
-        )
-        smc_missing = any(value in {"none", "unknown", ""} for value in (liquidity or "none", structure, key_zone or "none", location))
-        structural_warning = "структурных подтверждений недостаточно. " if smc_missing else ""
-        weak_structure_warning = "структурная база слабая, идея основана на вторичных факторах. " if smc_missing else ""
-        signal = "BUY" if direction == "bullish" else "SELL" if direction == "bearish" else "WAIT"
-        if signal == "SELL":
-            unified = (
-                f"{symbol} {timeframe}: рынок давят продавцы, цена удерживается под ключевой зоной {key_zone}, а структура описана как {structure}. "
-                f"Причина сценария — реакция {liquidity_phrase}, что поддерживает продолжение вниз к {target_liquidity}. "
-                f"{structural_warning}{weak_structure_warning}"
-                f"Подтверждение: свечи должны сохранять импульс вниз и не возвращаться устойчиво выше зоны входа {entry}. "
-                f"Действие: приоритет только short при подтверждении, риск контролируется через SL {sl}. "
-                f"Инвалидация: при закреплении выше зоны и сломе структуры вниз идея отменяется."
-            )
-        elif signal == "BUY":
-            unified = (
-                f"{symbol} {timeframe}: инициативу удерживают покупатели, цена работает над зоной {key_zone}, структура сейчас {structure}. "
-                f"Причина сценария — реакция {liquidity_phrase}, поэтому приоритет остаётся за движением к {target_liquidity}. "
-                f"{structural_warning}{weak_structure_warning}"
-                f"Подтверждение: нужно удержание импульса вверх и отсутствие возврата под зону входа {entry}. "
-                f"Действие: рассматривать только long при подтверждённой реакции, риск фиксировать через SL {sl}. "
-                f"Инвалидация: при закреплении ниже зоны и сломе восходящей структуры сценарий теряет силу."
-            )
+        sl = facts.get("sl") or facts.get("stop_loss")
+        tp = facts.get("tp") or facts.get("take_profit")
+
+        if direction in {"bullish", "buy", "long"}:
+            signal = "BUY"
+            side = "покупательский"
+        elif direction in {"bearish", "sell", "short"}:
+            signal = "SELL"
+            side = "продавецкий"
         else:
-            unified = (
-                f"{symbol} {timeframe}: рынок в режиме ОЖИДАНИЯ, потому что структура {structure} и реакция на ликвидность пока не дают чистого перевеса. "
-                f"Конфликт: цена находится около {key_zone}, но подтверждение направления к {target_liquidity} ещё неполное. "
-                f"{structural_warning}{weak_structure_warning}"
-                f"Что подтвердит сценарий: нужен явный импульс и закрепление в одну сторону от рабочей зоны около {entry}. "
-                f"Действие сейчас: без сделки до подтверждения, риск заранее ограничивать через плановый SL {sl}. "
-                f"Инвалидация ожидания: хаотичный пробой зоны в обе стороны без закрепления — повод пересобрать идею."
-            )
-        risk_note = f"Инвалидация сценария: {invalidation_logic}."
+            signal = "WAIT"
+            side = "нейтральный"
+
+        thesis = (
+            f"{symbol} {timeframe}: полноценный LLM-анализ временно недоступен, поэтому сайт не будет "
+            f"выдумывать уникальную идею вместо Grok/OpenRouter. Текущий контролируемый сценарий: {side}, "
+            f"статус {status}, Entry {entry}, SL {sl}, TP {tp}. Для подтверждения нужна проверка ликвидности, "
+            f"ордерблока или breaker block, FVG и структуры BOS/CHoCH. Пока эти факторы не подтверждены "
+            f"аналитиком, текст считается техническим fallback, а не полноценной торговой идеей."
+        )
+
         return {
-            "idea_thesis": unified,
-            "headline": f"{symbol} {timeframe} — {direction}",
-            "summary": short,
-            "cause": "Причина: снятие ликвидности и реакция в ключевой SMC-зоне подтверждают исходную идею.",
-            "confirmation": "Следствие: структура подтверждается только при совпадении BOS/CHoCH, объёма и дельты.",
-            "risk": "Риск контролируется заранее рассчитанным стоп-уровнем.",
-            "invalidation": f"Инвалидация: {invalidation_logic}.",
-            "target_logic": f"Цель берётся из расчётного TP {tp} как следующий пул ликвидности ({target_liquidity}).",
-            "update_explanation": f"Действие: обновление ({event_type}) основано на новых фактах: {delta_text}.",
-            "short_text": short,
-            "full_text": unified,
-            "unified_narrative": unified,
+            "idea_thesis": thesis,
+            "headline": f"{symbol} {timeframe}: ожидание подтверждения Grok-анализа",
+            "summary": thesis,
+            "short_text": f"{symbol}: LLM-анализ недоступен, сайт показывает только контролируемый fallback.",
+            "full_text": thesis,
+            "unified_narrative": thesis,
+            "cause": "Причина: LLM-анализ не был получен или не прошёл валидацию качества.",
+            "confirmation": "Подтверждение: требуется валидный ответ Grok/OpenRouter по ликвидности, OB/FVG, breaker block и структуре.",
+            "risk": f"Риск контролируется уровнем SL {sl}; без подтверждения сценарий нельзя считать полноценной идеей.",
+            "invalidation": f"Инвалидация: пробой или закрепление за SL {sl}, либо отсутствие подтверждения структуры.",
+            "target_logic": f"TP {tp} используется только как переданный уровень, без дополнительной выдуманной логики.",
+            "update_explanation": f"Событие {event_type}; delta={json.dumps(delta or {}, ensure_ascii=False)}.",
             "signal": signal,
-            "risk_note": risk_note,
+            "risk_note": f"Без валидного Grok-анализа идея считается технической и требует ручной проверки.",
+            "summary_structured": {
+                "signal": signal,
+                "situation": "LLM-анализ недоступен или не прошёл контроль качества.",
+                "cause": "Сайт не должен сам придумывать полноценную идею.",
+                "effect": "Показан только технический fallback.",
+                "action": "Ждать валидный анализ Grok/OpenRouter.",
+                "risk_note": "Без анализа крупного игрока вход не подтверждён.",
+            },
+            "trade_plan_structured": {
+                "entry_trigger": f"Entry {entry} требует подтверждения реакции цены.",
+                "entry_zone": str(entry),
+                "stop_loss": str(sl),
+                "take_profit": str(tp),
+                "invalidation": f"Инвалидация через SL {sl} или слом структуры.",
+            },
+            "market_structure_structured": {
+                "bias": direction,
+                "structure": "не подтверждена LLM-анализом",
+                "liquidity": "требует проверки",
+                "zone": "требует проверки OB/FVG/breaker block",
+                "confluence": "недостаточно данных после валидации",
+            },
         }
