@@ -394,7 +394,7 @@
       <div>
         <h1>AI-идеи по рынку</h1>
         <div class="subtitle">
-          Entry / SL / TP фиксируются. На графике показываются OB, Breaker Block, FVG, Liquidity и графические паттерны.
+          Entry / SL / TP фиксируются. График строится только по реальным свечам backend. Фейковые свечи отключены.
         </div>
       </div>
       <a class="home-link" href="/">На главную</a>
@@ -438,7 +438,7 @@
   </div>
 
   <script>
-    console.log("IDEAS_HTML_VERSION_MARKUP_V7_FULL_REPLACE");
+    console.log("IDEAS_HTML_VERSION_NO_SYNTHETIC_CANDLES_V8");
 
     const state = {
       ideas: [],
@@ -669,7 +669,7 @@
           <div id="ideaChart" class="chart"></div>
 
           <div class="chart-note" id="chartNote">
-            Разметка: OB, Breaker Block, FVG, Liquidity, графические паттерны. Лишние уровни скрыты.
+            Разметка строится только по реальным свечам. Фейковые свечи отключены.
           </div>
         </div>
       `;
@@ -711,7 +711,17 @@
       const candles = getCandlesForIdea(idea, state.currentTf);
 
       if (!candles.length) {
-        container.innerHTML = '<div class="empty">Свечи для графика недоступны.</div>';
+        container.innerHTML = `
+          <div class="empty" style="margin:16px;">
+            Нет реальных свечей от backend.<br>
+            Разметка OB / Breaker / FVG / Liquidity / Pattern не строится без реальных OHLC-данных.<br>
+            Фейковые свечи отключены.
+          </div>
+        `;
+        const note = document.getElementById("chartNote");
+        if (note) {
+          note.textContent = "Нет реальных свечей. Нужно, чтобы backend отдавал candles / chart_data.candles / chartData.candles.";
+        }
         return;
       }
 
@@ -868,7 +878,7 @@
       const note = document.getElementById("chartNote");
       if (note) {
         note.textContent =
-          `Разметка: OB=${detected.orderBlocks.length}, FVG=${detected.fvg.length}, Liquidity=${detected.liquidity.length}, Pattern=${detected.patterns.length}. Лишние уровни скрыты.`;
+          `Разметка: OB=${detected.orderBlocks.length}, FVG=${detected.fvg.length}, Liquidity=${detected.liquidity.length}, Pattern=${detected.patterns.length}. Фейковые свечи отключены.`;
       }
     }
 
@@ -948,12 +958,12 @@
     }
 
     function detectMarkup(candles) {
-      const orderBlocks = detectOrderBlocks(candles).slice(-3);
-      const fvg = detectFvg(candles).slice(-3);
-      const liquidity = detectLiquidity(candles).slice(-4);
-      const patterns = detectPatterns(candles).slice(-2);
-
-      return { orderBlocks, fvg, liquidity, patterns };
+      return {
+        orderBlocks: detectOrderBlocks(candles).slice(-3),
+        fvg: detectFvg(candles).slice(-3),
+        liquidity: detectLiquidity(candles).slice(-4),
+        patterns: detectPatterns(candles).slice(-2),
+      };
     }
 
     function detectOrderBlocks(candles) {
@@ -964,14 +974,22 @@
         const c = candles[i];
         const n = candles[i + 1];
 
-        const body = Math.abs(c.close - c.open);
         const nextBody = Math.abs(n.close - n.open);
         const avgRange = averageRange(candles.slice(Math.max(0, i - 5), i + 1));
 
         if (avgRange <= 0) continue;
 
-        const bullishOb = c.close < c.open && n.close > n.open && n.close > c.high && nextBody > avgRange * 0.65;
-        const bearishOb = c.close > c.open && n.close < n.open && n.close < c.low && nextBody > avgRange * 0.65;
+        const bullishOb =
+          c.close < c.open &&
+          n.close > n.open &&
+          n.close > c.high &&
+          nextBody > avgRange * 0.65;
+
+        const bearishOb =
+          c.close > c.open &&
+          n.close < n.open &&
+          n.close < c.low &&
+          nextBody > avgRange * 0.65;
 
         if (!bullishOb && !bearishOb) continue;
 
@@ -1082,11 +1100,6 @@
         }
       }
 
-      if (!out.length) {
-        out.push({ price: Math.max(...highs), label: "Liquidity (High)" });
-        out.push({ price: Math.min(...lows), label: "Liquidity (Low)" });
-      }
-
       return out;
     }
 
@@ -1165,18 +1178,6 @@
         });
       }
 
-      if (!out.length) {
-        out.push({
-          label: "Pattern (Compression)",
-          points: [
-            { index: candles.length - 32, price: max - range * 0.12 },
-            { index: candles.length - 4, price: max - range * 0.28 },
-            { index: candles.length - 4, price: min + range * 0.28 },
-            { index: candles.length - 32, price: min + range * 0.12 },
-          ],
-        });
-      }
-
       return out;
     }
 
@@ -1204,7 +1205,7 @@
         if (normalized.length) return normalized;
       }
 
-      return buildSyntheticCandlesFromIdea(idea);
+      return [];
     }
 
     function normalizeCandles(raw) {
@@ -1226,11 +1227,11 @@
 
         if (typeof time === "string") {
           const parsed = Date.parse(time);
-          time = Number.isFinite(parsed) ? Math.floor(parsed / 1000) : Math.floor(Date.now() / 1000) + i * 60;
+          time = Number.isFinite(parsed) ? Math.floor(parsed / 1000) : NaN;
         }
 
         if (!Number.isFinite(Number(time))) {
-          time = Math.floor(Date.now() / 1000) - (raw.length - i) * 900;
+          continue;
         }
 
         out.push({
@@ -1243,41 +1244,6 @@
       }
 
       return out.slice(-140);
-    }
-
-    function buildSyntheticCandlesFromIdea(idea) {
-      const entry = toNumber(idea.entry || idea.entry_price || idea.entry_zone) || 1.17;
-      const sl = toNumber(idea.stop_loss || idea.stopLoss || idea.sl) || entry * 0.997;
-      const tp = toNumber(idea.take_profit || idea.takeProfit || idea.tp) || entry * 1.004;
-
-      const min = Math.min(entry, sl, tp);
-      const max = Math.max(entry, sl, tp);
-      const range = Math.max(max - min, entry * 0.003);
-      const now = Math.floor(Date.now() / 1000);
-      const out = [];
-
-      let price = entry - range * 0.25;
-
-      for (let i = 0; i < 100; i++) {
-        const wave = Math.sin(i / 5) * range * 0.16;
-        const trend = (i / 100) * range * 0.75;
-        const open = price;
-        const close = min + range * 0.20 + trend + wave;
-        const high = Math.max(open, close) + range * 0.08;
-        const low = Math.min(open, close) - range * 0.08;
-
-        out.push({
-          time: now - (100 - i) * 900,
-          open,
-          high,
-          low,
-          close,
-        });
-
-        price = close;
-      }
-
-      return out;
     }
 
     function averageRange(rows) {
