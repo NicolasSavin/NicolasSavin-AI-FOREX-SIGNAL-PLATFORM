@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,10 @@ STATIC_DIR = BASE_DIR / "static"
 SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "").strip()
+
+CANDLE_CACHE: dict[str, dict[str, Any]] = {}
+CANDLE_CACHE_TTL_SECONDS = 900
+STALE_CANDLE_CACHE_TTL_SECONDS = 86400
 
 ACTIVE_FILE = Path("active_trades.json")
 ARCHIVE_FILE = Path("archive.json")
@@ -153,6 +158,25 @@ def api_chart(symbol: str, tf: str = "M15", limit: int = 160):
 @app.get("/api/canonical/chart/{symbol}/{tf}")
 def api_canonical_chart(symbol: str, tf: str, limit: int = 160):
     return get_candles_with_markup(symbol, tf, limit)
+
+
+@app.get("/api/debug/candles/{symbol}/{tf}")
+def api_debug_candles(symbol: str, tf: str, limit: int = 160):
+    payload = fetch_candles(symbol, tf, limit)
+    candles = payload.get("candles") or []
+    return {
+        "symbol": normalize_symbol(symbol),
+        "tf": tf,
+        "count": len(candles),
+        "provider": payload.get("provider"),
+        "source_symbol": payload.get("source_symbol"),
+        "interval": payload.get("interval"),
+        "cache_status": payload.get("cache_status"),
+        "warning_ru": payload.get("warning_ru"),
+        "attempts": payload.get("attempts"),
+        "first": candles[0] if candles else None,
+        "last": candles[-1] if candles else None,
+    }
 
 
 def build_signal(symbol: str) -> dict[str, Any]:
@@ -415,7 +439,9 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
     return {
         "symbol": symbol,
         "timeframe": tf,
-        "source_symbol": to_twelvedata_symbol(symbol),
+        "source_symbol": candles_payload.get("source_symbol") or to_twelvedata_symbol(symbol),
+        "provider": candles_payload.get("provider"),
+        "cache_status": candles_payload.get("cache_status"),
         "source": "twelvedata_time_series",
         "data_status": "real" if candles else "unavailable",
         "current_price": get_price(symbol).get("price"),
@@ -426,64 +452,213 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
         "annotations": annotations,
         "market_structure": market_structure,
         "warning_ru": candles_payload.get("warning_ru"),
+        "diagnostics": {
+            "attempts": candles_payload.get("attempts"),
+            "cache_status": candles_payload.get("cache_status"),
+            "provider": candles_payload.get("provider"),
+        },
     }
 
 
-def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
-    if not TWELVEDATA_API_KEY:
-        return {"candles": [], "warning_ru": "TWELVEDATA_API_KEY отсутствует."}
+def get_cached_candles(cache_key: str, max_age_seconds: int):
+    item = CANDLE_CACHE.get(cache_key)
+    if not item:
+        return None
+
+    age = (datetime.now(timezone.utc) - item["updated_at"]).total_seconds()
+    if age <= max_age_seconds:
+        return item["payload"]
+
+    return None
+
+
+def set_cached_candles(cache_key: str, payload: dict):
+    candles = payload.get("candles") or []
+    if candles:
+        CANDLE_CACHE[cache_key] = {
+            "updated_at": datetime.now(timezone.utc),
+            "payload": payload,
+        }
+
+
+def parse_td_values(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candles: list[dict[str, Any]] = []
+    for item in reversed(values):
+        dt = str(item.get("datetime"))
+        parsed = parse_td_datetime(dt)
+        candles.append(
+            {
+                "time": int(parsed.timestamp()),
+                "datetime": dt,
+                "open": float(item["open"]),
+                "high": float(item["high"]),
+                "low": float(item["low"]),
+                "close": float(item["close"]),
+                "volume": float(item.get("volume") or 0),
+            }
+        )
+    return candles
+
+
+def fetch_stooq_fallback(symbol: str, tf: str, limit: int = 160) -> dict[str, Any] | None:
+    normalized = normalize_symbol(symbol)
+    if tf.upper() != "M15":
+        return None
+
+    mapping = {
+        "EURUSD": "eurusd",
+        "GBPUSD": "gbpusd",
+        "USDJPY": "usdjpy",
+        "XAUUSD": "xauusd",
+    }
+    stooq_symbol = mapping.get(normalized)
+    if not stooq_symbol:
+        return None
 
     try:
-        response = requests.get(
-            "https://api.twelvedata.com/time_series",
-            params={
-                "symbol": to_twelvedata_symbol(symbol),
-                "interval": to_td_interval(tf),
-                "outputsize": limit,
-                "apikey": TWELVEDATA_API_KEY,
-                "format": "JSON",
-            },
-            timeout=8,
-        )
-        data = response.json()
+        response = requests.get(f"https://stooq.com/q/d/l/?s={stooq_symbol}&i=15", timeout=8)
+        response.raise_for_status()
+        rows = [line.strip() for line in response.text.splitlines() if line.strip()]
+        if len(rows) <= 1:
+            return None
 
-        if data.get("status") == "error":
-            return {
-                "candles": [],
-                "warning_ru": f"TwelveData error: {data.get('message')}",
-                "raw": data,
-            }
-
-        values = data.get("values") or []
-        if not values:
-            return {
-                "candles": [],
-                "warning_ru": "TwelveData returned empty values",
-                "raw": data,
-            }
-
-        candles = []
-
-        for item in reversed(values):
-            dt = str(item.get("datetime"))
+        candles: list[dict[str, Any]] = []
+        for row in rows[1:]:
+            parts = row.split(",")
+            if len(parts) < 6:
+                continue
+            dt = f"{parts[0]} {parts[1]}"
             parsed = parse_td_datetime(dt)
-
             candles.append(
                 {
                     "time": int(parsed.timestamp()),
                     "datetime": dt,
-                    "open": float(item["open"]),
-                    "high": float(item["high"]),
-                    "low": float(item["low"]),
-                    "close": float(item["close"]),
-                    "volume": float(item.get("volume") or 0),
+                    "open": float(parts[2]),
+                    "high": float(parts[3]),
+                    "low": float(parts[4]),
+                    "close": float(parts[5]),
+                    "volume": float(parts[6]) if len(parts) > 6 and parts[6] else 0.0,
                 }
             )
 
-        return {"candles": candles, "warning_ru": None}
+        candles = candles[-limit:]
+        if not candles:
+            return None
 
-    except Exception as exc:
-        return {"candles": [], "warning_ru": str(exc)}
+        return {
+            "candles": candles,
+            "warning_ru": "TwelveData временно недоступен, показаны реальные свечи из Stooq.",
+            "provider": "stooq_fallback",
+            "source_symbol": stooq_symbol,
+            "interval": "15m",
+            "cache_status": "live",
+            "attempts": 0,
+        }
+    except Exception:
+        return None
+
+
+def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
+    normalized_symbol = normalize_symbol(symbol)
+    source_symbol = to_twelvedata_symbol(normalized_symbol)
+    interval = to_td_interval(tf)
+    cache_key = f"{normalized_symbol}:{tf}:{limit}"
+
+    fresh = get_cached_candles(cache_key, CANDLE_CACHE_TTL_SECONDS)
+    if fresh:
+        return {
+            **fresh,
+            "provider": fresh.get("provider") or "twelvedata",
+            "source_symbol": fresh.get("source_symbol") or source_symbol,
+            "interval": fresh.get("interval") or interval,
+            "cache_status": "fresh",
+        }
+
+    if not TWELVEDATA_API_KEY:
+        return {
+            "candles": [],
+            "warning_ru": "TWELVEDATA_API_KEY отсутствует.",
+            "provider": "twelvedata",
+            "source_symbol": source_symbol,
+            "interval": interval,
+            "cache_status": "empty",
+            "attempts": 0,
+        }
+
+    attempts = 0
+    last_error = ""
+    backoffs = [0.4, 0.8, 1.2]
+    for idx, delay in enumerate(backoffs, start=1):
+        attempts = idx
+        try:
+            response = requests.get(
+                "https://api.twelvedata.com/time_series",
+                params={
+                    "symbol": source_symbol,
+                    "interval": interval,
+                    "outputsize": limit,
+                    "apikey": TWELVEDATA_API_KEY,
+                    "format": "JSON",
+                },
+                timeout=8,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") == "error":
+                last_error = f"TwelveData error: {data.get('message')}"
+            else:
+                values = data.get("values")
+                if not isinstance(values, list) or not values:
+                    last_error = "TwelveData returned empty values"
+                else:
+                    candles = parse_td_values(values)
+                    if candles:
+                        payload = {
+                            "candles": candles,
+                            "warning_ru": None,
+                            "provider": "twelvedata",
+                            "source_symbol": source_symbol,
+                            "interval": interval,
+                            "cache_status": "live",
+                            "attempts": attempts,
+                        }
+                        set_cached_candles(cache_key, payload)
+                        return payload
+                    last_error = "TwelveData returned empty values"
+        except Exception as exc:
+            last_error = str(exc)
+
+        if idx < len(backoffs):
+            time.sleep(delay)
+
+    stale = get_cached_candles(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
+    if stale:
+        return {
+            **stale,
+            "provider": stale.get("provider") or "twelvedata",
+            "source_symbol": stale.get("source_symbol") or source_symbol,
+            "interval": stale.get("interval") or interval,
+            "cache_status": "stale_fallback",
+            "warning_ru": "TwelveData временно недоступен, показаны последние реальные свечи из кеша.",
+            "attempts": attempts,
+        }
+
+    stooq_payload = fetch_stooq_fallback(normalized_symbol, tf, limit)
+    if stooq_payload:
+        stooq_payload["attempts"] = attempts
+        set_cached_candles(cache_key, stooq_payload)
+        return stooq_payload
+
+    return {
+        "candles": [],
+        "warning_ru": f"TwelveData недоступен после {attempts} попыток: {last_error}",
+        "provider": "twelvedata",
+        "source_symbol": source_symbol,
+        "interval": interval,
+        "cache_status": "empty",
+        "attempts": attempts,
+    }
 
 
 def build_annotations(candles: list[dict[str, Any]]) -> dict[str, Any]:
