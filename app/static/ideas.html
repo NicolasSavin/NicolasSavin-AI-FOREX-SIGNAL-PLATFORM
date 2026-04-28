@@ -448,6 +448,7 @@
       activeIdea: null,
       chart: null,
       series: null,
+      overlaySyncCleanup: null,
       currentTf: "M15",
     };
 
@@ -688,6 +689,10 @@
 
     function closeModal() {
       modalBackdrop.classList.remove("open");
+      if (typeof state.overlaySyncCleanup === "function") {
+        state.overlaySyncCleanup();
+        state.overlaySyncCleanup = null;
+      }
       if (state.chart) {
         state.chart.remove();
         state.chart = null;
@@ -701,6 +706,10 @@
       if (!container) return;
 
       if (state.chart) {
+        if (typeof state.overlaySyncCleanup === "function") {
+          state.overlaySyncCleanup();
+          state.overlaySyncCleanup = null;
+        }
         state.chart.remove();
         state.chart = null;
         state.series = null;
@@ -766,9 +775,44 @@
       state.chart = chart;
       state.series = series;
 
-      requestAnimationFrame(() => {
-        addIdeaOverlay(container, chart, series, candles, idea);
-      });
+      const redrawOverlay = () => addIdeaOverlay(container, chart, series, candles, idea);
+
+      state.overlaySyncCleanup = bindOverlayToChart(container, chart, redrawOverlay);
+      requestAnimationFrame(redrawOverlay);
+    }
+
+    function bindOverlayToChart(container, chart, redrawOverlay) {
+      if (!container || !chart || typeof redrawOverlay !== "function") return null;
+
+      let rafId = null;
+      const requestRedraw = () => {
+        if (rafId !== null) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          redrawOverlay();
+        });
+      };
+
+      const handleRangeChange = () => requestRedraw();
+      chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
+
+      const handleWindowResize = () => {
+        chart.applyOptions({
+          width: container.clientWidth,
+          height: container.clientHeight,
+        });
+        requestRedraw();
+      };
+      window.addEventListener("resize", handleWindowResize);
+
+      return () => {
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+        window.removeEventListener("resize", handleWindowResize);
+      };
     }
 
     function addCleanTradeLevels(series, idea) {
