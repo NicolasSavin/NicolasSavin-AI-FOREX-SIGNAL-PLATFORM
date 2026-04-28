@@ -172,6 +172,11 @@
     .badge-sell { color: #fff; background: linear-gradient(180deg, #d93f5b, #8f2034); }
     .badge-wait { color: #efeaff; background: linear-gradient(180deg, #5266bd, #293c78); }
     .badge-closed { color: #fff; background: linear-gradient(180deg, #708198, #36465d); }
+    .badge-status-active-live { color: #052416; background: linear-gradient(180deg, #65ffbf, #24d98a); }
+    .badge-status-active-missed { color: #fff8ef; background: linear-gradient(180deg, #ffb562, #d97706); }
+    .badge-status-tp { color: #022616; background: linear-gradient(180deg, #8dffc9, #10b981); }
+    .badge-status-sl { color: #fff2f5; background: linear-gradient(180deg, #ff7f99, #be123c); }
+    .badge-status-wait { color: #efeaff; background: linear-gradient(180deg, #7e8bce, #384b92); }
 
     .buy-text { color: var(--green); }
     .sell-text { color: var(--red); }
@@ -206,6 +211,25 @@
       line-height: 1.6;
       max-height: 150px;
       overflow: hidden;
+    }
+
+    .status-line {
+      margin: 10px 0 2px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .status-reason {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(95,145,203,.34);
+      background: rgba(3,14,28,.72);
+      color: #d9e9ff;
+      font-size: 12px;
+      line-height: 1.55;
     }
 
     .levels,
@@ -587,6 +611,8 @@
       const signal = normalizeSignal(idea.final_signal || idea.signal || idea.direction || idea.bias);
       const confidence = numberOrDash(idea.final_confidence ?? idea.confidence);
       const summary = pickText(idea);
+      const statusView = resolveIdeaStatusView(idea);
+      const statusReason = buildIdeaStatusReason(idea, statusView);
 
       card.className = "card";
       card.dataset.ideaId = id;
@@ -608,6 +634,10 @@
         </div>
 
         <div class="box">${escapeHtml(summary)}</div>
+        <div class="status-line">
+          <span class="badge ${statusView.badgeClass}">${escapeHtml(statusView.icon + " " + statusView.label)}</span>
+        </div>
+        <div class="status-reason">${escapeHtml(statusReason)}</div>
 
         <div class="levels">
           <div class="level entry">ENTRY<br>${formatValue(idea.entry || idea.entry_price || idea.entry_zone)}</div>
@@ -618,7 +648,7 @@
 
         <div class="footer">
           <span>${escapeHtml(symbol)}</span>
-          <span>${escapeHtml(idea.status || "active")}</span>
+          <span>${escapeHtml(statusView.code)}</span>
         </div>
       `;
 
@@ -632,8 +662,10 @@
 
       const symbol = normalizeSymbol(idea.symbol || idea.pair || "MARKET");
       const signal = normalizeSignal(idea.final_signal || idea.signal || idea.direction || idea.bias);
+      const statusView = resolveIdeaStatusView(idea);
+      const statusReason = buildIdeaStatusReason(idea, statusView);
 
-      modalTitle.textContent = `${symbol} • ${signal}`;
+      modalTitle.textContent = `${symbol} • ${signal} • ${statusView.label}`;
       modalSubtitle.textContent = pickText(idea);
 
       modalContent.innerHTML = `
@@ -646,6 +678,7 @@
 
         <div class="modal-section-title">Основная идея</div>
         <div class="box modal-text">${escapeHtml(pickText(idea))}</div>
+        <div class="status-reason">${escapeHtml(statusReason)}</div>
 
         <div class="modal-section-title">График и разметка</div>
 
@@ -1338,6 +1371,77 @@
       if (signal === "BUY") return "badge-buy";
       if (signal === "SELL") return "badge-sell";
       return "badge-wait";
+    }
+
+    function resolveIdeaStatusView(idea) {
+      const rawStatus = String(idea.status || "").trim().toLowerCase();
+      const entryDeviationPct = toNumber(idea.entry_deviation_pct ?? idea.entryDeviationPct);
+      const hasMissedEntry = Number.isFinite(entryDeviationPct) && entryDeviationPct > 0.35;
+
+      if (rawStatus === "tp_hit") {
+        return {
+          code: "tp_hit",
+          label: "Завершена (TP достигнут)",
+          icon: "🎯",
+          badgeClass: "badge-status-tp",
+        };
+      }
+      if (rawStatus === "sl_hit") {
+        return {
+          code: "sl_hit",
+          label: "Завершена (SL сработал)",
+          icon: "🛑",
+          badgeClass: "badge-status-sl",
+        };
+      }
+      if (["active", "triggered"].includes(rawStatus) && hasMissedEntry) {
+        return {
+          code: rawStatus || "active",
+          label: "Активная (момент упущен)",
+          icon: "⏳",
+          badgeClass: "badge-status-active-missed",
+        };
+      }
+      if (["active", "triggered"].includes(rawStatus)) {
+        return {
+          code: rawStatus,
+          label: "Активная (можно входить)",
+          icon: "✅",
+          badgeClass: "badge-status-active-live",
+        };
+      }
+      return {
+        code: rawStatus || "waiting",
+        label: "Ожидание подтверждения",
+        icon: "👀",
+        badgeClass: "badge-status-wait",
+      };
+    }
+
+    function buildIdeaStatusReason(idea, statusView) {
+      const updates = Array.isArray(idea.updates) ? idea.updates : [];
+      const history = Array.isArray(idea.history) ? idea.history : [];
+      const latestUpdate = updates.length ? updates[updates.length - 1] : null;
+      const latestHistory = history.length ? history[history.length - 1] : null;
+      const lastUpdateReason = String((latestUpdate && latestUpdate.explanation) || (latestHistory && latestHistory.note) || "").trim();
+      if (lastUpdateReason) return lastUpdateReason;
+
+      const closeExplanation = String(idea.close_explanation || "").trim();
+      if (closeExplanation) return closeExplanation;
+
+      const fallbackReason = String(idea.meaningful_update_reason || idea.update_summary || "").trim();
+      if (fallbackReason) return fallbackReason;
+
+      if (statusView.code === "tp_hit") {
+        return "Цена достигла целевой зоны ликвидности (TP), поэтому идея закрыта с выполнением сценария.";
+      }
+      if (statusView.code === "sl_hit") {
+        return "Рынок нарушил уровень инвалидации (SL), сценарий потерял актуальность и идея закрыта.";
+      }
+      if (statusView.label.includes("момент упущен")) {
+        return "Сигнал остаётся направленным, но цена уже заметно ушла от оптимальной точки входа. Лучше ждать новый откат или переразметку.";
+      }
+      return "Сценарий остаётся в работе: ждём подтверждение структуры и соблюдаем ограничения по риску.";
     }
 
     function toNumber(value) {
