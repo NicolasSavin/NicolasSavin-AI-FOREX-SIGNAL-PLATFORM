@@ -21,6 +21,35 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
 SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+HEATMAP_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"]
+HEATMAP_PAIRS = [
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "USDCHF",
+    "USDCAD",
+    "AUDUSD",
+    "NZDUSD",
+    "EURGBP",
+    "EURJPY",
+    "EURCHF",
+    "EURCAD",
+    "EURAUD",
+    "EURNZD",
+    "GBPJPY",
+    "GBPCHF",
+    "GBPCAD",
+    "GBPAUD",
+    "GBPNZD",
+    "AUDJPY",
+    "AUDCAD",
+    "AUDNZD",
+    "NZDJPY",
+    "NZDCAD",
+    "CADJPY",
+    "CADCHF",
+    "CHFJPY",
+]
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "").strip()
 TRADING_ECONOMICS_KEY = os.getenv("TRADING_ECONOMICS_KEY", "").strip()
@@ -366,6 +395,11 @@ def api_calendar():
 @app.get("/heatmap/page", include_in_schema=False)
 def heatmap_page():
     return FileResponse(STATIC_DIR / "heatmap.html")
+
+
+@app.get("/api/heatmap")
+def api_heatmap():
+    return build_currency_heatmap()
 
 
 @app.get("/api/signals")
@@ -1503,6 +1537,140 @@ def get_price(symbol: str) -> dict[str, Any]:
             "data_status": "unavailable",
             "warning_ru": str(exc),
         }
+
+
+def _fetch_twelvedata_previous_close(symbol: str) -> float | None:
+    if not TWELVEDATA_API_KEY:
+        return None
+    try:
+        response = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params={
+                "symbol": to_twelvedata_symbol(symbol),
+                "interval": "1day",
+                "outputsize": 2,
+                "apikey": TWELVEDATA_API_KEY,
+            },
+            timeout=8,
+        )
+        data = response.json()
+        values = data.get("values")
+        if not isinstance(values, list) or len(values) < 2:
+            return None
+        return first_float(values[1].get("close"))
+    except Exception:
+        return None
+
+
+def _fetch_heatmap_pair(symbol: str) -> dict[str, Any]:
+    pair = normalize_symbol(symbol)
+    base = pair[:3]
+    quote = pair[3:]
+    row = {
+        "symbol": pair,
+        "base": base,
+        "quote": quote,
+        "price": None,
+        "change_pct": None,
+        "data_status": "unavailable",
+    }
+
+    if len(pair) != 6:
+        return row
+    if not TWELVEDATA_API_KEY:
+        return row
+
+    try:
+        response = requests.get(
+            "https://api.twelvedata.com/quote",
+            params={"symbol": to_twelvedata_symbol(pair), "apikey": TWELVEDATA_API_KEY},
+            timeout=8,
+        )
+        data = response.json()
+        if data.get("status") == "error":
+            return row
+
+        current_price = first_float(data.get("close"), data.get("price"))
+        previous_close = first_float(data.get("previous_close"))
+        if previous_close is None:
+            previous_close = _fetch_twelvedata_previous_close(pair)
+
+        if current_price is None or previous_close in (None, 0):
+            return row
+
+        change_pct = ((current_price - previous_close) / previous_close) * 100
+        row["price"] = round(float(current_price), 6)
+        row["change_pct"] = round(float(change_pct), 4)
+        row["data_status"] = "delayed"
+        return row
+    except Exception:
+        return row
+
+
+def build_currency_heatmap() -> dict[str, Any]:
+    currencies = HEATMAP_CURRENCIES.copy()
+    pair_rows: list[dict[str, Any]] = []
+    strength_totals: dict[str, float] = {currency: 0.0 for currency in currencies}
+    strength_counts: dict[str, int] = {currency: 0 for currency in currencies}
+    real_pairs_count = 0
+    unavailable_pairs_count = 0
+
+    for symbol in HEATMAP_PAIRS:
+        row = _fetch_heatmap_pair(symbol)
+        pair_rows.append(row)
+        if row.get("change_pct") is None:
+            unavailable_pairs_count += 1
+            continue
+
+        real_pairs_count += 1
+        change_pct = float(row["change_pct"])
+        base = str(row.get("base") or "")
+        quote = str(row.get("quote") or "")
+
+        if base in strength_totals:
+            strength_totals[base] += change_pct
+            strength_counts[base] += 1
+        if quote in strength_totals:
+            strength_totals[quote] -= change_pct
+            strength_counts[quote] += 1
+
+    if real_pairs_count == 0:
+        return {
+            "currencies": currencies,
+            "pairs": [],
+            "strength": [],
+            "warning": "Реальные FX-данные временно недоступны. Тепловая карта не строится без котировок.",
+            "updated_at_utc": now_utc(),
+            "diagnostics": {
+                "real_pairs_count": 0,
+                "unavailable_pairs_count": len(HEATMAP_PAIRS),
+                "provider": "twelvedata",
+            },
+        }
+
+    strength: list[dict[str, Any]] = []
+    for currency in currencies:
+        count = strength_counts[currency]
+        if count <= 0:
+            continue
+        score = strength_totals[currency] / count
+        strength.append({"currency": currency, "score": round(score, 4)})
+
+    strength.sort(key=lambda item: item["score"], reverse=True)
+    for idx, item in enumerate(strength, start=1):
+        item["rank"] = idx
+
+    return {
+        "currencies": currencies,
+        "pairs": pair_rows,
+        "strength": strength,
+        "updated_at_utc": now_utc(),
+        "diagnostics": {
+            "real_pairs_count": real_pairs_count,
+            "unavailable_pairs_count": unavailable_pairs_count,
+            "provider": "twelvedata",
+        },
+    }
 
 
 def move_to_archive(trade: dict[str, Any]) -> None:
