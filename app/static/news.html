@@ -98,7 +98,16 @@
         items.forEach((item) => {
           const card = document.createElement("article");
           card.className = "news-card";
+          const longStory = item.long_story_ru || item.summary || "Описание недоступно.";
           card.innerHTML = `
+            <div class="news-card__image-wrap news-image-wrap">
+              <img
+                src="${escapeHtml(item.image_url || "")}"
+                alt="${escapeHtml(item.image_alt || item.title || "Иллюстрация новости")}"
+                loading="lazy"
+                onerror="this.closest('.news-image-wrap').classList.add('is-fallback'); this.remove();"
+              />
+            </div>
             <div class="news-card__header news-card__header--stacked">
               <p class="news-card__eyebrow">${escapeHtml(item.source || "Источник")}</p>
               <h3 class="news-card__title">${escapeHtml(item.title || "Новость без заголовка")}</h3>
@@ -108,8 +117,12 @@
               </div>
             </div>
             <section class="news-detail-box">
-              <h4>Разбор</h4>
-              <p class="news-card__text">${escapeHtml(item.summary || "Описание недоступно.").replace(/\n/g, "<br/>")}</p>
+              <h4>Коротко</h4>
+              <p class="news-card__text">${escapeHtml(item.summary || "Описание недоступно.")}</p>
+            </section>
+            <section class="news-detail-box">
+              <h4>Подробно (в популярном стиле, с лёгким юмором)</h4>
+              <p class="news-card__story">${escapeHtml(longStory)}</p>
             </section>
             <section class="news-detail-box news-detail-box--impact">
               <h4>Рыночный эффект</h4>

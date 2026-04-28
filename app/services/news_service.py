@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+import re
 from datetime import datetime, timedelta, timezone
 from hashlib import sha1
 from time import time
@@ -218,6 +220,118 @@ PUBLIC_RSS_SOURCES = [
 ]
 
 
+def strip_html(value: str) -> str:
+    decoded = html.unescape(str(value or ""))
+    without_script = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", decoded, flags=re.IGNORECASE | re.DOTALL)
+    without_tags = re.sub(r"<[^>]+>", " ", without_script)
+    normalized = re.sub(r"\s+", " ", without_tags).strip()
+    return normalized
+
+
+def extract_news_image(entry: dict) -> str | None:
+    def _pick_url(value: Any) -> str | None:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    media_content = entry.get("media_content") or []
+    if isinstance(media_content, list):
+        for item in media_content:
+            if isinstance(item, dict):
+                candidate = _pick_url(item.get("url"))
+                if candidate:
+                    return candidate
+
+    media_thumbnail = entry.get("media_thumbnail") or []
+    if isinstance(media_thumbnail, list):
+        for item in media_thumbnail:
+            if isinstance(item, dict):
+                candidate = _pick_url(item.get("url"))
+                if candidate:
+                    return candidate
+
+    for key in ("links", "enclosures"):
+        rows = entry.get(key) or []
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                mime = str(row.get("type") or row.get("title") or "").lower()
+                href = _pick_url(row.get("href") or row.get("url"))
+                if href and ("image/" in mime or any(href.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"])):
+                    return href
+
+    summary_html = str(entry.get("summary") or entry.get("description") or "")
+    image_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', summary_html, flags=re.IGNORECASE)
+    if image_match:
+        return image_match.group(1).strip()
+    return None
+
+
+def pick_fallback_news_image(title: str, summary: str, markets: list[str]) -> str:
+    text = f"{title} {summary} {' '.join(markets)}".lower()
+
+    if "xau" in text or "gold" in text or "золото" in text:
+        return "/static/news-placeholders/gold.svg"
+    if "oil" in text or "brent" in text or "energy" in text or "нефть" in text:
+        return "/static/news-placeholders/energy.svg"
+    if "stocks" in text or "nasdaq" in text or "s&p" in text or "equities" in text or "акции" in text:
+        return "/static/news-placeholders/stocks.svg"
+    if "usd" in text or "fed" in text or "dollar" in text or "фрс" in text or "доллар" in text:
+        return "/static/news-placeholders/usd.svg"
+
+    return "/static/news-placeholders/default.svg"
+
+
+def build_long_news_story(title: str, source_summary: str, markets: list[str], tone: str) -> dict[str, str]:
+    clean_title = strip_html(title).strip()
+    clean_summary = strip_html(source_summary).strip()
+
+    what_happened = (
+        f"Что случилось: {clean_title}. "
+        f"{clean_summary[:450] if clean_summary else 'Источник сообщил о событии, которое рынок может учитывать в текущем фундаментальном фоне.'}"
+    )
+
+    why_it_matters = (
+        "Почему это важно: такие новости влияют на ожидания по ставкам, инфляции, доллару, золоту и аппетиту к риску. "
+        "Рынок обычно сначала делает резкое лицо, потом открывает календарь, потом вспоминает про ФРС."
+    )
+
+    markets_text = ", ".join(markets or ["USD", "EURUSD", "GBPUSD", "XAUUSD"])
+
+    what_next = (
+        f"К чему может привести: в фокусе {markets_text}. "
+        "Если новость усиливает ожидания жёсткой политики центробанков, доллар может получить поддержку, "
+        "а золото и риск-активы — давление. Если фон мягче, рынок может снова включить режим «риск-он»."
+    )
+
+    humor = (
+        "Комментарий в популярном стиле и с лёгким юмором: рынок сейчас как трейдер перед NFP — уверенно кивает, "
+        "но держит палец рядом с кнопкой закрытия позиции."
+    )
+
+    if tone == "dovish":
+        humor = (
+            "Комментарий в популярном стиле и с лёгким юмором: рынок услышал более мягкий тон и будто снял галстук, "
+            "но терминал всё равно не закрывает."
+        )
+    elif tone in {"hawkish", "risk_off"}:
+        humor = (
+            "Комментарий в популярном стиле и с лёгким юмором: при жёстком фоне рынок становится серьёзным, "
+            "как чат трейдеров за минуту до публикации CPI."
+        )
+
+    long_story = f"{what_happened}\n\n{why_it_matters}\n\n{what_next}\n\n{humor}"
+
+    return {
+        "what_happened_ru": what_happened,
+        "why_it_matters_ru": why_it_matters,
+        "what_next_ru": what_next,
+        "grok_style_comment_ru": humor,
+        "long_story_ru": long_story,
+    }
+
+
 def build_market_explanation(title: str, summary: str) -> dict[str, Any]:
     text = f"{title} {summary}".lower()
 
@@ -255,12 +369,9 @@ def build_market_explanation(title: str, summary: str) -> dict[str, Any]:
 
     summary_ru = (
         "Что случилось: "
-        + title.strip()
-        + "\n\n"
-        + "Почему это важно: эта новость может повлиять на ожидания по ставкам, доллар, золото и общий аппетит к риску. "
-        + "Рынок, как обычно, сначала пугается, потом делает вид, что всё было очевидно.\n\n"
-        + "К чему может привести: "
-        + impact
+        + strip_html(title).strip()
+        + ". "
+        + (strip_html(summary).strip()[:260] if summary else "Источник опубликовал обновление по рынку.")
     )
 
     return {
@@ -290,10 +401,31 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
             feed = feedparser.parse(response.content)
             entries = getattr(feed, "entries", [])[: max(limit, 12)]
             for entry in entries:
-                title = str(entry.get("title") or "Новость без заголовка").strip()
-                summary = str(entry.get("summary") or entry.get("description") or "").strip()
-                enriched = build_market_explanation(title=title, summary=summary)
-                published_raw = entry.get("published") or entry.get("updated") or now_utc.isoformat()
+                try:
+                    title = str(entry.get("title") or "Новость без заголовка").strip()
+                    summary = str(entry.get("summary") or entry.get("description") or "").strip()
+                    enriched = build_market_explanation(title=title, summary=summary)
+                    published_raw = entry.get("published") or entry.get("updated") or now_utc.isoformat()
+                    image_url = extract_news_image(entry)
+                    fallback_image = pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"])
+                    safe_image_url = image_url or fallback_image
+                    image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
+                    story = build_long_news_story(title=title, source_summary=summary, markets=enriched["markets"], tone=enriched["tone"])
+                except Exception:
+                    title = str(entry.get("title") or "Новость без заголовка").strip()
+                    summary = str(entry.get("summary") or entry.get("description") or "").strip()
+                    published_raw = entry.get("published") or entry.get("updated") or now_utc.isoformat()
+                    enriched = build_market_explanation(title=title, summary=summary)
+                    safe_image_url = pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"])
+                    image_alt = "Иллюстрация новости"
+                    basic_summary = strip_html(summary)[:350] or "Источник сообщил о событии, детали уточняются."
+                    story = {
+                        "what_happened_ru": f"Что случилось: {strip_html(title)}. {basic_summary}",
+                        "why_it_matters_ru": "Почему это важно: рынок пересматривает ожидания по ставкам и риску.",
+                        "what_next_ru": f"К чему может привести: внимание на {', '.join(enriched['markets'])}.",
+                        "grok_style_comment_ru": "Комментарий в популярном стиле и с лёгким юмором: волатильность любит внезапные сюжеты.",
+                        "long_story_ru": f"Что случилось: {strip_html(title)}. {basic_summary}",
+                    }
                 items.append(
                     {
                         "title": title,
@@ -304,6 +436,13 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         "impact": enriched["impact"],
                         "markets": enriched["markets"],
                         "tone": enriched["tone"],
+                        "image_url": safe_image_url,
+                        "image_alt": image_alt,
+                        "what_happened_ru": story["what_happened_ru"],
+                        "why_it_matters_ru": story["why_it_matters_ru"],
+                        "what_next_ru": story["what_next_ru"],
+                        "grok_style_comment_ru": story["grok_style_comment_ru"],
+                        "long_story_ru": story["long_story_ru"],
                     }
                 )
         except Exception:
