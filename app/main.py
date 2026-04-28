@@ -534,23 +534,33 @@ def build_signal(symbol: str) -> dict[str, Any]:
             "htf_reason": decision.reason,
         }
 
+    auto_close_allowed = is_real_market_price_available(price_data)
     runtime_status, runtime_text, runtime_color, close_result = get_runtime_status(
         price=current_price,
         entry=safe_float(trade.get("entry")),
         sl=safe_float(trade.get("sl")),
         tp=safe_float(trade.get("tp")),
         signal=trade.get("signal"),
+        allow_close=auto_close_allowed,
     )
 
-    if close_result in {"TP", "SL"}:
+    auto_close_eval = evaluate_trade_result_by_price(trade=trade, current_price=current_price)
+
+    if auto_close_allowed and auto_close_eval.get("is_closed"):
+        close_result = auto_close_eval.get("result")
         archived = {
             **trade,
             "current_price": current_price,
             "result": close_result,
-            "runtime_status": runtime_status,
-            "runtime_text": runtime_text,
+            "status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL",
+            "runtime_status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL",
+            "runtime_text": auto_close_eval.get("reason_ru"),
             "runtime_color": runtime_color,
+            "close_reason": auto_close_eval.get("close_reason"),
+            "close_reason_ru": auto_close_eval.get("reason_ru"),
             "closed_at": now_utc(),
+            "closed_price": current_price,
+            "is_archived": True,
         }
 
         move_to_archive(archived)
@@ -559,6 +569,10 @@ def build_signal(symbol: str) -> dict[str, Any]:
         save_json(ACTIVE_FILE, active)
 
         trade = archived
+        runtime_status = str(archived.get("runtime_status") or runtime_status)
+        runtime_text = str(archived.get("runtime_text") or runtime_text)
+    elif not auto_close_allowed and trade.get("signal") in {"BUY", "SELL"}:
+        trade["auto_close_skipped_ru"] = "Автозакрытие пропущено: нет реальной рыночной цены."
 
     summary = build_summary(
         symbol=symbol,
@@ -614,6 +628,7 @@ def build_signal(symbol: str) -> dict[str, Any]:
         "full_text": summary,
         "compact_summary": summary,
         "warning_ru": human_price_warning(price_data),
+        "auto_close_skipped_ru": trade.get("auto_close_skipped_ru"),
         "setup_quality": "HTF_CONTEXT_REAL_CANDLES_ONLY",
         "risk_filter": "MN_W1_D1_H4_H1_M15_ALIGNMENT",
         "trade_permission": decision.allowed and runtime_status == "ACTIVE",
@@ -1213,17 +1228,84 @@ def build_market_structure(
     }
 
 
-def get_runtime_status(price, entry, sl, tp, signal):
+def evaluate_trade_result_by_price(trade: dict[str, Any], current_price: float | None) -> dict[str, Any]:
+    if current_price is None:
+        return {
+            "is_closed": False,
+            "result": None,
+            "reason_ru": "Нет реальной текущей цены — идея не закрывается автоматически.",
+        }
+
+    signal = str(trade.get("signal") or trade.get("final_signal") or "").upper()
+    entry = safe_float(trade.get("entry") or trade.get("entry_price"))
+    sl = safe_float(trade.get("sl") or trade.get("stop_loss"))
+    tp = safe_float(trade.get("tp") or trade.get("take_profit"))
+
+    if signal not in {"BUY", "SELL"}:
+        return {"is_closed": False, "result": None, "reason_ru": "Идея не является BUY/SELL."}
+
+    if entry is None or sl is None or tp is None:
+        return {
+            "is_closed": False,
+            "result": None,
+            "reason_ru": "Недостаточно уровней Entry/SL/TP для автоматического закрытия.",
+        }
+
+    if signal == "BUY":
+        if current_price >= tp:
+            return {
+                "is_closed": True,
+                "result": "TP",
+                "close_reason": "take_profit_hit",
+                "reason_ru": "TP достигнут по реальной рыночной цене.",
+            }
+        if current_price <= sl:
+            return {
+                "is_closed": True,
+                "result": "SL",
+                "close_reason": "stop_loss_hit",
+                "reason_ru": "SL достигнут по реальной рыночной цене.",
+            }
+
+    if signal == "SELL":
+        if current_price <= tp:
+            return {
+                "is_closed": True,
+                "result": "TP",
+                "close_reason": "take_profit_hit",
+                "reason_ru": "TP достигнут по реальной рыночной цене.",
+            }
+        if current_price >= sl:
+            return {
+                "is_closed": True,
+                "result": "SL",
+                "close_reason": "stop_loss_hit",
+                "reason_ru": "SL достигнут по реальной рыночной цене.",
+            }
+
+    return {
+        "is_closed": False,
+        "result": None,
+        "reason_ru": "Цена ещё не достигла TP или SL.",
+    }
+
+
+def is_real_market_price_available(price_data: dict[str, Any]) -> bool:
+    status = str(price_data.get("data_status") or "").lower()
+    return status in {"real", "delayed"} or bool(price_data.get("is_live_market_data") is True)
+
+
+def get_runtime_status(price, entry, sl, tp, signal, allow_close: bool = True):
     if price is None or entry is None:
         return "WAIT", "Нет текущей цены.", "violet", None
 
-    if signal == "BUY":
+    if allow_close and signal == "BUY":
         if tp is not None and price >= tp:
             return "CLOSED_TP", "TP достигнут. Идея закрыта в плюс и перенесена в архив.", "blue", "TP"
         if sl is not None and price <= sl:
             return "CLOSED_SL", "SL достигнут. Идея закрыта в минус и перенесена в архив.", "red", "SL"
 
-    if signal == "SELL":
+    if allow_close and signal == "SELL":
         if tp is not None and price <= tp:
             return "CLOSED_TP", "TP достигнут. Идея закрыта в плюс и перенесена в архив.", "blue", "TP"
         if sl is not None and price >= sl:
@@ -1426,7 +1508,10 @@ def get_price(symbol: str) -> dict[str, Any]:
 def move_to_archive(trade: dict[str, Any]) -> None:
     archive = load_json(ARCHIVE_FILE)
 
-    if any(x.get("id") == trade.get("id") and x.get("result") == trade.get("result") for x in archive):
+    existing_index = next((idx for idx, item in enumerate(archive) if item.get("id") == trade.get("id")), None)
+    if existing_index is not None:
+        archive[existing_index] = {**archive[existing_index], **trade}
+        save_json(ARCHIVE_FILE, archive)
         return
 
     archive.append(trade)

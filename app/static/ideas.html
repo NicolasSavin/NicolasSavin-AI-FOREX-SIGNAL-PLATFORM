@@ -274,6 +274,13 @@
       line-height: 1.55;
     }
 
+    .archive-meta {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #95afca;
+      line-height: 1.5;
+    }
+
     .levels,
     .modal-grid {
       display: grid;
@@ -804,7 +811,9 @@
     function isArchivedIdea(idea) {
       const status = String(idea?.status || "").toLowerCase();
       const isClosedByStatus = ["tp_hit", "sl_hit", "archived", "closed", "expired"].some((x) => status.includes(x));
-      return isClosedByStatus || isIdeaExpired(idea);
+      const result = String(idea?.result || "").toUpperCase();
+      const isClosedByResult = ["TP", "SL", "EXPIRED"].includes(result);
+      return Boolean(idea?.is_archived) || isClosedByStatus || isClosedByResult || isIdeaExpired(idea);
     }
 
     function renderArchive(archivedIdeas) {
@@ -847,6 +856,7 @@
       const summary = pickText(idea);
       const statusView = resolveIdeaStatusView(idea);
       const statusReason = buildIdeaStatusReason(idea, statusView);
+      const closeMeta = buildCloseMeta(idea);
 
       card.className = "card";
       card.dataset.ideaId = id;
@@ -872,6 +882,7 @@
           <span class="badge ${statusView.badgeClass}">${escapeHtml(statusView.icon + " " + statusView.label)}</span>
         </div>
         <div class="status-reason">${escapeHtml(statusReason)}</div>
+        ${closeMeta}
 
         <div class="levels">
           <div class="level entry">ENTRY<br>${formatValue(idea.entry || idea.entry_price || idea.entry_zone)}</div>
@@ -1680,23 +1691,32 @@
 
     function resolveIdeaStatusView(idea) {
       const rawStatus = String(idea.status || "").trim().toLowerCase();
+      const result = String(idea.result || "").trim().toUpperCase();
       const entryDeviationPct = toNumber(idea.entry_deviation_pct ?? idea.entryDeviationPct);
       const hasMissedEntry = Number.isFinite(entryDeviationPct) && entryDeviationPct > 0.35;
 
-      if (rawStatus === "tp_hit") {
+      if (rawStatus === "closed_tp" || rawStatus === "tp_hit" || result === "TP") {
         return {
-          code: "tp_hit",
+          code: "closed_tp",
           label: "Завершена (TP достигнут)",
           icon: "🎯",
           badgeClass: "badge-status-tp",
         };
       }
-      if (rawStatus === "sl_hit") {
+      if (rawStatus === "closed_sl" || rawStatus === "sl_hit" || result === "SL") {
         return {
-          code: "sl_hit",
+          code: "closed_sl",
           label: "Завершена (SL сработал)",
           icon: "🛑",
           badgeClass: "badge-status-sl",
+        };
+      }
+      if (rawStatus === "expired" || result === "EXPIRED") {
+        return {
+          code: "expired",
+          label: "Истекла по времени",
+          icon: "⌛",
+          badgeClass: "badge-status-wait",
         };
       }
       if (["active", "triggered"].includes(rawStatus) && hasMissedEntry) {
@@ -1737,16 +1757,43 @@
       const fallbackReason = String(idea.meaningful_update_reason || idea.update_summary || "").trim();
       if (fallbackReason) return fallbackReason;
 
-      if (statusView.code === "tp_hit") {
+      if (statusView.code === "tp_hit" || statusView.code === "closed_tp") {
         return "Цена достигла целевой зоны ликвидности (TP), поэтому идея закрыта с выполнением сценария.";
       }
-      if (statusView.code === "sl_hit") {
+      if (statusView.code === "sl_hit" || statusView.code === "closed_sl") {
         return "Рынок нарушил уровень инвалидации (SL), сценарий потерял актуальность и идея закрыта.";
+      }
+      if (statusView.code === "expired") {
+        return "Идея истекла по времени и закрыта без фиксации TP/SL результата.";
       }
       if (statusView.label.includes("момент упущен")) {
         return "Сигнал остаётся направленным, но цена уже заметно ушла от оптимальной точки входа. Лучше ждать новый откат или переразметку.";
       }
       return "Сценарий остаётся в работе: ждём подтверждение структуры и соблюдаем ограничения по риску.";
+    }
+
+    function buildCloseMeta(idea) {
+      if (!isArchivedIdea(idea)) return "";
+      const result = String(idea.result || "").toUpperCase();
+      const resultClass = result === "TP" ? "badge-status-tp" : result === "SL" ? "badge-status-sl" : "badge-status-wait";
+      const closedPrice = formatValue(idea.closed_price ?? idea.current_price);
+      const closedAt = formatDateTime(idea.closed_at);
+      const closeReason = String(idea.close_reason_ru || idea.runtime_text || "").trim() || "Причина закрытия не указана.";
+      return `
+        <div class="archive-meta">
+          <div><span class="badge ${resultClass}">${escapeHtml(result || "CLOSED")}</span></div>
+          <div>Цена закрытия: ${escapeHtml(closedPrice)}</div>
+          <div>Время закрытия: ${escapeHtml(closedAt)}</div>
+          <div>Причина: ${escapeHtml(closeReason)}</div>
+        </div>
+      `;
+    }
+
+    function formatDateTime(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString("ru-RU", { hour12: false });
     }
 
     function toNumber(value) {
