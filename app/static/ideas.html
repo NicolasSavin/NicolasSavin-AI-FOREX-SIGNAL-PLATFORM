@@ -359,6 +359,12 @@
       box-shadow: none;
     }
 
+    .ideas-modal__content {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
     .modal-head,
     .ideas-modal__header {
       display: flex;
@@ -424,6 +430,22 @@
       gap: 0;
     }
 
+    .ideas-modal__top {
+      flex: 0 0 auto;
+      max-height: 45vh;
+      overflow-y: auto;
+      min-height: 0;
+      padding-right: 4px;
+    }
+
+    .ideas-modal__bottom {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
     .chart-wrap {
       margin: 12px 0 0;
       border: 1px solid rgba(95,145,203,.42);
@@ -484,7 +506,14 @@
 
     .ideas-modal__chart {
       flex: 1;
-      min-height: 0;
+      min-height: 300px;
+      width: 100%;
+    }
+
+    .ideas-modal__chart canvas,
+    .ideas-modal__chart svg {
+      width: 100% !important;
+      height: 100% !important;
     }
 
     .chart-note {
@@ -579,6 +608,12 @@
       .hero { flex-direction: column; }
       .grid, .stats, .modal-grid, .legend-grid, .ideas-archive__list { grid-template-columns: 1fr; }
       .chart { height: 390px; }
+    }
+
+    @media (max-width: 768px) {
+      .ideas-modal__top {
+        max-height: 50vh;
+      }
     }
   </style>
 </head>
@@ -903,42 +938,45 @@
       modalSubtitle.textContent = pickText(idea);
 
       modalContent.innerHTML = `
-        <div class="modal-grid">
-          <div class="level entry">ENTRY<br>${formatValue(idea.entry || idea.entry_price || idea.entry_zone)}</div>
-          <div class="level sl">SL<br>${formatValue(idea.stop_loss || idea.stopLoss || idea.sl)}</div>
-          <div class="level tp">TP<br>${formatValue(idea.take_profit || idea.takeProfit || idea.tp)}</div>
-          <div class="level rr">Confidence<br>${numberOrDash(idea.final_confidence ?? idea.confidence)}%</div>
+        <div class="ideas-modal__top">
+          <div class="modal-grid">
+            <div class="level entry">ENTRY<br>${formatValue(idea.entry || idea.entry_price || idea.entry_zone)}</div>
+            <div class="level sl">SL<br>${formatValue(idea.stop_loss || idea.stopLoss || idea.sl)}</div>
+            <div class="level tp">TP<br>${formatValue(idea.take_profit || idea.takeProfit || idea.tp)}</div>
+            <div class="level rr">Confidence<br>${numberOrDash(idea.final_confidence ?? idea.confidence)}%</div>
+          </div>
+
+          <div class="modal-section-title">Основная идея</div>
+          <div class="box modal-text">${escapeHtml(pickText(idea))}</div>
+          ${renderFundamentalContext(idea)}
+          <div class="status-reason">${escapeHtml(statusReason)}</div>
+
+          <div class="modal-section-title">График и разметка</div>
+          <div class="legend-grid">
+              <div class="legend-item" style="color:var(--yellow)">ENTRY — точка входа</div>
+              <div class="legend-item" style="color:var(--red)">SL — отмена идеи</div>
+              <div class="legend-item" style="color:var(--green)">TP — цель идеи</div>
+              <div class="legend-item" style="color:var(--violet)">OB — ордерблок</div>
+              <div class="legend-item" style="color:#ff4d6d">Breaker — пробитый OB</div>
+              <div class="legend-item" style="color:var(--orange)">FVG — имбаланс</div>
+              <div class="legend-item" style="color:var(--blue)">Liquidity — ликвидность</div>
+              <div class="legend-item" style="color:var(--pattern)">Pattern — графический паттерн</div>
+          </div>
         </div>
 
-        <div class="modal-section-title">Основная идея</div>
-        <div class="box modal-text">${escapeHtml(pickText(idea))}</div>
-        ${renderFundamentalContext(idea)}
-        <div class="status-reason">${escapeHtml(statusReason)}</div>
+        <div class="ideas-modal__bottom">
+          <div class="chart-wrap">
+            <div class="chart-toolbar">
+              <button class="tf-btn" data-tf="M15">M15</button>
+              <button class="tf-btn" data-tf="H1">H1</button>
+              <button class="tf-btn" data-tf="H4">H4</button>
+            </div>
 
-        <div class="modal-section-title">График и разметка</div>
+            <div id="ideaChart" class="chart ideas-modal__chart"></div>
 
-        <div class="chart-wrap">
-          <div class="chart-toolbar">
-            <button class="tf-btn" data-tf="M15">M15</button>
-            <button class="tf-btn" data-tf="H1">H1</button>
-            <button class="tf-btn" data-tf="H4">H4</button>
-          </div>
-
-          <div class="legend-grid">
-            <div class="legend-item" style="color:var(--yellow)">ENTRY — точка входа</div>
-            <div class="legend-item" style="color:var(--red)">SL — отмена идеи</div>
-            <div class="legend-item" style="color:var(--green)">TP — цель идеи</div>
-            <div class="legend-item" style="color:var(--violet)">OB — ордерблок</div>
-            <div class="legend-item" style="color:#ff4d6d">Breaker — пробитый OB</div>
-            <div class="legend-item" style="color:var(--orange)">FVG — имбаланс</div>
-            <div class="legend-item" style="color:var(--blue)">Liquidity — ликвидность</div>
-            <div class="legend-item" style="color:var(--pattern)">Pattern — графический паттерн</div>
-          </div>
-
-          <div id="ideaChart" class="chart ideas-modal__chart"></div>
-
-          <div class="chart-note" id="chartNote">
-            Разметка строится только по реальным свечам. Фейковые свечи отключены.
+            <div class="chart-note" id="chartNote">
+              Разметка строится только по реальным свечам. Фейковые свечи отключены.
+            </div>
           </div>
         </div>
       `;
