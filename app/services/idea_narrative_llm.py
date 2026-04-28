@@ -267,6 +267,21 @@ class IdeaNarrativeLLMService:
         if not any(token in joined for token in smart_money_any):
             return False
 
+        cause_effect_any = (
+            "потому что",
+            "из-за",
+            "в результате",
+            "поэтому",
+            "что привело",
+            "следствие",
+            "cause",
+            "effect",
+            "as a result",
+            "therefore",
+        )
+        if not any(token in joined for token in cause_effect_any):
+            return False
+
         if len(str(data.get("idea_thesis") or "")) < 220:
             return False
 
@@ -332,6 +347,8 @@ class IdeaNarrativeLLMService:
             "Не пиши шаблонный текст. Не используй одинаковые фразы для разных инструментов.\n"
             "Описание должно быть как комментарий профессионального трейдера, который смотрит на рынок "
             "глазами крупного игрока.\n\n"
+            "Логика текста должна быть строго причинно-следственной: "
+            "сначала факт/причина, затем реакция рынка, затем ожидаемое следствие и действие.\n\n"
 
             "Обязательно объясни:\n"
             "1. Что сейчас делает цена.\n"
