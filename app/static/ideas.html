@@ -568,6 +568,8 @@
       series: null,
       overlaySyncCleanup: null,
       currentTf: "M15",
+      realCandlesCache: {},
+      candlesRequestSeq: 0,
     };
 
     const pairFilter = document.getElementById("pairFilter");
@@ -816,6 +818,7 @@
 
     function closeModal() {
       modalBackdrop.classList.remove("open");
+      state.candlesRequestSeq += 1;
       if (typeof state.overlaySyncCleanup === "function") {
         state.overlaySyncCleanup();
         state.overlaySyncCleanup = null;
@@ -828,7 +831,7 @@
       state.activeIdea = null;
     }
 
-    function renderIdeaChart(idea) {
+    async function renderIdeaChart(idea) {
       const container = document.getElementById("ideaChart");
       if (!container) return;
 
@@ -844,7 +847,12 @@
 
       container.innerHTML = "";
 
-      const candles = getCandlesForIdea(idea, state.currentTf);
+      const renderSeq = ++state.candlesRequestSeq;
+      let candles = getCandlesForIdea(idea, state.currentTf);
+      if (!candles.length) {
+        candles = await fetchRealCandlesForIdea(idea, state.currentTf);
+        if (renderSeq !== state.candlesRequestSeq) return;
+      }
 
       if (!candles.length) {
         container.innerHTML = `
@@ -906,6 +914,45 @@
 
       state.overlaySyncCleanup = bindOverlayToChart(container, chart, redrawOverlay);
       requestAnimationFrame(redrawOverlay);
+    }
+
+    async function fetchRealCandlesForIdea(idea, tf) {
+      const symbol = normalizeSymbol(idea?.symbol || idea?.pair);
+      const normalizedTf = String(tf || "M15").toUpperCase();
+      if (!symbol) return [];
+
+      const cacheKey = `${symbol}:${normalizedTf}`;
+      if (Array.isArray(state.realCandlesCache[cacheKey]) && state.realCandlesCache[cacheKey].length) {
+        return state.realCandlesCache[cacheKey];
+      }
+
+      const urls = [
+        `/api/canonical/chart/${encodeURIComponent(symbol)}/${encodeURIComponent(normalizedTf)}?limit=220&ts=${Date.now()}`,
+        `/api/chart/${encodeURIComponent(symbol)}?tf=${encodeURIComponent(normalizedTf)}&limit=220&ts=${Date.now()}`,
+      ];
+
+      for (const url of urls) {
+        try {
+          const response = await fetch(url, { cache: "no-store" });
+          if (!response.ok) continue;
+          const payload = await response.json();
+          const normalized = normalizeCandles(
+            payload?.candles ||
+            payload?.chart_data?.candles ||
+            payload?.chartData?.candles ||
+            payload?.chart_data ||
+            payload?.chartData
+          );
+          if (normalized.length) {
+            state.realCandlesCache[cacheKey] = normalized;
+            return normalized;
+          }
+        } catch (_error) {
+          // no-op: try next backend endpoint
+        }
+      }
+
+      return [];
     }
 
     function bindOverlayToChart(container, chart, redrawOverlay) {
