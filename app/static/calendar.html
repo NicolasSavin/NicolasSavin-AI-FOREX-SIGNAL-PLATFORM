@@ -37,20 +37,113 @@
           </div>
         </section>
 
-        <section class="panel calendar-events-panel">
+        <section class="panel calendar-widget-panel">
           <div class="panel-heading compact">
             <div>
-              <p class="section-kicker">События</p>
-              <h2>События и ожидаемое влияние</h2>
+              <p class="section-kicker">Живой календарь</p>
+              <h2>Экономические события в реальном времени</h2>
+              <p class="section-text">
+                Данные берутся из Tradays: время выхода, важность, фактические значения, прогнозы и предыдущие показатели.
+              </p>
             </div>
-            <span class="panel-meta" id="calendarState">Ожидание загрузки...</span>
           </div>
-          <ul class="data-list" id="calendarList"></ul>
+
+          <div class="calendar-explainer">
+            <p>
+              <strong>Как читать календарь без паники:</strong> высокая важность — это когда рынок внезапно вспоминает, что он
+              живой. На таких событиях спреды, свечи и настроение трейдера иногда расширяются одновременно.
+            </p>
+            <p>
+              <strong>Факт выше прогноза:</strong> валюта страны часто получает поддержку. Но рынок — существо капризное: иногда
+              покупает слухи, продаёт факт и делает вид, что «так и было задумано».
+            </p>
+            <p>
+              <strong>Факт ниже прогноза:</strong> слабые данные могут давить на валюту, особенно когда меняются ожидания по
+              ставкам. Центробанк смотрит на цифры, рынок смотрит на центробанк, трейдер смотрит на обоих и пьёт кофе с
+              уважением.
+            </p>
+          </div>
+
+          <div class="calendar-guide-grid">
+            <article class="calendar-guide-card">
+              <h3>Высокая важность</h3>
+              <p>Публикации, на которых волатильность может включить режим «турбо» за пару секунд.</p>
+            </article>
+            <article class="calendar-guide-card">
+              <h3>Факт / Прогноз / Предыдущее</h3>
+              <p>Сравнивайте не одну цифру, а три: рынок торгует отклонение от ожиданий и контекст.</p>
+            </article>
+            <article class="calendar-guide-card">
+              <h3>Уже вышло</h3>
+              <p>Смотрите, как цена отреагировала в первые минуты и где формируется новый баланс.</p>
+            </article>
+            <article class="calendar-guide-card">
+              <h3>Ожидается</h3>
+              <p>До релиза полезно проверить риск, ликвидность и план: «что делаю при сюрпризе».</p>
+            </article>
+            <article class="calendar-guide-card">
+              <h3>На что смотреть после релиза</h3>
+              <p>Реакция облигаций, индекс доллара и комментарии регулятора часто важнее самой первой свечи.</p>
+            </article>
+          </div>
+
+          <div class="tradays-widget-wrap" id="tradaysWidgetWrap">
+            <div id="economicCalendarWidget"></div>
+            <div class="ecw-copyright">
+              <a
+                href="https://www.mql5.com/?utm_source=calendar.widget&utm_medium=link&utm_term=economic.calendar&utm_content=visit.mql5.calendar&utm_campaign=202.calendar.widget"
+                rel="noopener nofollow"
+                target="_blank"
+                >MQL5 Algo Trading Community</a
+              >
+            </div>
+          </div>
+          <p class="tradays-fallback" id="tradaysFallback" hidden>
+            Tradays временно не загрузился. Попробуйте обновить страницу. Хорошая новость: если календарь не грузится, рынок
+            всё равно найдёт способ удивить.
+          </p>
         </section>
       </main>
     </div>
 
     <script src="/static/script.js"></script>
     <script src="/static/nav.js"></script>
+    <script>
+      (function () {
+        const widgetHost = document.getElementById('economicCalendarWidget');
+        const fallback = document.getElementById('tradaysFallback');
+        if (!widgetHost || !fallback) return;
+
+        let loaded = false;
+        const widgetScript = document.createElement('script');
+        widgetScript.async = true;
+        widgetScript.type = 'text/javascript';
+        widgetScript.dataset.type = 'calendar-widget';
+        widgetScript.src = 'https://www.tradays.com/c/js/widgets/calendar/widget.js?v=15';
+        widgetScript.textContent = JSON.stringify({
+          width: '100%',
+          height: 540,
+          mode: 2,
+          lang: 'ru',
+          dateformat: 'DMY',
+          theme: 1,
+        });
+
+        widgetScript.onload = function () {
+          loaded = true;
+          fallback.hidden = true;
+        };
+        widgetScript.onerror = function () {
+          fallback.hidden = false;
+        };
+
+        widgetHost.appendChild(widgetScript);
+        window.setTimeout(function () {
+          if (!loaded && widgetHost.children.length <= 1) {
+            fallback.hidden = false;
+          }
+        }, 5000);
+      })();
+    </script>
   </body>
 </html>
