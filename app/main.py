@@ -90,6 +90,11 @@ def get_fallback_calendar_events() -> list[dict[str, Any]]:
             "currency": "USD",
             "impact": "high",
             "description_ru": "Показатель инфляции в США.",
+            "why_important_ru": "От CPI зависят ожидания по траектории ставок ФРС и динамика доходностей.",
+            "market_impact_ru": "При сюрпризе вверх доллар часто крепнет, а золото и риск-активы могут просесть.",
+            "humor_ru": "Иногда рынок реагирует на CPI так бурно, будто кто-то резко прибавил громкость прямо на релизе.",
+            "assets": ["USD", "XAUUSD", "US500"],
+            "is_educational": True,
         },
         {
             "title": "Решение ФРС по ставке",
@@ -97,12 +102,71 @@ def get_fallback_calendar_events() -> list[dict[str, Any]]:
             "currency": "USD",
             "impact": "high",
             "description_ru": "Ключевое решение по ставке.",
+            "why_important_ru": "Монетарная политика ФРС задаёт ориентир для доллара, облигаций и глобального аппетита к риску.",
+            "market_impact_ru": "Изменение риторики может быстро переразложить позиции на FX, золоте и индексах США.",
+            "humor_ru": "Пара фраз на пресс-конференции иногда двигает рынок быстрее, чем пачка индикаторов.",
+            "assets": ["USD", "US500", "XAUUSD"],
+            "is_educational": True,
         },
     ]
 
 
+def _parse_utc_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc)
+    raw = str(value).strip()
+    if not raw:
+        return None
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _build_calendar_full_text(event: dict[str, Any]) -> str:
+    if event.get("full_text_ru"):
+        return str(event["full_text_ru"])
+    description = str(event.get("description_ru") or "").strip()
+    why_important = str(event.get("why_important_ru") or "").strip()
+    market_impact = str(event.get("market_impact_ru") or "").strip()
+    humor = str(event.get("humor_ru") or "").strip()
+    parts = [part for part in [description, why_important, market_impact] if part]
+    if humor:
+        parts.append(humor)
+    return " ".join(parts).strip() or "Описание события пока обновляется."
+
+
+def _normalize_calendar_event(event: dict[str, Any], now: datetime) -> dict[str, Any]:
+    normalized = dict(event)
+    event_dt = _parse_utc_datetime(normalized.get("time_utc"))
+    is_educational = bool(normalized.get("is_educational"))
+
+    if event_dt is not None:
+        normalized["time_utc"] = event_dt.isoformat().replace("+00:00", "Z")
+        normalized["status"] = "released" if event_dt < now else "upcoming"
+        normalized["time_label_ru"] = normalized.get("time_label_ru") or event_dt.strftime("%d.%m.%Y %H:%M UTC")
+    else:
+        normalized["time_utc"] = None
+        normalized["status"] = "unknown"
+        normalized["time_label_ru"] = (
+            "Образовательный ориентир: точное время не указано"
+            if is_educational
+            else "Точное время выхода не указано"
+        )
+
+    normalized["full_text_ru"] = _build_calendar_full_text(normalized)
+    return normalized
+
+
 def build_calendar_payload() -> dict[str, Any]:
-    events = get_fallback_calendar_events()
+    now = datetime.now(timezone.utc)
+    events = [_normalize_calendar_event(event, now) for event in get_fallback_calendar_events()]
     return {
         "events": events,
         "items": events,

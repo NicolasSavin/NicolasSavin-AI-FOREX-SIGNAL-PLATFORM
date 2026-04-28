@@ -120,6 +120,36 @@ function getCalendarBadgeClass(event) {
   return 'impact-badge--unknown';
 }
 
+function getCalendarStatusMeta(event) {
+  const status = String(event?.status || '').toLowerCase();
+  if (status === 'released') {
+    return { label: 'Уже вышло', className: 'calendar-status-badge--released' };
+  }
+  if (status === 'upcoming') {
+    return { label: 'Ожидается', className: 'calendar-status-badge--upcoming' };
+  }
+  return { label: 'Время не указано', className: 'calendar-status-badge--unknown' };
+}
+
+function getCalendarTimeLabel(event) {
+  if (event?.time_label_ru) return String(event.time_label_ru);
+  if (event?.time_utc) return formatUpdatedAt(event.time_utc);
+  return 'Точное время выхода не указано';
+}
+
+function getCalendarMainText(event, fallbackImpact) {
+  if (event?.full_text_ru) return String(event.full_text_ru);
+  const parts = [
+    event?.description_ru,
+    event?.why_important_ru,
+    event?.market_impact_ru || fallbackImpact.effect,
+    event?.humor_ru || fallbackImpact.humor,
+  ]
+    .map((part) => String(part || '').trim())
+    .filter(Boolean);
+  return parts.join(' ') || 'Описание события пока обновляется.';
+}
+
 function setCalendarState(state, message) {
   if (!calendarState) return;
   calendarState.className = `panel-meta calendar-state calendar-state--${state}`;
@@ -153,12 +183,11 @@ function renderCalendarEvents(rows) {
   rows.forEach((event) => {
     const li = document.createElement('li');
     li.className = 'calendar-event';
-    const eventTime = event.time_utc ? formatUpdatedAt(event.time_utc) : 'время не указано';
+    const eventTime = getCalendarTimeLabel(event);
     const currency = event.currency ? String(event.currency).toUpperCase() : 'несколько валют';
     const impact = inferCalendarImpact(event);
-    const whyImportant = event.why_important_ru || 'Событие помогает понять ожидания по ставкам и экономическому циклу.';
-    const marketImpact = event.market_impact_ru || impact.effect;
-    const humor = event.humor_ru || impact.humor;
+    const mainText = getCalendarMainText(event, impact);
+    const statusMeta = getCalendarStatusMeta(event);
     const assets = Array.isArray(event.assets) ? event.assets : impact.affected;
     const safeAssets = assets.length ? assets : ['FX', 'XAUUSD', 'US500'];
     const impactLabel = String(event.impact || event.importance || 'unknown').toLowerCase();
@@ -179,22 +208,15 @@ function renderCalendarEvents(rows) {
             <span class="impact-badge impact-badge--unknown">${escapeHtml(currency)}</span>
           </div>
         </div>
-        <p class="calendar-event__time">🕒 ${escapeHtml(eventTime)}</p>
+        <p class="calendar-event__time"><strong>Время выхода:</strong> ${escapeHtml(eventTime)}</p>
+        <div class="calendar-event__status">
+          <span class="impact-badge calendar-status-badge ${statusMeta.className}">${escapeHtml(statusMeta.label)}</span>
+        </div>
         <div class="calendar-event__impact">
-          <p><strong>Что это:</strong></p>
-          <p>${escapeHtml(event.description_ru || 'Описание отсутствует.')}</p>
-          <p><strong>Почему важно:</strong></p>
-          <p>${escapeHtml(whyImportant)}</p>
-          <p><strong>Возможное влияние:</strong></p>
-          <p>${escapeHtml(marketImpact)}</p>
-          <p><strong>С юмором:</strong></p>
-          <p>${escapeHtml(humor)}</p>
+          <p>${escapeHtml(mainText)}</p>
         </div>
         <div class="calendar-event__assets">
           ${safeAssets.map((asset) => `<span class="news-chip">${escapeHtml(asset)}</span>`).join('')}
-        </div>
-        <div class="calendar-event__impact">
-          <p><strong>Затронутые активы:</strong> ${escapeHtml(safeAssets.join(' • '))}</p>
         </div>
       </article>
     `;
