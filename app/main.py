@@ -434,9 +434,20 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
         data = response.json()
 
         if data.get("status") == "error":
-            return {"candles": [], "warning_ru": data.get("message"), "raw": data}
+            return {
+                "candles": [],
+                "warning_ru": f"TwelveData error: {data.get('message')}",
+                "raw": data,
+            }
 
         values = data.get("values") or []
+        if not values:
+            return {
+                "candles": [],
+                "warning_ru": "TwelveData returned empty values",
+                "raw": data,
+            }
+
         candles = []
 
         for item in reversed(values):
@@ -1039,40 +1050,30 @@ def normalize_symbol(symbol: str) -> str:
 
 
 def to_twelvedata_symbol(symbol: str) -> str:
-    mapping = {
-        "EURUSD": "EUR/USD",
-        "GBPUSD": "GBP/USD",
-        "USDJPY": "USD/JPY",
-        "USDCHF": "USD/CHF",
-        "USDCAD": "USD/CAD",
-        "AUDUSD": "AUD/USD",
-        "NZDUSD": "NZD/USD",
-        "XAUUSD": "XAU/USD",
-    }
+    symbol = normalize_symbol(symbol)
 
-    return mapping.get(normalize_symbol(symbol), normalize_symbol(symbol))
+    if symbol == "XAUUSD":
+        return "XAU/USD"
+
+    if len(symbol) == 6:
+        return f"{symbol[:3]}/{symbol[3:]}"
+
+    return symbol
 
 
 def to_td_interval(tf: str) -> str:
+    tf = str(tf or "").upper().strip()
+
     mapping = {
-        "M1": "1min",
-        "M5": "5min",
         "M15": "15min",
-        "M30": "30min",
         "H1": "1h",
         "H4": "4h",
         "D1": "1day",
         "W1": "1week",
         "MN": "1month",
-        "15MIN": "15min",
-        "1H": "1h",
-        "4H": "4h",
-        "1D": "1day",
-        "1W": "1week",
-        "1M": "1month",
     }
 
-    return mapping.get(str(tf or "M15").upper(), "15min")
+    return mapping.get(tf, "15min")
 
 
 def parse_td_datetime(value: str) -> datetime:
