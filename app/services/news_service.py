@@ -285,6 +285,26 @@ def extract_news_image(entry: dict) -> str | None:
     return None
 
 
+def extract_article_page_image(url: str) -> str | None:
+    try:
+        resp = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        if not resp.ok:
+            return None
+        html_text = resp.text
+        patterns = [
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+property=["\']og:image:secure_url["\'][^>]+content=["\']([^"\']+)["\']',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, html_text, flags=re.I)
+            if match:
+                return html.unescape(match.group(1))
+    except Exception:
+        return None
+    return None
+
+
 def pick_fallback_news_image(title: str, summary: str, markets: list[str]) -> str:
     text = f"{title} {summary} {' '.join(markets)}".lower()
 
@@ -609,16 +629,30 @@ def _placeholder_svg_for_title(title: str) -> str:
     return f"/static/generated-news/{slug}.svg"
 
 
-def _resolve_news_image(title: str, summary: str, source: str, entry: dict, diagnostics: dict[str, Any]) -> tuple[str, str]:
-    cache_key = _source_hash(strip_html(title) or "news")
+def _resolve_news_image(
+    title: str,
+    summary: str,
+    source: str,
+    source_url: str | None,
+    entry: dict,
+    diagnostics: dict[str, Any],
+) -> tuple[str, str]:
+    cache_key = _source_hash(str(source_url or strip_html(title) or "news"))
     cached = IMAGE_CACHE.get(cache_key)
     if cached and time() - cached.get("ts", 0) < IMAGE_CACHE_TTL_SECONDS:
         return cached.get("url"), cached.get("source")
 
     source_image = extract_news_image(entry)
     if source_image and _looks_like_image_url(source_image):
-        IMAGE_CACHE[cache_key] = {"ts": time(), "url": source_image, "source": "source"}
-        return source_image, "source"
+        IMAGE_CACHE[cache_key] = {"ts": time(), "url": source_image, "source": "source_rss"}
+        return source_image, "source_rss"
+
+    if source_url:
+        source_page_image = extract_article_page_image(source_url)
+        if source_page_image and _looks_like_image_url(source_page_image):
+            IMAGE_CACHE[cache_key] = {"ts": time(), "url": source_page_image, "source": "source_page"}
+            return source_page_image, "source_page"
+
     web_query = f"{strip_html(title)} {strip_html(source)} market news"
     open_web_image = find_open_web_image(web_query)
     if open_web_image:
@@ -662,6 +696,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                 continue
             source_had_item = False
             for entry in entries:
+                source_url = str(entry.get("link") or "").strip() or None
                 try:
                     title = str(entry.get("title") or "Новость без заголовка").strip()
                     summary = str(entry.get("summary") or entry.get("description") or "").strip()
@@ -671,6 +706,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         title=title,
                         summary=summary,
                         source=source_name,
+                        source_url=source_url,
                         entry=entry,
                         diagnostics=diagnostics,
                     )
@@ -695,7 +731,6 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     summary_ru = story["preview_ru"]
                     writer = "local_fallback"
                 source_had_item = True
-                source_url = str(entry.get("link") or "").strip() or None
                 items.append(
                     {
                         "title": title_ru,
