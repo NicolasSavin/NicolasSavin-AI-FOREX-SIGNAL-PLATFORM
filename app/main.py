@@ -29,9 +29,15 @@ FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
 CANDLE_CACHE: dict[str, dict[str, Any]] = {}
 CANDLE_CACHE_TTL_SECONDS = 900
 STALE_CANDLE_CACHE_TTL_SECONDS = 86400
+CALENDAR_CACHE_TTL_SECONDS = 120
+
+HIGH_IMPACT_NEWS_PRE_WARNING_MINUTES = 60
+HIGH_IMPACT_NEWS_HARD_BLOCK_MINUTES = 15
+HIGH_IMPACT_NEWS_POST_WARNING_MINUTES = 30
 
 ACTIVE_FILE = Path("active_trades.json")
 ARCHIVE_FILE = Path("archive.json")
+CALENDAR_RISK_CACHE: dict[str, Any] = {"updated_at": None, "payload": None}
 
 HTF_FILTER = HtfContextFilter()
 
@@ -363,6 +369,114 @@ def api_calendar():
     return build_calendar_payload()
 
 
+def symbol_related_to_event(symbol: str, event: dict[str, Any]) -> bool:
+    symbol = normalize_symbol(symbol)
+    currency = str(event.get("currency") or "").upper()
+    assets = [str(x).upper() for x in event.get("assets") or []]
+
+    if symbol in assets:
+        return True
+
+    if symbol == "XAUUSD" and currency == "USD":
+        return True
+
+    if len(symbol) == 6 and currency in {symbol[:3], symbol[3:]}:
+        return True
+
+    return False
+
+
+def _calendar_payload_for_news_risk() -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    cached_at = CALENDAR_RISK_CACHE.get("updated_at")
+    cached_payload = CALENDAR_RISK_CACHE.get("payload")
+    if isinstance(cached_at, datetime) and isinstance(cached_payload, dict):
+        age = (now - cached_at).total_seconds()
+        if age <= CALENDAR_CACHE_TTL_SECONDS:
+            return cached_payload
+
+    try:
+        payload = build_calendar_payload()
+    except Exception:
+        payload = {"events": []}
+
+    if not isinstance(payload, dict):
+        payload = {"events": []}
+
+    CALENDAR_RISK_CACHE["updated_at"] = now
+    CALENDAR_RISK_CACHE["payload"] = payload
+    return payload
+
+
+def get_news_risk_for_symbol(symbol: str) -> dict[str, Any]:
+    normalized_symbol = normalize_symbol(symbol)
+    default = {
+        "has_risk": False,
+        "hard_block": False,
+        "risk_level": "none",
+        "summary_ru": None,
+        "event": None,
+    }
+    payload = _calendar_payload_for_news_risk()
+    events = payload.get("events") if isinstance(payload, dict) else []
+    if not isinstance(events, list):
+        return default
+
+    now = datetime.now(timezone.utc)
+    best_risk = dict(default)
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("impact") or "").lower() != "high":
+            continue
+        if not symbol_related_to_event(normalized_symbol, event):
+            continue
+
+        event_dt = _parse_utc_datetime(event.get("time_utc"))
+        if event_dt is None:
+            continue
+
+        delta_minutes = (event_dt - now).total_seconds() / 60
+        title = str(event.get("title") or "важная новость").strip()
+
+        if -HIGH_IMPACT_NEWS_POST_WARNING_MINUTES <= delta_minutes < 0:
+            return {
+                "has_risk": True,
+                "hard_block": False,
+                "risk_level": "post_release",
+                "summary_ru": (
+                    "Новость уже вышла, но первые 30 минут рынок часто ведёт себя как кот после пылесоса: "
+                    "лучше дождаться стабилизации."
+                ),
+                "event": event,
+            }
+
+        if 0 <= delta_minutes <= HIGH_IMPACT_NEWS_HARD_BLOCK_MINUTES:
+            return {
+                "has_risk": True,
+                "hard_block": True,
+                "risk_level": "blocked",
+                "summary_ru": (
+                    "До важной новости меньше 15 минут. Вход лучше заблокировать: "
+                    "рынок может устроить фейерверк без приглашения."
+                ),
+                "event": event,
+            }
+
+        if 0 <= delta_minutes <= HIGH_IMPACT_NEWS_PRE_WARNING_MINUTES:
+            minutes_left = max(1, int(round(delta_minutes)))
+            best_risk = {
+                "has_risk": True,
+                "hard_block": False,
+                "risk_level": "warning",
+                "summary_ru": f"Через {minutes_left} минут выходит важная новость «{title}». Лучше снизить риск и размер позиции.",
+                "event": event,
+            }
+
+    return best_risk
+
+
 @app.get("/heatmap/page", include_in_schema=False)
 def heatmap_page():
     return FileResponse(STATIC_DIR / "heatmap.html")
@@ -569,6 +683,25 @@ def build_signal(symbol: str) -> dict[str, Any]:
     )
 
     m15_candles = candles_by_tf.get("M15", [])
+    technical_signal = str(trade.get("signal") or "WAIT").upper()
+    final_signal = technical_signal
+    confidence = resolve_confidence(decision)
+    final_confidence = confidence
+    trade_permission = bool(decision.allowed and runtime_status == "ACTIVE")
+    macro_warning = False
+    macro_blocked = False
+    news_risk = get_news_risk_for_symbol(symbol)
+
+    risk_level = str(news_risk.get("risk_level") or "none")
+    if risk_level in {"warning", "post_release"}:
+        final_confidence = max(10, int(final_confidence * 0.85))
+        macro_warning = True
+
+    if bool(news_risk.get("hard_block")):
+        trade_permission = False
+        macro_blocked = True
+        final_signal = "WAIT"
+    output_status = "WAIT" if macro_blocked and runtime_status == "ACTIVE" else runtime_status
 
     return {
         "id": trade.get("id"),
@@ -577,14 +710,14 @@ def build_signal(symbol: str) -> dict[str, Any]:
         "pair": symbol,
         "timeframe": "M15",
         "tf": "M15",
-        "signal": trade.get("signal"),
-        "final_signal": trade.get("signal"),
-        "direction": "bullish" if trade.get("signal") == "BUY" else "bearish" if trade.get("signal") == "SELL" else "neutral",
-        "bias": "bullish" if trade.get("signal") == "BUY" else "bearish" if trade.get("signal") == "SELL" else "neutral",
-        "confidence": resolve_confidence(decision),
-        "final_confidence": resolve_confidence(decision),
-        "status": runtime_status,
-        "runtime_status": runtime_status,
+        "signal": technical_signal,
+        "final_signal": final_signal,
+        "direction": "bullish" if technical_signal == "BUY" else "bearish" if technical_signal == "SELL" else "neutral",
+        "bias": "bullish" if technical_signal == "BUY" else "bearish" if technical_signal == "SELL" else "neutral",
+        "confidence": confidence,
+        "final_confidence": final_confidence,
+        "status": output_status,
+        "runtime_status": output_status,
         "runtime_text": runtime_text,
         "runtime_status_text": runtime_text,
         "runtime_color": runtime_color,
@@ -613,7 +746,15 @@ def build_signal(symbol: str) -> dict[str, Any]:
         "warning_ru": human_price_warning(price_data),
         "setup_quality": "HTF_CONTEXT_REAL_CANDLES_ONLY",
         "risk_filter": "MN_W1_D1_H4_H1_M15_ALIGNMENT",
-        "trade_permission": decision.allowed and runtime_status == "ACTIVE",
+        "trade_permission": trade_permission,
+        "macro_warning": macro_warning,
+        "macro_blocked": macro_blocked,
+        "fundamental_context": {
+            "news_risk": news_risk,
+            "summary_ru": news_risk.get("summary_ru"),
+            "hard_block": news_risk.get("hard_block"),
+            "risk_level": news_risk.get("risk_level"),
+        },
         "htf_context": decision.context,
         "htf_bias": decision.htf_bias,
         "htf_reason": decision.reason,

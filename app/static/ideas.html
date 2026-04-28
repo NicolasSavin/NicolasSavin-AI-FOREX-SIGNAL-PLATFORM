@@ -340,6 +340,23 @@
       font-size: 14px;
     }
 
+    .idea-fundamental-note {
+      margin: 12px 0;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: linear-gradient(145deg, rgba(255,184,77,.18), rgba(5,18,34,.92));
+      border: 1px solid rgba(255,184,77,.42);
+      color: rgba(244,248,255,.92);
+      line-height: 1.55;
+      font-size: 13px;
+    }
+
+    .idea-fundamental-note strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #ffd84d;
+    }
+
     .ideas-modal__body {
       flex: 1;
       min-height: 0;
@@ -758,6 +775,15 @@
       const signal = normalizeSignal(idea.final_signal || idea.signal || idea.direction || idea.bias);
       const statusView = resolveIdeaStatusView(idea);
       const statusReason = buildIdeaStatusReason(idea, statusView);
+      const fundamentalSummary = String(idea?.fundamental_context?.summary_ru || "").trim();
+      const fundamentalNoteHtml = fundamentalSummary
+        ? `
+          <div class="idea-fundamental-note">
+            <strong>Фундаментальный риск</strong>
+            <p>${escapeHtml(fundamentalSummary)}</p>
+          </div>
+        `
+        : "";
 
       modalTitle.textContent = `${symbol} • ${signal} • ${statusView.label}`;
       modalSubtitle.textContent = pickText(idea);
@@ -772,6 +798,7 @@
 
         <div class="modal-section-title">Основная идея</div>
         <div class="box modal-text">${escapeHtml(pickText(idea))}</div>
+        ${fundamentalNoteHtml}
         <div class="status-reason">${escapeHtml(statusReason)}</div>
 
         <div class="modal-section-title">График и разметка</div>
