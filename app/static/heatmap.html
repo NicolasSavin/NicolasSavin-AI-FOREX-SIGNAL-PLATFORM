@@ -3,16 +3,36 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Currency Heatmap</title>
+    <title>Тепловая карта валют</title>
     <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      .heatmap-page { display: grid; gap: 16px; }
+      .currency-strength-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+      .currency-strength-item { display: flex; justify-content: space-between; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,0.04); }
+      .heatmap-grid-wrap { overflow-x: auto; }
+      .heatmap-grid { display: grid; gap: 6px; min-width: 760px; }
+      .heatmap-cell { min-height: 74px; border-radius: 10px; padding: 8px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }
+      .heatmap-cell--positive { background: rgba(26, 160, 83, var(--cell-intensity, 0.22)); border-color: rgba(26, 160, 83, 0.5); }
+      .heatmap-cell--negative { background: rgba(204, 55, 55, var(--cell-intensity, 0.22)); border-color: rgba(204, 55, 55, 0.5); }
+      .heatmap-cell--neutral { background: rgba(124, 132, 153, 0.28); }
+      .heatmap-head { font-size: 12px; color: #a9b1c7; text-align: center; }
+      .heatmap-side { font-size: 12px; color: #a9b1c7; display: flex; align-items: center; justify-content: center; }
+      .heatmap-pair { font-weight: 700; font-size: 13px; }
+      .heatmap-change { font-size: 12px; opacity: 0.9; margin-top: 4px; }
+      .heatmap-empty { opacity: 0.4; }
+      .pair-table { width: 100%; border-collapse: collapse; }
+      .pair-table th, .pair-table td { text-align: left; padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+      .warn-box { border-radius: 10px; padding: 12px; background: rgba(204,55,55,0.16); border: 1px solid rgba(204,55,55,0.35); }
+      .explain-box { border-radius: 10px; padding: 12px; background: rgba(61,108,206,0.16); border: 1px solid rgba(61,108,206,0.35); }
+    </style>
   </head>
   <body data-page="heatmap">
-    <div class="page-shell">
+    <div class="page-shell heatmap-page">
       <header class="site-header">
         <div>
           <p class="eyebrow">Тепловая карта</p>
-          <h1>Тепловая карта валют</h1>
-          <p class="lead">Раздел сохранён как отдельная страница и получает данные по существующему маршруту heatmap.</p>
+          <h1>Тепловая карта валют FX</h1>
+          <p class="lead">Реальные изменения валютных пар и сила/слабость основных валют.</p>
         </div>
         <nav class="top-nav">
           <a href="/">Главная</a>
@@ -24,19 +44,188 @@
       </header>
 
       <main class="content-stack">
+        <section class="panel explain-box">
+          <strong>Как читать карту:</strong>
+          <div>Зелёная ячейка означает, что базовая валюта пары сильнее котируемой. Красная — слабее. Чем ярче цвет, тем сильнее движение.</div>
+        </section>
+
+        <section class="panel" id="warningBox" hidden></section>
+
         <section class="panel">
           <div class="panel-heading compact">
-            <div>
-              <p class="section-kicker">Тепловая карта FX</p>
-              <h2>Движение валютных пар</h2>
-            </div>
+            <h2>Рейтинг силы валют</h2>
+            <span id="updatedAt">Обновление: —</span>
           </div>
-          <ul class="data-list" id="heatmapList"></ul>
+          <ul class="currency-strength-list" id="strengthList"></ul>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading compact">
+            <h2>Матрица тепловой карты</h2>
+          </div>
+          <div class="heatmap-grid-wrap">
+            <div class="heatmap-grid" id="heatmapGrid"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading compact">
+            <h2>Пары и изменения</h2>
+          </div>
+          <table class="pair-table">
+            <thead>
+              <tr><th>Пара</th><th>Цена</th><th>Изм., %</th><th>Статус</th></tr>
+            </thead>
+            <tbody id="pairTableBody"></tbody>
+          </table>
         </section>
       </main>
     </div>
 
-    <script src="/static/script.js"></script>
+    <script>
+      const warningBox = document.getElementById('warningBox');
+      const strengthList = document.getElementById('strengthList');
+      const heatmapGrid = document.getElementById('heatmapGrid');
+      const pairTableBody = document.getElementById('pairTableBody');
+      const updatedAt = document.getElementById('updatedAt');
+
+      function intensityByChange(change) {
+        const value = Math.abs(change);
+        if (value < 0.1) return 0.20;
+        if (value <= 0.4) return 0.38;
+        return 0.55;
+      }
+
+      function cellClass(change) {
+        if (change > 0.02) return 'heatmap-cell heatmap-cell--positive';
+        if (change < -0.02) return 'heatmap-cell heatmap-cell--negative';
+        return 'heatmap-cell heatmap-cell--neutral';
+      }
+
+      function renderStrength(strength) {
+        strengthList.innerHTML = '';
+        if (!Array.isArray(strength) || strength.length === 0) {
+          strengthList.innerHTML = '<li class="currency-strength-item">Нет данных по силе валют.</li>';
+          return;
+        }
+        strength.forEach((item) => {
+          const li = document.createElement('li');
+          li.className = 'currency-strength-item';
+          li.innerHTML = `<span>#${item.rank} ${item.currency}</span><strong>${Number(item.score).toFixed(4)}%</strong>`;
+          strengthList.appendChild(li);
+        });
+      }
+
+      function renderGrid(currencies, pairs) {
+        heatmapGrid.innerHTML = '';
+        const list = Array.isArray(currencies) ? currencies : [];
+        const bySymbol = new Map((pairs || []).map((p) => [p.symbol, p]));
+        heatmapGrid.style.gridTemplateColumns = `80px repeat(${list.length}, minmax(82px, 1fr))`;
+
+        const blank = document.createElement('div');
+        blank.className = 'heatmap-head';
+        heatmapGrid.appendChild(blank);
+
+        list.forEach((quote) => {
+          const head = document.createElement('div');
+          head.className = 'heatmap-head';
+          head.textContent = quote;
+          heatmapGrid.appendChild(head);
+        });
+
+        list.forEach((base) => {
+          const side = document.createElement('div');
+          side.className = 'heatmap-side';
+          side.textContent = base;
+          heatmapGrid.appendChild(side);
+
+          list.forEach((quote) => {
+            const cell = document.createElement('div');
+            if (base === quote) {
+              cell.className = 'heatmap-cell heatmap-cell--neutral heatmap-empty';
+              cell.textContent = '—';
+              heatmapGrid.appendChild(cell);
+              return;
+            }
+
+            const direct = `${base}${quote}`;
+            const inverse = `${quote}${base}`;
+            let pair = bySymbol.get(direct);
+            let change = null;
+            let symbol = direct;
+
+            if (pair && typeof pair.change_pct === 'number') {
+              change = pair.change_pct;
+            } else {
+              const inv = bySymbol.get(inverse);
+              if (inv && typeof inv.change_pct === 'number') {
+                pair = inv;
+                change = -inv.change_pct;
+                symbol = direct;
+              }
+            }
+
+            if (change === null) {
+              cell.className = 'heatmap-cell heatmap-cell--neutral heatmap-empty';
+              cell.innerHTML = `<div class="heatmap-pair">${symbol}</div><div class="heatmap-change">нет данных</div>`;
+              heatmapGrid.appendChild(cell);
+              return;
+            }
+
+            cell.className = cellClass(change);
+            cell.style.setProperty('--cell-intensity', String(intensityByChange(change)));
+            cell.innerHTML = `<div class="heatmap-pair">${symbol}</div><div class="heatmap-change">${change >= 0 ? '+' : ''}${change.toFixed(3)}%</div>`;
+            heatmapGrid.appendChild(cell);
+          });
+        });
+      }
+
+      function renderPairs(pairs) {
+        pairTableBody.innerHTML = '';
+        const list = Array.isArray(pairs) ? pairs : [];
+        if (!list.length) {
+          pairTableBody.innerHTML = '<tr><td colspan="4">Реальные пары временно недоступны.</td></tr>';
+          return;
+        }
+
+        list.forEach((pair) => {
+          const tr = document.createElement('tr');
+          const change = typeof pair.change_pct === 'number' ? `${pair.change_pct >= 0 ? '+' : ''}${pair.change_pct.toFixed(3)}%` : '—';
+          const price = typeof pair.price === 'number' ? pair.price.toFixed(6) : '—';
+          tr.innerHTML = `<td>${pair.symbol}</td><td>${price}</td><td>${change}</td><td>${pair.data_status || 'unavailable'}</td>`;
+          pairTableBody.appendChild(tr);
+        });
+      }
+
+      async function loadHeatmap() {
+        try {
+          const response = await fetch('/api/heatmap');
+          const data = await response.json();
+
+          if (data.warning) {
+            warningBox.hidden = false;
+            warningBox.className = 'panel warn-box';
+            warningBox.textContent = data.warning;
+          } else {
+            warningBox.hidden = true;
+          }
+
+          updatedAt.textContent = `Обновление: ${data.updated_at_utc || '—'}`;
+          renderStrength(data.strength || []);
+          renderGrid(data.currencies || [], data.pairs || []);
+          renderPairs(data.pairs || []);
+        } catch (error) {
+          warningBox.hidden = false;
+          warningBox.className = 'panel warn-box';
+          warningBox.textContent = 'Не удалось загрузить тепловую карту.';
+          renderStrength([]);
+          renderGrid([], []);
+          renderPairs([]);
+        }
+      }
+
+      loadHeatmap();
+    </script>
     <script src="/static/nav.js"></script>
   </body>
 </html>
