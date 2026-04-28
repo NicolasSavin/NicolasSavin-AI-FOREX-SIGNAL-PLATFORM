@@ -147,16 +147,42 @@ function getCalendarTimeLabel(event) {
 }
 
 function getCalendarMainText(event, fallbackImpact) {
-  if (event?.full_text_ru) return String(event.full_text_ru);
+  if (event?.full_text_ru) {
+    return `${String(event.full_text_ru).trim()} ${getCalendarHumorLine(event, fallbackImpact)}`.trim();
+  }
   const parts = [
     event?.description_ru,
     event?.why_important_ru,
     event?.market_impact_ru || fallbackImpact.effect,
     event?.humor_ru || fallbackImpact.humor,
+    getCalendarHumorLine(event, fallbackImpact),
   ]
     .map((part) => String(part || '').trim())
     .filter(Boolean);
   return parts.join(' ') || 'Описание события пока обновляется.';
+}
+
+function getCalendarHumorLine(event, fallbackImpact) {
+  const title = String(event?.title || '').toLowerCase();
+  const impact = String(event?.impact || event?.importance || '').toLowerCase();
+  const currency = String(event?.currency || '').toUpperCase();
+
+  if (title.includes('cpi') || title.includes('инфляц') || title.includes('pce')) {
+    return 'Инфляция в кадре: трейдеры снова гадают, кто первым моргнёт — рынок или здравый смысл.';
+  }
+  if (title.includes('nfp') || title.includes('занятост') || title.includes('безработ')) {
+    return 'Релиз по рынку труда: волатильность приходит без приглашения и сразу садится за главный стол.';
+  }
+  if (title.includes('ставк') || title.includes('rate') || title.includes('fomc') || title.includes('ecb')) {
+    return 'День ставок: одно предложение регулятора, и графики начинают кардио быстрее трейдера.';
+  }
+  if (impact.includes('high') || impact.includes('выс')) {
+    return 'Высокая важность: кофе покрепче, риск-менеджмент ещё крепче.';
+  }
+  if (currency) {
+    return `Сегодня в центре внимания ${currency}: рынок обещал «спокойно», но мы ему не верим.`;
+  }
+  return fallbackImpact?.humor || 'Спокойно, это просто новости... наверное.';
 }
 
 function setCalendarState(state, message) {
