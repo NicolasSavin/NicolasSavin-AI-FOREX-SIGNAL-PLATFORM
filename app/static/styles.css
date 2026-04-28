@@ -1572,3 +1572,72 @@ a { color: inherit; }
   font-size: 11px;
   font-weight: 700;
 }
+
+.quote-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.quote-panel__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.quote-marquee {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid rgba(76, 201, 240, 0.2);
+  background: linear-gradient(90deg, rgba(11, 24, 44, 0.95), rgba(16, 32, 56, 0.9));
+}
+
+.quote-marquee__track {
+  display: inline-block;
+  white-space: nowrap;
+  padding: 12px 0;
+  color: #d9f1ff;
+  font-weight: 600;
+  animation: marqueeMove 26s linear infinite;
+}
+
+.quote-disclaimer {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.nav-cards {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.nav-card {
+  display: grid;
+  gap: 10px;
+  text-decoration: none;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(104, 143, 191, 0.2);
+  background: linear-gradient(160deg, rgba(13, 28, 49, 0.94), rgba(9, 20, 36, 0.9));
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.nav-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(76, 201, 240, 0.5);
+}
+
+.nav-card strong {
+  font-size: 1.1rem;
+}
+
+.nav-card span {
+  color: var(--muted);
+}
+
+@keyframes marqueeMove {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}

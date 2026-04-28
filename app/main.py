@@ -66,6 +66,21 @@ def ideas_page():
     return FileResponse(STATIC_DIR / "ideas.html")
 
 
+@app.get("/news", include_in_schema=False)
+def news_page():
+    return FileResponse(STATIC_DIR / "news.html")
+
+
+@app.get("/calendar", include_in_schema=False)
+def calendar_page():
+    return FileResponse(STATIC_DIR / "calendar.html")
+
+
+@app.get("/heatmap/page", include_in_schema=False)
+def heatmap_page():
+    return FileResponse(STATIC_DIR / "heatmap.html")
+
+
 @app.get("/api/signals")
 def api_signals():
     signals = [build_signal(symbol) for symbol in SYMBOLS]
