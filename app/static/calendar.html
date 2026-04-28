@@ -35,7 +35,7 @@
 
       .calendar-fullscreen {
         flex: 1;
-        min-height: 0;
+        min-height: calc(100vh - 90px);
         z-index: 1;
         background: #020617;
         display: flex;
@@ -45,6 +45,15 @@
       #economicCalendarWidget {
         flex: 1;
         min-height: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      #economicCalendarWidget > div,
+      #economicCalendarWidget iframe {
+        width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
       }
 
       .ecw-copyright {
