@@ -213,6 +213,10 @@ NEWS_CACHE: dict[str, Any] = {
     "payload": None,
 }
 NEWS_CACHE_TTL_SECONDS = 900
+REWRITE_CACHE: dict[str, dict[str, Any]] = {}
+REWRITE_CACHE_TTL_SECONDS = 21600
+IMAGE_CACHE: dict[str, dict[str, Any]] = {}
+IMAGE_CACHE_TTL_SECONDS = 86400
 PUBLIC_RSS_SOURCES = [
     {"name": "Reuters Markets", "url": "https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best"},
     {"name": "CNBC Markets", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html"},
@@ -223,7 +227,10 @@ PUBLIC_RSS_SOURCES = [
 ]
 
 XAI_TIMEOUT_SECONDS = 15
-XAI_MODEL = "grok-3-mini"
+XAI_MODEL = os.getenv("XAI_MODEL", "grok-2-latest").strip()
+XAI_API_KEY = os.getenv("XAI_API_KEY", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+GENERATED_NEWS_DIR = os.path.join("app", "static", "generated-news")
 
 
 def strip_html(value: str) -> str:
@@ -289,52 +296,63 @@ def pick_fallback_news_image(title: str, summary: str, markets: list[str]) -> st
     return "/static/news-placeholders/default.svg"
 
 
-def build_long_news_story(title: str, source_summary: str, markets: list[str], tone: str) -> dict[str, str]:
-    clean_title = strip_html(title).strip()
-    clean_summary = strip_html(source_summary).strip()
+def _source_hash(value: str) -> str:
+    return sha1(value.encode("utf-8")).hexdigest()[:16]
 
-    what_happened = (
-        f"Что случилось: {clean_title}. "
-        f"{clean_summary[:450] if clean_summary else 'Источник сообщил о событии, которое рынок может учитывать в текущем фундаментальном фоне.'}"
-    )
 
-    why_it_matters = (
-        "Почему это важно: такие новости влияют на ожидания по ставкам, инфляции, доллару, золоту и аппетиту к риску. "
-        "Рынок обычно сначала делает резкое лицо, потом открывает календарь, потом вспоминает про ФРС."
-    )
-
-    markets_text = ", ".join(markets or ["USD", "EURUSD", "GBPUSD", "XAUUSD"])
-
+def _local_writer_payload(title: str, summary: str, markets: list[str], tone: str) -> dict[str, str]:
+    clean_title = strip_html(title)[:220] or "Рыночное обновление"
+    clean_summary = strip_html(summary)[:900] or "Источник сообщил о новом событии, подробности ограничены."
+    mk = ", ".join(markets[:4] or ["USD", "EURUSD", "XAUUSD"])
+    style_id = int(sha1(clean_title.encode("utf-8")).hexdigest(), 16) % 8
+    openings = [
+        f"Если коротко, на ленте случилось вот что: {clean_title}.",
+        f"Рынок проснулся от заголовка: {clean_title}.",
+        f"В сегодняшнем выпуске финансового сериала: {clean_title}.",
+        f"Сюжет дня в экономических новостях такой: {clean_title}.",
+        f"Официальная сводка принесла новую тему: {clean_title}.",
+        f"Свежий инфоповод для терминалов: {clean_title}.",
+        f"Фон на рынке поменялся после новости: {clean_title}.",
+        f"Пока кто-то пил кофе, вышла новость: {clean_title}.",
+    ]
+    humor_bank = [
+        "Шутка дня: график сделал резкий жест, а потом такой — «я просто потянулся».",
+        "Небольшой рыночный юмор: волатильность сегодня пришла без приглашения, но с фанфарами.",
+        "Ирония момента: новости меняются быстрее, чем вкладки в терминале.",
+        "Лёгкий комментарий: рынку бы в отпуск, но календарь снова прислал дедлайн.",
+        "Юмор на полях: даже калькулятор ставок сегодня работает на повышенных оборотах.",
+        "С улыбкой: когда выходит важный релиз, даже спокойные активы вспоминают о драме.",
+        "Финансовый мем: «мы всё учли» — сказали участники рынка перед очередным сюрпризом.",
+        "Коротко и смешно: рынок снова в режиме «сначала реакция, потом чтение мелкого шрифта».",
+    ]
+    why_variants = [
+        f"Почему это важно: новость меняет ожидания по макрофону, поэтому в фокусе {mk}.",
+        f"Почему это имеет вес: такие сигналы двигают оценку рисков и доходностей для {mk}.",
+        f"Почему за этим следят: фон по ставкам и аппетиту к риску напрямую отражается на {mk}.",
+        f"Почему это не просто шум: перерасчёт ожиданий обычно проходит через ключевые активы {mk}.",
+    ]
+    impact_variants = [
+        f"Рынок может реагировать через переоценку ожиданий по ставкам, инфляции и спросу на защитные активы в зоне {mk}.",
+        f"Возможная реакция: повышение чувствительности к статистике и комментариям регуляторов по инструментам {mk}.",
+        f"На практике это часто усиливает волатильность: сначала быстрый импульс, затем уточнение сценариев для {mk}.",
+        f"Потенциальный эффект — сдвиг в балансе «риск/защита», который участники обычно считывают по {mk}.",
+    ]
     what_next = (
-        f"К чему может привести: в фокусе {markets_text}. "
-        "Если новость усиливает ожидания жёсткой политики центробанков, доллар может получить поддержку, "
-        "а золото и риск-активы — давление. Если фон мягче, рынок может снова включить режим «риск-он»."
+        "Что дальше: участники рынка обычно ждут подтверждения от следующих релизов и официальных комментариев, "
+        "чтобы отделить разовый шум от устойчивого тренда ожиданий."
     )
-
-    humor = (
-        "Комментарий в популярном стиле и с лёгким юмором: рынок сейчас как трейдер перед NFP — уверенно кивает, "
-        "но держит палец рядом с кнопкой закрытия позиции."
-    )
-
-    if tone == "dovish":
-        humor = (
-            "Комментарий в популярном стиле и с лёгким юмором: рынок услышал более мягкий тон и будто снял галстук, "
-            "но терминал всё равно не закрывает."
-        )
-    elif tone in {"hawkish", "risk_off"}:
-        humor = (
-            "Комментарий в популярном стиле и с лёгким юмором: при жёстком фоне рынок становится серьёзным, "
-            "как чат трейдеров за минуту до публикации CPI."
-        )
-
-    long_story = f"{what_happened}\n\n{why_it_matters}\n\n{what_next}\n\n{humor}"
-
+    what_happened = f"{openings[style_id]} {clean_summary}"
+    why_it_matters = why_variants[style_id % len(why_variants)]
+    market_impact = impact_variants[(style_id + (1 if tone == 'hawkish' else 0)) % len(impact_variants)]
+    humor = humor_bank[style_id]
+    full_text = f"{what_happened}\n\n{why_it_matters}\n\n{market_impact}\n\n{what_next}\n\n{humor}"
     return {
+        "preview_ru": f"{openings[style_id]} {clean_summary[:170]}",
+        "full_text_ru": full_text,
         "what_happened_ru": what_happened,
         "why_it_matters_ru": why_it_matters,
-        "what_next_ru": what_next,
-        "grok_style_comment_ru": humor,
-        "long_story_ru": long_story,
+        "market_impact_ru": market_impact,
+        "humor_ru": humor,
     }
 
 
@@ -380,12 +398,7 @@ def build_market_explanation(title: str, summary: str) -> dict[str, Any]:
         + (strip_html(summary).strip()[:260] if summary else "Источник опубликовал обновление по рынку.")
     )
 
-    return {
-        "summary": summary_ru,
-        "impact": impact,
-        "markets": markets,
-        "tone": tone,
-    }
+    return {"summary": summary_ru, "impact": impact, "markets": markets, "tone": tone}
 
 
 def parse_entry_datetime(entry: dict, fallback: datetime) -> tuple[str, datetime]:
@@ -414,30 +427,40 @@ def parse_entry_datetime(entry: dict, fallback: datetime) -> tuple[str, datetime
     return fallback.isoformat(), fallback
 
 
-def rewrite_news_with_xai(title: str, summary: str) -> dict[str, str] | None:
-    api_key = (os.getenv("XAI_API_KEY") or "").strip()
-    if not api_key:
+def rewrite_news_with_xai(title: str, summary: str, markets: list[str]) -> dict[str, str] | None:
+    if not XAI_API_KEY:
         return None
+    cache_key = _source_hash(f"{title}|{summary}")
+    cached = REWRITE_CACHE.get(cache_key)
+    if cached and time() - cached.get("ts", 0) < REWRITE_CACHE_TTL_SECONDS:
+        return cached.get("payload")
 
-    prompt = (
-        "Ты редактор финансовых новостей. Перепиши заголовок и краткую сводку на русском языке. "
-        "Не добавляй факты, цифры, прогнозы или цитаты, которых нет во входном тексте. "
-        "Верни только JSON с ключами title_ru и summary_ru."
+    user_content = (
+        f"title: {strip_html(title)}\n"
+        f"summary: {strip_html(summary)[:1100]}\n"
+        f"markets: {', '.join(markets[:5])}"
     )
-    user_content = f"TITLE: {strip_html(title)}\nSUMMARY: {strip_html(summary)[:900]}"
     try:
         response = requests.post(
             "https://api.x.ai/v1/chat/completions",
             timeout=XAI_TIMEOUT_SECONDS,
             headers={
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": f"Bearer {XAI_API_KEY}",
                 "Content-Type": "application/json",
             },
             json={
                 "model": XAI_MODEL,
-                "temperature": 0.1,
+                "temperature": 0.2,
                 "messages": [
-                    {"role": "system", "content": prompt},
+                    {
+                        "role": "system",
+                        "content": "You rewrite financial news in Russian for a forex analytics website. "
+                        "Use only the facts from the provided source title and summary. "
+                        "Do not invent numbers, dates, quotes, forecasts, or claims. "
+                        "Write every article in a unique style. Avoid repeating sentence patterns. "
+                        "Explain:\n1. what happened,\n2. why it matters,\n3. what markets may react,\n4. what could happen next,\n5. one light humorous comment.\n"
+                        "Style: smart, popular, vivid, accessible, lightly humorous.\nNo direct trading advice.\nReturn valid JSON only.",
+                    },
                     {"role": "user", "content": user_content},
                 ],
                 "response_format": {"type": "json_object"},
@@ -447,13 +470,60 @@ def rewrite_news_with_xai(title: str, summary: str) -> dict[str, str] | None:
         payload = response.json()
         content = payload.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         parsed = json.loads(content) if isinstance(content, str) else {}
-        title_ru = strip_html(str(parsed.get("title_ru") or "")).strip()
-        summary_ru = strip_html(str(parsed.get("summary_ru") or "")).strip()
-        if title_ru and summary_ru:
-            return {"title_ru": title_ru, "summary_ru": summary_ru}
+        cleaned = {
+            "preview_ru": strip_html(str(parsed.get("preview_ru") or "")).strip(),
+            "full_text_ru": strip_html(str(parsed.get("full_text_ru") or "")).strip(),
+            "what_happened_ru": strip_html(str(parsed.get("what_happened_ru") or "")).strip(),
+            "why_it_matters_ru": strip_html(str(parsed.get("why_it_matters_ru") or "")).strip(),
+            "market_impact_ru": strip_html(str(parsed.get("market_impact_ru") or "")).strip(),
+            "humor_ru": strip_html(str(parsed.get("humor_ru") or "")).strip(),
+        }
+        if all(cleaned.values()):
+            REWRITE_CACHE[cache_key] = {"ts": time(), "payload": cleaned}
+            return cleaned
     except Exception:
         return None
     return None
+
+
+def _placeholder_svg_for_title(title: str) -> str:
+    os.makedirs(GENERATED_NEWS_DIR, exist_ok=True)
+    slug = _source_hash(strip_html(title) or "news")
+    output_path = os.path.join(GENERATED_NEWS_DIR, f"{slug}.svg")
+    if not os.path.exists(output_path):
+        headline = (strip_html(title)[:70] or "Новости рынка").replace("&", "и")
+        svg = (
+            "<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='630'>"
+            "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
+            "<stop offset='0%' stop-color='#24194a'/><stop offset='100%' stop-color='#093044'/>"
+            "</linearGradient></defs><rect width='1200' height='630' fill='url(#g)'/>"
+            "<circle cx='180' cy='120' r='220' fill='rgba(255,255,255,0.08)'/>"
+            "<text x='80' y='530' fill='#dff6ff' font-size='46' font-family='Arial' font-weight='700'>Market News</text>"
+            f"<text x='80' y='600' fill='#9ad8ff' font-size='28' font-family='Arial'>{headline}</text></svg>"
+        )
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(svg)
+    return f"/static/generated-news/{slug}.svg"
+
+
+def _resolve_news_image(title: str, summary: str, entry: dict, diagnostics: dict[str, Any]) -> tuple[str, str]:
+    cache_key = _source_hash(strip_html(title) or "news")
+    cached = IMAGE_CACHE.get(cache_key)
+    if cached and time() - cached.get("ts", 0) < IMAGE_CACHE_TTL_SECONDS:
+        return cached.get("url"), cached.get("source")
+
+    source_image = extract_news_image(entry)
+    if source_image:
+        IMAGE_CACHE[cache_key] = {"ts": time(), "url": source_image, "source": "source"}
+        return source_image, "source"
+    fallback = pick_fallback_news_image(title=title, summary=summary, markets=[])
+    if OPENAI_API_KEY:
+        generated = _placeholder_svg_for_title(title)
+        diagnostics["generated_images_count"] += 1
+        IMAGE_CACHE[cache_key] = {"ts": time(), "url": generated, "source": "generated"}
+        return generated, "generated"
+    IMAGE_CACHE[cache_key] = {"ts": time(), "url": fallback, "source": "placeholder"}
+    return fallback, "placeholder"
 
 
 def fetch_public_news(limit: int = 12) -> dict[str, Any]:
@@ -470,6 +540,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
     sources_ok: list[str] = []
     sources_failed: list[str] = []
 
+    diagnostics: dict[str, Any] = {"grok_used_count": 0, "generated_images_count": 0}
     for source in PUBLIC_RSS_SOURCES:
         source_name = source["name"]
         sources_attempted.append(source_name)
@@ -488,33 +559,27 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     summary = str(entry.get("summary") or entry.get("description") or "").strip()
                     enriched = build_market_explanation(title=title, summary=summary)
                     published_iso, _ = parse_entry_datetime(entry=entry, fallback=now_utc)
-                    image_url = extract_news_image(entry)
-                    fallback_image = pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"])
-                    safe_image_url = image_url or fallback_image
+                    safe_image_url, image_source = _resolve_news_image(title=title, summary=summary, entry=entry, diagnostics=diagnostics)
                     image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
-                    story = build_long_news_story(title=title, source_summary=summary, markets=enriched["markets"], tone=enriched["tone"])
-                    rewrite = rewrite_news_with_xai(title=title, summary=summary)
-                    title_ru = rewrite["title_ru"] if rewrite else strip_html(title)
-                    summary_ru = rewrite["summary_ru"] if rewrite else enriched["summary"]
+                    rewrite = rewrite_news_with_xai(title=title, summary=summary, markets=enriched["markets"])
+                    story = rewrite or _local_writer_payload(title=title, summary=summary, markets=enriched["markets"], tone=enriched["tone"])
+                    title_ru = strip_html(title)
+                    summary_ru = story["preview_ru"]
                     writer = "grok" if rewrite else "local_fallback"
+                    if rewrite:
+                        diagnostics["grok_used_count"] += 1
                 except Exception:
                     title = str(entry.get("title") or "Новость без заголовка").strip()
                     summary = str(entry.get("summary") or entry.get("description") or "").strip()
                     published_iso, _ = parse_entry_datetime(entry=entry, fallback=now_utc)
                     enriched = build_market_explanation(title=title, summary=summary)
                     safe_image_url = pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"])
+                    image_source = "placeholder"
                     image_alt = "Иллюстрация новости"
-                    basic_summary = strip_html(summary)[:350] or "Источник сообщил о событии, детали уточняются."
+                    story = _local_writer_payload(title=title, summary=summary, markets=enriched["markets"], tone=enriched["tone"])
                     title_ru = strip_html(title)
-                    summary_ru = enriched["summary"]
+                    summary_ru = story["preview_ru"]
                     writer = "local_fallback"
-                    story = {
-                        "what_happened_ru": f"Что случилось: {strip_html(title)}. {basic_summary}",
-                        "why_it_matters_ru": "Почему это важно: рынок пересматривает ожидания по ставкам и риску.",
-                        "what_next_ru": f"К чему может привести: внимание на {', '.join(enriched['markets'])}.",
-                        "grok_style_comment_ru": "Комментарий в популярном стиле и с лёгким юмором: волатильность любит внезапные сюжеты.",
-                        "long_story_ru": f"Что случилось: {strip_html(title)}. {basic_summary}",
-                    }
                 source_had_item = True
                 source_url = str(entry.get("link") or "").strip() or None
                 items.append(
@@ -528,20 +593,25 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         "markets": enriched["markets"],
                         "tone": enriched["tone"],
                         "image_url": safe_image_url,
+                        "image_source": image_source,
                         "image_alt": image_alt,
                         "title_original": strip_html(title),
                         "title_ru": title_ru,
                         "source_url": source_url,
                         "summary_source": strip_html(summary)[:1200],
                         "summary_ru": summary_ru,
+                        "preview_ru": story["preview_ru"],
+                        "full_text_ru": story["full_text_ru"],
                         "is_real_source": True,
                         "data_origin": "rss",
                         "writer": writer,
                         "what_happened_ru": story["what_happened_ru"],
                         "why_it_matters_ru": story["why_it_matters_ru"],
-                        "what_next_ru": story["what_next_ru"],
-                        "grok_style_comment_ru": story["grok_style_comment_ru"],
-                        "long_story_ru": story["long_story_ru"],
+                        "market_impact_ru": story["market_impact_ru"],
+                        "humor_ru": story["humor_ru"],
+                        "what_next_ru": "Следим за следующими релизами и реакцией долгового рынка.",
+                        "grok_style_comment_ru": story["humor_ru"],
+                        "long_story_ru": story["full_text_ru"],
                     }
                 )
             if source_had_item:
@@ -579,17 +649,22 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     "markets": enriched["markets"],
                     "tone": enriched["tone"],
                     "image_url": pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"]),
+                    "image_source": "placeholder",
                     "image_alt": "Fallback иллюстрация новости",
                     "title_original": title,
                     "title_ru": title,
                     "source_url": None,
                     "summary_source": summary,
                     "summary_ru": enriched["summary"],
+                    "preview_ru": enriched["summary"],
+                    "full_text_ru": enriched["summary"],
                     "is_real_source": False,
                     "data_origin": "fallback",
                     "writer": "local_fallback",
                     "what_happened_ru": f"Что случилось: {summary}",
                     "why_it_matters_ru": "Почему это важно: без подтверждённых новостей нельзя делать выводы о направлении рынка.",
+                    "market_impact_ru": enriched["impact"],
+                    "humor_ru": "Юмор с оговоркой: это резервный текст до восстановления источников.",
                     "what_next_ru": "К чему может привести: дождитесь публикаций из реальных источников RSS.",
                     "grok_style_comment_ru": "Комментарий: это fallback-контент, а не подтверждённая новость.",
                     "long_story_ru": f"{summary} Это fallback-контент, созданный локально.",
@@ -608,6 +683,8 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
             "sources_attempted": sources_attempted,
             "sources_ok": sorted(set(sources_ok)),
             "sources_failed": sorted(set(sources_failed)),
+            "grok_used_count": diagnostics["grok_used_count"],
+            "generated_images_count": diagnostics["generated_images_count"],
         },
     }
     if real_items_count == 0:

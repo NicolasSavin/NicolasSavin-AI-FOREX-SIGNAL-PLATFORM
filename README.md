@@ -265,6 +265,11 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 - В карточке сигнала отображается блок «Внимание: важная новость», если событие связано с инструментом.
 - Поддерживаются открытые RSS-источники и ручной ingest через API.
 - Один и тот же news alert не должен проигрывать звук повторно после ререндера.
+- `/api/news` дополнен расширенными полями: `title_original`, `title_ru`, `preview_ru`, `full_text_ru`, `what_happened_ru`, `why_it_matters_ru`, `market_impact_ru`, `humor_ru`, `summary_source`, `image_url`, `image_source`, `image_alt`, `is_real_source`, `data_origin`, `writer`.
+- В ответ API добавлен `diagnostics`: `real_items_count`, `fallback_items_count`, `sources_attempted`, `sources_ok`, `sources_failed`, `grok_used_count`, `generated_images_count`.
+- Лента `/news` стала компактной: карточки с изображением и preview на русском раскрываются в detail-view с полным разбором, юмором, блоками «что произошло / почему важно / что может отреагировать».
+- Реальные изображения берутся из RSS (`media_content`, `media_thumbnail`, enclosures, `<img>` в summary/content). Если картинка отсутствует, сервер использует безопасный placeholder/generate fallback без передачи ключей на frontend.
+- Если доступен `XAI_API_KEY`, Grok используется только как server-side rewrite-слой; при недоступности включается локальный writer с вариативными стилями (не шаблонные повторы).
 
 ## MT4 bridge contract
 Эндпоинты `GET /api/mt4/signals` и `POST /api/mt4/export` подготавливают инфраструктуру для будущего советника MT4:
