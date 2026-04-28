@@ -340,6 +340,17 @@
       font-size: 14px;
     }
 
+    .idea-fundamental-note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: linear-gradient(145deg, rgba(120,70,255,.18), rgba(0,10,30,.9));
+      border: 1px solid rgba(120,70,255,.35);
+      color: rgba(235,240,255,.9);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
     .ideas-modal__body {
       flex: 1;
       min-height: 0;
@@ -772,6 +783,7 @@
 
         <div class="modal-section-title">Основная идея</div>
         <div class="box modal-text">${escapeHtml(pickText(idea))}</div>
+        ${renderFundamentalContext(idea)}
         <div class="status-reason">${escapeHtml(statusReason)}</div>
 
         <div class="modal-section-title">График и разметка</div>
@@ -812,6 +824,21 @@
       });
 
       setTimeout(() => renderIdeaChart(idea), 50);
+    }
+
+    function renderFundamentalContext(idea) {
+      const context = idea && typeof idea === "object" ? idea.fundamental_context : null;
+      if (!context || typeof context !== "object") return "";
+      const summary = String(context.summary_ru || "").trim();
+      const riskNote = String(context.risk_note_ru || "").trim();
+      const eventWarning = String(context.event_warning_ru || "").trim();
+      const lines = [summary, riskNote, eventWarning].filter(Boolean);
+      if (!lines.length) return "";
+      return `
+        <div class="idea-fundamental-note">
+          ${lines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}
+        </div>
+      `;
     }
 
     function closeModal() {
