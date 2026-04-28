@@ -5,15 +5,59 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Экономический календарь</title>
     <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      html,
+      body {
+        height: 100%;
+      }
+
+      body[data-page="calendar"] {
+        min-height: 100vh;
+      }
+
+      body[data-page="calendar"] .page-shell {
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      body[data-page="calendar"] .site-header {
+        border-radius: 0;
+        border-left: 0;
+        border-right: 0;
+        border-top: 0;
+        margin: 0;
+        padding: 16px 20px;
+      }
+
+      .calendar-fullscreen {
+        flex: 1;
+        min-height: 0;
+        z-index: 1;
+        background: #020617;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #economicCalendarWidget {
+        flex: 1;
+        min-height: 0;
+      }
+
+      .ecw-copyright {
+        text-align: center;
+        font-size: 12px;
+        padding: 6px 0;
+        color: rgba(255, 255, 255, 0.4);
+      }
+    </style>
   </head>
   <body data-page="calendar">
     <div class="page-shell">
-      <header class="site-header calendar-hero">
-        <div>
-          <p class="eyebrow">Календарь</p>
-          <h1>Экономический календарь</h1>
-          <p class="lead">Страница календаря сохранена в меню и продолжает использовать текущий API-контракт.</p>
-        </div>
+      <header class="site-header">
         <nav class="top-nav">
           <a href="/">Главная</a>
           <a href="/ideas">Идеи</a>
@@ -23,62 +67,28 @@
         </nav>
       </header>
 
-      <main class="content-stack">
-        <section class="panel">
-          <div class="panel-heading compact">
-            <div>
-              <p class="section-kicker">Навигатор</p>
-              <h2>Как читать влияние новостей</h2>
-              <p class="section-text">
-                Для каждого события мы показываем: <strong>что выходит</strong>, <strong>какие активы обычно реагируют</strong>,
-                <strong>тип реакции</strong> и <strong>короткий комментарий в стиле Grok</strong> (юмористическая подача, без выдумывания данных).
-              </p>
-            </div>
-          </div>
-        </section>
+      <div class="calendar-fullscreen">
+        <div id="economicCalendarWidget"></div>
 
-        <section class="panel calendar-widget-panel">
-          <div class="panel-heading compact">
-            <div>
-              <p class="section-kicker">Живой календарь</p>
-              <h2>Экономический календарь Tradays</h2>
-              <p class="section-text">
-                Здесь отображаются реальные события, время выхода, важность, прогноз, факт и предыдущее значение.
-              </p>
-            </div>
-          </div>
+        <div class="ecw-copyright">
+          <a
+            href="https://www.mql5.com/?utm_source=calendar.widget&utm_medium=link&utm_term=economic.calendar&utm_content=visit.mql5.calendar&utm_campaign=202.calendar.widget"
+            rel="noopener nofollow"
+            target="_blank"
+          >
+            MQL5 Algo Trading Community
+          </a>
+        </div>
 
-          <div class="calendar-guide-grid">
-            <article class="calendar-guide-card">
-              <strong>Высокая важность</strong>
-              <p>Это момент, когда рынок может внезапно вспомнить, что он живой. На таких релизах свечи иногда бегают быстрее трейдера за кофе.</p>
-            </article>
-            <article class="calendar-guide-card">
-              <strong>Факт против прогноза</strong>
-              <p>Если факт сильно отличается от прогноза, валюты могут дернуться резко. Рынок любит сюрпризы примерно как кот любит ванну.</p>
-            </article>
-            <article class="calendar-guide-card">
-              <strong>После релиза</strong>
-              <p>Не только цифра важна, но и реакция цены. Иногда данные хорошие, а рынок продаёт — потому что ожидал ещё лучше.</p>
-            </article>
-          </div>
-
-          <div class="tradays-widget-wrap">
-            <div id="economicCalendarWidget">
-              <iframe
-                title="Экономический календарь Tradays"
-                src="https://www.tradays.com/ru/economic-calendar/widget?mode=2&dateFormat=DMY"
-                width="100%"
-                height="650"
-                loading="lazy"
-                referrerpolicy="no-referrer-when-downgrade"
-                style="border:0"
-              ></iframe>
-            </div>
-          </div>
-          <script async src="https://www.tradays.com/c/js/widgets/calendar/widget.js?v=15"></script>
-        </section>
-      </main>
+        <script
+          async
+          type="text/javascript"
+          data-type="calendar-widget"
+          src="https://www.tradays.com/c/js/widgets/calendar/widget.js?v=15"
+        >
+          {"width":"100%","height":"100%","mode":"2","fw":"html","theme":1}
+        </script>
+      </div>
     </div>
 
     <script src="/static/script.js"></script>
