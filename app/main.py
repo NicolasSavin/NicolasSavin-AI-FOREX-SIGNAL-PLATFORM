@@ -22,7 +22,9 @@ from app.services.twelvedata_ws_service import twelvedata_ws_service
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+DEFAULT_IDEA_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+IDEA_SYMBOLS = os.getenv("IDEA_SYMBOLS", "EURUSD,GBPUSD,USDJPY,XAUUSD")
+SYMBOLS = [normalize.strip().upper() for normalize in IDEA_SYMBOLS.split(",") if normalize.strip()] or DEFAULT_IDEA_SYMBOLS
 HEATMAP_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"]
 HEATMAP_PAIRS = [
     "EURUSD",
@@ -52,6 +54,7 @@ HEATMAP_PAIRS = [
     "CADCHF",
     "CHFJPY",
 ]
+HEATMAP_CORE_PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD"]
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "").strip()
 TRADING_ECONOMICS_KEY = os.getenv("TRADING_ECONOMICS_KEY", "").strip()
@@ -61,6 +64,15 @@ FOREX_CLIENT_SENTIMENT_URL = "https://forexclientsentiment.com/forex-sentiment"
 CANDLE_CACHE: dict[str, dict[str, Any]] = {}
 STALE_CANDLE_CACHE_TTL_SECONDS = 86400
 MAX_CANDLE_CACHE_ITEMS = 300
+PROVIDER_LAST_REQUEST_AT: dict[str, float] = {}
+PROVIDER_MIN_INTERVAL_SECONDS = {"twelvedata": 1.2, "dukascopy": 0.25}
+IN_FLIGHT_FETCHES: dict[str, float] = {}
+HEATMAP_CACHE: dict[str, Any] = {"updated_at": None, "payload": None}
+HEATMAP_CACHE_TTL_SECONDS = 900
+MT4_SIGNALS_CACHE: dict[str, Any] = {"updated_at": None, "payload": None}
+MT4_SIGNALS_CACHE_TTL_SECONDS = 30
+MT4_MARKUP_CACHE: dict[str, dict[str, Any]] = {}
+MT4_MARKUP_CACHE_TTL_SECONDS = 60
 SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
 SENTIMENT_CACHE_TTL_SECONDS = 900
 
@@ -403,13 +415,13 @@ def heatmap_page():
 
 
 @app.get("/api/heatmap")
-def api_heatmap():
-    return build_currency_heatmap()
+def api_heatmap(mode: str = "core", tf: str = "M15"):
+    return build_currency_heatmap(mode=mode, tf=tf)
 
 
 @app.get("/api/signals")
 def api_signals():
-    signals = [build_signal(symbol) for symbol in SYMBOLS]
+    signals = [build_signal(symbol, detail=False) for symbol in SYMBOLS]
     archive = load_json(ARCHIVE_FILE)
 
     return {
@@ -436,6 +448,13 @@ def ideas_market():
 
 @app.get("/api/mt4/signals")
 def api_mt4_signals():
+    cached = MT4_SIGNALS_CACHE.get("payload")
+    updated_at = MT4_SIGNALS_CACHE.get("updated_at")
+    if cached and updated_at:
+        age = (datetime.now(timezone.utc) - updated_at).total_seconds()
+        if age <= MT4_SIGNALS_CACHE_TTL_SECONDS:
+            return cached
+
     raw_payload = api_signals()
     raw_signals = raw_payload.get("signals") or []
 
@@ -491,10 +510,13 @@ def api_mt4_signals():
             "comment": signal.get("summary") or signal.get("short_text") or "AI idea",
         })
 
-    return {
+    payload = {
         "updated_at_utc": raw_payload.get("updated_at_utc") or now_utc(),
         "signals": tradable_signals,
     }
+    MT4_SIGNALS_CACHE["updated_at"] = datetime.now(timezone.utc)
+    MT4_SIGNALS_CACHE["payload"] = payload
+    return payload
 
 
 
@@ -502,6 +524,13 @@ def api_mt4_signals():
 def api_mt4_markup(symbol: str, tf: str = "M15"):
     normalized_symbol = normalize_symbol(symbol)
     normalized_tf = str(tf or "M15").upper().strip()
+
+    markup_cache_key = f"{normalized_symbol}:{normalized_tf}"
+    cached = MT4_MARKUP_CACHE.get(markup_cache_key)
+    if cached:
+        age = (datetime.now(timezone.utc) - cached["updated_at"]).total_seconds()
+        if age <= MT4_MARKUP_CACHE_TTL_SECONDS:
+            return cached["payload"]
 
     chart_payload = get_candles_with_markup(normalized_symbol, normalized_tf, 160)
     annotations = chart_payload.get("annotations") or {}
@@ -600,7 +629,7 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
             "label": "Entry Zone",
         }
 
-    return {
+    payload = {
         "symbol": normalized_symbol,
         "timeframe": normalized_tf,
         "updated_at_utc": idea_payload.get("updated_at_utc") or chart_payload.get("last_updated_utc") or now_utc(),
@@ -617,6 +646,8 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
             "has_entry_zone": entry_zone_payload is not None,
         },
     }
+    MT4_MARKUP_CACHE[markup_cache_key] = {"updated_at": datetime.now(timezone.utc), "payload": payload}
+    return payload
 @app.get("/api/archive")
 def api_archive():
     archive = load_json(ARCHIVE_FILE)
@@ -675,6 +706,20 @@ def api_canonical_chart(symbol: str, tf: str, limit: int = 160):
     return get_candles_with_markup(symbol, tf, limit)
 
 
+@app.get("/api/debug/api-usage")
+def api_debug_api_usage():
+    now = datetime.now(timezone.utc)
+    heatmap_updated = HEATMAP_CACHE.get("updated_at")
+    mt4_updated = MT4_SIGNALS_CACHE.get("updated_at")
+    return {
+        "candle_cache_items": len(CANDLE_CACHE),
+        "heatmap_cache_age": None if not heatmap_updated else (now - heatmap_updated).total_seconds(),
+        "mt4_signals_cache_age": None if not mt4_updated else (now - mt4_updated).total_seconds(),
+        "provider_last_request_at": PROVIDER_LAST_REQUEST_AT,
+        "api_budget_mode": "basic_safe",
+    }
+
+
 @app.get("/api/debug/candles/{symbol}/{tf}")
 def api_debug_candles(symbol: str, tf: str, limit: int = 160):
     payload = fetch_candles(symbol, tf, limit)
@@ -720,12 +765,12 @@ def api_debug_sentiment(symbol: str):
     return fetch_forex_client_sentiment(symbol)
 
 
-def build_signal(symbol: str) -> dict[str, Any]:
+def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
     symbol = normalize_symbol(symbol)
     price_data = get_price(symbol)
     current_price = safe_float(price_data.get("price"))
 
-    candles_by_tf = build_candles_by_tf(symbol)
+    candles_by_tf = build_candles_by_tf(symbol, detail=detail)
 
     if current_price is None:
         return empty_signal(symbol, price_data, candles_by_tf)
@@ -980,17 +1025,10 @@ def validate_tp_distance(entry: float | None, tp: float | None, symbol: str) -> 
     return {"tp_warning_ru": None, "distance": distance, "min_tp_distance": min_distance}
 
 
-def build_candles_by_tf(symbol: str) -> dict[str, list[dict[str, Any]]]:
+def build_candles_by_tf(symbol: str, detail: bool = False) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {}
-
-    for tf, limit in (
-        ("MN", 80),
-        ("W1", 120),
-        ("D1", 160),
-        ("H4", 160),
-        ("H1", 160),
-        ("M15", 160),
-    ):
+    tf_plan = [("M15", 160)] if not detail else [("MN", 80), ("W1", 120), ("D1", 160), ("H4", 160), ("H1", 160), ("M15", 160)]
+    for tf, limit in tf_plan:
         payload = fetch_candles(symbol, tf, limit)
         candles = payload.get("candles") if isinstance(payload.get("candles"), list) else []
         if candles:
@@ -1098,13 +1136,27 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
 
 def candle_ttl_for_tf(tf: str) -> int:
     tf = str(tf or "M15").upper()
-    if tf in {"M1", "M5", "M15"}:
-        return 600
+    if tf in {"M1", "M5"}:
+        return 300
+    if tf == "M15":
+        return 900
     if tf in {"M30", "H1"}:
         return 1800
     if tf == "H4":
         return 3600
     return 21600
+
+
+def throttle_provider(provider: str):
+    min_interval = float(PROVIDER_MIN_INTERVAL_SECONDS.get(provider, 0))
+    if min_interval <= 0:
+        return
+    now_ts = time.time()
+    last = float(PROVIDER_LAST_REQUEST_AT.get(provider, 0))
+    wait_for = min_interval - (now_ts - last)
+    if wait_for > 0:
+        time.sleep(wait_for)
+    PROVIDER_LAST_REQUEST_AT[provider] = time.time()
 
 
 def get_cached_candle_payload(cache_key: str, max_age_seconds: int):
@@ -1282,6 +1334,7 @@ def aggregate_ticks_to_candles(ticks: list[dict[str, Any]], tf: str) -> list[dic
 
 
 def fetch_dukascopy_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
+    throttle_provider("dukascopy")
     normalized_symbol = normalize_symbol(symbol)
     provider_symbol = to_dukascopy_symbol(normalized_symbol)
     tf = str(tf or "M15").upper().strip()
@@ -1337,6 +1390,7 @@ def fetch_dukascopy_candles(symbol: str, tf: str = "M15", limit: int = 160) -> d
 
 
 def fetch_twelvedata_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
+    throttle_provider("twelvedata")
     normalized_symbol = normalize_symbol(symbol)
     source_symbol = to_twelvedata_symbol(normalized_symbol)
     interval = to_td_interval(tf)
@@ -1381,32 +1435,45 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
 
     providers_tried = []
     errors = []
+    inflight_started = IN_FLIGHT_FETCHES.get(cache_key)
+    if inflight_started:
+        for _ in range(10):
+            time.sleep(0.12)
+            fresh_wait = get_cached_candle_payload(cache_key, candle_ttl_for_tf(tf_norm))
+            if fresh_wait:
+                return {**fresh_wait, "cache_status": "fresh_waited", "provider": fresh_wait.get("provider") or "real_cache"}
+        stale_wait = get_cached_candle_payload(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
+        if stale_wait:
+            return {**stale_wait, "cache_status": "stale_waited", "provider": stale_wait.get("provider") or "real_cache"}
+    IN_FLIGHT_FETCHES[cache_key] = time.time()
+    try:
+        providers_tried.append("twelvedata")
+        td = fetch_twelvedata_candles(symbol_norm, tf_norm, limit)
+        if td.get("candles"):
+            td["provider"] = "twelvedata"
+            td["providers_tried"] = providers_tried
+            td["cache_status"] = "live"
+            set_cached_candle_payload(cache_key, td)
+            return td
+        errors.append({"twelvedata": td.get("raw_error") or td.get("warning_ru")})
 
-    providers_tried.append("twelvedata")
-    td = fetch_twelvedata_candles(symbol_norm, tf_norm, limit)
-    if td.get("candles"):
-        td["provider"] = "twelvedata"
-        td["providers_tried"] = providers_tried
-        td["cache_status"] = "live"
-        set_cached_candle_payload(cache_key, td)
-        return td
-    errors.append({"twelvedata": td.get("raw_error") or td.get("warning_ru")})
+        providers_tried.append("dukascopy")
+        dk = fetch_dukascopy_candles(symbol_norm, tf_norm, limit)
+        if dk.get("candles"):
+            dk["provider"] = "dukascopy"
+            dk["providers_tried"] = providers_tried
+            dk["cache_status"] = "live"
+            set_cached_candle_payload(cache_key, dk)
+            return dk
+        errors.append({"dukascopy": dk.get("raw_error") or dk.get("warning_ru")})
 
-    providers_tried.append("dukascopy")
-    dk = fetch_dukascopy_candles(symbol_norm, tf_norm, limit)
-    if dk.get("candles"):
-        dk["provider"] = "dukascopy"
-        dk["providers_tried"] = providers_tried
-        dk["cache_status"] = "live"
-        set_cached_candle_payload(cache_key, dk)
-        return dk
-    errors.append({"dukascopy": dk.get("raw_error") or dk.get("warning_ru")})
+        stale = get_cached_candle_payload(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
+        if stale:
+            return {**stale, "provider": "real_cache", "providers_tried": providers_tried, "cache_status": "stale_fallback", "warning_ru": "Провайдеры временно не отдали свечи, показаны последние реальные свечи из кеша.", "raw_error": errors}
 
-    stale = get_cached_candle_payload(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
-    if stale:
-        return {**stale, "provider": "real_cache", "providers_tried": providers_tried, "cache_status": "stale_fallback", "warning_ru": "Провайдеры временно не отдали свечи, показаны последние реальные свечи из кеша.", "raw_error": errors}
-
-    return {"candles": [], "provider": "unavailable", "source_symbol": to_twelvedata_symbol(symbol_norm), "interval": to_td_interval(tf_norm), "cache_status": "empty", "providers_tried": providers_tried, "warning_ru": "Нет реальных свечей от TwelveData/Dukascopy и нет сохранённого кеша.", "raw_error": errors}
+        return {"candles": [], "provider": "unavailable", "source_symbol": to_twelvedata_symbol(symbol_norm), "interval": to_td_interval(tf_norm), "cache_status": "empty", "providers_tried": providers_tried, "warning_ru": "Нет реальных свечей от TwelveData/Dukascopy и нет сохранённого кеша.", "raw_error": errors}
+    finally:
+        IN_FLIGHT_FETCHES.pop(cache_key, None)
 
 
 def build_annotations(candles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2210,7 +2277,7 @@ def _fetch_twelvedata_previous_close(symbol: str) -> float | None:
         return None
 
 
-def _fetch_heatmap_pair(symbol: str) -> dict[str, Any]:
+def _fetch_heatmap_pair(symbol: str, tf: str = "M15") -> dict[str, Any]:
     pair = normalize_symbol(symbol)
     base = pair[:3]
     quote = pair[3:]
@@ -2225,46 +2292,43 @@ def _fetch_heatmap_pair(symbol: str) -> dict[str, Any]:
 
     if len(pair) != 6:
         return row
-    if not TWELVEDATA_API_KEY:
-        return row
-
     try:
-        response = requests.get(
-            "https://api.twelvedata.com/quote",
-            params={"symbol": to_twelvedata_symbol(pair), "apikey": TWELVEDATA_API_KEY},
-            timeout=8,
-        )
-        data = response.json()
-        if data.get("status") == "error":
+        candles_payload = fetch_candles(pair, tf=tf, limit=2)
+        candles = candles_payload.get("candles") or []
+        if len(candles) < 2:
             return row
-
-        current_price = first_float(data.get("close"), data.get("price"))
-        previous_close = first_float(data.get("previous_close"))
-        if previous_close is None:
-            previous_close = _fetch_twelvedata_previous_close(pair)
-
+        current_price = first_float(candles[-1].get("close"))
+        previous_close = first_float(candles[-2].get("close"))
         if current_price is None or previous_close in (None, 0):
             return row
-
-        change_pct = ((current_price - previous_close) / previous_close) * 100
+        change_pct = ((float(current_price) - float(previous_close)) / float(previous_close)) * 100
         row["price"] = round(float(current_price), 6)
         row["change_pct"] = round(float(change_pct), 4)
-        row["data_status"] = "delayed"
+        row["data_status"] = "real" if candles_payload.get("cache_status") == "live" else "delayed"
         return row
     except Exception:
         return row
 
 
-def build_currency_heatmap() -> dict[str, Any]:
+def build_currency_heatmap(mode: str = "core", tf: str = "M15") -> dict[str, Any]:
+    normalized_mode = str(mode or "core").lower().strip()
+    normalized_tf = str(tf or "M15").upper().strip()
+    cached = HEATMAP_CACHE.get("payload")
+    updated_at = HEATMAP_CACHE.get("updated_at")
+    if normalized_mode != "full" and cached and updated_at:
+        if (datetime.now(timezone.utc) - updated_at).total_seconds() <= HEATMAP_CACHE_TTL_SECONDS:
+            return cached
+
     currencies = HEATMAP_CURRENCIES.copy()
+    pairs = HEATMAP_PAIRS if normalized_mode == "full" else HEATMAP_CORE_PAIRS
     pair_rows: list[dict[str, Any]] = []
     strength_totals: dict[str, float] = {currency: 0.0 for currency in currencies}
     strength_counts: dict[str, int] = {currency: 0 for currency in currencies}
     real_pairs_count = 0
     unavailable_pairs_count = 0
 
-    for symbol in HEATMAP_PAIRS:
-        row = _fetch_heatmap_pair(symbol)
+    for symbol in pairs:
+        row = _fetch_heatmap_pair(symbol, tf=normalized_tf)
         pair_rows.append(row)
         if row.get("change_pct") is None:
             unavailable_pairs_count += 1
@@ -2291,7 +2355,7 @@ def build_currency_heatmap() -> dict[str, Any]:
             "updated_at_utc": now_utc(),
             "diagnostics": {
                 "real_pairs_count": 0,
-                "unavailable_pairs_count": len(HEATMAP_PAIRS),
+                "unavailable_pairs_count": len(pairs),
                 "provider": "twelvedata",
             },
         }
@@ -2308,17 +2372,23 @@ def build_currency_heatmap() -> dict[str, Any]:
     for idx, item in enumerate(strength, start=1):
         item["rank"] = idx
 
-    return {
+    payload = {
         "currencies": currencies,
         "pairs": pair_rows,
         "strength": strength,
         "updated_at_utc": now_utc(),
+        "mode": normalized_mode,
+        "timeframe": normalized_tf,
         "diagnostics": {
             "real_pairs_count": real_pairs_count,
             "unavailable_pairs_count": unavailable_pairs_count,
             "provider": "twelvedata",
         },
     }
+    if normalized_mode != "full":
+        HEATMAP_CACHE["updated_at"] = datetime.now(timezone.utc)
+        HEATMAP_CACHE["payload"] = payload
+    return payload
 
 
 def move_to_archive(trade: dict[str, Any]) -> None:
