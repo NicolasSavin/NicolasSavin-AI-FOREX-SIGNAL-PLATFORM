@@ -766,6 +766,119 @@
         max-height: 28vh;
       }
     }
+
+
+/* FINAL FIX: Ideas modal chart visibility */
+.modal-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 9999 !important;
+  display: none;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 14px !important;
+  background: rgba(0,0,0,.78) !important;
+  backdrop-filter: blur(10px);
+}
+
+.modal-backdrop.open {
+  display: flex !important;
+}
+
+.modal {
+  width: min(1500px, 96vw) !important;
+  height: 92vh !important;
+  max-height: 92vh !important;
+  overflow: hidden !important;
+  padding: 16px !important;
+  border-radius: 24px !important;
+  display: grid !important;
+  grid-template-rows: auto 1fr !important;
+}
+
+.modal-head {
+  flex: 0 0 auto !important;
+  margin-bottom: 10px !important;
+}
+
+.modal-title {
+  font-size: clamp(24px, 2.6vw, 36px) !important;
+  margin-bottom: 4px !important;
+}
+
+#modalSubtitle {
+  max-height: 44px !important;
+  overflow: hidden !important;
+  line-height: 1.35 !important;
+}
+
+#modalContent {
+  min-height: 0 !important;
+  overflow: hidden !important;
+  display: grid !important;
+  grid-template-rows: auto 1fr !important;
+  gap: 10px !important;
+}
+
+/* Hide/compact text-heavy blocks so chart gets space */
+#modalContent .modal-grid,
+#modalContent .modal-section-title,
+#modalContent .modal-text,
+#modalContent .status-reason {
+  display: none !important;
+}
+
+.chart-wrap {
+  min-height: 0 !important;
+  height: 100% !important;
+  display: grid !important;
+  grid-template-rows: auto auto 1fr auto !important;
+  margin: 0 !important;
+}
+
+.chart-toolbar {
+  padding: 8px !important;
+}
+
+.legend-grid {
+  padding: 8px !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+}
+
+.legend-item {
+  padding: 6px 8px !important;
+  font-size: 11px !important;
+}
+
+.chart,
+#ideaChart {
+  height: 100% !important;
+  min-height: 560px !important;
+  width: 100% !important;
+}
+
+.chart-note {
+  padding: 6px 10px !important;
+  font-size: 11px !important;
+}
+
+@media (max-height: 820px) {
+  .modal {
+    height: 94vh !important;
+    max-height: 94vh !important;
+  }
+
+  .chart,
+  #ideaChart {
+    min-height: 500px !important;
+  }
+
+  .legend-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+}
+
   </style>
 </head>
 
@@ -1240,6 +1353,7 @@
         btn.addEventListener("click", () => {
           state.currentTf = btn.dataset.tf;
           renderIdeaChart(idea);
+          setTimeout(resizeIdeaChartSafely, 150);
         });
       });
 
@@ -1256,6 +1370,7 @@
       setTimeout(() => renderIdeaChart(idea), 50);
       setTimeout(resizeIdeaChartSafely, 100);
       setTimeout(resizeIdeaChartSafely, 300);
+      setTimeout(resizeIdeaChartSafely, 700);
     }
 
 
@@ -1314,10 +1429,10 @@
 
     function resizeIdeaChartSafely() {
       const container = document.getElementById("ideaChart");
-      if (!container || !state || !state.chart) return;
+      if (!container || !state.chart) return;
 
       const rect = container.getBoundingClientRect();
-      const width = Math.max(320, Math.floor(rect.width));
+      const width = Math.max(500, Math.floor(rect.width));
       const height = Math.max(560, Math.floor(rect.height));
 
       try {
@@ -1421,6 +1536,7 @@
       requestAnimationFrame(redrawOverlay);
       setTimeout(resizeIdeaChartSafely, 100);
       setTimeout(resizeIdeaChartSafely, 300);
+      setTimeout(resizeIdeaChartSafely, 700);
     }
 
     async function fetchRealCandlesForIdea(idea, tf) {
@@ -2057,17 +2173,23 @@
       return `${normalized.slice(0, maxLength - 1).trim()}…`;
     }
 
+    function formatSentimentText(sentiment) {
+      const longPct = Number(sentiment?.long_pct);
+      const shortPct = Number(sentiment?.short_pct);
+
+      if (!sentiment || !Number.isFinite(longPct) || !Number.isFinite(shortPct) || (longPct === 0 && shortPct === 0)) {
+        return "Sentiment: нет данных";
+      }
+
+      return `Sentiment: Long ${Math.round(longPct)}% / Short ${Math.round(shortPct)}%`;
+    }
+
     function renderSentimentBadge(idea) {
       const sentiment = idea && typeof idea.sentiment === "object" ? idea.sentiment : null;
       if (!sentiment || String(sentiment.data_status || "").toLowerCase() === "unavailable") {
         return `<div class="sentiment-badge">Sentiment: нет данных</div>`;
       }
-      const longPct = Number(sentiment.long_pct);
-      const shortPct = Number(sentiment.short_pct);
-      if (!Number.isFinite(longPct) || !Number.isFinite(shortPct)) {
-        return `<div class="sentiment-badge">Sentiment: нет данных</div>`;
-      }
-      return `<div class="sentiment-badge">Sentiment: Long ${escapeHtml(longPct.toFixed(0))}% / Short ${escapeHtml(shortPct.toFixed(0))}%</div>`;
+      return `<div class="sentiment-badge">${escapeHtml(formatSentimentText(sentiment))}</div>`;
     }
 
     function renderSmartMoneyContext(idea) {
