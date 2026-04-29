@@ -96,7 +96,8 @@
 - `POST /api/news/ingest`
 
 ### Подготовка к MT4
-- `GET /api/mt4/signals` — read-only polling контракт для будущего советника
+- `GET /api/mt4/signals` — упрощённый MT4-friendly контракт: только tradable BUY/SELL с валидными entry/sl/tp, `trade_permission=true` и `data_status` только `real|delayed`.
+- В репозиторий добавлен пример советника `AI_Ideas_Trader.mq4` с консервативными проверками spread/confidence/duplicate order и обработкой только ордеров с заданным `MagicNumber`.
 - `POST /api/mt4/export` — подготовка export payload для MT4/bridge слоя
 
 ### Analytics API
