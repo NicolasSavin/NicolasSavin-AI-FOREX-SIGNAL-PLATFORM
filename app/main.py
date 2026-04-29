@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import lzma
 import os
+import struct
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlencode
 from typing import Any
 
 import requests
@@ -565,8 +566,10 @@ def api_debug_dukascopy(symbol: str, tf: str, limit: int = 160):
         "tf": tf,
         "count": len(candles),
         "provider": payload.get("provider"),
+        "source_symbol": payload.get("source_symbol"),
         "warning_ru": payload.get("warning_ru"),
         "raw_error": payload.get("raw_error"),
+        "diagnostics": payload.get("diagnostics") or {},
         "first": candles[0] if candles else None,
         "last": candles[-1] if candles else None,
     }
@@ -927,118 +930,178 @@ def parse_td_values(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def to_dukascopy_symbol(symbol: str) -> str:
     symbol = normalize_symbol(symbol)
-    if len(symbol) == 6:
-        return symbol
-    return symbol
+    supported = {
+        "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
+        "EURGBP", "EURJPY", "EURCHF", "EURCAD", "EURAUD", "EURNZD",
+        "GBPJPY", "GBPCHF", "GBPCAD", "GBPAUD", "GBPNZD",
+        "AUDJPY", "AUDCAD", "AUDNZD",
+        "NZDJPY", "NZDCAD",
+        "CADJPY", "CADCHF",
+        "CHFJPY",
+        "XAUUSD",
+    }
+    return symbol if symbol in supported else ""
 
 
-def to_dukascopy_period(tf: str) -> str:
+def dukascopy_price_divisor(symbol: str) -> float:
+    symbol = normalize_symbol(symbol)
+    if symbol.endswith("JPY"):
+        return 1000.0
+    if symbol == "XAUUSD":
+        return 1000.0
+    return 100000.0
+
+
+def to_dukascopy_period(tf: str) -> int:
     tf = str(tf or "M15").upper().strip()
     return {
-        "M1": "1",
-        "M5": "5",
-        "M15": "15",
-        "M30": "30",
-        "H1": "60",
-        "H4": "240",
-        "D1": "1440",
-    }.get(tf, "")
+        "M1": 60,
+        "M5": 300,
+        "M15": 900,
+        "M30": 1800,
+        "H1": 3600,
+        "H4": 14400,
+    }.get(tf, 0)
+
+
+def dukascopy_hours_needed(tf: str, limit: int) -> int:
+    tf = str(tf or "M15").upper()
+    candles_per_hour = {"M1": 60, "M5": 12, "M15": 4, "M30": 2, "H1": 1, "H4": 0.25}
+    estimated = int((limit / candles_per_hour.get(tf, 4)) + 6)
+    if tf in {"M1", "M5", "M15", "M30", "H1"}:
+        return min(max(estimated, 12), 96)
+    if tf == "H4":
+        return min(max(estimated, 48), 240)
+    return 0
+
+
+def fetch_dukascopy_ticks_for_hour(symbol: str, hour_dt: datetime) -> tuple[list[dict[str, Any]], str | None]:
+    source_symbol = to_dukascopy_symbol(symbol)
+    if not source_symbol:
+        return [], "unsupported_symbol"
+
+    hour_dt = hour_dt.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    year = hour_dt.year
+    month_zero = f"{hour_dt.month - 1:02d}"
+    day = f"{hour_dt.day:02d}"
+    hour = f"{hour_dt.hour:02d}"
+    url = f"https://datafeed.dukascopy.com/datafeed/{source_symbol}/{year}/{month_zero}/{day}/{hour}h_ticks.bi5"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; forex-signal-platform/1.0)"}
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 404:
+            return [], None
+        if resp.status_code != 200:
+            return [], f"http_{resp.status_code}"
+        raw = lzma.decompress(resp.content)
+    except Exception as exc:
+        return [], str(exc)
+
+    divisor = dukascopy_price_divisor(source_symbol)
+    ticks: list[dict[str, Any]] = []
+    for i in range(0, len(raw), 20):
+        chunk = raw[i:i + 20]
+        if len(chunk) < 20:
+            continue
+        try:
+            ms, ask, bid, ask_vol, bid_vol = struct.unpack(">iiiff", chunk)
+        except struct.error:
+            continue
+        mid = ((ask + bid) / 2.0) / divisor
+        tick_time = hour_dt + timedelta(milliseconds=ms)
+        ticks.append({"time": tick_time, "price": mid, "volume": float(ask_vol or 0) + float(bid_vol or 0)})
+    return ticks, None
+
+
+def aggregate_ticks_to_candles(ticks: list[dict[str, Any]], tf: str) -> list[dict[str, Any]]:
+    bucket_seconds = to_dukascopy_period(tf)
+    if bucket_seconds <= 0:
+        return []
+    buckets: dict[int, dict[str, Any]] = {}
+    for tick in sorted(ticks, key=lambda x: x["time"]):
+        ts = int(tick["time"].timestamp())
+        bucket_ts = ts - (ts % bucket_seconds)
+        price = float(tick["price"])
+        volume = float(tick.get("volume") or 0.0)
+        row = buckets.get(bucket_ts)
+        if row is None:
+            dt = datetime.fromtimestamp(bucket_ts, tz=timezone.utc).isoformat()
+            buckets[bucket_ts] = {
+                "time": bucket_ts,
+                "datetime": dt,
+                "open": price,
+                "high": price,
+                "low": price,
+                "close": price,
+                "volume": volume,
+            }
+            continue
+        row["high"] = max(float(row["high"]), price)
+        row["low"] = min(float(row["low"]), price)
+        row["close"] = price
+        row["volume"] = float(row["volume"]) + volume
+    return [buckets[key] for key in sorted(buckets.keys())]
 
 
 def fetch_dukascopy_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
     normalized_symbol = normalize_symbol(symbol)
     provider_symbol = to_dukascopy_symbol(normalized_symbol)
-    period = to_dukascopy_period(tf)
-    if not period:
+    tf = str(tf or "M15").upper().strip()
+    if not provider_symbol:
         return {
             "candles": [],
             "provider": "dukascopy",
             "source_symbol": provider_symbol,
-            "interval": None,
-            "warning_ru": f"Dukascopy не поддерживает таймфрейм {str(tf).upper()}.",
-            "raw_error": "unsupported_timeframe",
-        }
-    if provider_symbol == "XAUUSD":
-        return {
-            "candles": [],
-            "provider": "dukascopy",
-            "source_symbol": provider_symbol,
-            "interval": period,
-            "warning_ru": "Dukascopy для XAUUSD в текущем endpoint не поддерживается.",
+            "interval": tf,
+            "warning_ru": "Dukascopy не поддерживает этот символ.",
             "raw_error": "unsupported_symbol",
+            "diagnostics": {"hours_requested": 0, "hours_with_ticks": 0, "ticks_count": 0},
         }
+    if tf in {"D1", "W1", "MN", "MN1"}:
+        return {
+            "candles": [],
+            "provider": "dukascopy",
+            "source_symbol": provider_symbol,
+            "interval": tf,
+            "warning_ru": f"Dukascopy datafeed пока не поддерживает {tf} в этом fallback.",
+            "raw_error": "unsupported_timeframe",
+            "diagnostics": {"hours_requested": 0, "hours_with_ticks": 0, "ticks_count": 0},
+        }
+    if to_dukascopy_period(tf) <= 0:
+        return {"candles": [], "provider": "dukascopy", "source_symbol": provider_symbol, "interval": tf, "warning_ru": f"Dukascopy не поддерживает таймфрейм {tf}.", "raw_error": "unsupported_timeframe", "diagnostics": {"hours_requested": 0, "hours_with_ticks": 0, "ticks_count": 0}}
 
-    params = {
-        "path": "chart/history",
-        "instrument": provider_symbol,
-        "offer_side": "BID",
-        "interval": period,
-        "splits": "true",
-        "limit": max(1, int(limit)),
+    limit = max(1, int(limit))
+    hours_requested = dukascopy_hours_needed(tf, limit)
+    base_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    all_ticks: list[dict[str, Any]] = []
+    hours_with_ticks = 0
+    raw_error: str | None = None
+    for offset in range(hours_requested):
+        hour_dt = base_hour - timedelta(hours=offset)
+        hour_ticks, hour_error = fetch_dukascopy_ticks_for_hour(provider_symbol, hour_dt)
+        if hour_ticks:
+            hours_with_ticks += 1
+            all_ticks.extend(hour_ticks)
+        if hour_error and raw_error is None:
+            raw_error = hour_error
+
+    candles = aggregate_ticks_to_candles(all_ticks, tf)
+    candles = sorted(candles, key=lambda x: x["time"])[-limit:]
+    warning = None
+    if not candles:
+        warning = "Dukascopy вернул пустой набор свечей."
+    elif raw_error:
+        warning = "Часть часов Dukascopy недоступна, использованы доступные реальные тики."
+    return {
+        "candles": candles,
+        "provider": "dukascopy",
+        "source_symbol": provider_symbol,
+        "interval": tf,
+        "warning_ru": warning,
+        "raw_error": raw_error,
+        "diagnostics": {"hours_requested": hours_requested, "hours_with_ticks": hours_with_ticks, "ticks_count": len(all_ticks)},
     }
-    url = f"https://freeserv.dukascopy.com/2.0/index.php?{urlencode(params)}"
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; forex-signal-platform/1.0)"}
-
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        rows = data if isinstance(data, list) else data.get("candles") if isinstance(data, dict) else []
-        candles: list[dict[str, Any]] = []
-        for item in rows or []:
-            if not isinstance(item, dict):
-                continue
-            raw_time = item.get("timestamp") or item.get("time") or item.get("ts")
-            if raw_time is None:
-                continue
-            ts = int(float(raw_time))
-            if ts > 10_000_000_000:
-                ts = int(ts / 1000)
-            o = item.get("open")
-            h = item.get("high")
-            l = item.get("low")
-            c = item.get("close")
-            if None in (o, h, l, c):
-                continue
-            dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-            candles.append(
-                {
-                    "time": ts,
-                    "datetime": dt,
-                    "open": float(o),
-                    "high": float(h),
-                    "low": float(l),
-                    "close": float(c),
-                    "volume": float(item.get("volume") or 0),
-                }
-            )
-        candles = sorted(candles, key=lambda x: x["time"])[-limit:]
-        if candles:
-            return {
-                "candles": candles,
-                "provider": "dukascopy",
-                "source_symbol": provider_symbol,
-                "interval": period,
-                "warning_ru": None,
-                "raw_error": None,
-            }
-        return {
-            "candles": [],
-            "provider": "dukascopy",
-            "source_symbol": provider_symbol,
-            "interval": period,
-            "warning_ru": "Dukascopy вернул пустой набор свечей.",
-            "raw_error": "empty_values",
-        }
-    except Exception as exc:
-        return {
-            "candles": [],
-            "provider": "dukascopy",
-            "source_symbol": provider_symbol,
-            "interval": period,
-            "warning_ru": "Dukascopy временно недоступен.",
-            "raw_error": str(exc),
-        }
 
 
 def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
