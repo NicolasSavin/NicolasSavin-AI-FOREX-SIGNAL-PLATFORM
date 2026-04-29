@@ -459,15 +459,32 @@ def api_mt4_signals():
         if data_status not in {"real", "delayed"}:
             continue
 
+        entry_zone = signal.get("entry_zone") if isinstance(signal.get("entry_zone"), dict) else {}
+        entry_zone_from = safe_float(entry_zone.get("from"))
+        entry_zone_to = safe_float(entry_zone.get("to"))
+        entry_zone_mid = safe_float(entry_zone.get("mid")) or entry
+        buffered_sl = safe_float(signal.get("buffered_sl")) or sl
+        tp_warning_ru = signal.get("tp_warning_ru")
+        aggressive_mode = bool(signal.get("aggressive_mode"))
+        mt4_trade_permission = trade_permission and not (tp_warning_ru and not aggressive_mode)
+
         tradable_signals.append({
             "id": signal.get("id") or f"{signal.get('symbol')}-{action}",
             "symbol": normalize_symbol(str(signal.get("symbol") or "")),
             "action": action,
             "entry": entry,
             "sl": sl,
+            "sl_original": sl,
+            "sl_buffered": buffered_sl,
             "tp": tp,
+            "entry_zone_from": entry_zone_from,
+            "entry_zone_to": entry_zone_to,
+            "entry_zone_mid": entry_zone_mid,
+            "execution_mode": "zone",
+            "skip_reason": "tp_too_close" if (tp_warning_ru and not aggressive_mode) else None,
+            "tp_warning_ru": tp_warning_ru,
             "confidence": int(signal.get("confidence") or 0),
-            "trade_permission": trade_permission,
+            "trade_permission": mt4_trade_permission,
             "status": signal.get("status") or signal.get("runtime_status") or "ACTIVE",
             "data_status": data_status,
             "expires_at": signal.get("expires_at") or signal.get("meaningful_updated_at") or signal.get("updated_at"),
@@ -511,12 +528,12 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
 
     levels = []
     entry = safe_float(matched_idea.get("entry") or matched_idea.get("entry_price"))
-    sl = safe_float(matched_idea.get("sl") or matched_idea.get("stop_loss"))
+    sl = safe_float(matched_idea.get("buffered_sl") or matched_idea.get("sl") or matched_idea.get("stop_loss"))
     tp = safe_float(matched_idea.get("tp") or matched_idea.get("take_profit"))
     if entry is not None:
         levels.append({"type": "entry", "price": entry, "label": "ENTRY"})
     if sl is not None:
-        levels.append({"type": "sl", "price": sl, "label": "SL"})
+        levels.append({"type": "sl", "price": sl, "label": "SL buffered"})
     if tp is not None:
         levels.append({"type": "tp", "price": tp, "label": "TP"})
 
@@ -572,18 +589,32 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
             "label": "BUY ↑" if signal == "BUY" else "SELL ↓",
         }
 
+    entry_zone = matched_idea.get("entry_zone") if isinstance(matched_idea.get("entry_zone"), dict) else {}
+    entry_zone_payload = None
+    zone_from = safe_float(entry_zone.get("from"))
+    zone_to = safe_float(entry_zone.get("to"))
+    if zone_from is not None and zone_to is not None:
+        entry_zone_payload = {
+            "from_price": zone_from,
+            "to_price": zone_to,
+            "label": "Entry Zone",
+        }
+
     return {
         "symbol": normalized_symbol,
         "timeframe": normalized_tf,
         "updated_at_utc": idea_payload.get("updated_at_utc") or chart_payload.get("last_updated_utc") or now_utc(),
         "levels": levels,
+        "entry_zone": entry_zone_payload,
         "zones": zones,
         "patterns": patterns,
         "arrow": arrow,
         "diagnostics": {
             "candles_count": len(candles),
+            "levels_count": len(levels),
             "zones_count": len(zones),
             "patterns_count": len(patterns),
+            "has_entry_zone": entry_zone_payload is not None,
         },
     }
 @app.get("/api/archive")
@@ -804,6 +835,23 @@ def build_signal(symbol: str) -> dict[str, Any]:
     )
 
     m15_candles = candles_by_tf.get("M15", [])
+    signal_side = str(trade.get("signal") or "")
+    entry_value = safe_float(trade.get("entry"))
+    original_sl = safe_float(trade.get("sl"))
+    tp_value = safe_float(trade.get("tp"))
+    tolerance = symbol_tolerance(symbol)
+    entry_zone = build_entry_zone(signal_side, entry_value, symbol)
+    buffered_sl = apply_sl_buffer(signal_side, original_sl, symbol)
+    tp_validation = validate_tp_distance(entry_value, tp_value, symbol)
+    tp_warning_ru = tp_validation.get("tp_warning_ru")
+    execution_safety = {
+        "entry_zone": entry_zone,
+        "original_sl": original_sl,
+        "buffered_sl": buffered_sl,
+        "sl_buffer": tolerance.get("sl_buffer"),
+        "tp_warning_ru": tp_warning_ru,
+        "provider_tolerance_ru": "Идея рассчитана с допуском на различие данных между сайтом, поставщиком и брокером.",
+    }
 
     return {
         "id": trade.get("id"),
@@ -833,10 +881,14 @@ def build_signal(symbol: str) -> dict[str, Any]:
         "price": current_price,
         "entry": trade.get("entry"),
         "entry_price": trade.get("entry"),
+        "entry_zone": entry_zone,
         "stop_loss": trade.get("sl"),
         "sl": trade.get("sl"),
+        "buffered_sl": buffered_sl,
         "take_profit": trade.get("tp"),
         "tp": trade.get("tp"),
+        "tp_warning_ru": tp_warning_ru,
+        "execution_safety": execution_safety,
         "risk_reward": trade.get("rr"),
         "rr": trade.get("rr"),
         "summary": summary,
@@ -876,7 +928,54 @@ def build_signal(symbol: str) -> dict[str, Any]:
             "candles_by_tf_count": {tf: len(rows) for tf, rows in candles_by_tf.items()},
             "htf_filter": decision.context,
         },
+}
+
+
+def symbol_tolerance(symbol: str) -> dict[str, float | str]:
+    symbol = normalize_symbol(symbol)
+    if symbol == "XAUUSD":
+        return {"entry_tolerance": 1.5, "sl_buffer": 2.5, "min_tp_distance": 4.0, "label": "gold_buffer"}
+    if symbol.endswith("JPY"):
+        return {"entry_tolerance": 0.08, "sl_buffer": 0.12, "min_tp_distance": 0.18, "label": "jpy_buffer"}
+    return {"entry_tolerance": 0.00045, "sl_buffer": 0.00065, "min_tp_distance": 0.0012, "label": "fx_major_buffer"}
+
+
+def build_entry_zone(signal: str, entry: float | None, symbol: str) -> dict[str, float | str] | None:
+    if entry is None:
+        return None
+    tol = float(symbol_tolerance(symbol)["entry_tolerance"])
+    return {
+        "from": entry - tol,
+        "to": entry + tol,
+        "mid": entry,
+        "tolerance": tol,
+        "reason_ru": "Entry показан как зона, чтобы учесть отличия котировок между брокером, сайтом и поставщиком данных.",
     }
+
+
+def apply_sl_buffer(signal: str, sl: float | None, symbol: str) -> float | None:
+    if sl is None:
+        return None
+    buffer = float(symbol_tolerance(symbol)["sl_buffer"])
+    if str(signal).upper() == "BUY":
+        return sl - buffer
+    if str(signal).upper() == "SELL":
+        return sl + buffer
+    return sl
+
+
+def validate_tp_distance(entry: float | None, tp: float | None, symbol: str) -> dict[str, Any]:
+    if entry is None or tp is None:
+        return {"tp_warning_ru": None}
+    distance = abs(tp - entry)
+    min_distance = float(symbol_tolerance(symbol)["min_tp_distance"])
+    if distance < min_distance:
+        return {
+            "tp_warning_ru": "TP слишком близко к Entry с учётом спреда/разницы провайдеров. Для советника вход лучше пропустить или ждать лучшей цены.",
+            "distance": distance,
+            "min_tp_distance": min_distance,
+        }
+    return {"tp_warning_ru": None, "distance": distance, "min_tp_distance": min_distance}
 
 
 def build_candles_by_tf(symbol: str) -> dict[str, list[dict[str, Any]]]:
