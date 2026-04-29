@@ -538,7 +538,7 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
             zone_side = str(zone.get("side") or zone.get("direction") or "").lower()
             if not zone_side:
                 zone_side = "supply" if "bearish" in str(zone.get("type") or "").lower() else "demand"
-            normalized.append({
+            normalized_zone = {
                 "type": zone_type,
                 "side": zone_side,
                 "from_price": from_price,
@@ -546,7 +546,12 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
                 "from_time": zone.get("from_time") or zone.get("start_time") or zone.get("datetime") or recent_from_time,
                 "to_time": zone.get("to_time") or zone.get("end_time") or zone.get("datetime") or recent_to_time,
                 "label": zone.get("label") or zone.get("name") or zone_type.upper(),
-            })
+            }
+            if zone_type == "ob":
+                normalized_zone["is_valid"] = bool(zone.get("is_valid"))
+                normalized_zone["quality"] = zone.get("quality") or "weak"
+                normalized_zone["validation"] = zone.get("validation") or {}
+            normalized.append(normalized_zone)
         return normalized
 
     zones = []
@@ -1424,6 +1429,167 @@ def detect_imbalances(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return zones[-8:]
 
 
+def candle_body(c: dict[str, Any]) -> float:
+    return abs(float(c["close"]) - float(c["open"]))
+
+
+def candle_range(c: dict[str, Any]) -> float:
+    return max(1e-9, float(c["high"]) - float(c["low"]))
+
+
+def is_bullish(c: dict[str, Any]) -> bool:
+    return float(c["close"]) > float(c["open"])
+
+
+def is_bearish(c: dict[str, Any]) -> bool:
+    return float(c["close"]) < float(c["open"])
+
+
+def detect_displacement_after_ob(
+    candles: list[dict[str, Any]],
+    ob_index: int,
+    side: str,
+    lookahead: int = 5,
+) -> dict[str, Any]:
+    if ob_index < 0 or ob_index >= len(candles) - 1:
+        return {"has_displacement": False, "index": None, "strength": 0.0}
+
+    start = ob_index + 1
+    end = min(len(candles), start + max(1, lookahead))
+    history_start = max(0, ob_index - 20)
+    history = candles[history_start:ob_index]
+    avg_body = sum(candle_body(c) for c in history) / max(1, len(history))
+    avg_body = max(avg_body, 1e-9)
+
+    side_norm = side.lower().strip()
+    for idx in range(start, end):
+        c = candles[idx]
+        body = candle_body(c)
+        body_to_range = body / candle_range(c)
+        direction_ok = (side_norm in {"bullish", "demand"} and is_bullish(c)) or (
+            side_norm in {"bearish", "supply"} and is_bearish(c)
+        )
+        if direction_ok and body >= 1.5 * avg_body and body_to_range >= 0.55:
+            return {
+                "has_displacement": True,
+                "index": idx,
+                "strength": round(body / avg_body, 4),
+            }
+    return {"has_displacement": False, "index": None, "strength": 0.0}
+
+
+def detect_fvg_after_ob(
+    candles: list[dict[str, Any]],
+    ob_index: int,
+    side: str,
+    lookahead: int = 6,
+) -> dict[str, Any]:
+    if ob_index < 0 or ob_index >= len(candles) - 2:
+        return {"has_fvg": False, "index": None, "from_price": None, "to_price": None}
+
+    side_norm = side.lower().strip()
+    start = max(1, ob_index + 1)
+    end = min(len(candles) - 1, ob_index + 1 + max(1, lookahead))
+    for i in range(start, end):
+        c_prev = candles[i - 1]
+        c_next = candles[i + 1]
+        if side_norm in {"bullish", "demand"} and float(c_prev["high"]) < float(c_next["low"]):
+            return {
+                "has_fvg": True,
+                "index": i,
+                "from_price": float(c_prev["high"]),
+                "to_price": float(c_next["low"]),
+            }
+        if side_norm in {"bearish", "supply"} and float(c_prev["low"]) > float(c_next["high"]):
+            return {
+                "has_fvg": True,
+                "index": i,
+                "from_price": float(c_next["high"]),
+                "to_price": float(c_prev["low"]),
+            }
+    return {"has_fvg": False, "index": None, "from_price": None, "to_price": None}
+
+
+def detect_bos_after_ob(
+    candles: list[dict[str, Any]],
+    ob_index: int,
+    side: str,
+    lookahead: int = 8,
+) -> bool:
+    try:
+        if ob_index < 2 or ob_index >= len(candles) - 1:
+            return False
+        recent = candles[max(0, ob_index - 5):ob_index]
+        if not recent:
+            return False
+        future = candles[ob_index + 1:min(len(candles), ob_index + 1 + max(1, lookahead))]
+        if not future:
+            return False
+        side_norm = side.lower().strip()
+        if side_norm in {"bullish", "demand"}:
+            recent_swing_high = max(float(c["high"]) for c in recent)
+            return any(float(c["high"]) > recent_swing_high for c in future)
+        if side_norm in {"bearish", "supply"}:
+            recent_swing_low = min(float(c["low"]) for c in recent)
+            return any(float(c["low"]) < recent_swing_low for c in future)
+        return False
+    except Exception:
+        return False
+
+
+def validate_order_block(ob: dict[str, Any], candles: list[dict[str, Any]]) -> dict[str, Any]:
+    if not candles or not isinstance(ob, dict):
+        return {
+            "is_valid": False,
+            "quality": "weak",
+            "has_displacement": False,
+            "has_fvg": False,
+            "has_bos": False,
+            "reason_ru": "Недостаточно данных для валидации OB.",
+        }
+
+    raw_side = str(ob.get("side") or ob.get("type") or "").lower()
+    side = "bullish" if any(x in raw_side for x in ("bullish", "demand")) else "bearish"
+    ob_index = ob.get("index")
+    if isinstance(ob_index, int):
+        idx = ob_index
+    else:
+        idx = -1
+        ob_time = str(ob.get("time") or ob.get("from_time") or "").strip()
+        if ob_time:
+            for i, c in enumerate(candles):
+                if str(c.get("time") or c.get("datetime") or "") == ob_time:
+                    idx = i
+                    break
+        if idx < 0:
+            idx = max(0, len(candles) - 2)
+
+    displacement = detect_displacement_after_ob(candles, idx, side)
+    fvg = detect_fvg_after_ob(candles, idx, side)
+    has_bos = detect_bos_after_ob(candles, idx, side)
+    has_displacement = bool(displacement.get("has_displacement"))
+    has_fvg = bool(fvg.get("has_fvg"))
+    quality = "strong" if has_displacement and has_fvg else "medium" if has_displacement else "weak"
+    is_valid = has_displacement and has_fvg
+    reason = (
+        "OB подтверждён импульсом и FVG после зоны."
+        if quality == "strong"
+        else "Есть импульс после OB, но нет подтверждённого FVG."
+        if quality == "medium"
+        else "OB найден, но после него нет достаточного displacement/FVG. Зона считается слабой, вход лучше ждать после подтверждения."
+    )
+    return {
+        "is_valid": is_valid,
+        "quality": quality,
+        "has_displacement": has_displacement,
+        "has_fvg": has_fvg,
+        "has_bos": has_bos,
+        "reason_ru": reason,
+        "displacement": displacement,
+        "fvg_after": fvg,
+    }
+
+
 def detect_order_blocks(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     zones = []
 
@@ -1466,7 +1632,15 @@ def detect_order_blocks(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 }
             )
 
-    return zones[-8:]
+    validated: list[dict[str, Any]] = []
+    for zone in zones[-8:]:
+        validation = validate_order_block(zone, candles)
+        zone["validation"] = validation
+        zone["is_valid"] = validation.get("is_valid", False)
+        zone["quality"] = validation.get("quality", "weak")
+        zone["label"] = f"{zone.get('label', 'OB')} ({zone['quality']})"
+        validated.append(zone)
+    return validated
 
 
 def detect_breaker_blocks(
