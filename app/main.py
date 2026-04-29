@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +59,8 @@ FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
 CANDLE_CACHE: dict[str, dict[str, Any]] = {}
 CANDLE_CACHE_TTL_SECONDS = 900
 STALE_CANDLE_CACHE_TTL_SECONDS = 86400
+SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
+SENTIMENT_CACHE_TTL_SECONDS = 900
 
 ACTIVE_FILE = Path("active_trades.json")
 ARCHIVE_FILE = Path("archive.json")
@@ -513,6 +516,7 @@ def build_signal(symbol: str) -> dict[str, Any]:
 
     if current_price is None:
         return empty_signal(symbol, price_data, candles_by_tf)
+    sentiment = fetch_forex_client_sentiment(symbol)
 
     proposed_bias = resolve_proposed_bias(candles_by_tf)
     decision = HTF_FILTER.evaluate(
@@ -615,6 +619,7 @@ def build_signal(symbol: str) -> dict[str, Any]:
         runtime_status=runtime_status,
         runtime_text=runtime_text,
         htf_decision=decision,
+        sentiment=sentiment,
     )
 
     m15_candles = candles_by_tf.get("M15", [])
@@ -662,6 +667,7 @@ def build_signal(symbol: str) -> dict[str, Any]:
         "full_text": summary,
         "compact_summary": summary,
         "warning_ru": human_price_warning(price_data),
+        "sentiment": sentiment,
         "auto_close_skipped_ru": trade.get("auto_close_skipped_ru"),
         "setup_quality": "HTF_CONTEXT_REAL_CANDLES_ONLY",
         "risk_filter": "MN_W1_D1_H4_H1_M15_ALIGNMENT",
@@ -1387,6 +1393,7 @@ def build_summary(
     runtime_status: str,
     runtime_text: str,
     htf_decision,
+    sentiment: dict[str, Any] | None = None,
 ) -> str:
     signal = trade.get("signal")
     context = htf_decision.context
@@ -1407,6 +1414,8 @@ def build_summary(
             "не дают согласованную картину."
         )
 
+    sentiment_text = build_sentiment_context_text(sentiment or {})
+
     return (
         f"{symbol}: {scenario} "
         f"HTF bias: {htf_decision.htf_bias}. "
@@ -1414,9 +1423,122 @@ def build_summary(
         f"H4={context.get('h4_bias')}, H1={context.get('h1_bias')}, M15={context.get('m15_bias')}. "
         f"Entry: {trade.get('entry')}, SL: {trade.get('sl')}, TP: {trade.get('tp')}. "
         f"Текущая цена: {current_price}. "
+        f"{sentiment_text} "
         f"{htf_decision.reason} "
         f"Статус: {runtime_status}. {runtime_text}"
     )
+
+
+def fetch_forex_client_sentiment(symbol: str) -> dict[str, Any]:
+    normalized_symbol = normalize_symbol(symbol)
+    cache_item = SENTIMENT_CACHE.get(normalized_symbol)
+    now_ts = time.time()
+    if cache_item and now_ts - cache_item.get("updated_at", 0) <= SENTIMENT_CACHE_TTL_SECONDS:
+        return cache_item.get("payload", build_unavailable_sentiment())
+
+    try:
+        response = requests.get(
+            "https://forexclientsentiment.com/forex-sentiment",
+            timeout=8,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; ForexSignalPlatform/1.0)"},
+        )
+        response.raise_for_status()
+        payload = _parse_forex_client_sentiment_html(response.text, normalized_symbol)
+        payload["source"] = "forexclientsentiment"
+        payload["warning"] = None
+        SENTIMENT_CACHE[normalized_symbol] = {
+            "updated_at": now_ts,
+            "payload": payload,
+        }
+        return payload
+    except Exception:
+        if cache_item:
+            return cache_item.get("payload", build_unavailable_sentiment())
+        return build_unavailable_sentiment()
+
+
+def _parse_forex_client_sentiment_html(html_text: str, symbol: str) -> dict[str, Any]:
+    target = _format_sentiment_symbol(symbol)
+    rows = re.findall(r"<tr[^>]*>.*?</tr>", html_text, flags=re.IGNORECASE | re.DOTALL)
+    for row in rows:
+        plain = _strip_html_tags(row)
+        compact_plain = plain.replace(" ", "").upper()
+        if target.upper() not in plain.upper() and symbol.upper() not in compact_plain:
+            continue
+
+        percents = re.findall(r"(\d{1,3}(?:[.,]\d+)?)\s*%", plain)
+        if len(percents) < 2:
+            continue
+        long_pct = _parse_percent(percents[0])
+        short_pct = _parse_percent(percents[1])
+        if long_pct is None or short_pct is None:
+            continue
+
+        bias = "neutral"
+        lower_plain = plain.lower()
+        if "bullish" in lower_plain:
+            bias = "crowd_long"
+        elif "bearish" in lower_plain:
+            bias = "crowd_short"
+
+        return {
+            "long_pct": long_pct,
+            "short_pct": short_pct,
+            "bias": bias,
+            "source": "forexclientsentiment",
+            "warning": None,
+        }
+
+    raise ValueError(f"sentiment_row_not_found:{symbol}")
+
+
+def build_unavailable_sentiment() -> dict[str, Any]:
+    return {
+        "long_pct": None,
+        "short_pct": None,
+        "bias": "neutral",
+        "source": "unavailable",
+        "warning": "Сентимент временно недоступен",
+    }
+
+
+def _format_sentiment_symbol(symbol: str) -> str:
+    if len(symbol) == 6:
+        return f"{symbol[:3]}/{symbol[3:]}"
+    return symbol
+
+
+def _strip_html_tags(value: str) -> str:
+    stripped = re.sub(r"<[^>]+>", " ", value)
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _parse_percent(value: str) -> int | None:
+    normalized = str(value).replace(",", ".")
+    try:
+        parsed = float(normalized)
+    except ValueError:
+        return None
+    parsed = max(0.0, min(100.0, parsed))
+    return int(round(parsed))
+
+
+def build_sentiment_context_text(sentiment: dict[str, Any]) -> str:
+    long_pct = sentiment.get("long_pct")
+    short_pct = sentiment.get("short_pct")
+    bias = sentiment.get("bias")
+
+    if bias == "crowd_long" and long_pct is not None:
+        return (
+            f"Большинство участников рынка (~{long_pct}%) уже в покупках. "
+            "Это создаёт риск движения против толпы — такие перекосы часто заканчиваются выносом long-позиций."
+        )
+    if bias == "crowd_short" and short_pct is not None:
+        return (
+            f"Толпа перегружена в шортах (~{short_pct}%), "
+            "что может дать топливо для роста при выносе стопов."
+        )
+    return "Сентимент нейтральный — рынок не перекошен, основную роль играет техническая структура."
 
 
 def empty_signal(

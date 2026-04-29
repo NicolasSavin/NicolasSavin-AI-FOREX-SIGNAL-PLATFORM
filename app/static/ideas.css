@@ -171,11 +171,34 @@ h1 {
 }
 
 .idea-chart-wrap {
+  position: relative;
   margin-top: 20px;
   overflow: hidden;
   border-radius: 22px;
   border: 1px solid rgba(255,255,255,.08);
   background: #0b1222;
+}
+
+.idea-sentiment-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, .78);
+  border: 1px solid rgba(148, 163, 184, .45);
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.idea-sentiment-badge-warn {
+  border-color: rgba(251, 191, 36, .7);
+  color: #fde68a;
 }
 
 .idea-chart-image {
