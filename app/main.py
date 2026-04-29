@@ -59,8 +59,8 @@ FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
 FOREX_CLIENT_SENTIMENT_URL = "https://forexclientsentiment.com/forex-sentiment"
 
 CANDLE_CACHE: dict[str, dict[str, Any]] = {}
-CANDLE_CACHE_TTL_SECONDS = 900
 STALE_CANDLE_CACHE_TTL_SECONDS = 86400
+MAX_CANDLE_CACHE_ITEMS = 300
 SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
 SENTIMENT_CACHE_TTL_SECONDS = 900
 
@@ -690,6 +690,7 @@ def api_debug_candles(symbol: str, tf: str, limit: int = 160):
         "providers_tried": payload.get("providers_tried") or [],
         "warning_ru": payload.get("warning_ru"),
         "raw_error": payload.get("raw_error"),
+        "diagnostics": payload.get("diagnostics") or {},
         "first": candles[0] if candles else None,
         "last": candles[-1] if candles else None,
     }
@@ -705,6 +706,7 @@ def api_debug_dukascopy(symbol: str, tf: str, limit: int = 160):
         "count": len(candles),
         "provider": payload.get("provider"),
         "source_symbol": payload.get("source_symbol"),
+        "interval": payload.get("interval"),
         "warning_ru": payload.get("warning_ru"),
         "raw_error": payload.get("raw_error"),
         "diagnostics": payload.get("diagnostics") or {},
@@ -1094,7 +1096,18 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
     }
 
 
-def get_cached_candles(cache_key: str, max_age_seconds: int):
+def candle_ttl_for_tf(tf: str) -> int:
+    tf = str(tf or "M15").upper()
+    if tf in {"M1", "M5", "M15"}:
+        return 600
+    if tf in {"M30", "H1"}:
+        return 1800
+    if tf == "H4":
+        return 3600
+    return 21600
+
+
+def get_cached_candle_payload(cache_key: str, max_age_seconds: int):
     item = CANDLE_CACHE.get(cache_key)
     if not item:
         return None
@@ -1106,13 +1119,22 @@ def get_cached_candles(cache_key: str, max_age_seconds: int):
     return None
 
 
-def set_cached_candles(cache_key: str, payload: dict):
+def trim_candle_cache():
+    if len(CANDLE_CACHE) <= MAX_CANDLE_CACHE_ITEMS:
+        return
+    oldest = sorted(CANDLE_CACHE.items(), key=lambda kv: kv[1]["updated_at"])
+    for key, _ in oldest[: max(1, len(CANDLE_CACHE) - MAX_CANDLE_CACHE_ITEMS)]:
+        CANDLE_CACHE.pop(key, None)
+
+
+def set_cached_candle_payload(cache_key: str, payload: dict):
     candles = payload.get("candles") or []
     if candles:
         CANDLE_CACHE[cache_key] = {
             "updated_at": datetime.now(timezone.utc),
             "payload": payload,
         }
+        trim_candle_cache()
 
 
 def parse_td_values(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1158,8 +1180,8 @@ def dukascopy_price_divisor(symbol: str) -> float:
     return 100000.0
 
 
-def to_dukascopy_period(tf: str) -> int:
-    tf = str(tf or "M15").upper().strip()
+def dukascopy_bucket_seconds(tf: str) -> int:
+    tf = str(tf or "M15").upper()
     return {
         "M1": 60,
         "M5": 300,
@@ -1167,13 +1189,13 @@ def to_dukascopy_period(tf: str) -> int:
         "M30": 1800,
         "H1": 3600,
         "H4": 14400,
-    }.get(tf, 0)
+    }.get(tf, 900)
 
 
 def dukascopy_hours_needed(tf: str, limit: int) -> int:
     tf = str(tf or "M15").upper()
     candles_per_hour = {"M1": 60, "M5": 12, "M15": 4, "M30": 2, "H1": 1, "H4": 0.25}
-    estimated = int((limit / candles_per_hour.get(tf, 4)) + 6)
+    estimated = int((int(limit) / candles_per_hour.get(tf, 4)) + 8)
     if tf in {"M1", "M5", "M15", "M30", "H1"}:
         return min(max(estimated, 12), 96)
     if tf == "H4":
@@ -1181,58 +1203,67 @@ def dukascopy_hours_needed(tf: str, limit: int) -> int:
     return 0
 
 
-def fetch_dukascopy_ticks_for_hour(symbol: str, hour_dt: datetime) -> tuple[list[dict[str, Any]], str | None]:
-    source_symbol = to_dukascopy_symbol(symbol)
-    if not source_symbol:
-        return [], "unsupported_symbol"
+def fetch_dukascopy_ticks_for_hour(symbol: str, hour_dt: datetime) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    pair = to_dukascopy_symbol(symbol)
+    if not pair:
+        return [], {"error": "unsupported_symbol"}
 
     hour_dt = hour_dt.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
-    year = hour_dt.year
-    month_zero = f"{hour_dt.month - 1:02d}"
-    day = f"{hour_dt.day:02d}"
-    hour = f"{hour_dt.hour:02d}"
-    url = f"https://datafeed.dukascopy.com/datafeed/{source_symbol}/{year}/{month_zero}/{day}/{hour}h_ticks.bi5"
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; forex-signal-platform/1.0)"}
+    month_zero = hour_dt.month - 1
+    url = (
+        f"https://datafeed.dukascopy.com/datafeed/{pair}/"
+        f"{hour_dt.year}/{month_zero:02d}/{hour_dt.day:02d}/{hour_dt.hour:02d}h_ticks.bi5"
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "*/*",
+        "Referer": "https://www.dukascopy.com/",
+        "Origin": "https://www.dukascopy.com",
+        "Cache-Control": "no-cache",
+    }
 
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=12)
         if resp.status_code == 404:
-            return [], None
-        if resp.status_code != 200:
-            return [], f"http_{resp.status_code}"
-        raw = lzma.decompress(resp.content)
-    except Exception as exc:
-        return [], str(exc)
+            return [], {"url": url, "status": 404, "error": "not_found"}
+        if resp.status_code == 403:
+            return [], {"url": url, "status": 403, "error": "forbidden"}
+        resp.raise_for_status()
 
-    divisor = dukascopy_price_divisor(source_symbol)
-    ticks: list[dict[str, Any]] = []
-    for i in range(0, len(raw), 20):
-        chunk = raw[i:i + 20]
-        if len(chunk) < 20:
-            continue
-        try:
+        raw = lzma.decompress(resp.content)
+        divisor = dukascopy_price_divisor(symbol)
+        ticks: list[dict[str, Any]] = []
+        for i in range(0, len(raw), 20):
+            chunk = raw[i:i + 20]
+            if len(chunk) < 20:
+                continue
             ms, ask, bid, ask_vol, bid_vol = struct.unpack(">iiiff", chunk)
-        except struct.error:
-            continue
-        mid = ((ask + bid) / 2.0) / divisor
-        tick_time = hour_dt + timedelta(milliseconds=ms)
-        ticks.append({"time": tick_time, "price": mid, "volume": float(ask_vol or 0) + float(bid_vol or 0)})
-    return ticks, None
+            if ask <= 0 or bid <= 0:
+                continue
+            mid = ((ask + bid) / 2.0) / divisor
+            tick_time = hour_dt + timedelta(milliseconds=ms)
+            ticks.append({"time": tick_time, "price": float(mid), "volume": float(ask_vol or 0) + float(bid_vol or 0)})
+
+        return ticks, {"url": url, "status": resp.status_code, "ticks": len(ticks)}
+    except Exception as exc:
+        return [], {"url": url, "error": str(exc)}
 
 
 def aggregate_ticks_to_candles(ticks: list[dict[str, Any]], tf: str) -> list[dict[str, Any]]:
-    bucket_seconds = to_dukascopy_period(tf)
-    if bucket_seconds <= 0:
+    if not ticks:
         return []
+
+    bucket_seconds = dukascopy_bucket_seconds(tf)
     buckets: dict[int, dict[str, Any]] = {}
-    for tick in sorted(ticks, key=lambda x: x["time"]):
-        ts = int(tick["time"].timestamp())
-        bucket_ts = ts - (ts % bucket_seconds)
+    for tick in ticks:
+        dt = tick["time"].astimezone(timezone.utc)
+        epoch = int(dt.timestamp())
+        bucket_ts = epoch - (epoch % bucket_seconds)
         price = float(tick["price"])
         volume = float(tick.get("volume") or 0.0)
         row = buckets.get(bucket_ts)
         if row is None:
-            dt = datetime.fromtimestamp(bucket_ts, tz=timezone.utc).isoformat()
+            dt = datetime.fromtimestamp(bucket_ts, timezone.utc).isoformat()
             buckets[bucket_ts] = {
                 "time": bucket_ts,
                 "datetime": dt,
@@ -1264,7 +1295,7 @@ def fetch_dukascopy_candles(symbol: str, tf: str = "M15", limit: int = 160) -> d
             "raw_error": "unsupported_symbol",
             "diagnostics": {"hours_requested": 0, "hours_with_ticks": 0, "ticks_count": 0},
         }
-    if tf in {"D1", "W1", "MN", "MN1"}:
+    if tf not in {"M1", "M5", "M15", "M30", "H1", "H4"}:
         return {
             "candles": [],
             "provider": "dukascopy",
@@ -1274,105 +1305,61 @@ def fetch_dukascopy_candles(symbol: str, tf: str = "M15", limit: int = 160) -> d
             "raw_error": "unsupported_timeframe",
             "diagnostics": {"hours_requested": 0, "hours_with_ticks": 0, "ticks_count": 0},
         }
-    if to_dukascopy_period(tf) <= 0:
-        return {"candles": [], "provider": "dukascopy", "source_symbol": provider_symbol, "interval": tf, "warning_ru": f"Dukascopy не поддерживает таймфрейм {tf}.", "raw_error": "unsupported_timeframe", "diagnostics": {"hours_requested": 0, "hours_with_ticks": 0, "ticks_count": 0}}
-
     limit = max(1, int(limit))
     hours_requested = dukascopy_hours_needed(tf, limit)
-    base_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     all_ticks: list[dict[str, Any]] = []
     hours_with_ticks = 0
-    raw_error: str | None = None
-    for offset in range(hours_requested):
-        hour_dt = base_hour - timedelta(hours=offset)
-        hour_ticks, hour_error = fetch_dukascopy_ticks_for_hour(provider_symbol, hour_dt)
+    errors: list[dict[str, Any]] = []
+    for offset in range(1, hours_requested + 1):
+        hour_dt = now - timedelta(hours=offset)
+        hour_ticks, meta = fetch_dukascopy_ticks_for_hour(provider_symbol, hour_dt)
         if hour_ticks:
             hours_with_ticks += 1
             all_ticks.extend(hour_ticks)
-        if hour_error and raw_error is None:
-            raw_error = hour_error
+        if meta.get("error") and meta.get("status") not in {404}:
+            errors.append(meta)
+
+        time.sleep(0.03)
 
     candles = aggregate_ticks_to_candles(all_ticks, tf)
     candles = sorted(candles, key=lambda x: x["time"])[-limit:]
-    warning = None
-    if not candles:
-        warning = "Dukascopy вернул пустой набор свечей."
-    elif raw_error:
-        warning = "Часть часов Dukascopy недоступна, использованы доступные реальные тики."
+    warning = None if candles else "Dukascopy datafeed не отдал свечи."
     return {
         "candles": candles,
         "provider": "dukascopy",
         "source_symbol": provider_symbol,
         "interval": tf,
         "warning_ru": warning,
-        "raw_error": raw_error,
-        "diagnostics": {"hours_requested": hours_requested, "hours_with_ticks": hours_with_ticks, "ticks_count": len(all_ticks)},
+        "raw_error": errors[-3:] if errors else None,
+        "diagnostics": {"hours_requested": hours_requested, "hours_with_ticks": hours_with_ticks, "ticks_count": len(all_ticks), "candles_count": len(candles), "endpoint": "datafeed.dukascopy.com"},
     }
 
 
-def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
+def fetch_twelvedata_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
     normalized_symbol = normalize_symbol(symbol)
     source_symbol = to_twelvedata_symbol(normalized_symbol)
     interval = to_td_interval(tf)
-    cache_key = f"{normalized_symbol}:{tf}:{limit}"
-
-    fresh = get_cached_candles(cache_key, CANDLE_CACHE_TTL_SECONDS)
-    if fresh:
-        return {
-            **fresh,
-            "provider": fresh.get("provider") or "real_cache",
-            "source_symbol": fresh.get("source_symbol") or source_symbol,
-            "interval": fresh.get("interval") or interval,
-            "cache_status": "fresh",
-            "providers_tried": fresh.get("providers_tried") or [],
-        }
-
-    providers_tried: list[str] = []
     attempts = 0
     last_error = ""
-    providers_tried.append("twelvedata")
+
     if TWELVEDATA_API_KEY:
         backoffs = [0.4, 0.8, 1.2]
         for idx, delay in enumerate(backoffs, start=1):
             attempts = idx
             try:
-                response = requests.get(
-                    "https://api.twelvedata.com/time_series",
-                    params={
-                        "symbol": source_symbol,
-                        "interval": interval,
-                        "outputsize": limit,
-                        "apikey": TWELVEDATA_API_KEY,
-                        "format": "JSON",
-                    },
-                    timeout=8,
-                )
+                response = requests.get("https://api.twelvedata.com/time_series", params={"symbol": source_symbol, "interval": interval, "outputsize": limit, "apikey": TWELVEDATA_API_KEY, "format": "JSON"}, timeout=8)
                 response.raise_for_status()
                 data = response.json()
-
                 if data.get("status") == "error":
                     last_error = f"TwelveData error: {data.get('message')}"
                 else:
                     values = data.get("values")
-                    if not isinstance(values, list) or not values:
-                        last_error = "TwelveData returned empty values"
-                    else:
+                    if isinstance(values, list) and values:
                         candles = parse_td_values(values)
                         if candles:
-                            payload = {
-                                "candles": candles,
-                                "warning_ru": None,
-                                "provider": "twelvedata",
-                                "providers_tried": providers_tried,
-                                "source_symbol": source_symbol,
-                                "interval": interval,
-                                "cache_status": "live",
-                                "attempts": attempts,
-                                "raw_error": None,
-                            }
-                            set_cached_candles(cache_key, payload)
-                            return payload
-                        last_error = "TwelveData returned empty values"
+                            return {"candles": candles, "warning_ru": None, "provider": "twelvedata", "source_symbol": source_symbol, "interval": interval, "attempts": attempts, "raw_error": None}
+                    last_error = "TwelveData returned empty values"
             except Exception as exc:
                 last_error = str(exc)
             if idx < len(backoffs):
@@ -1380,44 +1367,46 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
     else:
         last_error = "TWELVEDATA_API_KEY отсутствует."
 
+    return {"candles": [], "warning_ru": None, "provider": "twelvedata", "source_symbol": source_symbol, "interval": interval, "attempts": attempts, "raw_error": last_error}
+
+
+def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
+    symbol_norm = normalize_symbol(symbol)
+    tf_norm = str(tf or "M15").upper()
+    cache_key = f"{symbol_norm}:{tf_norm}:{int(limit)}"
+
+    fresh = get_cached_candle_payload(cache_key, candle_ttl_for_tf(tf_norm))
+    if fresh:
+        return {**fresh, "cache_status": "fresh", "provider": fresh.get("provider") or "real_cache"}
+
+    providers_tried = []
+    errors = []
+
+    providers_tried.append("twelvedata")
+    td = fetch_twelvedata_candles(symbol_norm, tf_norm, limit)
+    if td.get("candles"):
+        td["provider"] = "twelvedata"
+        td["providers_tried"] = providers_tried
+        td["cache_status"] = "live"
+        set_cached_candle_payload(cache_key, td)
+        return td
+    errors.append({"twelvedata": td.get("raw_error") or td.get("warning_ru")})
+
     providers_tried.append("dukascopy")
-    dk = fetch_dukascopy_candles(normalized_symbol, tf, limit)
+    dk = fetch_dukascopy_candles(symbol_norm, tf_norm, limit)
     if dk.get("candles"):
-        payload = {
-            **dk,
-            "provider": "dukascopy",
-            "providers_tried": providers_tried,
-            "cache_status": "live",
-            "attempts": attempts,
-        }
-        set_cached_candles(cache_key, payload)
-        return payload
+        dk["provider"] = "dukascopy"
+        dk["providers_tried"] = providers_tried
+        dk["cache_status"] = "live"
+        set_cached_candle_payload(cache_key, dk)
+        return dk
+    errors.append({"dukascopy": dk.get("raw_error") or dk.get("warning_ru")})
 
-    stale = get_cached_candles(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
+    stale = get_cached_candle_payload(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
     if stale:
-        return {
-            **stale,
-            "provider": "real_cache",
-            "providers_tried": providers_tried,
-            "source_symbol": stale.get("source_symbol") or source_symbol,
-            "interval": stale.get("interval") or interval,
-            "cache_status": "stale_fallback",
-            "warning_ru": "Провайдеры временно не отдали свечи, показаны последние реальные свечи из кеша.",
-            "attempts": attempts,
-            "raw_error": f"twelvedata={last_error}; dukascopy={dk.get('raw_error')}",
-        }
+        return {**stale, "provider": "real_cache", "providers_tried": providers_tried, "cache_status": "stale_fallback", "warning_ru": "Провайдеры временно не отдали свечи, показаны последние реальные свечи из кеша.", "raw_error": errors}
 
-    return {
-        "candles": [],
-        "warning_ru": "Нет реальных свечей от TwelveData/Dukascopy и нет сохранённого кеша.",
-        "provider": "unavailable",
-        "providers_tried": providers_tried,
-        "source_symbol": source_symbol,
-        "interval": interval,
-        "cache_status": "empty",
-        "attempts": attempts,
-        "raw_error": f"twelvedata={last_error}; dukascopy={dk.get('raw_error')}",
-    }
+    return {"candles": [], "provider": "unavailable", "source_symbol": to_twelvedata_symbol(symbol_norm), "interval": to_td_interval(tf_norm), "cache_status": "empty", "providers_tried": providers_tried, "warning_ru": "Нет реальных свечей от TwelveData/Dukascopy и нет сохранённого кеша.", "raw_error": errors}
 
 
 def build_annotations(candles: list[dict[str, Any]]) -> dict[str, Any]:
