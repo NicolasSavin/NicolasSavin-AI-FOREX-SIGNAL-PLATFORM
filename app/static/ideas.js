@@ -53,6 +53,11 @@ function renderIdeaCard(idea) {
   const analysisMode = String(idea.analysis_mode || "").toLowerCase() === "professional" ? "профессиональный" : "упрощённый";
   const providerLabel = String(idea.data_provider || "").toLowerCase() === "twelvedata" ? "TwelveData" : "Yahoo fallback";
   const warningText = String(idea.warning || "").trim();
+  const sentiment = idea?.sentiment || {};
+  const hasSentiment = Number.isFinite(Number(sentiment.long_pct)) && Number.isFinite(Number(sentiment.short_pct));
+  const sentimentLabel = hasSentiment
+    ? `Sentiment: Long ${Number(sentiment.long_pct)}% / Short ${Number(sentiment.short_pct)}%`
+    : "Sentiment: нет данных";
 
   return `
     <article class="idea-card">
@@ -74,6 +79,7 @@ function renderIdeaCard(idea) {
       <div class="idea-news-line">Источник описания: <strong>${escapeHtml(idea.narrative_source || "резервный_шаблон")}</strong></div>
 
       ${renderChartBlock(idea, chartImageUrl)}
+      <div class="idea-sentiment-badge">${escapeHtml(sentimentLabel)}</div>
 
       <section class="idea-section idea-section-plan">
         <h4>Единый нарратив</h4>
