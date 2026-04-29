@@ -404,6 +404,7 @@
     .ideas-modal {
       position: fixed;
       inset: 0;
+      height: 100vh;
       z-index: 9999;
       display: flex;
       align-items: stretch;
@@ -500,6 +501,14 @@
       min-height: 0;
     }
 
+    .ideas-modal__body,
+    .ideas-modal__content {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
     #modalContent {
       flex: 1;
       display: flex;
@@ -511,15 +520,16 @@
 
     .ideas-modal__top {
       flex: 0 0 auto;
-      max-height: min(45vh, calc(100vh - 420px));
+      max-height: 35vh;
       overflow-y: auto;
       min-height: 0;
       padding-right: 4px;
     }
 
+    .ideas-modal__chart-zone,
     .ideas-modal__bottom {
       flex: 1;
-      min-height: 360px;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -594,7 +604,7 @@
 
     .ideas-modal__chart {
       flex: 1;
-      min-height: 320px;
+      min-height: 480px;
       width: 100%;
     }
 
@@ -716,7 +726,7 @@
 
     @media (max-width: 768px) {
       .ideas-modal__top {
-        max-height: 50vh;
+        max-height: 35vh;
       }
     }
   </style>
@@ -1137,7 +1147,7 @@
           </div>
         </div>
 
-        <div class="ideas-modal__bottom">
+        <div class="ideas-modal__chart-zone ideas-modal__bottom">
           <div class="chart-wrap">
             ${renderSentimentBadge(idea)}
             <div class="chart-toolbar">
@@ -1165,6 +1175,7 @@
       });
 
       setTimeout(() => renderIdeaChart(idea), 50);
+      setTimeout(resizeIdeaChartSafely, 100);
     }
 
     function renderFundamentalContext(idea) {
@@ -1195,6 +1206,15 @@
         state.series = null;
       }
       state.activeIdea = null;
+    }
+
+    function resizeIdeaChartSafely() {
+      const container = document.getElementById("ideaChart");
+      if (!container || !state.chart || typeof state.chart.applyOptions !== "function") return;
+      state.chart.applyOptions({
+        width: Math.max(container.clientWidth, 320),
+        height: Math.max(container.clientHeight, 480),
+      });
     }
 
     async function renderIdeaChart(idea) {
