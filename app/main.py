@@ -479,6 +479,108 @@ def api_mt4_signals():
         "signals": tradable_signals,
     }
 
+
+
+@app.get("/api/mt4/markup/{symbol}")
+def api_mt4_markup(symbol: str, tf: str = "M15"):
+    normalized_symbol = normalize_symbol(symbol)
+    normalized_tf = str(tf or "M15").upper().strip()
+
+    chart_payload = get_candles_with_markup(normalized_symbol, normalized_tf, 160)
+    annotations = chart_payload.get("annotations") or {}
+    candles = chart_payload.get("candles") or []
+
+    idea_payload = api_signals()
+    ideas = idea_payload.get("ideas") or []
+    matched_idea = next(
+        (
+            item for item in ideas
+            if normalize_symbol(str(item.get("symbol") or item.get("pair") or "")) == normalized_symbol
+            and str(item.get("timeframe") or item.get("tf") or "M15").upper().strip() == normalized_tf
+        ),
+        None,
+    )
+    if matched_idea is None:
+        matched_idea = next(
+            (
+                item for item in ideas
+                if normalize_symbol(str(item.get("symbol") or item.get("pair") or "")) == normalized_symbol
+            ),
+            {},
+        )
+
+    levels = []
+    entry = safe_float(matched_idea.get("entry") or matched_idea.get("entry_price"))
+    sl = safe_float(matched_idea.get("sl") or matched_idea.get("stop_loss"))
+    tp = safe_float(matched_idea.get("tp") or matched_idea.get("take_profit"))
+    if entry is not None:
+        levels.append({"type": "entry", "price": entry, "label": "ENTRY"})
+    if sl is not None:
+        levels.append({"type": "sl", "price": sl, "label": "SL"})
+    if tp is not None:
+        levels.append({"type": "tp", "price": tp, "label": "TP"})
+
+    recent_from_time = candles[-40].get("datetime") if len(candles) >= 40 else (candles[0].get("datetime") if candles else None)
+    recent_to_time = candles[-1].get("datetime") if candles else None
+
+    def _to_zone_list(raw_items, zone_type: str):
+        zone_items = raw_items if isinstance(raw_items, list) else []
+        normalized = []
+        for zone in zone_items:
+            if not isinstance(zone, dict):
+                continue
+            low = safe_float(zone.get("low") or zone.get("from_price") or zone.get("price_from") or zone.get("min"))
+            high = safe_float(zone.get("high") or zone.get("to_price") or zone.get("price_to") or zone.get("max"))
+            if low is None and high is None:
+                continue
+            from_price = low if low is not None else high
+            to_price = high if high is not None else low
+            zone_side = str(zone.get("side") or zone.get("direction") or "").lower()
+            if not zone_side:
+                zone_side = "supply" if "bearish" in str(zone.get("type") or "").lower() else "demand"
+            normalized.append({
+                "type": zone_type,
+                "side": zone_side,
+                "from_price": from_price,
+                "to_price": to_price,
+                "from_time": zone.get("from_time") or zone.get("start_time") or zone.get("datetime") or recent_from_time,
+                "to_time": zone.get("to_time") or zone.get("end_time") or zone.get("datetime") or recent_to_time,
+                "label": zone.get("label") or zone.get("name") or zone_type.upper(),
+            })
+        return normalized
+
+    zones = []
+    zones.extend(_to_zone_list(annotations.get("ob") or annotations.get("order_blocks"), "ob"))
+    zones.extend(_to_zone_list(annotations.get("fvg") or annotations.get("imbalances"), "fvg"))
+    zones.extend(_to_zone_list(annotations.get("liquidity"), "liquidity"))
+    zones.extend(_to_zone_list(annotations.get("breaker") or annotations.get("breakers") or annotations.get("breaker_blocks"), "breaker"))
+
+    patterns = annotations.get("patterns") if isinstance(annotations.get("patterns"), list) else []
+
+    signal = str(matched_idea.get("signal") or matched_idea.get("action") or "").upper()
+    arrow = None
+    if signal in {"BUY", "SELL"}:
+        arrow_price = entry if entry is not None else safe_float(matched_idea.get("current_price") or matched_idea.get("price"))
+        arrow = {
+            "direction": "up" if signal == "BUY" else "down",
+            "price": arrow_price,
+            "label": "BUY ↑" if signal == "BUY" else "SELL ↓",
+        }
+
+    return {
+        "symbol": normalized_symbol,
+        "timeframe": normalized_tf,
+        "updated_at_utc": idea_payload.get("updated_at_utc") or chart_payload.get("last_updated_utc") or now_utc(),
+        "levels": levels,
+        "zones": zones,
+        "patterns": patterns,
+        "arrow": arrow,
+        "diagnostics": {
+            "candles_count": len(candles),
+            "zones_count": len(zones),
+            "patterns_count": len(patterns),
+        },
+    }
 @app.get("/api/archive")
 def api_archive():
     archive = load_json(ARCHIVE_FILE)
