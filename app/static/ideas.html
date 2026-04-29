@@ -1114,6 +1114,7 @@
       const statusView = resolveIdeaStatusView(idea);
       const statusReason = buildIdeaStatusReason(idea, statusView);
       const closeMeta = buildCloseMeta(idea);
+      const entryTouch = resolveEntryTouchView(idea, statusView);
 
       card.className = "card";
       card.dataset.ideaId = id;
@@ -1132,6 +1133,7 @@
           <span class="chip">Entry ${formatValue(idea.entry || idea.entry_price || idea.entry_zone)}</span>
           <span class="chip">SL ${formatValue(idea.stop_loss || idea.stopLoss || idea.sl)}</span>
           <span class="chip">TP ${formatValue(idea.take_profit || idea.takeProfit || idea.tp)}</span>
+          <span class="chip">Тест уровня входа: ${escapeHtml(entryTouch.label)}</span>
         </div>
 
         <div class="box">${escapeHtml(summary)}</div>
@@ -2100,6 +2102,26 @@
         icon: "👀",
         badgeClass: "badge-status-wait",
       };
+    }
+
+    function resolveEntryTouchView(idea, statusView = null) {
+      const rawStatus = String(idea.status || "").trim().toLowerCase();
+      const result = String(idea.result || "").trim().toUpperCase();
+      const updates = Array.isArray(idea.updates) ? idea.updates : [];
+      const hasTriggerEvent = updates.some((row) => {
+        const event = String((row && row.event) || "").trim().toLowerCase();
+        return event === "triggered" || event === "active";
+      });
+
+      if (["closed_tp", "closed_sl", "tp_hit", "sl_hit", "active", "triggered"].includes(rawStatus) || ["TP", "SL"].includes(result) || hasTriggerEvent) {
+        return { touched: true, label: "был" };
+      }
+
+      if (statusView && String(statusView.code || "") === "waiting") {
+        return { touched: false, label: "ещё не было" };
+      }
+
+      return { touched: false, label: "нет подтверждения" };
     }
 
     function buildIdeaStatusReason(idea, statusView) {
