@@ -792,8 +792,8 @@
   overflow: hidden !important;
   padding: 16px !important;
   border-radius: 24px !important;
-  display: grid !important;
-  grid-template-rows: auto 1fr !important;
+  display: flex !important;
+  flex-direction: column !important;
 }
 
 .modal-head {
@@ -814,26 +814,21 @@
 
 #modalContent {
   min-height: 0 !important;
-  overflow: hidden !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  flex: 1 !important;
   display: grid !important;
   grid-template-rows: auto 1fr !important;
   gap: 10px !important;
-}
-
-/* Hide/compact text-heavy blocks so chart gets space */
-#modalContent .modal-grid,
-#modalContent .modal-section-title,
-#modalContent .modal-text,
-#modalContent .status-reason {
-  display: none !important;
+  scroll-behavior: smooth;
 }
 
 .chart-wrap {
-  min-height: 0 !important;
+  min-height: 500px !important;
   height: 100% !important;
   display: grid !important;
   grid-template-rows: auto auto 1fr auto !important;
-  margin: 0 !important;
+  margin-top: 12px !important;
 }
 
 .chart-toolbar {
@@ -853,9 +848,9 @@
 
 .chart,
 #ideaChart {
-  height: 100% !important;
-  min-height: 560px !important;
   width: 100% !important;
+  height: 500px !important;
+  min-height: 500px !important;
 }
 
 .chart-note {
