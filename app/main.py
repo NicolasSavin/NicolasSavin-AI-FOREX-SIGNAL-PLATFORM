@@ -431,6 +431,53 @@ def ideas_market():
     return api_signals()
 
 
+
+
+@app.get("/api/mt4/signals")
+def api_mt4_signals():
+    raw_payload = api_signals()
+    raw_signals = raw_payload.get("signals") or []
+
+    tradable_signals = []
+    for signal in raw_signals:
+        action = str(signal.get("signal") or signal.get("action") or "").upper()
+        if action not in {"BUY", "SELL"}:
+            continue
+
+        entry = safe_float(signal.get("entry") or signal.get("entry_price"))
+        sl = safe_float(signal.get("sl") or signal.get("stop_loss"))
+        tp = safe_float(signal.get("tp") or signal.get("take_profit"))
+        if entry is None or sl is None or tp is None:
+            continue
+
+        trade_permission = bool(signal.get("trade_permission"))
+        if not trade_permission:
+            continue
+
+        data_status = str(signal.get("data_status") or "").lower()
+        if data_status not in {"real", "delayed"}:
+            continue
+
+        tradable_signals.append({
+            "id": signal.get("id") or f"{signal.get('symbol')}-{action}",
+            "symbol": normalize_symbol(str(signal.get("symbol") or "")),
+            "action": action,
+            "entry": entry,
+            "sl": sl,
+            "tp": tp,
+            "confidence": int(signal.get("confidence") or 0),
+            "trade_permission": trade_permission,
+            "status": signal.get("status") or signal.get("runtime_status") or "ACTIVE",
+            "data_status": data_status,
+            "expires_at": signal.get("expires_at") or signal.get("meaningful_updated_at") or signal.get("updated_at"),
+            "comment": signal.get("summary") or signal.get("short_text") or "AI idea",
+        })
+
+    return {
+        "updated_at_utc": raw_payload.get("updated_at_utc") or now_utc(),
+        "signals": tradable_signals,
+    }
+
 @app.get("/api/archive")
 def api_archive():
     archive = load_json(ARCHIVE_FILE)
