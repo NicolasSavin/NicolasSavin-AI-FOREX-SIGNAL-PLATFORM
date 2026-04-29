@@ -526,6 +526,37 @@
       padding-right: 4px;
     }
 
+    .ideas-modal__top-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 10px;
+    }
+
+    .ideas-toggle-summary-btn {
+      border: 1px solid rgba(95,145,203,.4);
+      border-radius: 999px;
+      background: rgba(7, 23, 44, 0.92);
+      color: #dbeeff;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 8px 14px;
+      cursor: pointer;
+      transition: all .18s ease;
+    }
+
+    .ideas-toggle-summary-btn:hover {
+      border-color: rgba(125,180,255,.66);
+      box-shadow: 0 0 16px rgba(67, 136, 230, 0.25);
+    }
+
+    #modalContent.summary-collapsed .ideas-modal__top {
+      display: none;
+    }
+
+    #modalContent.summary-collapsed .ideas-modal__chart-zone {
+      flex: 1 1 100%;
+    }
+
     .ideas-modal__chart-zone,
     .ideas-modal__bottom {
       flex: 1;
@@ -604,7 +635,7 @@
 
     .ideas-modal__chart {
       flex: 1;
-      min-height: 480px;
+      min-height: 620px;
       width: 100%;
     }
 
@@ -836,6 +867,7 @@
       currentTf: "M15",
       realCandlesCache: {},
       candlesRequestSeq: 0,
+      isSummaryCollapsed: false,
     };
 
     const pairFilter = document.getElementById("pairFilter");
@@ -849,6 +881,25 @@
     const modalTitle = document.getElementById("modalTitle");
     const modalSubtitle = document.getElementById("modalSubtitle");
     const modalContent = document.getElementById("modalContent");
+
+    function updateSummaryToggleButton() {
+      const toggleBtn = document.getElementById("toggleSummaryBtn");
+      if (!toggleBtn) return;
+      toggleBtn.textContent = state.isSummaryCollapsed ? "Развернуть описание" : "Свернуть описание";
+      toggleBtn.setAttribute("aria-expanded", String(!state.isSummaryCollapsed));
+    }
+
+    function applySummaryState() {
+      if (!modalContent) return;
+      modalContent.classList.toggle("summary-collapsed", state.isSummaryCollapsed);
+      updateSummaryToggleButton();
+      setTimeout(resizeIdeaChartSafely, 60);
+    }
+
+    function toggleSummarySection() {
+      state.isSummaryCollapsed = !state.isSummaryCollapsed;
+      applySummaryState();
+    }
 
     pairFilter.addEventListener("change", () => {
       state.selectedPair = pairFilter.value;
@@ -1110,6 +1161,7 @@
     function openModal(idea) {
       state.activeIdea = idea;
       state.currentTf = pickDefaultTf(idea);
+      state.isSummaryCollapsed = false;
 
       const symbol = normalizeSymbol(idea.symbol || idea.pair || "MARKET");
       const signal = normalizeSignal(idea.final_signal || idea.signal || idea.direction || idea.bias);
@@ -1121,6 +1173,9 @@
 
       modalContent.innerHTML = `
         <div class="ideas-modal__top">
+          <div class="ideas-modal__top-actions">
+            <button id="toggleSummaryBtn" class="ideas-toggle-summary-btn" type="button" aria-expanded="true">Свернуть описание</button>
+          </div>
           <div class="modal-grid">
             <div class="level entry">ENTRY<br>${formatValue(idea.entry || idea.entry_price || idea.entry_zone)}</div>
             <div class="level sl">SL<br>${formatValue(idea.stop_loss || idea.stopLoss || idea.sl)}</div>
@@ -1174,6 +1229,11 @@
         });
       });
 
+      const toggleSummaryBtn = document.getElementById("toggleSummaryBtn");
+      if (toggleSummaryBtn) toggleSummaryBtn.addEventListener("click", toggleSummarySection);
+
+      applySummaryState();
+
       setTimeout(() => renderIdeaChart(idea), 50);
       setTimeout(resizeIdeaChartSafely, 100);
     }
@@ -1206,6 +1266,7 @@
         state.series = null;
       }
       state.activeIdea = null;
+      state.isSummaryCollapsed = false;
     }
 
     function resizeIdeaChartSafely() {
