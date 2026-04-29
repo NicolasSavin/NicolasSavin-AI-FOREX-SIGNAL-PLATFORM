@@ -404,45 +404,42 @@
     .ideas-modal {
       position: fixed;
       inset: 0;
-      height: 100vh;
       z-index: 9999;
-      display: flex;
-      align-items: stretch;
-      justify-content: stretch;
-      background: rgba(2, 8, 20, 0.85);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(0,0,0,.78);
       backdrop-filter: blur(10px);
-      visibility: hidden;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity .16s ease;
     }
 
     .modal-backdrop.open,
     .ideas-modal.open {
-      visibility: visible;
-      opacity: 1;
-      pointer-events: auto;
+      display: flex;
     }
 
     .modal,
     .ideas-modal__content {
-      width: 100%;
-      height: 100%;
-      border-radius: 0;
+      width: min(1400px, 92vw);
+      height: 88vh;
+      max-height: 88vh;
+      overflow: auto;
+      border-radius: 26px;
+      background:
+        radial-gradient(circle at 90% 0%, rgba(69,202,255,.18), transparent 34%),
+        linear-gradient(160deg, rgba(24,58,103,.98), rgba(5,17,33,.98) 72%);
+      border: 1px solid rgba(124,184,255,.62);
+      box-shadow: 0 34px 110px rgba(0,0,0,.68);
+      padding: 24px;
       margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background: linear-gradient(145deg, rgba(6,18,36,.98), rgba(3,10,22,.98));
       display: flex;
       flex-direction: column;
-      border: none;
-      box-shadow: none;
     }
 
     .ideas-modal__content {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      min-height: 0;
     }
 
     .modal-head,
@@ -451,7 +448,7 @@
       justify-content: space-between;
       gap: 16px;
       margin: 0;
-      padding: 16px 20px;
+      padding: 0 0 14px;
       border-bottom: 1px solid rgba(255,255,255,.08);
       flex-shrink: 0;
     }
@@ -490,7 +487,7 @@
     .ideas-modal__body {
       flex: 1;
       min-height: 0;
-      overflow: hidden;
+      overflow: auto;
       display: flex;
       flex-direction: column;
       padding: 0;
@@ -513,14 +510,14 @@
       flex: 1;
       display: flex;
       flex-direction: column;
-      padding: 14px 20px 18px;
-      overflow: hidden;
+      padding: 14px 4px 8px;
+      overflow: visible;
       gap: 0;
     }
 
     .ideas-modal__top {
       flex: 0 0 auto;
-      max-height: 35vh;
+      max-height: 28vh;
       overflow-y: auto;
       min-height: 0;
       padding-right: 4px;
@@ -573,7 +570,7 @@
       overflow: hidden;
       background: rgba(2,10,20,.88);
       flex: 1;
-      min-height: 340px;
+      min-height: 620px;
       display: flex;
       flex-direction: column;
     }
@@ -622,15 +619,15 @@
     }
 
     .chart {
-      height: 520px;
+      height: 620px;
       width: 100%;
       position: relative;
     }
 
     .ideas-modal__body .chart {
       flex: 1;
-      min-height: 0;
-      height: 100%;
+      min-height: 620px;
+      height: 620px;
     }
 
     .ideas-modal__chart {
@@ -757,7 +754,7 @@
 
     @media (max-width: 768px) {
       .ideas-modal__top {
-        max-height: 35vh;
+        max-height: 28vh;
       }
     }
   </style>
@@ -1238,6 +1235,7 @@
 
       setTimeout(() => renderIdeaChart(idea), 50);
       setTimeout(resizeIdeaChartSafely, 100);
+      setTimeout(resizeIdeaChartSafely, 300);
     }
 
     function renderFundamentalContext(idea) {
@@ -1273,11 +1271,18 @@
 
     function resizeIdeaChartSafely() {
       const container = document.getElementById("ideaChart");
-      if (!container || !state.chart || typeof state.chart.applyOptions !== "function") return;
-      state.chart.applyOptions({
-        width: Math.max(container.clientWidth, 320),
-        height: Math.max(container.clientHeight, 480),
-      });
+      if (!container || !state || !state.chart) return;
+
+      const rect = container.getBoundingClientRect();
+      const width = Math.max(320, Math.floor(rect.width));
+      const height = Math.max(560, Math.floor(rect.height));
+
+      try {
+        state.chart.resize(width, height);
+        state.chart.timeScale().fitContent();
+      } catch (error) {
+        console.warn("Idea chart resize skipped:", error);
+      }
     }
 
     async function renderIdeaChart(idea) {
@@ -1371,6 +1376,8 @@
 
       state.overlaySyncCleanup = bindOverlayToChart(container, chart, redrawOverlay, getChartSize);
       requestAnimationFrame(redrawOverlay);
+      setTimeout(resizeIdeaChartSafely, 100);
+      setTimeout(resizeIdeaChartSafely, 300);
     }
 
     async function fetchRealCandlesForIdea(idea, tf) {
