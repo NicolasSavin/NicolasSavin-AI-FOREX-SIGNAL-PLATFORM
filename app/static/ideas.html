@@ -1169,7 +1169,7 @@
       const statusReason = buildIdeaStatusReason(idea, statusView);
 
       modalTitle.textContent = `${symbol} • ${signal} • ${statusView.label}`;
-      modalSubtitle.textContent = pickText(idea);
+      modalSubtitle.textContent = pickSubtitleText(idea);
 
       modalContent.innerHTML = `
         <div class="ideas-modal__top">
@@ -1184,7 +1184,7 @@
           </div>
 
           <div class="modal-section-title">Основная идея</div>
-          <div class="box modal-text">${escapeHtml(pickText(idea))}</div>
+          <div class="box modal-text">${escapeHtml(pickMainIdeaText(idea))}</div>
           ${renderSmartMoneyContext(idea)}
           ${renderFundamentalContext(idea)}
           <div class="status-reason">${escapeHtml(statusReason)}</div>
@@ -1959,6 +1959,36 @@
 
     function pickText(idea) {
       return (
+        idea.idea_thesis ||
+        idea.unified_narrative ||
+        idea.full_text ||
+        idea.fullText ||
+        idea.summary_ru ||
+        idea.summary ||
+        idea.short_text ||
+        idea.description_ru ||
+        "Описание идеи отсутствует."
+      );
+    }
+
+    function pickSubtitleText(idea) {
+      return (
+        idea.full_text ||
+        idea.fullText ||
+        idea.unified_narrative ||
+        idea.summary_ru ||
+        idea.summary ||
+        idea.short_text ||
+        idea.idea_thesis ||
+        idea.description_ru ||
+        "Описание идеи отсутствует."
+      );
+    }
+
+    function pickMainIdeaText(idea) {
+      const detailBrief = idea && typeof idea.detail_brief === "object" ? idea.detail_brief : null;
+      return (
+        detailBrief?.summary_narrative ||
         idea.idea_thesis ||
         idea.unified_narrative ||
         idea.full_text ||
