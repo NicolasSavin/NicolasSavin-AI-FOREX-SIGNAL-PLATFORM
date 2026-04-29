@@ -525,7 +525,9 @@
     .ideas-modal__top-actions {
       display: flex;
       justify-content: flex-end;
+      gap: 8px;
       margin-bottom: 10px;
+      flex-wrap: wrap;
     }
 
     .ideas-toggle-summary-btn {
@@ -925,6 +927,11 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") closeModal();
     });
+    document.addEventListener("fullscreenchange", () => {
+      const fullscreenChartBtn = document.getElementById("fullscreenChartBtn");
+      updateFullscreenButton(fullscreenChartBtn);
+      resizeIdeaChartSafely();
+    });
 
     async function loadIdeas(manual = false) {
       if (manual) {
@@ -1181,6 +1188,7 @@
         <div class="ideas-modal__top">
           <div class="ideas-modal__top-actions">
             <button id="toggleSummaryBtn" class="ideas-toggle-summary-btn" type="button" aria-expanded="true">Свернуть описание</button>
+            <button id="fullscreenChartBtn" class="ideas-toggle-summary-btn" type="button">График на весь экран</button>
           </div>
           <div class="modal-grid">
             <div class="level entry">ENTRY<br>${formatValue(idea.entry || idea.entry_price || idea.entry_zone)}</div>
@@ -1237,12 +1245,40 @@
 
       const toggleSummaryBtn = document.getElementById("toggleSummaryBtn");
       if (toggleSummaryBtn) toggleSummaryBtn.addEventListener("click", toggleSummarySection);
+      const fullscreenChartBtn = document.getElementById("fullscreenChartBtn");
+      if (fullscreenChartBtn) {
+        fullscreenChartBtn.addEventListener("click", () => toggleChartFullscreen(fullscreenChartBtn));
+        updateFullscreenButton(fullscreenChartBtn);
+      }
 
       applySummaryState();
 
       setTimeout(() => renderIdeaChart(idea), 50);
       setTimeout(resizeIdeaChartSafely, 100);
       setTimeout(resizeIdeaChartSafely, 300);
+    }
+
+
+    function updateFullscreenButton(button) {
+      if (!button) return;
+      const isFullscreen = Boolean(document.fullscreenElement);
+      button.textContent = isFullscreen ? "Выйти из полноэкранного" : "График на весь экран";
+    }
+
+    async function toggleChartFullscreen(button) {
+      const chartWrap = document.querySelector(".chart-wrap");
+      if (!chartWrap) return;
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else if (chartWrap.requestFullscreen) {
+          await chartWrap.requestFullscreen();
+        }
+      } catch (error) {
+        console.warn("Fullscreen toggle skipped:", error);
+      }
+      updateFullscreenButton(button);
+      setTimeout(resizeIdeaChartSafely, 80);
     }
 
     function renderFundamentalContext(idea) {
@@ -1988,25 +2024,22 @@
     }
 
     function pickSubtitleText(idea) {
-      return (
-        idea.full_text ||
-        idea.fullText ||
-        idea.unified_narrative ||
+      const shortText = (
+        idea.idea_thesis ||
         idea.summary_ru ||
         idea.summary ||
         idea.short_text ||
-        idea.idea_thesis ||
         idea.description_ru ||
         "Описание идеи отсутствует."
       );
+      return trimToLength(shortText, 170);
     }
 
     function pickMainIdeaText(idea) {
       const detailBrief = idea && typeof idea.detail_brief === "object" ? idea.detail_brief : null;
       return (
-        detailBrief?.summary_narrative ||
-        idea.idea_thesis ||
         idea.unified_narrative ||
+        detailBrief?.summary_narrative ||
         idea.full_text ||
         idea.fullText ||
         idea.summary_ru ||
@@ -2015,6 +2048,13 @@
         idea.description_ru ||
         "Описание идеи отсутствует."
       );
+    }
+
+    function trimToLength(text, maxLength = 170) {
+      const normalized = String(text || "").replace(/\s+/g, " ").trim();
+      if (!normalized) return "Описание идеи отсутствует.";
+      if (normalized.length <= maxLength) return normalized;
+      return `${normalized.slice(0, maxLength - 1).trim()}…`;
     }
 
     function renderSentimentBadge(idea) {
