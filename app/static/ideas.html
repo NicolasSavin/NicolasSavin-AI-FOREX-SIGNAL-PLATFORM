@@ -858,6 +858,55 @@
   font-size: 11px !important;
 }
 
+.chart-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  background: #020817;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-fullscreen-overlay[hidden] {
+  display: none !important;
+}
+
+.chart-fullscreen-header {
+  height: 52px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(2, 8, 23, .96);
+  border-bottom: 1px solid rgba(95,156,230,.32);
+}
+
+.chart-fullscreen-header strong {
+  color: #f4f8ff;
+  font-size: 15px;
+}
+
+.chart-fullscreen-header button,
+.chart-fullscreen-btn {
+  border: 1px solid rgba(69,202,255,.45);
+  background: linear-gradient(135deg, rgba(28,80,150,.92), rgba(10,31,58,.92));
+  color: #dbeeff;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.chart-fullscreen-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.chart-fullscreen-container {
+  width: 100%;
+  height: 100%;
+}
+
 @media (max-height: 820px) {
   .modal {
     height: 94vh !important;
@@ -966,6 +1015,17 @@
     </div>
   </div>
 
+  <div class="chart-fullscreen-overlay" id="chartFullscreenOverlay" hidden>
+    <div class="chart-fullscreen-header">
+      <strong id="chartFullscreenTitle">График идеи</strong>
+      <button type="button" id="chartFullscreenClose">Закрыть</button>
+    </div>
+
+    <div class="chart-fullscreen-body">
+      <div id="ideaChartFullscreen" class="chart-fullscreen-container"></div>
+    </div>
+  </div>
+
   <script>
     console.log("IDEAS_HTML_VERSION_NO_SYNTHETIC_CANDLES_V8");
 
@@ -982,6 +1042,8 @@
       realCandlesCache: {},
       candlesRequestSeq: 0,
       isSummaryCollapsed: false,
+      fullscreenChart: null,
+      fullscreenOverlayCleanup: null,
     };
 
     const pairFilter = document.getElementById("pairFilter");
@@ -1033,12 +1095,15 @@
     });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closeModal();
+      if (event.key === "Escape") {
+        closeChartFullscreen();
+        closeModal();
+      }
     });
-    document.addEventListener("fullscreenchange", () => {
-      const fullscreenChartBtn = document.getElementById("fullscreenChartBtn");
-      updateFullscreenButton(fullscreenChartBtn);
+    document.getElementById("chartFullscreenClose")?.addEventListener("click", closeChartFullscreen);
+    window.addEventListener("resize", () => {
       resizeIdeaChartSafely();
+      resizeFullscreenChartSafely();
     });
 
     async function loadIdeas(manual = false) {
@@ -1296,7 +1361,7 @@
         <div class="ideas-modal__top">
           <div class="ideas-modal__top-actions">
             <button id="toggleSummaryBtn" class="ideas-toggle-summary-btn" type="button" aria-expanded="true">Свернуть описание</button>
-            <button id="fullscreenChartBtn" class="ideas-toggle-summary-btn" type="button">График на весь экран</button>
+            <button type="button" class="chart-fullscreen-btn" id="chartFullscreenBtn">График на весь экран</button>
           </div>
           <div class="modal-grid">
             <div class="level entry">ENTRY<br>${formatValue(idea.entry || idea.entry_price || idea.entry_zone)}</div>
@@ -1354,11 +1419,7 @@
 
       const toggleSummaryBtn = document.getElementById("toggleSummaryBtn");
       if (toggleSummaryBtn) toggleSummaryBtn.addEventListener("click", toggleSummarySection);
-      const fullscreenChartBtn = document.getElementById("fullscreenChartBtn");
-      if (fullscreenChartBtn) {
-        fullscreenChartBtn.addEventListener("click", () => toggleChartFullscreen(fullscreenChartBtn));
-        updateFullscreenButton(fullscreenChartBtn);
-      }
+      document.getElementById("chartFullscreenBtn")?.addEventListener("click", openChartFullscreen);
 
       applySummaryState();
 
@@ -1368,27 +1429,44 @@
       setTimeout(resizeIdeaChartSafely, 700);
     }
 
+    function openChartFullscreen() {
+      const overlay = document.getElementById("chartFullscreenOverlay");
+      const container = document.getElementById("ideaChartFullscreen");
+      const title = document.getElementById("chartFullscreenTitle");
+      const currentIdea = state.activeIdea;
+      if (!overlay || !container || !currentIdea) return;
 
-    function updateFullscreenButton(button) {
-      if (!button) return;
-      const isFullscreen = Boolean(document.fullscreenElement);
-      button.textContent = isFullscreen ? "Выйти из полноэкранного" : "График на весь экран";
+      overlay.hidden = false;
+      document.body.style.overflow = "hidden";
+      if (title) {
+        title.textContent = `${currentIdea.symbol || currentIdea.pair || ""} • ${state.currentTf || "M15"}`;
+      }
+
+      renderIdeaChartIntoContainer(currentIdea, state.currentTf, container, "fullscreen");
+      setTimeout(resizeFullscreenChartSafely, 100);
+      setTimeout(resizeFullscreenChartSafely, 300);
     }
 
-    async function toggleChartFullscreen(button) {
-      const chartWrap = document.querySelector(".chart-wrap");
-      if (!chartWrap) return;
-      try {
-        if (document.fullscreenElement) {
-          await document.exitFullscreen();
-        } else if (chartWrap.requestFullscreen) {
-          await chartWrap.requestFullscreen();
-        }
-      } catch (error) {
-        console.warn("Fullscreen toggle skipped:", error);
+    function closeChartFullscreen() {
+      const overlay = document.getElementById("chartFullscreenOverlay");
+      if (!overlay || overlay.hidden) return;
+      overlay.hidden = true;
+      document.body.style.overflow = "";
+      teardownFullscreenChart();
+      if (typeof resizeIdeaChartSafely === "function") {
+        setTimeout(resizeIdeaChartSafely, 100);
       }
-      updateFullscreenButton(button);
-      setTimeout(resizeIdeaChartSafely, 80);
+    }
+
+    function resizeFullscreenChartSafely() {
+      const container = document.getElementById("ideaChartFullscreen");
+      if (!container || !state.fullscreenChart) return;
+      try {
+        state.fullscreenChart.resize(container.clientWidth, container.clientHeight);
+        state.fullscreenChart.timeScale().fitContent();
+      } catch (error) {
+        console.warn("Fullscreen chart resize skipped:", error);
+      }
     }
 
     function renderFundamentalContext(idea) {
@@ -1407,6 +1485,7 @@
     }
 
     function closeModal() {
+      closeChartFullscreen();
       modalBackdrop.classList.remove("open");
       state.candlesRequestSeq += 1;
       if (typeof state.overlaySyncCleanup === "function") {
@@ -1441,8 +1520,18 @@
     async function renderIdeaChart(idea) {
       const container = document.getElementById("ideaChart");
       if (!container) return;
+      await renderIdeaChartIntoContainer(idea, state.currentTf, container, "modal");
+      setTimeout(resizeIdeaChartSafely, 100);
+      setTimeout(resizeIdeaChartSafely, 300);
+      setTimeout(resizeIdeaChartSafely, 700);
+    }
 
-      if (state.chart) {
+    async function renderIdeaChartIntoContainer(idea, tf, container, mode = "modal") {
+      if (!container || !idea) return;
+      const isFullscreen = mode === "fullscreen";
+      if (isFullscreen) {
+        teardownFullscreenChart();
+      } else if (state.chart) {
         if (typeof state.overlaySyncCleanup === "function") {
           state.overlaySyncCleanup();
           state.overlaySyncCleanup = null;
@@ -1451,7 +1540,6 @@
         state.chart = null;
         state.series = null;
       }
-
       container.innerHTML = "";
 
       const getChartSize = () => {
@@ -1462,9 +1550,9 @@
       };
 
       const renderSeq = ++state.candlesRequestSeq;
-      let candles = getCandlesForIdea(idea, state.currentTf);
+      let candles = getCandlesForIdea(idea, tf);
       if (!candles.length) {
-        candles = await fetchRealCandlesForIdea(idea, state.currentTf);
+        candles = await fetchRealCandlesForIdea(idea, tf);
         if (renderSeq !== state.candlesRequestSeq) return;
       }
 
@@ -1476,7 +1564,7 @@
             Фейковые свечи отключены.
           </div>
         `;
-        const note = document.getElementById("chartNote");
+        const note = isFullscreen ? null : document.getElementById("chartNote");
         if (note) {
           note.textContent = "Нет реальных свечей. Нужно, чтобы backend отдавал candles / chart_data.candles / chartData.candles.";
         }
@@ -1488,7 +1576,7 @@
         width: chartSize.width,
         height: chartSize.height,
         layout: {
-          background: { color: "#07111f" },
+          background: { color: isFullscreen ? "#020817" : "#07111f" },
           textColor: "#9bb8d8",
         },
         grid: {
@@ -1522,16 +1610,38 @@
 
       chart.timeScale().fitContent();
 
-      state.chart = chart;
-      state.series = series;
+      if (isFullscreen) {
+        state.fullscreenChart = chart;
+      } else {
+        state.chart = chart;
+        state.series = series;
+      }
 
       const redrawOverlay = () => addIdeaOverlay(container, chart, series, candles, idea);
-
-      state.overlaySyncCleanup = bindOverlayToChart(container, chart, redrawOverlay, getChartSize);
+      const cleanup = bindOverlayToChart(container, chart, redrawOverlay, getChartSize);
+      if (isFullscreen) {
+        state.fullscreenOverlayCleanup = cleanup;
+      } else {
+        state.overlaySyncCleanup = cleanup;
+      }
       requestAnimationFrame(redrawOverlay);
-      setTimeout(resizeIdeaChartSafely, 100);
-      setTimeout(resizeIdeaChartSafely, 300);
-      setTimeout(resizeIdeaChartSafely, 700);
+    }
+
+    function teardownFullscreenChart() {
+      if (typeof state.fullscreenOverlayCleanup === "function") {
+        state.fullscreenOverlayCleanup();
+        state.fullscreenOverlayCleanup = null;
+      }
+      try {
+        if (state.fullscreenChart) {
+          state.fullscreenChart.remove();
+        }
+      } catch (error) {
+        console.warn("Fullscreen chart remove failed:", error);
+      }
+      state.fullscreenChart = null;
+      const container = document.getElementById("ideaChartFullscreen");
+      if (container) container.innerHTML = "";
     }
 
     async function fetchRealCandlesForIdea(idea, tf) {
