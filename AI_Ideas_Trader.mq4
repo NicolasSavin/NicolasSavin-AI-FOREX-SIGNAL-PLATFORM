@@ -18,6 +18,10 @@ input bool UseConfidenceFilter = true;
 input int MinConfidence = 60;
 input bool AllowBuy = true;
 input bool AllowSell = true;
+input bool UseEntryZone = true;
+input bool UseBufferedSL = true;
+input bool SkipIfTpTooClose = true;
+input string MarkupUrlTemplate = "https://your-domain.onrender.com/api/mt4/markup/{symbol}?tf=M15";
 
 datetime g_lastPoll = 0;
 
@@ -39,16 +43,33 @@ void PollSignalsAndTrade()
    string response = "";
    if(!HttpGet(ApiUrl, response)) return;
 
-   string symbol = "", action = "", comment = "";
-   double entry = 0.0, sl = 0.0, tp = 0.0;
+   string symbol = "", action = "", comment = "", skipReason = "";
+   double entry = 0.0, sl = 0.0, tp = 0.0, entryZoneFrom = 0.0, entryZoneTo = 0.0, entryZoneMid = 0.0, slBuffered = 0.0;
    int confidence = 0;
    bool tradePermission = false;
 
-   if(!ExtractSignalForCurrentSymbol(response, symbol, action, entry, sl, tp, confidence, tradePermission, comment))
+   if(!ExtractSignalForCurrentSymbol(response, symbol, action, entry, sl, tp, confidence, tradePermission, comment, entryZoneFrom, entryZoneTo, entryZoneMid, slBuffered, skipReason))
    {
       Print("No matching tradable signal for ", Symbol());
+      DrawMarkupForCurrentSymbol();
       return;
    }
+
+   DrawMarkupForCurrentSymbol();
+
+   if(SkipIfTpTooClose && skipReason == "tp_too_close")
+   {
+      Print("Skipped: TP too close according to backend safety");
+      return;
+   }
+
+   if(UseEntryZone && !IsPriceAllowedByEntryZone(action, entryZoneFrom, entryZoneTo))
+   {
+      Print("Ждём цену в зоне Entry");
+      return;
+   }
+
+   if(UseBufferedSL && slBuffered > 0) sl = slBuffered;
 
    Print("AI signal received: ", symbol, " ", action, " entry=", DoubleToString(entry, Digits), " sl=", DoubleToString(sl, Digits), " tp=", DoubleToString(tp, Digits));
 
@@ -121,7 +142,7 @@ bool HttpGet(string url, string &response)
    return(true);
 }
 
-bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, double &entry, double &sl, double &tp, int &confidence, bool &tradePermission, string &comment)
+bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, double &entry, double &sl, double &tp, int &confidence, bool &tradePermission, string &comment, double &entryZoneFrom, double &entryZoneTo, double &entryZoneMid, double &slBuffered, string &skipReason)
 {
    int signalsPos = StringFind(json, "\"signals\"");
    if(signalsPos < 0) return(false);
@@ -144,7 +165,12 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
       string apiAction = StringUpper(JsonGetString(obj, "action"));
       double apiEntry = JsonGetNumber(obj, "entry");
       double apiSl = JsonGetNumber(obj, "sl");
+      double apiSlBuffered = JsonGetNumber(obj, "sl_buffered");
       double apiTp = JsonGetNumber(obj, "tp");
+      double apiEntryZoneFrom = JsonGetNumber(obj, "entry_zone_from");
+      double apiEntryZoneTo = JsonGetNumber(obj, "entry_zone_to");
+      double apiEntryZoneMid = JsonGetNumber(obj, "entry_zone_mid");
+      string apiSkipReason = JsonGetString(obj, "skip_reason");
       int apiConfidence = (int)JsonGetNumber(obj, "confidence");
       bool apiTradePermission = JsonGetBool(obj, "trade_permission");
       string apiDataStatus = StringLower(JsonGetString(obj, "data_status"));
@@ -159,7 +185,12 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
          action = apiAction;
          entry = NormalizeDouble(apiEntry, Digits);
          sl = NormalizeDouble(apiSl, Digits);
+         slBuffered = NormalizeDouble(apiSlBuffered, Digits);
          tp = NormalizeDouble(apiTp, Digits);
+         entryZoneFrom = NormalizeDouble(apiEntryZoneFrom, Digits);
+         entryZoneTo = NormalizeDouble(apiEntryZoneTo, Digits);
+         entryZoneMid = NormalizeDouble(apiEntryZoneMid, Digits);
+         skipReason = apiSkipReason;
          confidence = apiConfidence;
          tradePermission = apiTradePermission;
          comment = JsonGetString(obj, "comment");
@@ -170,6 +201,71 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
    }
 
    return(false);
+}
+
+bool IsPriceAllowedByEntryZone(string action, double fromPrice, double toPrice)
+{
+   if(fromPrice <= 0 || toPrice <= 0) return(true);
+   double low = MathMin(fromPrice, toPrice);
+   double high = MathMax(fromPrice, toPrice);
+   if(action == "BUY") return(Ask <= high + (2 * Point));
+   if(action == "SELL") return(Bid >= low - (2 * Point));
+   return(false);
+}
+
+void DrawMarkupForCurrentSymbol()
+{
+   string url = MarkupUrlTemplate;
+   StringReplace(url, "{symbol}", Symbol());
+   string response = "";
+   if(!HttpGet(url, response))
+   {
+      Print("Markup: unavailable");
+      return;
+   }
+   ClearMarkupObjects();
+   DrawLineFromLevel(response, "entry", clrDodgerBlue);
+   DrawLineFromLevel(response, "sl", clrTomato);
+   DrawLineFromLevel(response, "tp", clrLimeGreen);
+   DrawEntryZone(response);
+}
+
+void ClearMarkupObjects()
+{
+   for(int i = ObjectsTotal() - 1; i >= 0; i--)
+   {
+      string name = ObjectName(i);
+      if(StringFind(name, "AI_MARKUP_") == 0) ObjectDelete(name);
+   }
+}
+
+void DrawLineFromLevel(string json, string levelType, color lineColor)
+{
+   string marker = "\"type\":\"" + levelType + "\"";
+   int p = StringFind(json, marker);
+   if(p < 0) return;
+   int pricePos = StringFind(json, "\"price\":", p);
+   if(pricePos < 0) return;
+   double price = JsonGetNumber(StringSubstr(json, p, 200), "price");
+   if(price <= 0) return;
+   string objName = "AI_MARKUP_" + StringUpper(levelType);
+   ObjectCreate(objName, OBJ_HLINE, 0, 0, price);
+   ObjectSet(objName, OBJPROP_COLOR, lineColor);
+}
+
+void DrawEntryZone(string json)
+{
+   int p = StringFind(json, "\"entry_zone\"");
+   if(p < 0) return;
+   string chunk = StringSubstr(json, p, 300);
+   double fromPrice = JsonGetNumber(chunk, "from_price");
+   double toPrice = JsonGetNumber(chunk, "to_price");
+   if(fromPrice <= 0 || toPrice <= 0) return;
+   datetime t1 = Time[MathMin(Bars - 1, 120)];
+   datetime t2 = Time[0];
+   string name = "AI_MARKUP_ENTRY_ZONE";
+   ObjectCreate(name, OBJ_RECTANGLE, 0, t1, fromPrice, t2, toPrice);
+   ObjectSet(name, OBJPROP_COLOR, clrSlateBlue);
 }
 
 bool SymbolMatches(string brokerSymbol, string apiSymbol)
@@ -251,6 +347,6 @@ bool JsonGetBool(string obj, string key)
    int start = colon + 1;
    while(start < StringLen(obj) && (StringGetCharacter(obj, start) == ' ')) start++;
    string rem = StringSubstr(obj, start, 5);
-   rem = StringLower(rem);
-   return(StringFind(rem, "true") == 0);
+  rem = StringLower(rem);
+  return(StringFind(rem, "true") == 0);
 }
