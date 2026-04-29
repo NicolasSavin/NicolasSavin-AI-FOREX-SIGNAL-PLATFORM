@@ -1284,13 +1284,12 @@
       state.currentTf = pickDefaultTf(idea);
       state.isSummaryCollapsed = false;
 
-      const symbol = normalizeSymbol(idea.symbol || idea.pair || "MARKET");
       const signal = normalizeSignal(idea.final_signal || idea.signal || idea.direction || idea.bias);
       const statusView = resolveIdeaStatusView(idea);
       const statusReason = buildIdeaStatusReason(idea, statusView);
 
-      modalTitle.textContent = `${symbol} • ${signal} • ${statusView.label}`;
-      modalSubtitle.textContent = pickSubtitleText(idea);
+      modalTitle.textContent = `${signal} • ${statusView.label}`;
+      modalSubtitle.textContent = "";
 
       modalContent.innerHTML = `
         <div class="ideas-modal__top">
