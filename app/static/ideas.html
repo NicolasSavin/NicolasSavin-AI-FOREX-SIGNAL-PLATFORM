@@ -900,11 +900,53 @@
 .chart-fullscreen-body {
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 .chart-fullscreen-container {
   width: 100%;
   height: 100%;
+}
+
+.chart-fullscreen-toolbar {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 13000;
+  display: flex;
+  gap: 10px;
+}
+
+.chart-fullscreen-toolbar button,
+.chart-fullscreen-description button {
+  border: 1px solid rgba(69,202,255,.55);
+  background: linear-gradient(135deg, rgba(28,80,150,.95), rgba(10,31,58,.95));
+  color: #fff;
+  border-radius: 999px;
+  padding: 8px 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.chart-fullscreen-description {
+  position: absolute;
+  top: 64px;
+  left: 20px;
+  width: min(560px, calc(100vw - 40px));
+  max-height: 55vh;
+  overflow: auto;
+  z-index: 12900;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(3,14,28,.94);
+  border: 1px solid rgba(95,156,230,.42);
+  color: rgba(244,248,255,.94);
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.chart-fullscreen-description[hidden] {
+  display: none !important;
 }
 
 @media (max-height: 820px) {
@@ -1022,6 +1064,14 @@
     </div>
 
     <div class="chart-fullscreen-body">
+      <div class="chart-fullscreen-toolbar">
+        <button id="fullscreenDescriptionToggle" type="button">Развернуть описание</button>
+        <button id="chartFullscreenExit" type="button">Выйти из полноэкранного режима</button>
+      </div>
+      <div id="chartFullscreenDescription" class="chart-fullscreen-description" hidden>
+        <button id="fullscreenDescriptionClose" type="button">Свернуть описание</button>
+        <div id="chartFullscreenDescriptionText"></div>
+      </div>
       <div id="ideaChartFullscreen" class="chart-fullscreen-container"></div>
     </div>
   </div>
@@ -1057,6 +1107,23 @@
     const modalTitle = document.getElementById("modalTitle");
     const modalSubtitle = document.getElementById("modalSubtitle");
     const modalContent = document.getElementById("modalContent");
+
+    function getCurrentIdeaDescriptionText() {
+      const idea = state.activeIdea || state.currentIdea || {};
+      return (
+        idea.summary ||
+        idea.main_idea ||
+        idea.description ||
+        idea.reason ||
+        idea.title ||
+        "Описание идеи недоступно."
+      );
+    }
+
+    function fillFullscreenDescription() {
+      const el = document.getElementById("chartFullscreenDescriptionText");
+      if (el) el.textContent = getCurrentIdeaDescriptionText();
+    }
 
     function updateSummaryToggleButton() {
       const toggleBtn = document.getElementById("toggleSummaryBtn");
@@ -1101,6 +1168,20 @@
       }
     });
     document.getElementById("chartFullscreenClose")?.addEventListener("click", closeChartFullscreen);
+    document.getElementById("fullscreenDescriptionToggle")?.addEventListener("click", () => {
+      fillFullscreenDescription();
+      const panel = document.getElementById("chartFullscreenDescription");
+      if (panel) panel.hidden = false;
+    });
+    document.getElementById("fullscreenDescriptionClose")?.addEventListener("click", () => {
+      const panel = document.getElementById("chartFullscreenDescription");
+      if (panel) panel.hidden = true;
+    });
+    document.getElementById("chartFullscreenExit")?.addEventListener("click", () => {
+      if (typeof closeChartFullscreen === "function") {
+        closeChartFullscreen();
+      }
+    });
     window.addEventListener("resize", () => {
       resizeIdeaChartSafely();
       resizeFullscreenChartSafely();
@@ -1450,6 +1531,8 @@
       const overlay = document.getElementById("chartFullscreenOverlay");
       if (!overlay || overlay.hidden) return;
       overlay.hidden = true;
+      const desc = document.getElementById("chartFullscreenDescription");
+      if (desc) desc.hidden = true;
       document.body.style.overflow = "";
       teardownFullscreenChart();
       if (typeof resizeIdeaChartSafely === "function") {
