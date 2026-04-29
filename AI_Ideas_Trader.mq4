@@ -10,7 +10,8 @@
 input string ApiUrl = "https://your-domain.onrender.com/api/mt4/signals";
 input double Lots = 0.01;
 input int MagicNumber = 26042026;
-input int RefreshSeconds = 30;
+input int RefreshSeconds = 60;
+input int MarkupRefreshSeconds = 120;
 input int MaxSpreadPoints = 30;
 input int Slippage = 5;
 input bool OneTradePerSymbol = true;
@@ -24,6 +25,7 @@ input bool SkipIfTpTooClose = true;
 input string MarkupUrlTemplate = "https://your-domain.onrender.com/api/mt4/markup/{symbol}?tf=M15";
 
 datetime g_lastPoll = 0;
+datetime g_lastMarkupPoll = 0;
 
 int OnInit()
 {
@@ -215,6 +217,8 @@ bool IsPriceAllowedByEntryZone(string action, double fromPrice, double toPrice)
 
 void DrawMarkupForCurrentSymbol()
 {
+   if(TimeCurrent() - g_lastMarkupPoll < MarkupRefreshSeconds) return;
+   g_lastMarkupPoll = TimeCurrent();
    string url = MarkupUrlTemplate;
    StringReplace(url, "{symbol}", Symbol());
    string response = "";
