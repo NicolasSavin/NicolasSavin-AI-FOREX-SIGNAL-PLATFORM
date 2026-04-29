@@ -1717,7 +1717,8 @@ class TradeIdeaService:
             "labels": overlay_payload.get("labels", []),
             "markers": overlay_payload.get("labels", []),
             "arrows": overlay_payload.get("arrows", []),
-            "patterns": overlay_payload.get("patterns", []),
+            "patterns": chart_data.get("patterns", overlay_payload.get("patterns", [])),
+                        "trade_arrow": chart_data.get("trade_arrow"),
             "news_title": "AI trade idea",
             "analysis": analysis_payload,
             "trade_plan": trade_plan_payload,
@@ -1871,11 +1872,19 @@ class TradeIdeaService:
         )
         if isinstance(level_candidates, list):
             levels["items"] = [item for item in level_candidates if isinstance(item, dict)]
+        resolved_overlays = chart_overlays if isinstance(chart_overlays, dict) else {}
+        resolved_overlays = cls.normalize_chart_overlays(resolved_overlays)
+        detected_patterns = cls.detect_chart_patterns(candles)
+        resolved_overlays["patterns"] = detected_patterns or list(resolved_overlays.get("patterns") or [])
+        signal_name = str(signal.get("signal") or "").upper()
+        trade_arrow = cls.build_trade_arrow(signal_name, levels.get("entry"), levels.get("reference"), candles)
         chart_payload: dict[str, Any] = {
             "candles": candles,
             "levels": levels,
-            "overlays": chart_overlays if isinstance(chart_overlays, dict) else {},
-            "chart_overlays": chart_overlays if isinstance(chart_overlays, dict) else {},
+            "overlays": resolved_overlays,
+            "chart_overlays": resolved_overlays,
+            "patterns": resolved_overlays.get("patterns", []),
+            "trade_arrow": trade_arrow,
         }
         legacy_chart_data = signal.get("chart_data") if isinstance(signal.get("chart_data"), dict) else (
             signal.get("chartData") if isinstance(signal.get("chartData"), dict) else {}
@@ -1886,6 +1895,73 @@ class TradeIdeaService:
                 chart_payload[optional_key] = value
         return chart_payload
 
+
+    @classmethod
+    def detect_chart_patterns(cls, candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        sample = [item for item in candles[-120:] if isinstance(item, dict)]
+        if len(sample) < 40:
+            return []
+
+        points = []
+        for idx in range(2, len(sample) - 2):
+            high = cls._extract_numeric(sample[idx].get("high"))
+            low = cls._extract_numeric(sample[idx].get("low"))
+            if high is None or low is None:
+                continue
+            neighbors_h = [cls._extract_numeric(sample[k].get("high")) for k in (idx - 2, idx - 1, idx + 1, idx + 2)]
+            neighbors_l = [cls._extract_numeric(sample[k].get("low")) for k in (idx - 2, idx - 1, idx + 1, idx + 2)]
+            if all(v is not None and high > v for v in neighbors_h):
+                points.append(("high", idx, high))
+            if all(v is not None and low < v for v in neighbors_l):
+                points.append(("low", idx, low))
+
+        highs = [p for p in points if p[0] == "high"]
+        lows = [p for p in points if p[0] == "low"]
+        if len(highs) < 2 or len(lows) < 2:
+            return []
+
+        def mkpt(i, price):
+            t = cls._extract_numeric(sample[i].get("time") or sample[i].get("timestamp"))
+            return {"time": int(t) if t is not None else int(i), "price": round(float(price), 6)}
+
+        patterns = []
+        h1, h2 = highs[-2], highs[-1]
+        l1, l2 = lows[-2], lows[-1]
+        tol = max(abs(h1[2]) * 0.0015, 1e-6)
+        if abs(h1[2] - h2[2]) <= tol:
+            patterns.append({"type": "double_top", "label": "Двойная вершина", "direction": "bearish", "confidence": 0.66, "lines": [{"label": "вершины", "points": [mkpt(h1[1], h1[2]), mkpt(h2[1], h2[2])]}], "label_point": mkpt(h2[1], h2[2])})
+        tol_l = max(abs(l1[2]) * 0.0015, 1e-6)
+        if abs(l1[2] - l2[2]) <= tol_l:
+            patterns.append({"type": "double_bottom", "label": "Двойное дно", "direction": "bullish", "confidence": 0.66, "lines": [{"label": "дно", "points": [mkpt(l1[1], l1[2]), mkpt(l2[1], l2[2])]}], "label_point": mkpt(l2[1], l2[2])})
+
+        if h2[2] < h1[2] and l2[2] > l1[2]:
+            patterns.append({"type": "triangle", "label": "Треугольник", "direction": "neutral", "confidence": 0.64, "lines": [{"label": "верхняя граница", "points": [mkpt(h1[1], h1[2]), mkpt(h2[1], h2[2])]}, {"label": "нижняя граница", "points": [mkpt(l1[1], l1[2]), mkpt(l2[1], l2[2])]}], "label_point": mkpt(h2[1], h2[2])})
+        span_h = abs(h2[2]-h1[2])
+        span_l = abs(l2[2]-l1[2])
+        if span_h > 0 and span_l > 0 and abs((span_h/span_l)-1) <= 0.35:
+            patterns.append({"type": "channel", "label": "Канал", "direction": "neutral", "confidence": 0.62, "lines": [{"label": "верхняя граница", "points": [mkpt(h1[1], h1[2]), mkpt(h2[1], h2[2])]}, {"label": "нижняя граница", "points": [mkpt(l1[1], l1[2]), mkpt(l2[1], l2[2])]}], "label_point": mkpt(h2[1], h2[2])})
+
+        return [p for p in patterns if float(p.get("confidence") or 0) >= 0.6][:3]
+
+    @classmethod
+    def build_trade_arrow(cls, signal: str, entry: float | None, current_price: float | None, candles: list[dict[str, Any]]) -> dict[str, Any] | None:
+        s = str(signal or "").upper()
+        if s not in {"BUY", "SELL"}:
+            return None
+        last = candles[-1] if candles else {}
+        price = cls._extract_numeric(entry)
+        if price is None:
+            price = cls._extract_numeric(current_price)
+        if price is None:
+            price = cls._extract_numeric(last.get("close"))
+        ts = cls._extract_numeric(last.get("time") or last.get("timestamp"))
+        return {
+            "signal": s,
+            "direction": "up" if s == "BUY" else "down",
+            "time": int(ts) if ts is not None else int(datetime.now(timezone.utc).timestamp()),
+            "price": round(float(price), 6) if price is not None else None,
+            "label": "BUY ↑" if s == "BUY" else "SELL ↓",
+        }
     @staticmethod
     def _chart_diagnostics(
         *,
@@ -5327,7 +5403,8 @@ class TradeIdeaService:
                         "labels": overlay_payload.get("labels", []),
                         "markers": overlay_payload.get("labels", []),
                         "arrows": overlay_payload.get("arrows", []),
-                        "patterns": overlay_payload.get("patterns", []),
+                        "patterns": chart_data.get("patterns", overlay_payload.get("patterns", [])),
+                        "trade_arrow": chart_data.get("trade_arrow"),
                         "chartImageUrl": chart_image_url,
                         "chart_image": chart_image_url,
                         "chartSnapshotStatus": chart_snapshot_status,
