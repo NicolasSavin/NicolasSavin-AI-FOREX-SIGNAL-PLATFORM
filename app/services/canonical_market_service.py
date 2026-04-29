@@ -8,6 +8,7 @@ from typing import Any
 
 from app.services.market_providers import TwelveDataProvider
 from app.services.real_market_data_provider import RealMarketDataProvider
+from app.services.yahoo_market_data_service import YahooMarketDataService
 
 
 class CanonicalMarketService:
@@ -17,10 +18,7 @@ class CanonicalMarketService:
         historical_fallback: RealMarketDataProvider | None = None,
     ) -> None:
         self.live_provider = live_provider or TwelveDataProvider()
-
-        # Backward-compatible attributes for existing debug routes.
-        # They are intentionally disabled to prevent Yahoo/Stooq/Finnhub spam.
-        self.historical_fallback = None
+        self.historical_fallback = historical_fallback or YahooMarketDataService()
         self.finnhub_provider = None
 
         self._quote_ttl_seconds = float(
@@ -187,7 +185,7 @@ class CanonicalMarketService:
             "finnhub_error": "disabled",
             "twelvedata_error": None,
             "yahoo_used": False,
-            "yahoo_error": "disabled",
+            "yahoo_error": None,
             "stooq_error": "disabled",
             "cache_hit": False,
             "provider_error": None,
@@ -214,10 +212,41 @@ class CanonicalMarketService:
 
         if len(candles) < 30:
             error = error or f"insufficient_candles_{len(candles)}"
-            diagnostics["final_provider_used"] = "none"
             diagnostics["twelvedata_error"] = error
-            diagnostics["provider_error"] = error
+            yahoo_payload, yahoo_cache_hit = self.fetch_yahoo_candles(
+                normalized_symbol,
+                normalized_tf,
+                normalized_limit,
+            )
+            yahoo_raw_candles = yahoo_payload.get("candles") or []
+            yahoo_candles = [
+                item
+                for item in (
+                    self._normalize_candle(candle)
+                    for candle in yahoo_raw_candles
+                )
+                if item is not None
+            ]
+            if len(yahoo_candles) >= 30:
+                diagnostics["final_provider_used"] = "yahoo_finance"
+                diagnostics["yahoo_used"] = True
+                diagnostics["yahoo_error"] = None
+                diagnostics["cache_hit"] = bool(yahoo_cache_hit)
+                diagnostics["provider_error"] = None
+                return {
+                    "provider": "yahoo_finance",
+                    "candles": yahoo_candles,
+                    "source_symbol": yahoo_payload.get("source_symbol") or normalized_symbol,
+                    "last_updated_utc": yahoo_payload.get("last_updated_utc")
+                    or datetime.now(timezone.utc).isoformat(),
+                    "error": None,
+                    "diagnostics": diagnostics,
+                }
 
+            yahoo_error = yahoo_payload.get("error") or f"insufficient_candles_{len(yahoo_candles)}"
+            diagnostics["final_provider_used"] = "none"
+            diagnostics["yahoo_error"] = yahoo_error
+            diagnostics["provider_error"] = error
             return {
                 "provider": "twelvedata",
                 "candles": [],
@@ -276,15 +305,11 @@ class CanonicalMarketService:
         timeframe: str,
         limit: int,
     ) -> tuple[dict[str, Any], bool]:
-        return (
-            {
-                "provider": "yahoo",
-                "candles": [],
-                "source_symbol": self._normalize_symbol(symbol),
-                "last_updated_utc": datetime.now(timezone.utc).isoformat(),
-                "error": "yahoo_disabled",
-            },
-            False,
+        return self._fetch_provider_candles(
+            provider="yahoo_finance",
+            symbol=symbol,
+            timeframe=timeframe,
+            limit=limit,
         )
 
     def get_market_contract(self, symbol: str) -> dict[str, Any]:
@@ -538,6 +563,11 @@ class CanonicalMarketService:
                 },
                 True,
             )
+
+        if provider == "yahoo_finance":
+            payload = self.historical_fallback.get_candles(symbol, timeframe, limit)
+            self._cache_set(self._provider_fetch_cache, cache_key, dict(payload))
+            return payload, False
 
         if provider != "twelvedata":
             return (
