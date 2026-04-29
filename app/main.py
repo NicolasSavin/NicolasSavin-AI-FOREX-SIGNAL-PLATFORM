@@ -54,10 +54,13 @@ HEATMAP_PAIRS = [
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "").strip()
 TRADING_ECONOMICS_KEY = os.getenv("TRADING_ECONOMICS_KEY", "").strip()
 FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
+FOREX_CLIENT_SENTIMENT_URL = "https://forexclientsentiment.com/forex-sentiment"
 
 CANDLE_CACHE: dict[str, dict[str, Any]] = {}
 CANDLE_CACHE_TTL_SECONDS = 900
 STALE_CANDLE_CACHE_TTL_SECONDS = 86400
+SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
+SENTIMENT_CACHE_TTL_SECONDS = 900
 
 ACTIVE_FILE = Path("active_trades.json")
 ARCHIVE_FILE = Path("archive.json")
@@ -504,6 +507,11 @@ def api_debug_candles(symbol: str, tf: str, limit: int = 160):
     }
 
 
+@app.get("/api/debug/sentiment/{symbol}")
+def api_debug_sentiment(symbol: str):
+    return fetch_forex_client_sentiment(symbol)
+
+
 def build_signal(symbol: str) -> dict[str, Any]:
     symbol = normalize_symbol(symbol)
     price_data = get_price(symbol)
@@ -608,6 +616,8 @@ def build_signal(symbol: str) -> dict[str, Any]:
     elif not auto_close_allowed and trade.get("signal") in {"BUY", "SELL"}:
         trade["auto_close_skipped_ru"] = "Автозакрытие пропущено: нет реальной рыночной цены."
 
+    sentiment = fetch_forex_client_sentiment(symbol)
+
     summary = build_summary(
         symbol=symbol,
         trade=trade,
@@ -615,6 +625,7 @@ def build_signal(symbol: str) -> dict[str, Any]:
         runtime_status=runtime_status,
         runtime_text=runtime_text,
         htf_decision=decision,
+        sentiment=sentiment,
     )
 
     m15_candles = candles_by_tf.get("M15", [])
@@ -662,6 +673,7 @@ def build_signal(symbol: str) -> dict[str, Any]:
         "full_text": summary,
         "compact_summary": summary,
         "warning_ru": human_price_warning(price_data),
+        "sentiment": sentiment,
         "auto_close_skipped_ru": trade.get("auto_close_skipped_ru"),
         "setup_quality": "HTF_CONTEXT_REAL_CANDLES_ONLY",
         "risk_filter": "MN_W1_D1_H4_H1_M15_ALIGNMENT",
@@ -1387,6 +1399,7 @@ def build_summary(
     runtime_status: str,
     runtime_text: str,
     htf_decision,
+    sentiment: dict[str, Any] | None = None,
 ) -> str:
     signal = trade.get("signal")
     context = htf_decision.context
@@ -1407,7 +1420,7 @@ def build_summary(
             "не дают согласованную картину."
         )
 
-    return (
+    base_summary = (
         f"{symbol}: {scenario} "
         f"HTF bias: {htf_decision.htf_bias}. "
         f"MN={context.get('mn_bias')}, W1={context.get('w1_bias')}, D1={context.get('d1_bias')}, "
@@ -1417,6 +1430,21 @@ def build_summary(
         f"{htf_decision.reason} "
         f"Статус: {runtime_status}. {runtime_text}"
     )
+
+    bias = str((sentiment or {}).get("bias") or "neutral").strip().lower()
+    if bias == "crowd_long":
+        suffix = (
+            " Сентимент: большинство в покупках. Это не сигнал на продажу само по себе, но предупреждение: "
+            "толпа может стать топливом для выноса long-позиций."
+        )
+    elif bias == "crowd_short":
+        suffix = (
+            " Сентимент: большинство в продажах. Это не сигнал на покупку само по себе, но при выносе стопов "
+            "может дать топливо для роста."
+        )
+    else:
+        suffix = " Сентимент: перекоса толпы нет, основной вес остаётся за структурой и HTF-контекстом."
+    return base_summary + suffix
 
 
 def empty_signal(
@@ -1727,6 +1755,140 @@ def normalize_symbol(symbol: str) -> str:
         .replace(" ", "")
         .strip()
     )
+
+
+def to_sentiment_pair(symbol: str) -> str:
+    symbol = normalize_symbol(symbol)
+    if len(symbol) == 6:
+        return f"{symbol[:3]}/{symbol[3:]}"
+    return symbol
+
+
+def get_sentiment_cache(symbol: str):
+    item = SENTIMENT_CACHE.get(normalize_symbol(symbol))
+    if not item:
+        return None
+    age = (datetime.now(timezone.utc) - item["updated_at"]).total_seconds()
+    if age <= SENTIMENT_CACHE_TTL_SECONDS:
+        return item["payload"]
+    return None
+
+
+def set_sentiment_cache(symbol: str, payload: dict):
+    SENTIMENT_CACHE[normalize_symbol(symbol)] = {
+        "updated_at": datetime.now(timezone.utc),
+        "payload": payload,
+    }
+
+
+def unavailable_sentiment(reason: str = "Сентимент временно недоступен") -> dict:
+    return {
+        "long_pct": None,
+        "short_pct": None,
+        "bias": "neutral",
+        "source": "unavailable",
+        "source_url": None,
+        "updated_at_utc": now_utc(),
+        "warning": reason,
+    }
+
+
+def parse_forex_client_sentiment_html(html: str, symbol: str) -> dict[str, Any] | None:
+    import re
+
+    normalized = normalize_symbol(symbol)
+    display = to_sentiment_pair(symbol)
+    text = re.sub(r"<[^>]+>", "\n", html or "")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    joined = "\n".join(lines)
+    patterns = [normalized, display]
+
+    anchor_indexes: list[int] = []
+    for idx, line in enumerate(lines):
+        upper_line = line.upper()
+        if any(p.upper() in upper_line for p in patterns):
+            anchor_indexes.append(idx)
+
+    chunks: list[str] = []
+    for idx in anchor_indexes:
+        start = max(0, idx - 4)
+        end = min(len(lines), idx + 5)
+        chunks.append(" ".join(lines[start:end]))
+    if not chunks and any(p.upper() in joined.upper() for p in patterns):
+        chunks = [joined]
+
+    for chunk in chunks:
+        pct_matches = [int(x) for x in re.findall(r"(\d{1,3})\s*%", chunk) if 0 <= int(x) <= 100]
+        if len(pct_matches) < 2:
+            continue
+        candidates = pct_matches[:4]
+        for i in range(len(candidates) - 1):
+            a, b = candidates[i], candidates[i + 1]
+            if abs((a + b) - 100) > 5:
+                continue
+            lower_chunk = chunk.lower()
+            if "long" in lower_chunk and "short" in lower_chunk:
+                long_first = lower_chunk.find("long") < lower_chunk.find("short")
+                return {"long_pct": a if long_first else b, "short_pct": b if long_first else a}
+            if "long" in joined.lower() and "short" in joined.lower():
+                long_first_global = joined.lower().find("long") < joined.lower().find("short")
+                return {"long_pct": a if long_first_global else b, "short_pct": b if long_first_global else a}
+            return {"long_pct": a, "short_pct": b}
+    return None
+
+
+def fetch_forex_client_sentiment(symbol: str) -> dict:
+    cached = get_sentiment_cache(symbol)
+    if cached:
+        return {**cached, "cache_status": "fresh"}
+    try:
+        response = requests.get(
+            FOREX_CLIENT_SENTIMENT_URL,
+            timeout=10,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; AI-Forex-Signal-Platform/1.0)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        response.raise_for_status()
+        parsed = parse_forex_client_sentiment_html(response.text, symbol)
+        if not parsed:
+            stale = SENTIMENT_CACHE.get(normalize_symbol(symbol))
+            if stale:
+                return {
+                    **stale["payload"],
+                    "cache_status": "stale_fallback",
+                    "warning": "Парсинг сентимента временно не сработал, показаны последние сохранённые данные.",
+                }
+            return unavailable_sentiment("Сентимент не найден на странице источника.")
+
+        long_pct = parsed.get("long_pct")
+        short_pct = parsed.get("short_pct")
+        if long_pct is None or short_pct is None:
+            return unavailable_sentiment("Сентимент найден, но проценты long/short не распознаны.")
+
+        bias = "crowd_long" if long_pct > 60 else "crowd_short" if short_pct > 60 else "neutral"
+        payload = {
+            "long_pct": long_pct,
+            "short_pct": short_pct,
+            "bias": bias,
+            "source": "forexclientsentiment",
+            "source_url": FOREX_CLIENT_SENTIMENT_URL,
+            "updated_at_utc": now_utc(),
+            "cache_status": "live",
+            "warning": None,
+        }
+        set_sentiment_cache(symbol, payload)
+        return payload
+    except Exception as exc:
+        stale = SENTIMENT_CACHE.get(normalize_symbol(symbol))
+        if stale:
+            return {
+                **stale["payload"],
+                "cache_status": "stale_fallback",
+                "warning": f"Источник сентимента временно недоступен, показан кеш: {exc}",
+            }
+        return unavailable_sentiment(f"Сентимент временно недоступен: {exc}")
 
 
 def to_twelvedata_symbol(symbol: str) -> str:
