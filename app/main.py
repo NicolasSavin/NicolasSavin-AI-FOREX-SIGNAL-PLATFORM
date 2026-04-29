@@ -5,6 +5,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 from typing import Any
 
 import requests
@@ -507,6 +508,23 @@ def api_debug_candles(symbol: str, tf: str, limit: int = 160):
     }
 
 
+@app.get("/api/debug/dukascopy/{symbol}/{tf}")
+def api_debug_dukascopy(symbol: str, tf: str, limit: int = 160):
+    payload = fetch_dukascopy_candles(symbol, tf, limit)
+    candles = payload.get("candles") or []
+    return {
+        "symbol": normalize_symbol(symbol),
+        "provider_symbol": to_dukascopy_symbol(symbol),
+        "tf": tf,
+        "count": len(candles),
+        "provider": payload.get("provider"),
+        "warning_ru": payload.get("warning_ru"),
+        "raw_error": payload.get("raw_error"),
+        "first": candles[0] if candles else None,
+        "last": candles[-1] if candles else None,
+    }
+
+
 @app.get("/api/debug/sentiment/{symbol}")
 def api_debug_sentiment(symbol: str):
     return fetch_forex_client_sentiment(symbol)
@@ -813,6 +831,7 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
             "raw_error": candles_payload.get("raw_error"),
             "cache_status": candles_payload.get("cache_status"),
             "provider": candles_payload.get("provider"),
+            "providers_tried": candles_payload.get("providers_tried") or [],
         },
     }
 
@@ -857,6 +876,113 @@ def parse_td_values(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return candles
 
 
+def to_dukascopy_symbol(symbol: str) -> str:
+    symbol = normalize_symbol(symbol)
+    if len(symbol) == 6:
+        return symbol
+    return symbol
+
+
+def to_dukascopy_period(tf: str) -> str:
+    tf = str(tf or "M15").upper().strip()
+    return {
+        "M1": "1",
+        "M5": "5",
+        "M15": "15",
+        "M30": "30",
+        "H1": "60",
+        "H4": "240",
+        "D1": "1440",
+    }.get(tf, "15")
+
+
+def fetch_dukascopy_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
+    normalized_symbol = normalize_symbol(symbol)
+    provider_symbol = to_dukascopy_symbol(normalized_symbol)
+    period = to_dukascopy_period(tf)
+    if provider_symbol == "XAUUSD":
+        return {
+            "candles": [],
+            "provider": "dukascopy",
+            "source_symbol": provider_symbol,
+            "interval": period,
+            "warning_ru": "Dukascopy для XAUUSD в текущем endpoint не поддерживается.",
+            "raw_error": "unsupported_symbol",
+        }
+
+    params = {
+        "path": "chart/history",
+        "instrument": provider_symbol,
+        "offer_side": "BID",
+        "interval": period,
+        "splits": "true",
+        "limit": max(1, int(limit)),
+    }
+    url = f"https://freeserv.dukascopy.com/2.0/index.php?{urlencode(params)}"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; forex-signal-platform/1.0)"}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        rows = data if isinstance(data, list) else data.get("candles") if isinstance(data, dict) else []
+        candles: list[dict[str, Any]] = []
+        for item in rows or []:
+            if not isinstance(item, dict):
+                continue
+            raw_time = item.get("timestamp") or item.get("time") or item.get("ts")
+            if raw_time is None:
+                continue
+            ts = int(float(raw_time))
+            if ts > 10_000_000_000:
+                ts = int(ts / 1000)
+            o = item.get("open")
+            h = item.get("high")
+            l = item.get("low")
+            c = item.get("close")
+            if None in (o, h, l, c):
+                continue
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            candles.append(
+                {
+                    "time": ts,
+                    "datetime": dt,
+                    "open": float(o),
+                    "high": float(h),
+                    "low": float(l),
+                    "close": float(c),
+                    "volume": float(item.get("volume") or 0),
+                }
+            )
+        candles = sorted(candles, key=lambda x: x["time"])[-limit:]
+        if candles:
+            return {
+                "candles": candles,
+                "provider": "dukascopy",
+                "source_symbol": provider_symbol,
+                "interval": period,
+                "warning_ru": None,
+                "raw_error": None,
+            }
+        return {
+            "candles": [],
+            "provider": "dukascopy",
+            "source_symbol": provider_symbol,
+            "interval": period,
+            "warning_ru": "Dukascopy вернул пустой набор свечей.",
+            "raw_error": "empty_values",
+        }
+    except Exception as exc:
+        return {
+            "candles": [],
+            "provider": "dukascopy",
+            "source_symbol": provider_symbol,
+            "interval": period,
+            "warning_ru": "Dukascopy временно недоступен.",
+            "raw_error": str(exc),
+        }
+
+
 def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
     normalized_symbol = normalize_symbol(symbol)
     source_symbol = to_twelvedata_symbol(normalized_symbol)
@@ -867,94 +993,103 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
     if fresh:
         return {
             **fresh,
-            "provider": fresh.get("provider") or "twelvedata",
+            "provider": fresh.get("provider") or "real_cache",
             "source_symbol": fresh.get("source_symbol") or source_symbol,
             "interval": fresh.get("interval") or interval,
             "cache_status": "fresh",
+            "providers_tried": fresh.get("providers_tried") or [],
         }
 
-    if not TWELVEDATA_API_KEY:
-        return {
-            "candles": [],
-            "warning_ru": "TWELVEDATA_API_KEY отсутствует.",
-            "provider": "twelvedata",
-            "source_symbol": source_symbol,
-            "interval": interval,
-            "cache_status": "empty",
-            "attempts": 0,
-            "raw_error": "TWELVEDATA_API_KEY отсутствует.",
-        }
-
+    providers_tried: list[str] = []
     attempts = 0
     last_error = ""
-    backoffs = [0.4, 0.8, 1.2]
-    for idx, delay in enumerate(backoffs, start=1):
-        attempts = idx
-        try:
-            response = requests.get(
-                "https://api.twelvedata.com/time_series",
-                params={
-                    "symbol": source_symbol,
-                    "interval": interval,
-                    "outputsize": limit,
-                    "apikey": TWELVEDATA_API_KEY,
-                    "format": "JSON",
-                },
-                timeout=8,
-            )
-            response.raise_for_status()
-            data = response.json()
+    providers_tried.append("twelvedata")
+    if TWELVEDATA_API_KEY:
+        backoffs = [0.4, 0.8, 1.2]
+        for idx, delay in enumerate(backoffs, start=1):
+            attempts = idx
+            try:
+                response = requests.get(
+                    "https://api.twelvedata.com/time_series",
+                    params={
+                        "symbol": source_symbol,
+                        "interval": interval,
+                        "outputsize": limit,
+                        "apikey": TWELVEDATA_API_KEY,
+                        "format": "JSON",
+                    },
+                    timeout=8,
+                )
+                response.raise_for_status()
+                data = response.json()
 
-            if data.get("status") == "error":
-                last_error = f"TwelveData error: {data.get('message')}"
-            else:
-                values = data.get("values")
-                if not isinstance(values, list) or not values:
-                    last_error = "TwelveData returned empty values"
+                if data.get("status") == "error":
+                    last_error = f"TwelveData error: {data.get('message')}"
                 else:
-                    candles = parse_td_values(values)
-                    if candles:
-                        payload = {
-                            "candles": candles,
-                            "warning_ru": None,
-                            "provider": "twelvedata",
-                            "source_symbol": source_symbol,
-                            "interval": interval,
-                            "cache_status": "live",
-                            "attempts": attempts,
-                            "raw_error": None,
-                        }
-                        set_cached_candles(cache_key, payload)
-                        return payload
-                    last_error = "TwelveData returned empty values"
-        except Exception as exc:
-            last_error = str(exc)
+                    values = data.get("values")
+                    if not isinstance(values, list) or not values:
+                        last_error = "TwelveData returned empty values"
+                    else:
+                        candles = parse_td_values(values)
+                        if candles:
+                            payload = {
+                                "candles": candles,
+                                "warning_ru": None,
+                                "provider": "twelvedata",
+                                "providers_tried": providers_tried,
+                                "source_symbol": source_symbol,
+                                "interval": interval,
+                                "cache_status": "live",
+                                "attempts": attempts,
+                                "raw_error": None,
+                            }
+                            set_cached_candles(cache_key, payload)
+                            return payload
+                        last_error = "TwelveData returned empty values"
+            except Exception as exc:
+                last_error = str(exc)
+            if idx < len(backoffs):
+                time.sleep(delay)
+    else:
+        last_error = "TWELVEDATA_API_KEY отсутствует."
 
-        if idx < len(backoffs):
-            time.sleep(delay)
+    providers_tried.append("dukascopy")
+    dk = fetch_dukascopy_candles(normalized_symbol, tf, limit)
+    if dk.get("candles"):
+        payload = {
+            **dk,
+            "provider": "dukascopy",
+            "providers_tried": providers_tried,
+            "cache_status": "live",
+            "attempts": attempts,
+        }
+        set_cached_candles(cache_key, payload)
+        return payload
 
     stale = get_cached_candles(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
     if stale:
         return {
             **stale,
-            "provider": stale.get("provider") or "twelvedata",
+            "provider": "real_cache",
+            "providers_tried": providers_tried,
             "source_symbol": stale.get("source_symbol") or source_symbol,
             "interval": stale.get("interval") or interval,
             "cache_status": "stale_fallback",
-            "warning_ru": "TwelveData временно недоступен, показаны последние реальные свечи из кеша.",
+            "warning_ru": "Провайдеры временно не отдали свечи, показаны последние реальные свечи из кеша.",
             "attempts": attempts,
-            "raw_error": last_error,
+            "raw_error": f"twelvedata={last_error}; dukascopy={dk.get('raw_error')}",
         }
 
     return {
         "candles": [],
-        "warning_ru": f"TwelveData недоступен после {attempts} попыток: {last_error}",
-        "provider": "twelvedata",
+        "warning_ru": "Нет реальных свечей от TwelveData/Dukascopy и нет сохранённого кеша.",
+        "provider": "unavailable",
+        "providers_tried": providers_tried,
         "source_symbol": source_symbol,
         "interval": interval,
         "cache_status": "empty",
         "attempts": attempts,
-        "raw_error": last_error,
+        "raw_error": f"twelvedata={last_error}; dukascopy={dk.get('raw_error')}",
     }
 
 
