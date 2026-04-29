@@ -501,6 +501,7 @@ def api_debug_candles(symbol: str, tf: str, limit: int = 160):
         "source_symbol": payload.get("source_symbol"),
         "interval": payload.get("interval"),
         "cache_status": payload.get("cache_status"),
+        "providers_tried": payload.get("providers_tried") or [],
         "warning_ru": payload.get("warning_ru"),
         "raw_error": payload.get("raw_error"),
         "first": candles[0] if candles else None,
@@ -514,7 +515,6 @@ def api_debug_dukascopy(symbol: str, tf: str, limit: int = 160):
     candles = payload.get("candles") or []
     return {
         "symbol": normalize_symbol(symbol),
-        "provider_symbol": to_dukascopy_symbol(symbol),
         "tf": tf,
         "count": len(candles),
         "provider": payload.get("provider"),
@@ -826,6 +826,8 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
         "annotations": annotations,
         "market_structure": market_structure,
         "warning_ru": candles_payload.get("warning_ru"),
+        "providers_tried": candles_payload.get("providers_tried") or [],
+        "candles_count": len(candles),
         "diagnostics": {
             "attempts": candles_payload.get("attempts"),
             "raw_error": candles_payload.get("raw_error"),
@@ -893,13 +895,22 @@ def to_dukascopy_period(tf: str) -> str:
         "H1": "60",
         "H4": "240",
         "D1": "1440",
-    }.get(tf, "15")
+    }.get(tf, "")
 
 
 def fetch_dukascopy_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
     normalized_symbol = normalize_symbol(symbol)
     provider_symbol = to_dukascopy_symbol(normalized_symbol)
     period = to_dukascopy_period(tf)
+    if not period:
+        return {
+            "candles": [],
+            "provider": "dukascopy",
+            "source_symbol": provider_symbol,
+            "interval": None,
+            "warning_ru": f"Dukascopy не поддерживает таймфрейм {str(tf).upper()}.",
+            "raw_error": "unsupported_timeframe",
+        }
     if provider_symbol == "XAUUSD":
         return {
             "candles": [],
