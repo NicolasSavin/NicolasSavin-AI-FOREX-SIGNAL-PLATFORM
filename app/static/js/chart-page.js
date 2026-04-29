@@ -39,6 +39,7 @@ let activeIdea = null;
 let chart = null;
 let candleSeries = null;
 let chartPriceLines = [];
+let chartPatternSeries = [];
 let currentChartPayload = null;
 let detailRequestId = 0;
 let chartDisplayMode = "unavailable";
@@ -1263,6 +1264,7 @@ function ensureChart() {
 function resetChartState({ keepSnapshot = true } = {}) {
   currentChartPayload = null;
   clearChartPriceLines();
+  clearPatternSeries();
   if (chartSnapshotImage && !keepSnapshot) {
     chartSnapshotImage.removeAttribute("src");
   }
@@ -1579,6 +1581,68 @@ function applyLevelLines(levelLines) {
   });
 }
 
+
+function getPatternColor(type) {
+  return {
+    flag: "#ffd84d",
+    wedge: "#b084ff",
+    triangle: "#45caff",
+    channel: "#5fa8ff",
+    head_shoulders: "#ff5f7a",
+    inverse_head_shoulders: "#31f59d",
+    double_top: "#ff2d95",
+    double_bottom: "#31f59d",
+  }[String(type || "").toLowerCase()] || "#ffffff";
+}
+
+function clearPatternSeries() {
+  (chartPatternSeries || []).forEach((series) => {
+    try { chart.removeSeries(series); } catch (error) { console.debug("Failed to remove pattern series", error); }
+  });
+  chartPatternSeries = [];
+}
+
+function drawPatternLines(patterns) {
+  if (!chart || !Array.isArray(patterns)) return;
+  clearPatternSeries();
+  patterns.forEach((pattern) => {
+    const color = getPatternColor(pattern?.type);
+    (pattern?.lines || []).forEach((line) => {
+      const points = (line?.points || []).map((p) => ({ time: normalizeCandleTime(p?.time), value: Number(p?.price) })).filter((p) => Number.isFinite(p.time) && Number.isFinite(p.value));
+      if (points.length < 2) return;
+      const series = chart.addLineSeries({ color, lineWidth: 4, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      series.setData(points);
+      chartPatternSeries.push(series);
+    });
+  });
+}
+
+function buildChartMarkers(idea, payload) {
+  const markers = [];
+  const overlays = payload?.overlays || {};
+  const existing = Array.isArray(overlays?.markers) ? overlays.markers : [];
+  existing.forEach((m) => {
+    const t = normalizeCandleTime(m?.time);
+    if (!Number.isFinite(t)) return;
+    markers.push({ time: t, position: m?.position || "aboveBar", color: m?.color || "#e2e8f0", shape: m?.shape || "circle", text: m?.text || m?.label || "" });
+  });
+  const arrow = idea?.trade_arrow || payload?.trade_arrow;
+  if (arrow && arrow.direction && arrow.direction !== "neutral") {
+    const t = normalizeCandleTime(arrow.time);
+    if (Number.isFinite(t)) {
+      const up = arrow.direction === "up";
+      markers.push({ time: t, position: up ? "belowBar" : "aboveBar", color: up ? "#31f59d" : "#ff5f7a", shape: up ? "arrowUp" : "arrowDown", text: arrow.label || (up ? "BUY ↑" : "SELL ↓") });
+    }
+  }
+  const patterns = Array.isArray(payload?.patterns) ? payload.patterns : [];
+  patterns.forEach((pattern) => {
+    const lp = pattern?.label_point;
+    const t = normalizeCandleTime(lp?.time);
+    if (!Number.isFinite(t)) return;
+    markers.push({ time: t, position: "aboveBar", color: getPatternColor(pattern?.type), shape: "circle", text: pattern?.label || "Паттерн" });
+  });
+  return markers;
+}
 function showLiveChart(payload, { levelLines = null } = {}) {
   const normalizedPayload = normalizeChartPayload(payload);
   const candleCount = normalizedPayload?.candles?.length ?? 0;
@@ -1594,6 +1658,9 @@ function showLiveChart(payload, { levelLines = null } = {}) {
     candleSeries.setData(normalizedPayload.candles);
     console.debug("[ideas-chart] setData called", { candleCount });
     applyLevelLines(levelLines ?? normalizedPayload.level_lines ?? null);
+    const markers = buildChartMarkers(activeIdea, normalizedPayload);
+    candleSeries.setMarkers(markers);
+    drawPatternLines(normalizedPayload.patterns || normalizedPayload?.overlays?.patterns || []);
     chart.timeScale().fitContent();
   } catch (error) {
     console.warn("[ideas-chart] fallback placeholder used", {
