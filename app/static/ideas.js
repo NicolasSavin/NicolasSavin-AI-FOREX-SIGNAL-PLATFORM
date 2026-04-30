@@ -105,17 +105,21 @@ function updateVoiceToggleLabel(button) {
 }
 
 function initVoiceToggle() {
-  if (!ideasUpdatedAt || document.getElementById("voiceToggleButton")) return;
+  if (!document.body || document.getElementById("voice-toggle-btn")) return;
   if (localStorage.getItem(VOICE_STORAGE_KEY) !== "1" && localStorage.getItem(VOICE_STORAGE_KEY) !== "0") {
     setVoiceEnabled(false);
   }
 
   const button = document.createElement("button");
-  button.id = "voiceToggleButton";
+  button.id = "voice-toggle-btn";
   button.type = "button";
-  button.style.marginLeft = "10px";
-  button.style.padding = "4px 10px";
+  button.style.position = "fixed";
+  button.style.top = "16px";
+  button.style.right = "16px";
+  button.style.zIndex = "9999";
+  button.style.padding = "8px 12px";
   button.style.fontSize = "12px";
+  button.style.borderRadius = "8px";
   button.style.cursor = "pointer";
   updateVoiceToggleLabel(button);
 
@@ -124,7 +128,7 @@ function initVoiceToggle() {
     updateVoiceToggleLabel(button);
   });
 
-  ideasUpdatedAt.insertAdjacentElement("afterend", button);
+  document.body.appendChild(button);
 }
 
 function enqueueVoiceMessage(message) {
@@ -343,6 +347,14 @@ async function loadIdeas() {
   }
 }
 
-initVoiceToggle();
-loadIdeas();
-setInterval(loadIdeas, 60000);
+function startIdeasPage() {
+  initVoiceToggle();
+  loadIdeas();
+  setInterval(loadIdeas, 60000);
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", startIdeasPage);
+} else {
+  startIdeasPage();
+}
