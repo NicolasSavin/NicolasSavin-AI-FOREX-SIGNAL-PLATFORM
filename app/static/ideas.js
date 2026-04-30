@@ -116,11 +116,15 @@ function initVoiceToggle() {
   button.style.position = "fixed";
   button.style.top = "16px";
   button.style.right = "16px";
-  button.style.zIndex = "9999";
+  button.style.zIndex = "999999";
   button.style.padding = "8px 12px";
   button.style.fontSize = "12px";
   button.style.borderRadius = "8px";
   button.style.cursor = "pointer";
+  button.style.background = "#111827";
+  button.style.color = "#f9fafb";
+  button.style.border = "1px solid #374151";
+  button.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.35)";
   updateVoiceToggleLabel(button);
 
   button.addEventListener("click", () => {
