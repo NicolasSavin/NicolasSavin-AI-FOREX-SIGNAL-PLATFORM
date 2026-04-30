@@ -77,6 +77,9 @@ MT4_MARKUP_CACHE_TTL_SECONDS = 60
 MT4_CANDLE_STORE: dict[str, dict[str, Any]] = {}
 MT4_CANDLE_STORE_MAX_BARS = 600
 MT4_CANDLE_FRESH_SECONDS = 300
+DATA_PRIMARY_PROVIDER = os.getenv("DATA_PRIMARY_PROVIDER", "mt4_bridge").strip()
+MT4_BRIDGE_FRESH_SECONDS = int(os.getenv("MT4_BRIDGE_FRESH_SECONDS", "180"))
+ALLOW_EXTERNAL_FALLBACK = os.getenv("ALLOW_EXTERNAL_FALLBACK", "1") == "1"
 SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
 SENTIMENT_CACHE_TTL_SECONDS = 900
 
@@ -750,6 +753,25 @@ def api_debug_mt4_bridge_pair(symbol: str, tf: str, limit: int = 160):
     return fetch_mt4_pushed_candles(symbol, tf, limit)
 
 
+@app.get("/api/debug/provider-status/{symbol}/{tf}")
+def api_debug_provider_status(symbol: str, tf: str):
+    mt4_status = get_mt4_bridge_status(symbol, tf)
+    payload = fetch_candles(symbol, tf, 50)
+    tf_norm = str(tf or "M15").upper()
+    return {
+        "symbol": normalize_symbol(symbol),
+        "tf": tf_norm,
+        "primary": DATA_PRIMARY_PROVIDER or "mt4_bridge",
+        "mt4": mt4_status,
+        "selected_provider": payload.get("provider"),
+        "provider_priority": payload.get("provider_priority"),
+        "fallback_used": payload.get("fallback_used"),
+        "providers_tried": payload.get("providers_tried"),
+        "warning_ru": payload.get("warning_ru"),
+        "count": len(payload.get("candles") or []),
+    }
+
+
 @app.get("/api/debug/candles/{symbol}/{tf}")
 def api_debug_candles(symbol: str, tf: str, limit: int = 160):
     payload = fetch_candles(symbol, tf, limit)
@@ -1249,11 +1271,12 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
         return {"candles": [], "provider": "mt4_bridge", "warning_ru": "Нет свечей от MT4 bridge.", "raw_error": "no_mt4_data"}
 
     age_seconds = (datetime.now(timezone.utc) - item["updated_at"]).total_seconds()
-    if age_seconds > MT4_CANDLE_FRESH_SECONDS:
+    if age_seconds > MT4_BRIDGE_FRESH_SECONDS:
         return {
             "candles": [],
             "provider": "mt4_bridge",
-            "warning_ru": "Свечи от MT4 bridge устарели.",
+            "data_status": "stale",
+            "warning_ru": "MT4 bridge устарел, включается резервный провайдер.",
             "raw_error": "stale_mt4_data",
             "diagnostics": {"age_seconds": age_seconds},
         }
@@ -1262,6 +1285,9 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
     return {
         "candles": candles,
         "provider": "mt4_bridge",
+        "data_status": "real",
+        "provider_priority": "primary",
+        "fallback_used": False,
         "source_symbol": symbol_norm,
         "interval": tf_norm,
         "warning_ru": None,
@@ -1273,6 +1299,33 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
             "broker": item.get("broker"),
             "account": item.get("account"),
         },
+    }
+
+
+def get_mt4_bridge_status(symbol: str, tf: str) -> dict[str, Any]:
+    symbol = normalize_symbol(symbol)
+    tf = str(tf or "M15").upper()
+    key = f"{symbol}:{tf}"
+
+    item = MT4_CANDLE_STORE.get(key)
+    if not item:
+        return {
+            "available": False,
+            "fresh": False,
+            "reason": "no_mt4_data",
+            "age_seconds": None,
+            "count": 0,
+        }
+
+    age = (datetime.now(timezone.utc) - item["updated_at"]).total_seconds()
+    candles = item.get("candles") or []
+    is_fresh = bool(candles) and age <= MT4_BRIDGE_FRESH_SECONDS
+    return {
+        "available": bool(candles),
+        "fresh": is_fresh,
+        "reason": "fresh" if is_fresh else "stale",
+        "age_seconds": age,
+        "count": len(candles),
     }
 
 
@@ -1516,18 +1569,28 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
     tf_norm = str(tf or "M15").upper()
     cache_key = f"{symbol_norm}:{tf_norm}:{int(limit)}"
 
+    providers_tried = []
+    providers_tried.append("mt4_bridge")
     mt4 = fetch_mt4_pushed_candles(symbol_norm, tf_norm, limit)
     if mt4.get("candles"):
-        mt4["providers_tried"] = ["mt4_bridge"]
+        mt4["providers_tried"] = providers_tried
         mt4["cache_status"] = "live"
+        mt4["provider_priority"] = "primary"
+        mt4["fallback_used"] = False
         set_cached_candle_payload(cache_key, mt4)
         return mt4
 
     fresh = get_cached_candle_payload(cache_key, candle_ttl_for_tf(tf_norm))
     if fresh:
-        return {**fresh, "cache_status": "fresh", "provider": fresh.get("provider") or "real_cache"}
+        return {
+            **fresh,
+            "cache_status": "fresh",
+            "provider": fresh.get("provider") or "real_cache",
+            "providers_tried": providers_tried + ["fresh_cache"],
+            "provider_priority": "cache",
+            "fallback_used": (fresh.get("provider") != "mt4_bridge"),
+        }
 
-    providers_tried = []
     errors = []
     inflight_started = IN_FLIGHT_FETCHES.get(cache_key)
     if inflight_started:
@@ -1535,37 +1598,78 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
             time.sleep(0.12)
             fresh_wait = get_cached_candle_payload(cache_key, candle_ttl_for_tf(tf_norm))
             if fresh_wait:
-                return {**fresh_wait, "cache_status": "fresh_waited", "provider": fresh_wait.get("provider") or "real_cache"}
+                return {
+                    **fresh_wait,
+                    "cache_status": "fresh_waited",
+                    "provider": fresh_wait.get("provider") or "real_cache",
+                    "providers_tried": providers_tried + ["fresh_cache_waited"],
+                    "provider_priority": "cache",
+                    "fallback_used": (fresh_wait.get("provider") != "mt4_bridge"),
+                }
         stale_wait = get_cached_candle_payload(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
         if stale_wait:
-            return {**stale_wait, "cache_status": "stale_waited", "provider": stale_wait.get("provider") or "real_cache"}
+            return {
+                **stale_wait,
+                "cache_status": "stale_waited",
+                "provider": stale_wait.get("provider") or "real_cache",
+                "providers_tried": providers_tried + ["stale_cache_waited"],
+                "provider_priority": "stale_cache",
+                "fallback_used": True,
+            }
     IN_FLIGHT_FETCHES[cache_key] = time.time()
     try:
-        providers_tried.append("twelvedata")
-        td = fetch_twelvedata_candles(symbol_norm, tf_norm, limit)
-        if td.get("candles"):
-            td["provider"] = "twelvedata"
-            td["providers_tried"] = providers_tried
-            td["cache_status"] = "live"
-            set_cached_candle_payload(cache_key, td)
-            return td
-        errors.append({"twelvedata": td.get("raw_error") or td.get("warning_ru")})
+        if ALLOW_EXTERNAL_FALLBACK:
+            providers_tried.append("twelvedata")
+            td = fetch_twelvedata_candles(symbol_norm, tf_norm, limit)
+            if td.get("candles"):
+                td["provider"] = "twelvedata"
+                td["providers_tried"] = providers_tried
+                td["cache_status"] = "live"
+                td["provider_priority"] = "fallback"
+                td["fallback_used"] = True
+                td["fallback_reason"] = mt4.get("raw_error") or "mt4_unavailable"
+                set_cached_candle_payload(cache_key, td)
+                return td
+            errors.append({"twelvedata": td.get("raw_error") or td.get("warning_ru")})
 
-        providers_tried.append("dukascopy")
-        dk = fetch_dukascopy_candles(symbol_norm, tf_norm, limit)
-        if dk.get("candles"):
-            dk["provider"] = "dukascopy"
-            dk["providers_tried"] = providers_tried
-            dk["cache_status"] = "live"
-            set_cached_candle_payload(cache_key, dk)
-            return dk
-        errors.append({"dukascopy": dk.get("raw_error") or dk.get("warning_ru")})
+            providers_tried.append("dukascopy")
+            dk = fetch_dukascopy_candles(symbol_norm, tf_norm, limit)
+            if dk.get("candles"):
+                dk["provider"] = "dukascopy"
+                dk["providers_tried"] = providers_tried
+                dk["cache_status"] = "live"
+                dk["provider_priority"] = "fallback"
+                dk["fallback_used"] = True
+                dk["fallback_reason"] = mt4.get("raw_error") or "mt4_unavailable"
+                set_cached_candle_payload(cache_key, dk)
+                return dk
+            errors.append({"dukascopy": dk.get("raw_error") or dk.get("warning_ru")})
 
         stale = get_cached_candle_payload(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
         if stale:
-            return {**stale, "provider": "real_cache", "providers_tried": providers_tried, "cache_status": "stale_fallback", "warning_ru": "Провайдеры временно не отдали свечи, показаны последние реальные свечи из кеша.", "raw_error": errors}
+            return {
+                **stale,
+                "provider": "real_cache",
+                "providers_tried": providers_tried,
+                "cache_status": "stale_fallback",
+                "provider_priority": "stale_cache",
+                "fallback_used": True,
+                "warning_ru": "MT4 bridge и резервные провайдеры недоступны, показаны последние реальные свечи из кеша.",
+                "raw_error": errors,
+            }
 
-        return {"candles": [], "provider": "unavailable", "source_symbol": to_twelvedata_symbol(symbol_norm), "interval": to_td_interval(tf_norm), "cache_status": "empty", "providers_tried": providers_tried, "warning_ru": "Нет реальных свечей от TwelveData/Dukascopy и нет сохранённого кеша.", "raw_error": errors}
+        return {
+            "candles": [],
+            "provider": "unavailable",
+            "source_symbol": to_twelvedata_symbol(symbol_norm),
+            "interval": to_td_interval(tf_norm),
+            "cache_status": "empty",
+            "providers_tried": providers_tried,
+            "provider_priority": "none",
+            "fallback_used": True,
+            "warning_ru": "Нет свежих данных MT4 bridge и резервных провайдеров.",
+            "raw_error": errors,
+        }
     finally:
         IN_FLIGHT_FETCHES.pop(cache_key, None)
 
