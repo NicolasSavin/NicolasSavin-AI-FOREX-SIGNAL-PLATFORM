@@ -6,11 +6,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from fastapi import FastAPI
+from fastapi.routing import APIRouter
 
 logger = logging.getLogger(__name__)
 
-_ORIGINAL_ADD_API_ROUTE = FastAPI.add_api_route
+_ORIGINAL_ADD_API_ROUTE = APIRouter.add_api_route
 _GUARDED_PATHS = {"/ideas/market", "/api/ideas", "/api/signals"}
 
 
@@ -47,7 +47,7 @@ def _safe_ideas_payload(path: str, exc: Exception) -> dict[str, Any]:
 
 
 def _wrap_guarded_endpoint(path: str, endpoint: Callable[..., Any]) -> Callable[..., Any]:
-    if path not in _GUARDED_PATHS:
+    if path not in _GUARDED_PATHS or getattr(endpoint, "_ideas_guarded", False):
         return endpoint
 
     if inspect.iscoroutinefunction(endpoint):
@@ -59,6 +59,7 @@ def _wrap_guarded_endpoint(path: str, endpoint: Callable[..., Any]) -> Callable[
                 logger.exception("guarded_endpoint_failed path=%s reason=%s", path, exc)
                 return _safe_ideas_payload(path, exc)
 
+        async_guard._ideas_guarded = True  # type: ignore[attr-defined]
         return async_guard
 
     @functools.wraps(endpoint)
@@ -69,12 +70,13 @@ def _wrap_guarded_endpoint(path: str, endpoint: Callable[..., Any]) -> Callable[
             logger.exception("guarded_endpoint_failed path=%s reason=%s", path, exc)
             return _safe_ideas_payload(path, exc)
 
+    sync_guard._ideas_guarded = True  # type: ignore[attr-defined]
     return sync_guard
 
 
-def _add_api_route_with_ideas_guard(self: FastAPI, path: str, endpoint: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+def _add_api_route_with_ideas_guard(self: APIRouter, path: str, endpoint: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return _ORIGINAL_ADD_API_ROUTE(self, path, _wrap_guarded_endpoint(path, endpoint), *args, **kwargs)
 
 
-if getattr(FastAPI.add_api_route, "__name__", "") != "_add_api_route_with_ideas_guard":
-    FastAPI.add_api_route = _add_api_route_with_ideas_guard
+if getattr(APIRouter.add_api_route, "__name__", "") != "_add_api_route_with_ideas_guard":
+    APIRouter.add_api_route = _add_api_route_with_ideas_guard
