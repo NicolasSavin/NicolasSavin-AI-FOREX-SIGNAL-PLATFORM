@@ -5,6 +5,7 @@ import lzma
 import os
 import struct
 import time
+import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -478,7 +479,57 @@ def api_signals():
 
 @app.get("/api/ideas")
 def api_ideas():
-    return api_signals()
+    symbols = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+    tf = "M15"
+    signals: list[dict[str, Any]] = []
+    failed_symbols: list[str] = []
+
+    for symbol in symbols:
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(build_signal_from_candles, symbol, tf)
+                signal = future.result(timeout=2.0)
+        except Exception:
+            failed_symbols.append(symbol)
+            logger.exception("api_ideas: failed to build signal for %s", symbol)
+            continue
+
+        if isinstance(signal, dict) and signal:
+            signals.append(signal)
+        else:
+            failed_symbols.append(symbol)
+
+    if signals:
+        archive = load_json(ARCHIVE_FILE)
+        return {
+            "signals": signals,
+            "ideas": signals,
+            "archive": archive,
+            "statistics": build_stats(),
+            "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
+            "updated_at_utc": now_utc(),
+        }
+
+    return {
+        "signals": [],
+        "ideas": [],
+        "archive": [],
+        "statistics": {
+            "total": 0,
+            "buy": 0,
+            "sell": 0,
+            "wait": 0,
+            "active": 0,
+            "blocked": 0,
+        },
+        "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
+        "updated_at_utc": now_utc(),
+        "ok": False,
+        "diagnostics": {
+            "error": "Не удалось сформировать сигналы ни по одному символу.",
+            "failed_symbols": failed_symbols,
+        },
+    }
 
 
 @app.get("/ideas/market")
@@ -1086,6 +1137,11 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
         }
     except Exception:
         return empty_signal(symbol, {}, {})
+
+
+def build_signal_from_candles(symbol: str, tf: str) -> dict[str, Any]:
+    _ = tf
+    return build_signal(symbol, detail=False)
 
 
 def symbol_tolerance(symbol: str) -> dict[str, float | str]:
