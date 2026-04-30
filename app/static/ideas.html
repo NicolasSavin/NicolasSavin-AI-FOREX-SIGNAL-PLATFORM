@@ -1079,6 +1079,8 @@
   <script>
     console.log("IDEAS_HTML_VERSION_NO_SYNTHETIC_CANDLES_V8");
 
+    console.log("Lightweight chart renderer active");
+
     const state = {
       ideas: [],
       archive: [],
@@ -1873,13 +1875,29 @@
       overlay.appendChild(svg);
 
       const timeToX = (time) => chart.timeScale().timeToCoordinate(time);
-      const xByIndex = (index) => {
-        const safeIndex = Math.max(0, Math.min(candles.length - 1, Math.round(Number(index) || 0)));
-        const byTime = timeToX(candles[safeIndex]?.time);
-        if (Number.isFinite(byTime)) return byTime;
-        return chart.timeScale().logicalToCoordinate(safeIndex) ?? 0;
+      const xByAnchor = (anchor) => {
+        if (!anchor || typeof anchor !== "object") return null;
+
+        if (anchor.time !== undefined && anchor.time !== null) {
+          const byTime = timeToX(anchor.time);
+          if (Number.isFinite(byTime)) return byTime;
+        }
+
+        if (Number.isFinite(anchor.index)) {
+          const safeIndex = Math.max(0, Math.min(candles.length - 1, Math.round(anchor.index)));
+          const byCandleTime = timeToX(candles[safeIndex]?.time);
+          if (Number.isFinite(byCandleTime)) return byCandleTime;
+          const byLogical = chart.timeScale().logicalToCoordinate(safeIndex);
+          if (Number.isFinite(byLogical)) return byLogical;
+        }
+
+        return null;
       };
-      const yByPrice = (price) => series.priceToCoordinate(Number(price)) ?? 0;
+      const xByIndex = (index) => xByAnchor({ index });
+      const yByPrice = (price) => {
+        const y = series.priceToCoordinate(Number(price));
+        return Number.isFinite(y) ? y : null;
+      };
 
       const detected = detectMarkup(candles, idea);
 
@@ -1910,18 +1928,14 @@
         );
       }
 
-      for (const level of detected.liquidity) {
-        drawLiquidity(svg, width, yByPrice(level.price), "#2f8cff", level.label);
-      }
-
       for (const pattern of detected.patterns) {
-        drawPatternShape(svg, pattern, xByIndex, yByPrice);
+        drawPatternShape(svg, pattern, xByAnchor, yByPrice);
       }
 
       const note = document.getElementById("chartNote");
       if (note) {
         note.textContent =
-          `Разметка: OB=${detected.orderBlocks.length}, FVG=${detected.fvg.length}, Liquidity=${detected.liquidity.length}, Pattern=${detected.patterns.length}. Фейковые свечи отключены.`;
+          `Разметка: OB/Breaker=${detected.orderBlocks.length}, FVG=${detected.fvg.length}, Pattern=${detected.patterns.length}. Фейковые свечи отключены.`;
       }
     }
 
@@ -1986,16 +2000,16 @@
       svg.appendChild(text);
     }
 
-    function drawPatternShape(svg, pattern, xByIndex, yByPrice) {
+    function drawPatternShape(svg, pattern, xByAnchor, yByPrice) {
       if (!pattern || !Array.isArray(pattern.lines) || !pattern.lines.length) return;
 
       for (const lineDef of pattern.lines) {
         const p1 = lineDef?.p1;
         const p2 = lineDef?.p2;
         if (!p1 || !p2) continue;
-        const x1 = xByIndex(p1.index);
+        const x1 = xByAnchor(p1);
         const y1 = yByPrice(p1.price);
-        const x2 = xByIndex(p2.index);
+        const x2 = xByAnchor(p2);
         const y2 = yByPrice(p2.price);
         if (![x1, y1, x2, y2].every(Number.isFinite)) continue;
         const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -2012,7 +2026,7 @@
 
       const anchor = pattern.labelPoint || pattern.lines[0]?.p2 || pattern.lines[0]?.p1;
       if (!anchor) return;
-      const tx = xByIndex(anchor.index);
+      const tx = xByAnchor(anchor);
       const ty = yByPrice(anchor.price);
       if (![tx, ty].every(Number.isFinite)) return;
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -2030,7 +2044,6 @@
       return {
         orderBlocks: detectOrderBlocks(candles).slice(-3),
         fvg: detectFvg(candles).slice(-3),
-        liquidity: detectLiquidity(candles).slice(-4),
         patterns: overlayPatterns.length ? overlayPatterns : detectPatterns(candles).slice(-2),
       };
     }
@@ -2075,10 +2088,37 @@
       if (!point || typeof point !== "object") return null;
       const price = toNumber(point.price ?? point.y ?? point.value);
       if (!Number.isFinite(price)) return null;
+
       const idxRaw = point.index ?? point.i ?? point.bar_index ?? point.x;
-      const index = Number.isFinite(Number(idxRaw)) ? Number(idxRaw) : null;
-      if (index === null) return null;
-      return { index: Math.max(0, Math.min(candlesLength - 1, Math.round(index))), price };
+      const hasIndex = Number.isFinite(Number(idxRaw));
+      const normalizedIndex = hasIndex
+        ? Math.max(0, Math.min(candlesLength - 1, Math.round(Number(idxRaw))))
+        : null;
+
+      const rawTime = point.time ?? point.t ?? point.timestamp ?? point.ts;
+      const normalizedTime = normalizePatternTime(rawTime);
+
+      if (normalizedIndex === null && normalizedTime === null) return null;
+      return { index: normalizedIndex, time: normalizedTime, price };
+    }
+
+    function normalizePatternTime(rawTime) {
+      if (rawTime === undefined || rawTime === null || rawTime === "") return null;
+      if (typeof rawTime === "number" && Number.isFinite(rawTime)) {
+        return rawTime > 1e12 ? Math.floor(rawTime / 1000) : Math.floor(rawTime);
+      }
+      if (typeof rawTime === "string") {
+        const trimmed = rawTime.trim();
+        if (!trimmed) return null;
+        if (/^\d+$/.test(trimmed)) {
+          const asNum = Number(trimmed);
+          if (!Number.isFinite(asNum)) return null;
+          return asNum > 1e12 ? Math.floor(asNum / 1000) : Math.floor(asNum);
+        }
+        const asDate = new Date(trimmed);
+        if (!Number.isNaN(asDate.getTime())) return Math.floor(asDate.getTime() / 1000);
+      }
+      return null;
     }
 
     function buildPatternLines(type, points) {
