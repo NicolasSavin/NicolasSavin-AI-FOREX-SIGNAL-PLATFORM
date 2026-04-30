@@ -11,7 +11,7 @@ from typing import Any
 
 import requests
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.services.htf_context_filter import HtfContextFilter
