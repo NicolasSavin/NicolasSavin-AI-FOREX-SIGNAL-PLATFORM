@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import lzma
 import os
+import random
 import struct
 import time
 import concurrent.futures
@@ -83,6 +84,8 @@ MT4_BRIDGE_FRESH_SECONDS = int(os.getenv("MT4_BRIDGE_FRESH_SECONDS", "180"))
 ALLOW_EXTERNAL_FALLBACK = os.getenv("ALLOW_EXTERNAL_FALLBACK", "1") == "1"
 SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
 SENTIMENT_CACHE_TTL_SECONDS = 900
+IDEA_REASONING_CACHE: dict[str, dict[str, Any]] = {}
+IDEA_REASONING_CACHE_TTL_SECONDS = 45
 
 ACTIVE_FILE = Path("active_trades.json")
 ARCHIVE_FILE = Path("archive.json")
@@ -1301,6 +1304,84 @@ def resolve_confidence(decision) -> int:
     return 28
 
 
+def generate_grok_reasoning(signal: dict[str, Any], candles: list[dict[str, Any]], annotations: dict[str, Any]) -> str:
+    symbol = str(signal.get("symbol") or signal.get("pair") or "инструмент")
+    timeframe = str(signal.get("timeframe") or signal.get("tf") or "M15").upper()
+    direction = str(signal.get("action") or signal.get("signal") or "WAIT").upper()
+    entry = safe_float(signal.get("entry") or signal.get("entry_price"))
+    sl = safe_float(signal.get("sl") or signal.get("stop_loss"))
+    tp = safe_float(signal.get("tp") or signal.get("take_profit"))
+    annotations_safe = annotations if isinstance(annotations, dict) else {}
+
+    bucket = int(time.time() // IDEA_REASONING_CACHE_TTL_SECONDS)
+    cache_key = f"{symbol}:{timeframe}:{direction}:{bucket}"
+    cached = IDEA_REASONING_CACHE.get(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("text"), str) and cached.get("text", "").strip():
+        return str(cached["text"]).strip()
+
+    try:
+        patterns = annotations_safe.get("patterns") if isinstance(annotations_safe.get("patterns"), list) else []
+        has_fvg = any(str(p.get("type") or "").lower() == "fvg" for p in patterns if isinstance(p, dict))
+        has_ob = any(str(p.get("type") or "").lower() in {"ob", "order_block"} for p in patterns if isinstance(p, dict))
+        has_liquidity = any("liq" in str(p.get("type") or "").lower() for p in patterns if isinstance(p, dict))
+
+        candles_safe = [c for c in candles if isinstance(c, dict)]
+        recent = candles_safe[-20:] if len(candles_safe) > 20 else candles_safe
+        closes = [safe_float(c.get("close")) for c in recent]
+        closes = [x for x in closes if x is not None]
+        impulse = 0.0
+        if len(closes) >= 6:
+            impulse = closes[-1] - closes[-6]
+
+        start_variants = [
+            f"По {symbol} на {timeframe} крупный поток заявок сместил баланс в сторону {'покупателя' if direction == 'BUY' else 'продавца' if direction == 'SELL' else 'ожидания'}.",
+            f"В {symbol} заметна работа крупного участника: цена двигается {'вверх' if direction == 'BUY' else 'вниз' if direction == 'SELL' else 'в боковом режиме'} не случайно, а через сбор ликвидности.",
+            f"Сейчас в {symbol} рынок отрабатывает зону интереса старших объёмов, поэтому движение на {timeframe} выглядит структурным.",
+        ]
+        cause_variants = [
+            f"После импульса {('вверх' if impulse > 0 else 'вниз' if impulse < 0 else 'без выраженного импульса')} цена оставила локальный дисбаланс и вернулась к неэффективности.",
+            "Сначала прошёл съём ближайшей ликвидности, из-за чего слабые позиции выбило и появилась более чистая траектория для следующего шага.",
+            "Ключевая реакция пришла из области, где ранее остались несбалансированные сделки, поэтому рынок снова тестирует эту цену.",
+        ]
+        zone_variants = []
+        if has_fvg:
+            zone_variants.append("FVG выступает рабочей зоной, где цена пытается восстановить баланс между спросом и предложением.")
+        if has_ob:
+            zone_variants.append("Order Block удерживает структуру и показывает, где крупный капитал защищает набор позиции.")
+        if has_liquidity:
+            zone_variants.append("Ликвидность с краёв диапазона частично снята, поэтому фокус смещается к следующему пулу стопов.")
+        if not zone_variants:
+            zone_variants.append("Зоны ликвидности и дисбаланса рядом с текущей ценой формируют техническую причину для следующего теста.")
+
+        outcome_variants = [
+            f"Пока цена удерживается относительно точки входа {entry if entry is not None else 'текущей зоны'}, базовый сценарий — движение к целевой области {tp if tp is not None else 'по тренду'}; отмена сценария рассматривается при уходе к {sl if sl is not None else 'зоне инвалидации'}.",
+            f"Если реакция от зоны сохранится, рынок вероятнее продолжит путь к {tp if tp is not None else 'следующему уровню ликвидности'}, а пробой в сторону {sl if sl is not None else 'инвалидации'} ослабит идею.",
+            f"Ожидается развитие импульса в сторону {tp if tp is not None else 'следующей цели'}, но только при сохранении структуры без глубокого возврата к {sl if sl is not None else 'критическому уровню'}.",
+        ]
+
+        sentence_pool = [
+            random.choice(start_variants),
+            random.choice(cause_variants),
+            random.choice(zone_variants),
+            random.choice(outcome_variants),
+        ]
+        random.shuffle(sentence_pool)
+        text = " ".join(sentence_pool[: random.randint(2, 4)]).strip()
+        if not text:
+            raise ValueError("empty_reasoning")
+    except Exception:
+        # Dynamic fallback: still variable and non-empty.
+        fallbacks = [
+            f"{symbol} {timeframe}: цена работает вокруг зоны ликвидности, и после локального дисбаланса рынок ищет более справедливый диапазон. При удержании структуры вероятно продолжение к целевому уровню, при сломе — возврат к инвалидации.",
+            f"По {symbol} видна реакция крупных заявок: сначала сняли ближайшую ликвидность, затем цена вернулась в неэффективную область. Дальше важна реакция от зоны, потому что именно она определит продолжение сценария или его ослабление.",
+            f"Текущее движение {symbol} связано с перераспределением объёма вокруг зоны интереса. Пока структура не нарушена, приоритет остаётся за основным сценарием с контролем риска через уровень инвалидации.",
+        ]
+        text = random.choice(fallbacks)
+
+    IDEA_REASONING_CACHE[cache_key] = {"text": text, "ts": time.time()}
+    return text
+
+
 def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
     symbol_norm = normalize_symbol(symbol)
     tf_norm = str(tf or "M15").upper()
@@ -1384,7 +1465,7 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         sl = round(entry + avg_range * 1.2, 6)
         tp = round(entry - avg_range * 1.8, 6)
 
-    return {
+    signal_payload = {
         "id": f"{symbol_norm}-{action}",
         "symbol": symbol_norm,
         "pair": symbol_norm,
@@ -1408,6 +1489,14 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         "data_status": "real" if candles else "unavailable",
         "updated_at": now_utc(),
     }
+    idea_description = generate_grok_reasoning(
+        signal_payload,
+        candles,
+        build_annotations(candles) if isinstance(candles, list) else {},
+    )
+    if not str(signal_payload.get("description") or "").strip():
+        signal_payload["description"] = idea_description
+    return signal_payload
 
 
 def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
