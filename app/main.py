@@ -76,7 +76,7 @@ MT4_MARKUP_CACHE: dict[str, dict[str, Any]] = {}
 MT4_MARKUP_CACHE_TTL_SECONDS = 60
 MT4_CANDLE_STORE: dict[str, dict[str, Any]] = {}
 MT4_CANDLE_STORE_MAX_BARS = 600
-MT4_CANDLE_FRESH_SECONDS = 180
+MT4_CANDLE_FRESH_SECONDS = 300
 SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
 SENTIMENT_CACHE_TTL_SECONDS = 900
 
@@ -525,47 +525,59 @@ def api_mt4_signals():
 
 @app.post("/api/mt4/push-candles")
 async def api_mt4_push_candles(request: Request):
-    payload = await request.json()
-    token = str(payload.get("token") or "").strip()
-    if not is_mt4_bridge_authorized(token):
-        return Response(content=json.dumps({"ok": False, "error": "unauthorized"}), media_type="application/json", status_code=401)
+    try:
+        payload = await request.json()
+        token = str(payload.get("token") or "").strip()
+        if MT4_BRIDGE_TOKEN and token != MT4_BRIDGE_TOKEN:
+            return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
 
-    symbol = normalize_mt4_symbol(payload.get("symbol"))
-    tf = str(payload.get("timeframe") or "").upper().strip()
-    candles_raw = payload.get("candles")
-    if not symbol or not tf or not isinstance(candles_raw, list):
-        return {"ok": False, "error": "invalid_payload"}
+        symbol = normalize_symbol(str(payload.get("symbol") or ""))
+        tf = str(payload.get("timeframe") or "M15").upper()
+        candles_in = payload.get("candles") or []
+        if not symbol or not tf or not isinstance(candles_in, list):
+            return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_payload"})
 
-    incoming = candles_raw[:300]
-    by_time: dict[int, dict[str, Any]] = {}
-    for row in incoming:
-        if not isinstance(row, dict):
-            continue
-        ts = int(row.get("time") or 0)
-        op = safe_float(row.get("open"))
-        hi = safe_float(row.get("high"))
-        lo = safe_float(row.get("low"))
-        cl = safe_float(row.get("close"))
-        vol = safe_float(row.get("volume")) or 0.0
-        if ts <= 0 or op is None or hi is None or lo is None or cl is None:
-            continue
-        if hi < max(op, cl) or lo > min(op, cl) or lo > hi:
-            continue
-        by_time[ts] = {"time": ts, "datetime": datetime.fromtimestamp(ts, timezone.utc).isoformat(), "open": float(op), "high": float(hi), "low": float(lo), "close": float(cl), "volume": float(vol)}
-    normalized_candles = [by_time[ts] for ts in sorted(by_time.keys())]
-    if not normalized_candles:
-        return {"ok": False, "error": "invalid_candles"}
+        candles = []
+        for c in candles_in[:300]:
+            try:
+                t = int(c.get("time"))
+                o = float(c.get("open"))
+                h = float(c.get("high"))
+                l = float(c.get("low"))
+                cl = float(c.get("close"))
+                v = float(c.get("volume") or 0)
+                if t <= 0 or o <= 0 or h <= 0 or l <= 0 or cl <= 0:
+                    continue
+                candles.append({"time": t, "datetime": datetime.fromtimestamp(t, timezone.utc).isoformat(), "open": o, "high": h, "low": l, "close": cl, "volume": v})
+            except Exception:
+                continue
 
-    key = f"{symbol}:{tf}"
-    existing = MT4_CANDLE_STORE.get(key, {})
-    existing_candles = existing.get("candles") if isinstance(existing.get("candles"), list) else []
-    merged_map = {int(c["time"]): c for c in existing_candles if isinstance(c, dict) and safe_float(c.get("time")) is not None}
-    for candle in normalized_candles:
-        merged_map[int(candle["time"])] = candle
-    merged = [merged_map[ts] for ts in sorted(merged_map.keys())][-MT4_CANDLE_STORE_MAX_BARS:]
-    updated_at = datetime.now(timezone.utc)
-    MT4_CANDLE_STORE[key] = {"updated_at": updated_at, "candles": merged}
-    return {"ok": True, "symbol": symbol, "timeframe": tf, "received": len(incoming), "stored": len(merged), "updated_at_utc": updated_at.isoformat()}
+        if not candles:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "no_valid_candles"})
+
+        candles.sort(key=lambda x: x["time"])
+        dedup = {}
+        for c in candles:
+            dedup[c["time"]] = c
+        candles = [dedup[k] for k in sorted(dedup.keys())]
+
+        key = f"{symbol}:{tf}"
+        existing = MT4_CANDLE_STORE.get(key, {}).get("candles") or []
+        merged = {c["time"]: c for c in existing}
+        for c in candles:
+            merged[c["time"]] = c
+        merged_candles = [merged[k] for k in sorted(merged.keys())][-MT4_CANDLE_STORE_MAX_BARS:]
+        MT4_CANDLE_STORE[key] = {
+            "updated_at": datetime.now(timezone.utc),
+            "symbol": symbol,
+            "timeframe": tf,
+            "broker": payload.get("broker"),
+            "account": payload.get("account"),
+            "candles": merged_candles,
+        }
+        return {"ok": True, "symbol": symbol, "timeframe": tf, "received": len(candles), "stored": len(merged_candles), "updated_at_utc": MT4_CANDLE_STORE[key]["updated_at"].isoformat()}
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
 
 @app.get("/api/mt4/markup/{symbol}")
@@ -714,14 +726,22 @@ def api_debug_api_usage():
 
 @app.get("/api/debug/mt4-bridge")
 def api_debug_mt4_bridge():
-    now = datetime.now(timezone.utc)
     items = []
-    for key, value in MT4_CANDLE_STORE.items():
-        symbol, tf = key.split(":", 1) if ":" in key else (key, "")
-        candles = value.get("candles") if isinstance(value.get("candles"), list) else []
-        updated_at = value.get("updated_at")
-        age_seconds = None if not isinstance(updated_at, datetime) else round((now - updated_at).total_seconds(), 3)
-        items.append({"symbol": symbol, "timeframe": tf, "count": len(candles), "age_seconds": age_seconds, "first": candles[0] if candles else None, "last": candles[-1] if candles else None})
+    now = datetime.now(timezone.utc)
+    for key, item in MT4_CANDLE_STORE.items():
+        candles = item.get("candles") or []
+        age = (now - item["updated_at"]).total_seconds()
+        items.append({
+            "key": key,
+            "symbol": item.get("symbol"),
+            "timeframe": item.get("timeframe"),
+            "count": len(candles),
+            "age_seconds": age,
+            "broker": item.get("broker"),
+            "account": item.get("account"),
+            "first": candles[0] if candles else None,
+            "last": candles[-1] if candles else None,
+        })
     return {"items": items}
 
 
@@ -1221,37 +1241,38 @@ def is_mt4_bridge_authorized(token: str) -> bool:
 
 
 def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
-    symbol_norm = normalize_mt4_symbol(symbol)
-    tf_norm = str(tf or "M15").upper().strip()
+    symbol_norm = normalize_symbol(symbol)
+    tf_norm = str(tf or "M15").upper()
     key = f"{symbol_norm}:{tf_norm}"
     item = MT4_CANDLE_STORE.get(key)
     if not item:
-        return {}
-    updated_at = item.get("updated_at")
-    if not isinstance(updated_at, datetime):
-        return {}
-    age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
-    candles = item.get("candles") if isinstance(item.get("candles"), list) else []
+        return {"candles": [], "provider": "mt4_bridge", "warning_ru": "Нет свечей от MT4 bridge.", "raw_error": "no_mt4_data"}
+
+    age_seconds = (datetime.now(timezone.utc) - item["updated_at"]).total_seconds()
     if age_seconds > MT4_CANDLE_FRESH_SECONDS:
         return {
             "candles": [],
             "provider": "mt4_bridge",
-            "source_symbol": symbol_norm,
-            "interval": tf_norm,
-            "cache_status": "stale",
-            "warning_ru": "MT4 bridge не присылал свежие свечи, выполнен fallback на другие источники.",
-            "diagnostics": {"stored_count": len(candles), "age_seconds": round(age_seconds, 3)},
+            "warning_ru": "Свечи от MT4 bridge устарели.",
+            "raw_error": "stale_mt4_data",
+            "diagnostics": {"age_seconds": age_seconds},
         }
-    safe_limit = min(max(int(limit), 1), MT4_CANDLE_STORE_MAX_BARS)
-    sliced = candles[-safe_limit:]
+
+    candles = (item.get("candles") or [])[-int(limit):]
     return {
-        "candles": sliced,
+        "candles": candles,
         "provider": "mt4_bridge",
         "source_symbol": symbol_norm,
         "interval": tf_norm,
-        "cache_status": "live",
         "warning_ru": None,
-        "diagnostics": {"stored_count": len(candles), "age_seconds": round(age_seconds, 3)},
+        "raw_error": None,
+        "diagnostics": {
+            "stored_count": len(item.get("candles") or []),
+            "returned_count": len(candles),
+            "age_seconds": age_seconds,
+            "broker": item.get("broker"),
+            "account": item.get("account"),
+        },
     }
 
 
@@ -1498,6 +1519,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
     mt4 = fetch_mt4_pushed_candles(symbol_norm, tf_norm, limit)
     if mt4.get("candles"):
         mt4["providers_tried"] = ["mt4_bridge"]
+        mt4["cache_status"] = "live"
         set_cached_candle_payload(cache_key, mt4)
         return mt4
 
