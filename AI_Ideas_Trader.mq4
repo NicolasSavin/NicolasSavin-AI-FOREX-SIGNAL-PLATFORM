@@ -22,6 +22,7 @@ input bool AllowSell = true;
 input bool UseEntryZone = true;
 input bool UseBufferedSL = true;
 input bool SkipIfTpTooClose = true;
+input bool AllowFallbackProviderTrading = false;
 input string MarkupUrlTemplate = "https://your-domain.onrender.com/api/mt4/markup/{symbol}?tf=M15";
 
 datetime g_lastPoll = 0;
@@ -173,15 +174,16 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
       double apiEntryZoneTo = JsonGetNumber(obj, "entry_zone_to");
       double apiEntryZoneMid = JsonGetNumber(obj, "entry_zone_mid");
       string apiSkipReason = JsonGetString(obj, "skip_reason");
+      string apiProvider = StringLower(JsonGetString(obj, "provider"));
       int apiConfidence = (int)JsonGetNumber(obj, "confidence");
       bool apiTradePermission = JsonGetBool(obj, "trade_permission");
-      string apiDataStatus = StringLower(JsonGetString(obj, "data_status"));
+      bool providerAllowed = (apiProvider == "mt4_bridge") || AllowFallbackProviderTrading;
 
       if(SymbolMatches(Symbol(), apiSymbol)
          && (apiAction == "BUY" || apiAction == "SELL")
          && apiEntry > 0 && apiSl > 0 && apiTp > 0
          && apiTradePermission
-         && (apiDataStatus == "real" || apiDataStatus == "delayed"))
+         && providerAllowed)
       {
          symbol = apiSymbol;
          action = apiAction;
@@ -197,6 +199,10 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
          tradePermission = apiTradePermission;
          comment = JsonGetString(obj, "comment");
          return(true);
+      }
+      if(SymbolMatches(Symbol(), apiSymbol) && !providerAllowed)
+      {
+         Print("Provider fallback: trading disabled");
       }
 
       pos = objEnd + 1;

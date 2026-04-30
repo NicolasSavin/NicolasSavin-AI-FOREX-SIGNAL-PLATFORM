@@ -433,7 +433,7 @@ def api_signals():
 
     for symbol in SYMBOLS:
         try:
-            signal = build_signal(symbol, detail=False)
+            signal = build_signal_from_candles(symbol, "M15")
             if isinstance(signal, dict) and signal:
                 signals.append(signal)
             else:
@@ -497,12 +497,10 @@ def api_mt4_signals():
         if age <= MT4_SIGNALS_CACHE_TTL_SECONDS:
             return cached
 
-    raw_payload = api_signals()
-    raw_signals = raw_payload.get("signals") or []
-
     tradable_signals = []
-    for signal in raw_signals:
-        action = str(signal.get("signal") or signal.get("action") or "").upper()
+    for symbol in SYMBOLS:
+        signal = build_signal_from_candles(symbol, "M15")
+        action = str(signal.get("action") or "").upper()
         if action not in {"BUY", "SELL"}:
             continue
 
@@ -516,44 +514,24 @@ def api_mt4_signals():
         if not trade_permission:
             continue
 
-        data_status = str(signal.get("data_status") or "").lower()
-        if data_status not in {"real", "delayed"}:
-            continue
-
-        entry_zone = signal.get("entry_zone") if isinstance(signal.get("entry_zone"), dict) else {}
-        entry_zone_from = safe_float(entry_zone.get("from"))
-        entry_zone_to = safe_float(entry_zone.get("to"))
-        entry_zone_mid = safe_float(entry_zone.get("mid")) or entry
-        buffered_sl = safe_float(signal.get("buffered_sl")) or sl
-        tp_warning_ru = signal.get("tp_warning_ru")
-        aggressive_mode = bool(signal.get("aggressive_mode"))
-        mt4_trade_permission = trade_permission and not (tp_warning_ru and not aggressive_mode)
-
         tradable_signals.append({
-            "id": signal.get("id") or f"{signal.get('symbol')}-{action}",
+            "id": f"{signal.get('symbol')}-{action}",
             "symbol": normalize_symbol(str(signal.get("symbol") or "")),
             "action": action,
             "entry": entry,
             "sl": sl,
-            "sl_original": sl,
-            "sl_buffered": buffered_sl,
             "tp": tp,
-            "entry_zone_from": entry_zone_from,
-            "entry_zone_to": entry_zone_to,
-            "entry_zone_mid": entry_zone_mid,
-            "execution_mode": "zone",
-            "skip_reason": "tp_too_close" if (tp_warning_ru and not aggressive_mode) else None,
-            "tp_warning_ru": tp_warning_ru,
             "confidence": int(signal.get("confidence") or 0),
-            "trade_permission": mt4_trade_permission,
-            "status": signal.get("status") or signal.get("runtime_status") or "ACTIVE",
-            "data_status": data_status,
-            "expires_at": signal.get("expires_at") or signal.get("meaningful_updated_at") or signal.get("updated_at"),
-            "comment": signal.get("summary") or signal.get("short_text") or "AI idea",
+            "trade_permission": trade_permission,
+            "status": "ACTIVE",
+            "provider": signal.get("provider"),
+            "provider_priority": signal.get("provider_priority"),
+            "fallback_used": signal.get("fallback_used"),
+            "comment": signal.get("reason_ru") or "AI idea",
         })
 
     payload = {
-        "updated_at_utc": raw_payload.get("updated_at_utc") or now_utc(),
+        "updated_at_utc": now_utc(),
         "signals": tradable_signals,
     }
     MT4_SIGNALS_CACHE["updated_at"] = datetime.now(timezone.utc)
@@ -623,12 +601,7 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
     symbol = normalize_symbol(symbol)
     tf = str(tf or "M15").upper().strip()
 
-    idea_error = None
-    try:
-        idea = build_signal(symbol)
-    except Exception as exc:
-        idea = {}
-        idea_error = str(exc)
+    idea = build_signal_from_candles(symbol, tf)
 
     entry = safe_float(idea.get("entry"))
     sl = safe_float(idea.get("sl"))
@@ -647,7 +620,7 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
 
     chart_payload = fetch_candles(symbol, tf, 160)
     candles = chart_payload.get("candles") or []
-    action = str(idea.get("signal") or idea.get("final_signal") or "").upper() or None
+    action = str(idea.get("action") or "").upper() or None
     annotations = build_chart_annotations(candles, symbol, action, entry)
     zones = []
 
@@ -685,11 +658,12 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
         "patterns": patterns,
         "arrow": annotations.get("trade_arrow"),
         "diagnostics": {
+            "provider": chart_payload.get("provider"),
+            "candles_count": len(candles),
             "levels_count": len(levels),
             "zones_count": len(zones),
             "patterns_count": len(patterns),
             "has_entry_zone": bool(entry_zone),
-            "idea_error": idea_error,
         },
     }
     return payload
@@ -846,6 +820,29 @@ def api_debug_annotations(symbol: str, tf: str, limit: int = 160):
         "zones_count": sum(len(annotations.get(k) or []) for k in ["ob", "fvg", "liquidity", "breaker"]),
         "patterns_count": len(annotations.get("patterns") or []),
         "annotations": annotations,
+    }
+
+
+@app.get("/api/debug/final-flow/{symbol}/{tf}")
+def api_debug_final_flow(symbol: str, tf: str = "M15"):
+    candles_payload = fetch_candles(symbol, tf, 200)
+    signal = build_signal_from_candles(symbol, tf)
+    annotations = build_chart_annotations(candles_payload.get("candles") or [], symbol, signal.get("action"), signal.get("entry"))
+
+    return {
+        "symbol": normalize_symbol(symbol),
+        "tf": tf.upper(),
+        "provider": candles_payload.get("provider"),
+        "provider_priority": candles_payload.get("provider_priority"),
+        "fallback_used": candles_payload.get("fallback_used"),
+        "candles_count": len(candles_payload.get("candles") or []),
+        "signal": signal,
+        "annotations_counts": {
+            "ob": len(annotations.get("ob") or []),
+            "fvg": len(annotations.get("fvg") or []),
+            "liquidity": len(annotations.get("liquidity") or []),
+            "patterns": len(annotations.get("patterns") or []),
+        },
     }
 
 @app.get("/api/debug/dukascopy/{symbol}/{tf}")
@@ -1248,12 +1245,122 @@ def resolve_confidence(decision) -> int:
     return 28
 
 
+def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
+    symbol_norm = normalize_symbol(symbol)
+    tf_norm = str(tf or "M15").upper()
+    candles_payload = fetch_candles(symbol_norm, tf_norm, 200)
+    candles = candles_payload.get("candles") or []
+    provider = candles_payload.get("provider")
+    provider_priority = candles_payload.get("provider_priority")
+    fallback_used = bool(candles_payload.get("fallback_used"))
+
+    if not candles:
+        return {
+            "id": f"{symbol_norm}-WAIT",
+            "symbol": symbol_norm,
+            "pair": symbol_norm,
+            "timeframe": tf_norm,
+            "tf": tf_norm,
+            "action": "WAIT",
+            "signal": "WAIT",
+            "entry": None,
+            "sl": None,
+            "tp": None,
+            "confidence": 0,
+            "trade_permission": False,
+            "provider": provider,
+            "provider_priority": provider_priority,
+            "fallback_used": fallback_used,
+            "reason_ru": "Нет доступных реальных свечей для расчёта сигнала.",
+            "candles_count": 0,
+        }
+
+    closes = [safe_float(c.get("close")) for c in candles]
+    highs = [safe_float(c.get("high")) for c in candles]
+    lows = [safe_float(c.get("low")) for c in candles]
+    closes = [x for x in closes if x is not None]
+    highs = [x for x in highs if x is not None]
+    lows = [x for x in lows if x is not None]
+    if len(closes) < 30 or len(highs) < 30 or len(lows) < 30:
+        return {
+            "id": f"{symbol_norm}-WAIT",
+            "symbol": symbol_norm,
+            "pair": symbol_norm,
+            "timeframe": tf_norm,
+            "tf": tf_norm,
+            "action": "WAIT",
+            "signal": "WAIT",
+            "entry": None,
+            "sl": None,
+            "tp": None,
+            "confidence": 20,
+            "trade_permission": False,
+            "provider": provider,
+            "provider_priority": provider_priority,
+            "fallback_used": fallback_used,
+            "reason_ru": "Недостаточно свечей для уверенного анализа.",
+            "candles_count": len(candles),
+        }
+
+    last_close = closes[-1]
+    sma_fast = sum(closes[-10:]) / 10
+    sma_slow = sum(closes[-30:]) / 30
+    avg_range = sum(h - l for h, l in zip(highs[-20:], lows[-20:])) / 20
+    momentum = (last_close - closes[-6]) if len(closes) > 6 else 0.0
+
+    action = "WAIT"
+    reason_ru = "Структура рынка нейтральна, лучше ждать подтверждения."
+    if sma_fast > sma_slow and momentum > avg_range * 0.15:
+        action = "BUY"
+        reason_ru = "Быстрая средняя выше медленной и есть восходящий импульс."
+    elif sma_fast < sma_slow and momentum < -avg_range * 0.15:
+        action = "SELL"
+        reason_ru = "Быстрая средняя ниже медленной и есть нисходящий импульс."
+
+    entry = round(last_close, 6)
+    sl = tp = None
+    trade_permission = action in {"BUY", "SELL"}
+    confidence = 35 if action == "WAIT" else 72
+    if action == "BUY":
+        sl = round(entry - avg_range * 1.2, 6)
+        tp = round(entry + avg_range * 1.8, 6)
+    elif action == "SELL":
+        sl = round(entry + avg_range * 1.2, 6)
+        tp = round(entry - avg_range * 1.8, 6)
+
+    return {
+        "id": f"{symbol_norm}-{action}",
+        "symbol": symbol_norm,
+        "pair": symbol_norm,
+        "timeframe": tf_norm,
+        "tf": tf_norm,
+        "action": action,
+        "signal": action,
+        "entry": entry,
+        "entry_price": entry,
+        "sl": sl,
+        "stop_loss": sl,
+        "tp": tp,
+        "take_profit": tp,
+        "confidence": int(confidence),
+        "trade_permission": bool(trade_permission),
+        "provider": provider,
+        "provider_priority": provider_priority,
+        "fallback_used": fallback_used,
+        "reason_ru": reason_ru,
+        "candles_count": len(candles),
+        "data_status": "real" if candles else "unavailable",
+        "updated_at": now_utc(),
+    }
+
+
 def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
     symbol = normalize_symbol(symbol)
     candles_payload = fetch_candles(symbol, tf, limit)
     candles = candles_payload.get("candles", [])
 
-    chart_annotations = build_chart_annotations(candles, symbol)
+    signal = build_signal_from_candles(symbol, tf)
+    chart_annotations = build_chart_annotations(candles, symbol, signal.get("action"), safe_float(signal.get("entry")))
     annotations = build_annotations(candles)
     market_structure = build_market_structure(candles, annotations)
 
@@ -1262,6 +1369,8 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
         "timeframe": tf,
         "source_symbol": candles_payload.get("source_symbol") or to_twelvedata_symbol(symbol),
         "provider": candles_payload.get("provider"),
+        "provider_priority": candles_payload.get("provider_priority"),
+        "fallback_used": candles_payload.get("fallback_used"),
         "cache_status": candles_payload.get("cache_status"),
         "source": "twelvedata_time_series",
         "data_status": "real" if candles else "unavailable",
@@ -1771,6 +1880,8 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
                 set_cached_candle_payload(cache_key, td)
                 return td
             errors.append({"twelvedata": td.get("raw_error") or td.get("warning_ru")})
+            providers_tried.append("alpha_vantage")
+            errors.append({"alpha_vantage": "not_configured"})
 
             providers_tried.append("dukascopy")
             dk = fetch_dukascopy_candles(symbol_norm, tf_norm, limit)
