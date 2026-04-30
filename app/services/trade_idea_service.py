@@ -5,7 +5,6 @@ from hashlib import sha1
 import json
 import logging
 import os
-import random
 import re
 from threading import Lock
 from typing import Any
@@ -4300,17 +4299,28 @@ class TradeIdeaService:
         if cached and float(cached.get("expires_at", 0)) > now_ts:
             return cached["payload"]
 
-        payload = self._build_local_dynamic_reasoning(
-            symbol=symbol,
-            signal=signal,
-            entry=entry,
-            sl=sl,
-            tp=tp,
-            selected_zone_type=selected_zone_type,
-            annotations=annotations,
-            timeframe_ideas=timeframe_ideas,
-            htf_context=htf_context,
-        )
+        try:
+            payload = self._build_local_dynamic_reasoning(
+                symbol=symbol,
+                signal=signal,
+                entry=entry,
+                sl=sl,
+                tp=tp,
+                selected_zone_type=selected_zone_type,
+                annotations=annotations,
+                timeframe_ideas=timeframe_ideas,
+                htf_context=htf_context,
+            )
+        except Exception:
+            payload = {
+                "text": (
+                    f"{symbol}: {signal} сценарий активен от {entry}. "
+                    f"Отмена сценария у {sl}, целевой ориентир {tp}."
+                ),
+                "narrative_source": "local_dynamic_fallback",
+                "htf_context_used": False,
+                "liquidity_context_used": False,
+            }
         self._grok_reasoning_cache[cache_key] = {"expires_at": now_ts + self._grok_reasoning_cache_ttl_seconds, "payload": payload}
         return payload
 
@@ -4338,7 +4348,8 @@ class TradeIdeaService:
         below = str(liq.get("below") or liq.get("eql") or liq.get("sell_side") or "нижняя ликвидность")
         sweep = str(liq.get("sweep") or annotations.get("liquidity_sweep") or "").strip()
         openings = ["Сейчас структура подсказывает", "По текущему сценарию видно", "В этой идее ключевое", "На текущем участке рынка"]
-        s1 = random.choice(openings)
+        variant_idx = sum(ord(ch) for ch in f"{symbol}|{side}|{entry}|{sl}|{tp}") % len(openings)
+        s1 = openings[variant_idx]
         if side == "BUY":
             trend_line = "это continuation вверх" if dominant == "bullish" else "это рискованный коррекционный long против HTF" if dominant == "bearish" else "HTF смешанный, поэтому нужен дополнительный триггер"
             text = (
