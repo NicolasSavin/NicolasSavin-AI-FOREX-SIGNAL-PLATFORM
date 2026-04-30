@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from fastapi.responses import FileResponse
+
 from app.main import DEFAULT_PAIRS, app, signal_engine
 from app.main import canonical_market_service
 from backend.signal_engine import SUPPORTED_TIMEFRAMES
+
+
+@app.get('/analytics', include_in_schema=False)
+async def analytics_page():
+    """Страница AI-аналитики рынка."""
+    return FileResponse('app/static/analytics.html')
 
 
 @app.get('/signals')
