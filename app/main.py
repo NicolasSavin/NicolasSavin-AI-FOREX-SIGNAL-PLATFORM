@@ -839,215 +839,218 @@ def api_debug_sentiment(symbol: str):
 
 def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
     symbol = normalize_symbol(symbol)
-    price_data = get_price(symbol)
-    current_price = safe_float(price_data.get("price"))
+    try:
+        price_data = get_price(symbol)
+        current_price = safe_float(price_data.get("price"))
 
-    candles_by_tf = build_candles_by_tf(symbol, detail=detail)
+        candles_by_tf = build_candles_by_tf(symbol, detail=detail)
 
-    if current_price is None:
-        return empty_signal(symbol, price_data, candles_by_tf)
+        if current_price is None:
+            return empty_signal(symbol, price_data, candles_by_tf)
 
-    proposed_bias = resolve_proposed_bias(candles_by_tf)
-    decision = HTF_FILTER.evaluate(
-        symbol=symbol,
-        candles_by_tf=candles_by_tf,
-        proposed_signal=proposed_bias,
-    )
+        proposed_bias = resolve_proposed_bias(candles_by_tf)
+        decision = HTF_FILTER.evaluate(
+            symbol=symbol,
+            candles_by_tf=candles_by_tf,
+            proposed_signal=proposed_bias,
+        )
 
-    signal = decision.final_signal
+        signal = decision.final_signal
 
-    active = load_json(ACTIVE_FILE)
-    trade_id = f"{symbol}-{signal}"
+        active = load_json(ACTIVE_FILE)
+        trade_id = f"{symbol}-{signal}"
 
-    existing = next((x for x in active if x.get("id") == trade_id), None)
+        existing = next((x for x in active if x.get("id") == trade_id), None)
 
-    if signal in {"BUY", "SELL"}:
-        if existing:
-            trade = existing
+        if signal in {"BUY", "SELL"}:
+            if existing:
+                trade = existing
+            else:
+                entry = current_price
+                sl, tp, rr = build_levels(symbol, entry, signal)
+
+                trade = {
+                    "id": trade_id,
+                    "symbol": symbol,
+                    "signal": signal,
+                    "entry": entry,
+                    "sl": sl,
+                    "tp": tp,
+                    "rr": rr,
+                    "created_at": now_utc(),
+                    "status": "ACTIVE",
+                    "htf_context": decision.context,
+                    "htf_reason": decision.reason,
+                }
+
+                active.append(trade)
+                save_json(ACTIVE_FILE, active)
         else:
             entry = current_price
-            sl, tp, rr = build_levels(symbol, entry, signal)
-
+            sl, tp, rr = build_levels(symbol, entry, "BUY")
             trade = {
-                "id": trade_id,
+                "id": f"{symbol}-WAIT",
                 "symbol": symbol,
-                "signal": signal,
+                "signal": "WAIT",
                 "entry": entry,
                 "sl": sl,
                 "tp": tp,
                 "rr": rr,
                 "created_at": now_utc(),
-                "status": "ACTIVE",
+                "status": "WAIT",
                 "htf_context": decision.context,
                 "htf_reason": decision.reason,
             }
 
-            active.append(trade)
+        auto_close_allowed = is_real_market_price_available(price_data)
+        runtime_status, runtime_text, runtime_color, close_result = get_runtime_status(
+            price=current_price,
+            entry=safe_float(trade.get("entry")),
+            sl=safe_float(trade.get("sl")),
+            tp=safe_float(trade.get("tp")),
+            signal=trade.get("signal"),
+            allow_close=auto_close_allowed,
+        )
+
+        auto_close_eval = evaluate_trade_result_by_price(trade=trade, current_price=current_price)
+
+        if auto_close_allowed and auto_close_eval.get("is_closed"):
+            close_result = auto_close_eval.get("result")
+            archived = {
+                **trade,
+                "current_price": current_price,
+                "result": close_result,
+                "status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL",
+                "runtime_status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL",
+                "runtime_text": auto_close_eval.get("reason_ru"),
+                "runtime_color": runtime_color,
+                "close_reason": auto_close_eval.get("close_reason"),
+                "close_reason_ru": auto_close_eval.get("reason_ru"),
+                "closed_at": now_utc(),
+                "closed_price": current_price,
+                "is_archived": True,
+            }
+
+            move_to_archive(archived)
+
+            active = [x for x in load_json(ACTIVE_FILE) if x.get("id") != trade_id]
             save_json(ACTIVE_FILE, active)
-    else:
-        entry = current_price
-        sl, tp, rr = build_levels(symbol, entry, "BUY")
-        trade = {
-            "id": f"{symbol}-WAIT",
+
+            trade = archived
+            runtime_status = str(archived.get("runtime_status") or runtime_status)
+            runtime_text = str(archived.get("runtime_text") or runtime_text)
+        elif not auto_close_allowed and trade.get("signal") in {"BUY", "SELL"}:
+            trade["auto_close_skipped_ru"] = "Автозакрытие пропущено: нет реальной рыночной цены."
+
+        sentiment = fetch_forex_client_sentiment(symbol)
+
+        summary = build_summary(
+            symbol=symbol,
+            trade=trade,
+            current_price=current_price,
+            runtime_status=runtime_status,
+            runtime_text=runtime_text,
+            htf_decision=decision,
+            sentiment=sentiment,
+        )
+
+        m15_candles = candles_by_tf.get("M15", [])
+        signal_side = str(trade.get("signal") or "")
+        entry_value = safe_float(trade.get("entry"))
+        original_sl = safe_float(trade.get("sl"))
+        tp_value = safe_float(trade.get("tp"))
+        tolerance = symbol_tolerance(symbol)
+        entry_zone = build_entry_zone(signal_side, entry_value, symbol)
+        buffered_sl = apply_sl_buffer(signal_side, original_sl, symbol)
+        tp_validation = validate_tp_distance(entry_value, tp_value, symbol)
+        tp_warning_ru = tp_validation.get("tp_warning_ru")
+        execution_safety = {
+            "entry_zone": entry_zone,
+            "original_sl": original_sl,
+            "buffered_sl": buffered_sl,
+            "sl_buffer": tolerance.get("sl_buffer"),
+            "tp_warning_ru": tp_warning_ru,
+            "provider_tolerance_ru": "Идея рассчитана с допуском на различие данных между сайтом, поставщиком и брокером.",
+        }
+
+        return {
+            "id": trade.get("id"),
+            "idea_id": trade.get("id"),
             "symbol": symbol,
-            "signal": "WAIT",
-            "entry": entry,
-            "sl": sl,
-            "tp": tp,
-            "rr": rr,
-            "created_at": now_utc(),
-            "status": "WAIT",
-            "htf_context": decision.context,
-            "htf_reason": decision.reason,
-        }
-
-    auto_close_allowed = is_real_market_price_available(price_data)
-    runtime_status, runtime_text, runtime_color, close_result = get_runtime_status(
-        price=current_price,
-        entry=safe_float(trade.get("entry")),
-        sl=safe_float(trade.get("sl")),
-        tp=safe_float(trade.get("tp")),
-        signal=trade.get("signal"),
-        allow_close=auto_close_allowed,
-    )
-
-    auto_close_eval = evaluate_trade_result_by_price(trade=trade, current_price=current_price)
-
-    if auto_close_allowed and auto_close_eval.get("is_closed"):
-        close_result = auto_close_eval.get("result")
-        archived = {
-            **trade,
-            "current_price": current_price,
-            "result": close_result,
-            "status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL",
-            "runtime_status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL",
-            "runtime_text": auto_close_eval.get("reason_ru"),
+            "pair": symbol,
+            "timeframe": "M15",
+            "tf": "M15",
+            "signal": trade.get("signal"),
+            "final_signal": trade.get("signal"),
+            "direction": "bullish" if trade.get("signal") == "BUY" else "bearish" if trade.get("signal") == "SELL" else "neutral",
+            "bias": "bullish" if trade.get("signal") == "BUY" else "bearish" if trade.get("signal") == "SELL" else "neutral",
+            "confidence": resolve_confidence(decision),
+            "final_confidence": resolve_confidence(decision),
+            "status": runtime_status,
+            "runtime_status": runtime_status,
+            "runtime_text": runtime_text,
+            "runtime_status_text": runtime_text,
             "runtime_color": runtime_color,
-            "close_reason": auto_close_eval.get("close_reason"),
-            "close_reason_ru": auto_close_eval.get("reason_ru"),
-            "closed_at": now_utc(),
-            "closed_price": current_price,
-            "is_archived": True,
+            "source": price_data.get("source"),
+            "data_status": price_data.get("data_status"),
+            "metric_status": "proxy",
+            "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
+            "is_live_market_data": bool(price_data.get("is_live_market_data")),
+            "source_symbol": to_twelvedata_symbol(symbol),
+            "current_price": current_price,
+            "price": current_price,
+            "entry": trade.get("entry"),
+            "entry_price": trade.get("entry"),
+            "entry_zone": entry_zone,
+            "stop_loss": trade.get("sl"),
+            "sl": trade.get("sl"),
+            "buffered_sl": buffered_sl,
+            "take_profit": trade.get("tp"),
+            "tp": trade.get("tp"),
+            "tp_warning_ru": tp_warning_ru,
+            "execution_safety": execution_safety,
+            "risk_reward": trade.get("rr"),
+            "rr": trade.get("rr"),
+            "summary": summary,
+            "summary_ru": summary,
+            "ai_explanation": summary,
+            "short_text": summary,
+            "idea_thesis": summary,
+            "unified_narrative": summary,
+            "full_text": summary,
+            "compact_summary": summary,
+            "warning_ru": human_price_warning(price_data),
+            "sentiment": sentiment,
+            "auto_close_skipped_ru": trade.get("auto_close_skipped_ru"),
+            "setup_quality": "HTF_CONTEXT_REAL_CANDLES_ONLY",
+            "risk_filter": "MN_W1_D1_H4_H1_M15_ALIGNMENT",
+            "trade_permission": decision.allowed and runtime_status == "ACTIVE",
+            "htf_context": decision.context,
+            "htf_bias": decision.htf_bias,
+            "htf_reason": decision.reason,
+            "risk_note": decision.risk_note,
+            "candles": m15_candles,
+            "chart_data": {"candles": m15_candles},
+            "chartData": {"candles": m15_candles},
+            "timeframe_ideas": build_timeframe_ideas(symbol, candles_by_tf, decision),
+            "timeframes_available": list(candles_by_tf.keys()),
+            "created_at": trade.get("created_at"),
+            "updated_at": now_utc(),
+            "meaningful_updated_at": now_utc(),
+            "tags": [symbol, str(trade.get("signal")), runtime_status, decision.htf_bias],
+            "diagnostics": {
+                "levels_fixed": True,
+                "real_candles_only": True,
+                "synthetic_candles_disabled": True,
+                "active_file": str(ACTIVE_FILE),
+                "archive_file": str(ARCHIVE_FILE),
+                "price_data": price_data,
+                "candles_by_tf_count": {tf: len(rows) for tf, rows in candles_by_tf.items()},
+                "htf_filter": decision.context,
+            },
         }
-
-        move_to_archive(archived)
-
-        active = [x for x in load_json(ACTIVE_FILE) if x.get("id") != trade_id]
-        save_json(ACTIVE_FILE, active)
-
-        trade = archived
-        runtime_status = str(archived.get("runtime_status") or runtime_status)
-        runtime_text = str(archived.get("runtime_text") or runtime_text)
-    elif not auto_close_allowed and trade.get("signal") in {"BUY", "SELL"}:
-        trade["auto_close_skipped_ru"] = "Автозакрытие пропущено: нет реальной рыночной цены."
-
-    sentiment = fetch_forex_client_sentiment(symbol)
-
-    summary = build_summary(
-        symbol=symbol,
-        trade=trade,
-        current_price=current_price,
-        runtime_status=runtime_status,
-        runtime_text=runtime_text,
-        htf_decision=decision,
-        sentiment=sentiment,
-    )
-
-    m15_candles = candles_by_tf.get("M15", [])
-    signal_side = str(trade.get("signal") or "")
-    entry_value = safe_float(trade.get("entry"))
-    original_sl = safe_float(trade.get("sl"))
-    tp_value = safe_float(trade.get("tp"))
-    tolerance = symbol_tolerance(symbol)
-    entry_zone = build_entry_zone(signal_side, entry_value, symbol)
-    buffered_sl = apply_sl_buffer(signal_side, original_sl, symbol)
-    tp_validation = validate_tp_distance(entry_value, tp_value, symbol)
-    tp_warning_ru = tp_validation.get("tp_warning_ru")
-    execution_safety = {
-        "entry_zone": entry_zone,
-        "original_sl": original_sl,
-        "buffered_sl": buffered_sl,
-        "sl_buffer": tolerance.get("sl_buffer"),
-        "tp_warning_ru": tp_warning_ru,
-        "provider_tolerance_ru": "Идея рассчитана с допуском на различие данных между сайтом, поставщиком и брокером.",
-    }
-
-    return {
-        "id": trade.get("id"),
-        "idea_id": trade.get("id"),
-        "symbol": symbol,
-        "pair": symbol,
-        "timeframe": "M15",
-        "tf": "M15",
-        "signal": trade.get("signal"),
-        "final_signal": trade.get("signal"),
-        "direction": "bullish" if trade.get("signal") == "BUY" else "bearish" if trade.get("signal") == "SELL" else "neutral",
-        "bias": "bullish" if trade.get("signal") == "BUY" else "bearish" if trade.get("signal") == "SELL" else "neutral",
-        "confidence": resolve_confidence(decision),
-        "final_confidence": resolve_confidence(decision),
-        "status": runtime_status,
-        "runtime_status": runtime_status,
-        "runtime_text": runtime_text,
-        "runtime_status_text": runtime_text,
-        "runtime_color": runtime_color,
-        "source": price_data.get("source"),
-        "data_status": price_data.get("data_status"),
-        "metric_status": "proxy",
-        "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
-        "is_live_market_data": bool(price_data.get("is_live_market_data")),
-        "source_symbol": to_twelvedata_symbol(symbol),
-        "current_price": current_price,
-        "price": current_price,
-        "entry": trade.get("entry"),
-        "entry_price": trade.get("entry"),
-        "entry_zone": entry_zone,
-        "stop_loss": trade.get("sl"),
-        "sl": trade.get("sl"),
-        "buffered_sl": buffered_sl,
-        "take_profit": trade.get("tp"),
-        "tp": trade.get("tp"),
-        "tp_warning_ru": tp_warning_ru,
-        "execution_safety": execution_safety,
-        "risk_reward": trade.get("rr"),
-        "rr": trade.get("rr"),
-        "summary": summary,
-        "summary_ru": summary,
-        "ai_explanation": summary,
-        "short_text": summary,
-        "idea_thesis": summary,
-        "unified_narrative": summary,
-        "full_text": summary,
-        "compact_summary": summary,
-        "warning_ru": human_price_warning(price_data),
-        "sentiment": sentiment,
-        "auto_close_skipped_ru": trade.get("auto_close_skipped_ru"),
-        "setup_quality": "HTF_CONTEXT_REAL_CANDLES_ONLY",
-        "risk_filter": "MN_W1_D1_H4_H1_M15_ALIGNMENT",
-        "trade_permission": decision.allowed and runtime_status == "ACTIVE",
-        "htf_context": decision.context,
-        "htf_bias": decision.htf_bias,
-        "htf_reason": decision.reason,
-        "risk_note": decision.risk_note,
-        "candles": m15_candles,
-        "chart_data": {"candles": m15_candles},
-        "chartData": {"candles": m15_candles},
-        "timeframe_ideas": build_timeframe_ideas(symbol, candles_by_tf, decision),
-        "timeframes_available": list(candles_by_tf.keys()),
-        "created_at": trade.get("created_at"),
-        "updated_at": now_utc(),
-        "meaningful_updated_at": now_utc(),
-        "tags": [symbol, str(trade.get("signal")), runtime_status, decision.htf_bias],
-        "diagnostics": {
-            "levels_fixed": True,
-            "real_candles_only": True,
-            "synthetic_candles_disabled": True,
-            "active_file": str(ACTIVE_FILE),
-            "archive_file": str(ARCHIVE_FILE),
-            "price_data": price_data,
-            "candles_by_tf_count": {tf: len(rows) for tf, rows in candles_by_tf.items()},
-            "htf_filter": decision.context,
-        },
-}
+    except Exception:
+        return empty_signal(symbol, {}, {})
 
 
 def symbol_tolerance(symbol: str) -> dict[str, float | str]:
@@ -1117,27 +1120,44 @@ def build_timeframe_ideas(
     result: dict[str, dict[str, Any]] = {}
 
     for tf, candles in candles_by_tf.items():
-        annotations = build_annotations(candles)
-        structure = build_market_structure(candles, annotations)
-        bias = structure.get("trend", "neutral")
+        try:
+            candles_safe = candles if isinstance(candles, list) else []
+            if not candles_safe:
+                continue
+            annotations = build_annotations(candles_safe)
+            if not isinstance(annotations, dict):
+                annotations = {}
+            structure = build_market_structure(candles_safe, annotations)
+            if not isinstance(structure, dict):
+                structure = {}
+            bias = structure.get("trend", "neutral")
+            chart_annotations = build_chart_annotations(candles_safe, symbol)
+            if chart_annotations is None:
+                chart_annotations = {}
+            if not isinstance(chart_annotations, dict):
+                chart_annotations = {}
+            patterns = chart_annotations.get("patterns") or []
+            trade_arrow = chart_annotations.get("trade_arrow")
 
-        result[tf] = {
-            "symbol": symbol,
-            "timeframe": tf,
-            "tf": tf,
-            "signal": "BUY" if bias == "bullish" else "SELL" if bias == "bearish" else "WAIT",
-            "direction": bias,
-            "bias": bias,
-            "candles": candles,
-            "chart_data": {"candles": candles},
-            "chartData": {"candles": candles},
-            "annotations": chart_annotations,
-        "patterns": chart_annotations.get("patterns") or [],
-        "trade_arrow": chart_annotations.get("trade_arrow"),
-            "market_structure": structure,
-            "summary": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
-            "summary_ru": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
-        }
+            result[tf] = {
+                "symbol": symbol,
+                "timeframe": tf,
+                "tf": tf,
+                "signal": "BUY" if bias == "bullish" else "SELL" if bias == "bearish" else "WAIT",
+                "direction": bias,
+                "bias": bias,
+                "candles": candles_safe,
+                "chart_data": {"candles": candles_safe},
+                "chartData": {"candles": candles_safe},
+                "annotations": chart_annotations if isinstance(chart_annotations, dict) else {},
+                "patterns": patterns if isinstance(patterns, list) else [],
+                "trade_arrow": trade_arrow,
+                "market_structure": structure,
+                "summary": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
+                "summary_ru": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
+            }
+        except Exception:
+            continue
 
     return result
 
