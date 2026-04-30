@@ -2613,6 +2613,29 @@ def build_empty_timeframe_ideas(
 def get_price(symbol: str) -> dict[str, Any]:
     symbol = normalize_symbol(symbol)
 
+    # MT4 bridge/candles are primary for signal pricing.
+    try:
+        candles_payload = fetch_candles(symbol, tf="M15", limit=2)
+        candles = candles_payload.get("candles") or []
+        if candles:
+            last_close = first_float(candles[-1].get("close"))
+            if last_close is not None:
+                cache_status = str(candles_payload.get("cache_status") or "").lower()
+                provider = str(candles_payload.get("provider") or "unknown")
+                return {
+                    "symbol": symbol,
+                    "source_symbol": candles_payload.get("source_symbol") or symbol,
+                    "price": float(last_close),
+                    "source": provider,
+                    "provider": provider,
+                    "data_status": "real" if cache_status == "live" else "delayed",
+                    "is_live_market_data": cache_status == "live",
+                    "updated_at_utc": candles_payload.get("updated_at_utc"),
+                }
+    except Exception:
+        # Never block signal generation on primary source read errors.
+        pass
+
     ws = twelvedata_ws_service.get_price(symbol)
 
     if ws.get("price") is not None and ws.get("data_status") == "real":
