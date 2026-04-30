@@ -569,7 +569,7 @@ async def api_mt4_push_candles(request: Request):
         if MT4_BRIDGE_TOKEN and token != MT4_BRIDGE_TOKEN:
             return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
 
-        symbol = normalize_symbol(str(payload.get("symbol") or ""))
+        symbol = normalize_mt4_symbol(str(payload.get("symbol") or ""))
         tf = str(payload.get("timeframe") or "M15").upper()
         candles_in = payload.get("candles") or []
         if not symbol or not tf or not isinstance(candles_in, list):
@@ -1365,11 +1365,49 @@ def is_mt4_bridge_authorized(token: str) -> bool:
     return not is_production
 
 
+def resolve_mt4_candle_item(symbol: str, tf: str) -> tuple[str, dict[str, Any] | None]:
+    symbol_norm = normalize_symbol(symbol)
+    symbol_mt4 = normalize_mt4_symbol(symbol_norm)
+    tf_norm = str(tf or "M15").upper()
+
+    candidate_symbols = [symbol_norm]
+    if symbol_mt4 not in candidate_symbols:
+        candidate_symbols.append(symbol_mt4)
+
+    for candidate in candidate_symbols:
+        key = f"{candidate}:{tf_norm}"
+        item = MT4_CANDLE_STORE.get(key)
+        if item:
+            return key, item
+
+    # Fallback: если bridge пушит брокерский суффикс (например EURUSDm),
+    # ищем свежую запись с тем же базовым символом.
+    suffix_matches: list[tuple[datetime, str, dict[str, Any]]] = []
+    for key, item in MT4_CANDLE_STORE.items():
+        try:
+            stored_symbol, stored_tf = key.split(":", 1)
+        except ValueError:
+            continue
+        if stored_tf != tf_norm:
+            continue
+        if normalize_mt4_symbol(stored_symbol) != symbol_mt4:
+            continue
+        updated_at = item.get("updated_at") if isinstance(item, dict) else None
+        if isinstance(updated_at, datetime):
+            suffix_matches.append((updated_at, key, item))
+
+    if suffix_matches:
+        suffix_matches.sort(key=lambda row: row[0], reverse=True)
+        _, key, item = suffix_matches[0]
+        return key, item
+
+    return f"{symbol_norm}:{tf_norm}", None
+
+
 def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
     symbol_norm = normalize_symbol(symbol)
     tf_norm = str(tf or "M15").upper()
-    key = f"{symbol_norm}:{tf_norm}"
-    item = MT4_CANDLE_STORE.get(key)
+    key, item = resolve_mt4_candle_item(symbol_norm, tf_norm)
     if not item:
         return {"candles": [], "provider": "mt4_bridge", "warning_ru": "Нет свечей от MT4 bridge.", "raw_error": "no_mt4_data"}
 
@@ -1408,9 +1446,7 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
 def get_mt4_bridge_status(symbol: str, tf: str) -> dict[str, Any]:
     symbol = normalize_symbol(symbol)
     tf = str(tf or "M15").upper()
-    key = f"{symbol}:{tf}"
-
-    item = MT4_CANDLE_STORE.get(key)
+    key, item = resolve_mt4_candle_item(symbol, tf)
     if not item:
         return {
             "available": False,
