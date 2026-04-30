@@ -76,19 +76,28 @@ function createIdeaComparableState(idea) {
   };
 }
 
-function formatVoiceMessage(type, idea) {
-  const symbol = String(idea?.instrument || idea?.symbol || "инструмент").trim() || "инструмент";
-  const signal = String(idea?.signal || idea?.label || "сигнал").trim() || "сигнал";
-  const entry = String(idea?.entry ?? "").trim();
-  const sl = String(idea?.sl ?? idea?.stop_loss ?? "").trim();
-  const tp = String(idea?.tp ?? idea?.target ?? "").trim();
+function voiceSymbolLabel(symbolRaw) {
+  const symbol = String(symbolRaw || "").trim().toUpperCase();
+  if (symbol === "EURUSD") return "евродоллар";
+  if (symbol === "USDJPY") return "доллар йена";
+  if (symbol === "GBPUSD") return "фунт доллар";
+  if (symbol === "XAUUSD") return "золото";
+  return "инструмент";
+}
 
-  const prefix = type === "new" ? "Новая идея" : "Обновление идеи";
-  const parts = [`${prefix} ${symbol}.`, `${signal}.`];
-  if (entry) parts.push(`Вход ${entry}.`);
-  if (sl) parts.push(`Стоп ${sl}.`);
-  if (tp) parts.push(`Цель ${tp}.`);
-  return parts.join(" ");
+function voiceActionLabel(signalRaw) {
+  const signal = String(signalRaw || "").trim().toUpperCase();
+  if (signal === "BUY" || signal === "ИДЕЯ ПОКУПКИ") return "покупка";
+  if (signal === "SELL" || signal === "ИДЕЯ ПРОДАЖИ") return "продажа";
+  return "ожидание";
+}
+
+function formatVoiceMessage(type, idea) {
+  const symbol = String(idea?.instrument || idea?.symbol || "").trim();
+  const signal = String(idea?.signal || idea?.label || "").trim();
+  const symbolLabel = voiceSymbolLabel(symbol);
+  const actionLabel = voiceActionLabel(signal);
+  return `${symbolLabel} ${actionLabel}`;
 }
 
 function isVoiceEnabled() {

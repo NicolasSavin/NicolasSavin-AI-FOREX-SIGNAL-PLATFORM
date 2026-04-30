@@ -1200,18 +1200,29 @@
       );
     }
 
+    function voiceSymbolLabel(symbolRaw) {
+      const symbol = String(symbolRaw || "").toUpperCase();
+      if (symbol === "EURUSD") return "евродоллар";
+      if (symbol === "USDJPY") return "доллар йена";
+      if (symbol === "GBPUSD") return "фунт доллар";
+      if (symbol === "XAUUSD") return "золото";
+      return "инструмент";
+    }
+
+    function voiceActionLabel(actionRaw) {
+      const action = String(actionRaw || "").toUpperCase();
+      if (action === "BUY") return "покупка";
+      if (action === "SELL") return "продажа";
+      return "ожидание";
+    }
+
     function speakIdeaChange(idea) {
       if (!window.speechSynthesis) return;
       if (localStorage.getItem("ideas_voice_enabled") !== "true") return;
 
-      const symbol = idea.symbol || "инструмент";
-      const action = idea.action || idea.signal || "WAIT";
-      const status = idea.status || "";
-      const entry = idea.entry ? `Вход ${idea.entry}.` : "";
-      const sl = idea.sl ? `Стоп ${idea.sl}.` : "";
-      const tp = idea.tp ? `Тейк ${idea.tp}.` : "";
-
-      const text = `Новая идея по ${symbol}. Сигнал ${action}. ${status}. ${entry} ${sl} ${tp}`;
+      const symbolLabel = voiceSymbolLabel(idea.symbol);
+      const actionLabel = voiceActionLabel(idea.action || idea.signal || "WAIT");
+      const text = `${symbolLabel} ${actionLabel}`;
 
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = "ru-RU";
