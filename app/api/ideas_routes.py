@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from fastapi import APIRouter
 
@@ -82,18 +82,65 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
         )
         return {"symbols": symbols, "timeframes": timeframes}
 
+    def _safe_attach_live_market_contracts(items: Any, *, field: str) -> list[dict]:
+        if not isinstance(items, list):
+            logger.warning("ideas_market_invalid_%s_type type=%s", field, type(items).__name__)
+            return []
+        try:
+            return services.attach_live_market_contracts(items)
+        except Exception as exc:
+            logger.exception("ideas_market_attach_contracts_failed field=%s reason=%s", field, exc)
+            return items
+
+    def _safe_market_contracts(symbols: list[str]) -> list[dict]:
+        contracts: list[dict] = []
+        for symbol in symbols:
+            try:
+                contract = services.canonical_market_service.get_market_contract(symbol)
+            except Exception as exc:
+                logger.exception("ideas_market_contract_failed symbol=%s reason=%s", symbol, exc)
+                contract = {"symbol": symbol, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            contracts.append(contract)
+        return contracts
+
+    def _safe_fallback_ideas(reason: str) -> list[dict]:
+        try:
+            return services.trade_idea_service.fallback_ideas(reason=reason)
+        except Exception as exc:
+            logger.exception("ideas_market_fallback_failed reason=%s fallback_error=%s", reason, exc)
+            return []
+
     @router.get("/ideas/market")
     async def market_ideas():
-        services.queue_ideas_refresh()
-        payload = services.trade_idea_service.refresh_market_ideas()
-        if not payload.get("ideas"):
-            logger.info("ideas_market_empty_after_refresh force_generate=true")
-            await services.trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
+        try:
+            services.queue_ideas_refresh()
             payload = services.trade_idea_service.refresh_market_ideas()
-        payload["ideas"] = services.attach_live_market_contracts(payload.get("ideas") or [])
-        payload["archive"] = services.attach_live_market_contracts(payload.get("archive") or [])
-        payload["market"] = [services.canonical_market_service.get_market_contract(symbol) for symbol in DEFAULT_PAIRS]
-        return _localize_output_layer(payload)
+            if not isinstance(payload, dict):
+                logger.warning("ideas_market_invalid_payload_type type=%s", type(payload).__name__)
+                payload = {"ideas": [], "archive": []}
+
+            if not payload.get("ideas"):
+                logger.info("ideas_market_empty_after_refresh force_generate=true")
+                await services.trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
+                payload = services.trade_idea_service.refresh_market_ideas()
+                if not isinstance(payload, dict):
+                    logger.warning("ideas_market_invalid_payload_type_after_generation type=%s", type(payload).__name__)
+                    payload = {"ideas": [], "archive": []}
+
+            payload["ideas"] = _safe_attach_live_market_contracts(payload.get("ideas") or [], field="ideas")
+            payload["archive"] = _safe_attach_live_market_contracts(payload.get("archive") or [], field="archive")
+            payload["market"] = _safe_market_contracts(list(DEFAULT_PAIRS))
+            return _localize_output_layer(payload)
+        except Exception as exc:
+            logger.exception("ideas_market_failed reason=%s", exc)
+            fallback_reason = f"route_exception:{type(exc).__name__}"
+            return _localize_output_layer({
+                "ideas": _safe_fallback_ideas(reason=fallback_reason),
+                "archive": [],
+                "market": _safe_market_contracts(list(DEFAULT_PAIRS)),
+                "ok": False,
+                "diagnostics": {"error": str(exc), "reason": fallback_reason},
+            })
 
     @router.get("/api/ideas")
     async def api_ideas():
