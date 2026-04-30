@@ -1872,10 +1872,16 @@
       svg.style.inset = "0";
       overlay.appendChild(svg);
 
-      const xByIndex = (index) => chart.timeScale().logicalToCoordinate(index) ?? 0;
+      const timeToX = (time) => chart.timeScale().timeToCoordinate(time);
+      const xByIndex = (index) => {
+        const safeIndex = Math.max(0, Math.min(candles.length - 1, Math.round(Number(index) || 0)));
+        const byTime = timeToX(candles[safeIndex]?.time);
+        if (Number.isFinite(byTime)) return byTime;
+        return chart.timeScale().logicalToCoordinate(safeIndex) ?? 0;
+      };
       const yByPrice = (price) => series.priceToCoordinate(Number(price)) ?? 0;
 
-      const detected = detectMarkup(candles);
+      const detected = detectMarkup(candles, idea);
 
       for (const zone of detected.orderBlocks) {
         const isBreaker = zone.type === "breaker";
@@ -1909,14 +1915,7 @@
       }
 
       for (const pattern of detected.patterns) {
-        drawPattern(
-          svg,
-          pattern.points.map((p) => ({
-            x: xByIndex(p.index),
-            y: yByPrice(p.price),
-          })),
-          pattern.label
-        );
+        drawPatternShape(svg, pattern, xByIndex, yByPrice);
       }
 
       const note = document.getElementById("chartNote");
@@ -1987,37 +1986,119 @@
       svg.appendChild(text);
     }
 
-    function drawPattern(svg, points, label) {
-      if (!points || points.length < 3) return;
-      if (!points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) return;
+    function drawPatternShape(svg, pattern, xByIndex, yByPrice) {
+      if (!pattern || !Array.isArray(pattern.lines) || !pattern.lines.length) return;
 
-      const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-      polygon.setAttribute("points", points.map((p) => `${p.x},${p.y}`).join(" "));
-      polygon.setAttribute("fill", "rgba(244,114,182,0.14)");
-      polygon.setAttribute("stroke", "#ff5fb7");
-      polygon.setAttribute("stroke-width", "2");
-      polygon.setAttribute("stroke-dasharray", "5 5");
-      svg.appendChild(polygon);
+      for (const lineDef of pattern.lines) {
+        const p1 = lineDef?.p1;
+        const p2 = lineDef?.p2;
+        if (!p1 || !p2) continue;
+        const x1 = xByIndex(p1.index);
+        const y1 = yByPrice(p1.price);
+        const x2 = xByIndex(p2.index);
+        const y2 = yByPrice(p2.price);
+        if (![x1, y1, x2, y2].every(Number.isFinite)) continue;
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", x1);
+        line.setAttribute("y1", y1);
+        line.setAttribute("x2", x2);
+        line.setAttribute("y2", y2);
+        line.setAttribute("stroke", "#ff5fb7");
+        line.setAttribute("stroke-width", "4.2");
+        line.setAttribute("stroke-linecap", "round");
+        if (pattern.type === "liquidity_sweep") line.setAttribute("stroke-dasharray", "10 8");
+        svg.appendChild(line);
+      }
 
-      const last = points[points.length - 1];
-
+      const anchor = pattern.labelPoint || pattern.lines[0]?.p2 || pattern.lines[0]?.p1;
+      if (!anchor) return;
+      const tx = xByIndex(anchor.index);
+      const ty = yByPrice(anchor.price);
+      if (![tx, ty].every(Number.isFinite)) return;
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      text.setAttribute("x", last.x - 20);
-      text.setAttribute("y", last.y + 34);
+      text.setAttribute("x", tx + 8);
+      text.setAttribute("y", ty - 8);
       text.setAttribute("fill", "#ff5fb7");
-      text.setAttribute("font-size", "13");
+      text.setAttribute("font-size", "12");
       text.setAttribute("font-weight", "900");
-      text.textContent = label;
+      text.textContent = pattern.label || "Pattern";
       svg.appendChild(text);
     }
 
-    function detectMarkup(candles) {
+    function detectMarkup(candles, idea) {
+      const overlayPatterns = extractPatternLinesFromIdea(idea, candles).slice(-4);
       return {
         orderBlocks: detectOrderBlocks(candles).slice(-3),
         fvg: detectFvg(candles).slice(-3),
         liquidity: detectLiquidity(candles).slice(-4),
-        patterns: detectPatterns(candles).slice(-2),
+        patterns: overlayPatterns.length ? overlayPatterns : detectPatterns(candles).slice(-2),
       };
+    }
+
+    function extractPatternLinesFromIdea(idea, candles) {
+      const overlays = idea?.chart_overlays || idea?.chartOverlays || idea?.chart_data?.chart_overlays || idea?.chartData?.chart_overlays || {};
+      const rawPatterns = []
+        .concat(Array.isArray(overlays?.patterns) ? overlays.patterns : [])
+        .concat(Array.isArray(overlays?.structure_levels) ? overlays.structure_levels : [])
+        .concat(Array.isArray(idea?.patterns) ? idea.patterns : []);
+      const out = [];
+      for (const item of rawPatterns) {
+        const normalized = normalizePatternOverlay(item, candles.length);
+        if (normalized) out.push(normalized);
+      }
+      return out;
+    }
+
+    function normalizePatternOverlay(item, candlesLength) {
+      if (!item || typeof item !== "object") return null;
+      const pointsRaw = Array.isArray(item.points) ? item.points : Array.isArray(item.coordinates) ? item.coordinates : [];
+      if (pointsRaw.length < 2) return null;
+      const points = pointsRaw.map((point) => normalizePoint(point, candlesLength)).filter(Boolean);
+      if (points.length < 2) return null;
+      const typeRaw = String(item.pattern_type || item.type || item.kind || item.label || "").toLowerCase();
+      const isSweep = typeRaw.includes("sweep");
+      const type = isSweep ? "liquidity_sweep"
+        : typeRaw.includes("choch") || typeRaw.includes("bos") ? "bos_choch"
+          : typeRaw.includes("triangle") ? "triangle"
+            : typeRaw.includes("channel") ? "channel"
+              : typeRaw.includes("wedge") ? "wedge"
+                : "trendline";
+      return {
+        type,
+        label: String(item.label || item.name || item.pattern || type.toUpperCase()).slice(0, 34),
+        lines: buildPatternLines(type, points),
+        labelPoint: points[points.length - 1],
+      };
+    }
+
+    function normalizePoint(point, candlesLength) {
+      if (!point || typeof point !== "object") return null;
+      const price = toNumber(point.price ?? point.y ?? point.value);
+      if (!Number.isFinite(price)) return null;
+      const idxRaw = point.index ?? point.i ?? point.bar_index ?? point.x;
+      const index = Number.isFinite(Number(idxRaw)) ? Number(idxRaw) : null;
+      if (index === null) return null;
+      return { index: Math.max(0, Math.min(candlesLength - 1, Math.round(index))), price };
+    }
+
+    function buildPatternLines(type, points) {
+      if (type === "triangle" && points.length >= 3) {
+        return [
+          { p1: points[0], p2: points[1] },
+          { p1: points[1], p2: points[2] },
+          { p1: points[2], p2: points[0] },
+        ];
+      }
+      if ((type === "channel" || type === "wedge") && points.length >= 4) {
+        return [
+          { p1: points[0], p2: points[1] },
+          { p1: points[2], p2: points[3] },
+        ];
+      }
+      if ((type === "bos_choch" || type === "liquidity_sweep" || type === "trendline") && points.length >= 2) {
+        return [{ p1: points[0], p2: points[1] }];
+      }
+      return points.slice(1).map((p, idx) => ({ p1: points[idx], p2: p }));
     }
 
     function detectOrderBlocks(candles) {
