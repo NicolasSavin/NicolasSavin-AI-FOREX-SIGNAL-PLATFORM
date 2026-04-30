@@ -7,6 +7,9 @@ const NAV_ITEMS = [
   { path: "/", label: "Главная" },
   { path: "/ideas", label: "Идеи" },
   { path: "/analytics", label: "Аналитика" },
+  { path: "/news", label: "Новости", external: true },
+  { path: "/calendar", label: "Календарь", external: true },
+  { path: "/heatmap/page", label: "Тепловая карта", external: true },
 ];
 
 function normalizePath(rawPath) {
@@ -57,6 +60,7 @@ export default function App() {
                   key={item.path}
                   href={item.path}
                   onClick={(event) => {
+                    if (item.external) return;
                     event.preventDefault();
                     navigate(item.path);
                   }}
