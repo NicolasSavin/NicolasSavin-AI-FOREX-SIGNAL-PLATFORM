@@ -610,8 +610,11 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
     if tp is not None:
         levels.append({"type": "tp", "price": tp, "label": "TP"})
 
+    chart_payload = fetch_candles(symbol, tf, 160)
+    candles = chart_payload.get("candles") or []
+    action = str(idea.get("signal") or idea.get("final_signal") or "").upper() or None
+    annotations = build_chart_annotations(candles, symbol, action, entry)
     zones = []
-    annotations = idea.get("annotations") if isinstance(idea.get("annotations"), dict) else {}
 
     def add_zones(items, zone_type: str):
         for z in items or []:
@@ -636,7 +639,7 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
     add_zones(annotations.get("liquidity"), "liquidity")
     add_zones(annotations.get("breaker") or annotations.get("breakers"), "breaker")
 
-    patterns = annotations.get("patterns") or idea.get("patterns") or []
+    patterns = annotations.get("patterns") or []
     payload = {
         "symbol": symbol,
         "timeframe": tf,
@@ -645,7 +648,7 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
         "entry_zone": entry_zone,
         "zones": zones,
         "patterns": patterns,
-        "arrow": idea.get("trade_arrow"),
+        "arrow": annotations.get("trade_arrow"),
         "diagnostics": {
             "levels_count": len(levels),
             "zones_count": len(zones),
@@ -792,6 +795,23 @@ def api_debug_candles(symbol: str, tf: str, limit: int = 160):
         "last": candles[-1] if candles else None,
     }
 
+
+
+
+@app.get("/api/debug/annotations/{symbol}/{tf}")
+def api_debug_annotations(symbol: str, tf: str, limit: int = 160):
+    payload = fetch_candles(symbol, tf, limit)
+    candles = payload.get("candles") or []
+    annotations = build_chart_annotations(candles, symbol)
+    return {
+        "symbol": normalize_symbol(symbol),
+        "tf": tf.upper(),
+        "provider": payload.get("provider"),
+        "candles_count": len(candles),
+        "zones_count": sum(len(annotations.get(k) or []) for k in ["ob", "fvg", "liquidity", "breaker"]),
+        "patterns_count": len(annotations.get("patterns") or []),
+        "annotations": annotations,
+    }
 
 @app.get("/api/debug/dukascopy/{symbol}/{tf}")
 def api_debug_dukascopy(symbol: str, tf: str, limit: int = 160):
@@ -1111,7 +1131,9 @@ def build_timeframe_ideas(
             "candles": candles,
             "chart_data": {"candles": candles},
             "chartData": {"candles": candles},
-            "annotations": annotations,
+            "annotations": chart_annotations,
+        "patterns": chart_annotations.get("patterns") or [],
+        "trade_arrow": chart_annotations.get("trade_arrow"),
             "market_structure": structure,
             "summary": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
             "summary_ru": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
@@ -1153,6 +1175,7 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
     candles_payload = fetch_candles(symbol, tf, limit)
     candles = candles_payload.get("candles", [])
 
+    chart_annotations = build_chart_annotations(candles, symbol)
     annotations = build_annotations(candles)
     market_structure = build_market_structure(candles, annotations)
 
@@ -1171,7 +1194,9 @@ def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> d
         "candles": candles,
         "chart_data": {"candles": candles},
         "chartData": {"candles": candles},
-        "annotations": annotations,
+        "annotations": chart_annotations,
+        "patterns": chart_annotations.get("patterns") or [],
+        "trade_arrow": chart_annotations.get("trade_arrow"),
         "market_structure": market_structure,
         "warning_ru": candles_payload.get("warning_ru"),
         "providers_tried": candles_payload.get("providers_tried") or [],
@@ -1573,10 +1598,11 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
     providers_tried.append("mt4_bridge")
     mt4 = fetch_mt4_pushed_candles(symbol_norm, tf_norm, limit)
     if mt4.get("candles"):
-        mt4["providers_tried"] = providers_tried
-        mt4["cache_status"] = "live"
+        mt4["provider"] = "mt4_bridge"
         mt4["provider_priority"] = "primary"
         mt4["fallback_used"] = False
+        mt4["providers_tried"] = ["mt4_bridge"]
+        mt4["cache_status"] = "live"
         set_cached_candle_payload(cache_key, mt4)
         return mt4
 
@@ -1672,6 +1698,118 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
         }
     finally:
         IN_FLIGHT_FETCHES.pop(cache_key, None)
+
+
+def find_swings(candles: list[dict[str, Any]], left: int = 2, right: int = 2) -> dict[str, Any]:
+    swings = {"highs": [], "lows": []}
+    if len(candles) < left + right + 1:
+        return swings
+    for i in range(left, len(candles) - right):
+        try:
+            high = float(candles[i]["high"])
+            low = float(candles[i]["low"])
+            left_slice = candles[i - left:i]
+            right_slice = candles[i + 1:i + 1 + right]
+            if all(high >= float(x["high"]) for x in left_slice + right_slice):
+                swings["highs"].append({"index": i, "price": high, "time": candles[i].get("time")})
+            if all(low <= float(x["low"]) for x in left_slice + right_slice):
+                swings["lows"].append({"index": i, "price": low, "time": candles[i].get("time")})
+        except Exception:
+            continue
+    return swings
+
+
+def detect_fvg_zones(candles: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
+    recent = (candles or [])[-120:]
+    zones: list[dict[str, Any]] = []
+    for i in range(1, len(recent) - 1):
+        try:
+            c_prev, c_next = recent[i - 1], recent[i + 1]
+            prev_high = float(c_prev["high"])
+            prev_low = float(c_prev["low"])
+            next_low = float(c_next["low"])
+            next_high = float(c_next["high"])
+            if prev_high < next_low:
+                zones.append({"type": "fvg", "side": "bullish", "from_price": prev_high, "to_price": next_low, "from_time": c_prev.get("time"), "to_time": c_next.get("time"), "label": "FVG (Bullish)"})
+            if prev_low > next_high:
+                zones.append({"type": "fvg", "side": "bearish", "from_price": next_high, "to_price": prev_low, "from_time": c_prev.get("time"), "to_time": c_next.get("time"), "label": "FVG (Bearish)"})
+        except Exception:
+            continue
+    return zones[-limit:]
+
+
+def detect_liquidity_zones(candles: list[dict[str, Any]], limit: int = 8) -> list[dict[str, Any]]:
+    recent = (candles or [])[-120:]
+    if len(recent) < 10:
+        return []
+    swings = find_swings(recent, 2, 2)
+    highs, lows = swings.get("highs") or [], swings.get("lows") or []
+    zones = []
+    try:
+        max_high = max(float(c["high"]) for c in recent)
+        min_low = min(float(c["low"]) for c in recent)
+        close = float(recent[-1]["close"])
+        tol = max((max_high - min_low) * 0.0015, close * 0.00015)
+    except Exception:
+        return []
+
+    def cluster(points, side):
+        for i in range(len(points)):
+            base = points[i]
+            group = [p for p in points if abs(float(p["price"]) - float(base["price"])) <= tol]
+            if len(group) >= 2:
+                price = sum(float(g["price"]) for g in group) / len(group)
+                zones.append({"type": "liquidity", "side": side, "from_price": price - tol, "to_price": price + tol, "from_time": group[0].get("time"), "to_time": recent[-1].get("time"), "label": "Liquidity (EQL)"})
+
+    cluster(highs, "buy_side")
+    cluster(lows, "sell_side")
+    uniq = []
+    seen = set()
+    for z in zones:
+        key = (z["side"], round(z["from_price"], 6), round(z["to_price"], 6))
+        if key not in seen:
+            seen.add(key)
+            uniq.append(z)
+    return uniq[-limit:]
+
+
+def build_trade_arrow(signal: str | None, entry: float | None, candles: list[dict[str, Any]]) -> dict[str, Any] | None:
+    sig = str(signal or "").upper()
+    if sig not in {"BUY", "SELL"} or entry is None:
+        return None
+    t = (candles[-1].get("time") if candles else None)
+    return {"direction": "up" if sig == "BUY" else "down", "price": float(entry), "label": "BUY ↑" if sig == "BUY" else "SELL ↓", "time": t}
+
+
+def detect_chart_patterns(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    base = detect_patterns(candles)[-3:]
+    mapped = []
+    labels = {"double_top": ("Двойная вершина", "bearish"), "double_bottom": ("Двойное дно", "bullish"), "triangle": ("Клин", "neutral"), "flag": ("Флаг", "neutral")}
+    for p in base:
+        ptype = p.get("type")
+        mtype = "wedge" if ptype == "triangle" else ptype
+        ru, direction = labels.get(ptype, (ptype or "pattern", "neutral"))
+        mapped.append({"type": mtype, "label": ru, "direction": direction, "confidence": 0.62, "lines": [], "label_point": {"time": p.get("to_time"), "price": p.get("to_price")}})
+    return mapped[:3]
+
+
+def build_chart_annotations(candles: list[dict[str, Any]], symbol: str, signal: str | None = None, entry: float | None = None) -> dict[str, Any]:
+    result = {"ob": [], "fvg": [], "liquidity": [], "breaker": [], "patterns": [], "trade_arrow": None}
+    try:
+        recent = (candles or [])[-120:]
+        if len(recent) < 5:
+            return result
+        obs = detect_order_blocks(recent, limit=8)
+        breakers = detect_breaker_blocks(recent, obs)
+        result["ob"] = obs
+        result["fvg"] = detect_fvg_zones(recent)
+        result["liquidity"] = detect_liquidity_zones(recent)
+        result["breaker"] = breakers
+        result["patterns"] = detect_chart_patterns(recent)
+        result["trade_arrow"] = build_trade_arrow(signal, entry, recent)
+    except Exception:
+        return result
+    return result
 
 
 def build_annotations(candles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1923,7 +2061,7 @@ def validate_order_block(ob: dict[str, Any], candles: list[dict[str, Any]]) -> d
     has_displacement = bool(displacement.get("has_displacement"))
     has_fvg = bool(fvg.get("has_fvg"))
     quality = "strong" if has_displacement and has_fvg else "medium" if has_displacement else "weak"
-    is_valid = has_displacement and has_fvg
+    is_valid = quality in {"strong", "medium"}
     reason = (
         "OB подтверждён импульсом и FVG после зоны."
         if quality == "strong"
@@ -1943,7 +2081,7 @@ def validate_order_block(ob: dict[str, Any], candles: list[dict[str, Any]]) -> d
     }
 
 
-def detect_order_blocks(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def detect_order_blocks(candles: list[dict[str, Any]], limit: int = 8) -> list[dict[str, Any]]:
     zones = []
 
     for i in range(2, len(candles)):
@@ -1986,7 +2124,7 @@ def detect_order_blocks(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
 
     validated: list[dict[str, Any]] = []
-    for zone in zones[-8:]:
+    for zone in zones[-max(1, limit):]:
         validation = validate_order_block(zone, candles)
         zone["validation"] = validation
         zone["is_valid"] = validation.get("is_valid", False)
