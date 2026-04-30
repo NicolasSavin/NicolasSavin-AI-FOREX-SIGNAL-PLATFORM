@@ -1672,6 +1672,10 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
     tf_norm = str(tf or "M15").upper()
     cache_key = f"{symbol_norm}:{tf_norm}:{int(limit)}"
 
+    primary_provider = (DATA_PRIMARY_PROVIDER or "mt4_bridge").strip().lower()
+    if primary_provider not in {"mt4_bridge", "twelvedata", "dukascopy"}:
+        primary_provider = "mt4_bridge"
+
     providers_tried = []
     providers_tried.append("mt4_bridge")
     mt4 = fetch_mt4_pushed_candles(symbol_norm, tf_norm, limit)
@@ -1681,6 +1685,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
         mt4["fallback_used"] = False
         mt4["providers_tried"] = ["mt4_bridge"]
         mt4["cache_status"] = "live"
+        mt4["configured_primary_provider"] = primary_provider
         set_cached_candle_payload(cache_key, mt4)
         return mt4
 
@@ -1693,6 +1698,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
             "providers_tried": providers_tried + ["fresh_cache"],
             "provider_priority": "cache",
             "fallback_used": (fresh.get("provider") != "mt4_bridge"),
+            "configured_primary_provider": primary_provider,
         }
 
     errors = []
@@ -1709,6 +1715,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
                     "providers_tried": providers_tried + ["fresh_cache_waited"],
                     "provider_priority": "cache",
                     "fallback_used": (fresh_wait.get("provider") != "mt4_bridge"),
+                    "configured_primary_provider": primary_provider,
                 }
         stale_wait = get_cached_candle_payload(cache_key, STALE_CANDLE_CACHE_TTL_SECONDS)
         if stale_wait:
@@ -1719,6 +1726,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
                 "providers_tried": providers_tried + ["stale_cache_waited"],
                 "provider_priority": "stale_cache",
                 "fallback_used": True,
+                "configured_primary_provider": primary_provider,
             }
     IN_FLIGHT_FETCHES[cache_key] = time.time()
     try:
@@ -1732,6 +1740,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
                 td["provider_priority"] = "fallback"
                 td["fallback_used"] = True
                 td["fallback_reason"] = mt4.get("raw_error") or "mt4_unavailable"
+                td["configured_primary_provider"] = primary_provider
                 set_cached_candle_payload(cache_key, td)
                 return td
             errors.append({"twelvedata": td.get("raw_error") or td.get("warning_ru")})
@@ -1745,6 +1754,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
                 dk["provider_priority"] = "fallback"
                 dk["fallback_used"] = True
                 dk["fallback_reason"] = mt4.get("raw_error") or "mt4_unavailable"
+                dk["configured_primary_provider"] = primary_provider
                 set_cached_candle_payload(cache_key, dk)
                 return dk
             errors.append({"dukascopy": dk.get("raw_error") or dk.get("warning_ru")})
@@ -1758,6 +1768,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
                 "cache_status": "stale_fallback",
                 "provider_priority": "stale_cache",
                 "fallback_used": True,
+                "configured_primary_provider": primary_provider,
                 "warning_ru": "MT4 bridge и резервные провайдеры недоступны, показаны последние реальные свечи из кеша.",
                 "raw_error": errors,
             }
@@ -1773,6 +1784,7 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
             "fallback_used": True,
             "warning_ru": "Нет свежих данных MT4 bridge и резервных провайдеров.",
             "raw_error": errors,
+            "configured_primary_provider": primary_provider,
         }
     finally:
         IN_FLIGHT_FETCHES.pop(cache_key, None)
