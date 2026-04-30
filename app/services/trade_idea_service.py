@@ -5,6 +5,7 @@ from hashlib import sha1
 import json
 import logging
 import os
+import random
 import re
 from threading import Lock
 from typing import Any
@@ -104,6 +105,8 @@ class TradeIdeaService:
         self.legacy_store = JsonStorage("signals_data/market_ideas.json", {"updated_at_utc": None, "ideas": []})
         self.narrative_llm = IdeaNarrativeLLMService()
         self.narrative_refresh_cooldown_seconds = NARRATIVE_REFRESH_COOLDOWN_SECONDS
+        self._grok_reasoning_cache_ttl_seconds = max(60, min(300, int(os.getenv("GROK_REASONING_CACHE_TTL_SECONDS", "120"))))
+        self._grok_reasoning_cache: dict[str, dict[str, Any]] = {}
         self._refresh_lock = Lock()
         self._refresh_in_progress = False
 
@@ -4277,6 +4280,89 @@ class TradeIdeaService:
             direct_text=direct_clean,
         )
 
+    def generate_grok_reasoning(
+        self,
+        *,
+        symbol: str,
+        signal: str,
+        entry: str,
+        sl: str,
+        tp: str,
+        selected_zone_type: str,
+        annotations: dict[str, Any],
+        timeframe_ideas: dict[str, Any],
+        htf_context: dict[str, Any],
+        latest_candle_time: str,
+    ) -> dict[str, Any]:
+        cache_key = "|".join([symbol, signal, entry, sl, tp, selected_zone_type, latest_candle_time])
+        now_ts = datetime.now(timezone.utc).timestamp()
+        cached = self._grok_reasoning_cache.get(cache_key)
+        if cached and float(cached.get("expires_at", 0)) > now_ts:
+            return cached["payload"]
+
+        payload = self._build_local_dynamic_reasoning(
+            symbol=symbol,
+            signal=signal,
+            entry=entry,
+            sl=sl,
+            tp=tp,
+            selected_zone_type=selected_zone_type,
+            annotations=annotations,
+            timeframe_ideas=timeframe_ideas,
+            htf_context=htf_context,
+        )
+        self._grok_reasoning_cache[cache_key] = {"expires_at": now_ts + self._grok_reasoning_cache_ttl_seconds, "payload": payload}
+        return payload
+
+    @staticmethod
+    def _build_local_dynamic_reasoning(
+        *,
+        symbol: str,
+        signal: str,
+        entry: str,
+        sl: str,
+        tp: str,
+        selected_zone_type: str,
+        annotations: dict[str, Any],
+        timeframe_ideas: dict[str, Any],
+        htf_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        side = str(signal or "").upper()
+        h4 = str((htf_context.get("H4") or {}).get("direction") or "").lower()
+        d1 = str((htf_context.get("D1") or {}).get("direction") or "").lower()
+        w1 = str((htf_context.get("W1") or {}).get("direction") or "").lower()
+        trends = [x for x in [h4, d1, w1] if x in {"bullish", "bearish"}]
+        dominant = trends[0] if trends and all(t == trends[0] for t in trends) else "mixed"
+        liq = annotations.get("liquidity") if isinstance(annotations.get("liquidity"), dict) else {}
+        above = str(liq.get("above") or liq.get("eqh") or liq.get("buy_side") or "верхняя ликвидность")
+        below = str(liq.get("below") or liq.get("eql") or liq.get("sell_side") or "нижняя ликвидность")
+        sweep = str(liq.get("sweep") or annotations.get("liquidity_sweep") or "").strip()
+        openings = ["Сейчас структура подсказывает", "По текущему сценарию видно", "В этой идее ключевое", "На текущем участке рынка"]
+        s1 = random.choice(openings)
+        if side == "BUY":
+            trend_line = "это continuation вверх" if dominant == "bullish" else "это рискованный коррекционный long против HTF" if dominant == "bearish" else "HTF смешанный, поэтому нужен дополнительный триггер"
+            text = (
+                f"{s1}: {symbol} после смещения к {below} собирал sell-side ликвидность и реагирует от зоны {selected_zone_type or 'demand/OB/FVG'} около {entry}. "
+                f"Причина входа BUY — после снятия ликвидности снизу цена удерживает рабочую область, а дисбаланс рядом с входом может дать ребаланс перед импульсом. "
+                f"По H4/D1/W1 контексту {trend_line}; цель сценария — движение к {above} и далее к {tp}, отмена при уходе ниже {sl}."
+            )
+        else:
+            trend_line = "это continuation вниз" if dominant == "bearish" else "это рискованный коррекционный short против HTF" if dominant == "bullish" else "HTF смешанный, поэтому сначала ждём подтверждение"
+            text = (
+                f"{s1}: {symbol} после смещения к {above} собирал buy-side ликвидность и реагирует от зоны {selected_zone_type or 'supply/OB/FVG'} около {entry}. "
+                f"Причина входа SELL — после снятия ликвидности сверху цена слабеет в зоне предложения, а дисбаланс выше входа может быть зоной добора перед снижением. "
+                f"По H4/D1/W1 контексту {trend_line}; целевая ликвидность остаётся у {below} с ориентиром на {tp}, сценарий отменяется выше {sl}."
+            )
+        if sweep:
+            text += f" Дополнительно отмечен sweep: {sweep}."
+        text = re.sub(r"\s+", " ", text).strip()
+        return {
+            "text": text,
+            "narrative_source": "local_dynamic",
+            "htf_context_used": bool(trends),
+            "liquidity_context_used": bool(liq or sweep),
+        }
+
     @staticmethod
     def _sentence_count(text: str) -> int:
         return len([part for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part.strip()])
@@ -5164,8 +5250,25 @@ class TradeIdeaService:
                 raw_source = str(raw_narrative_source or "").strip().lower()
                 resolved_source = "grok" if raw_source == "grok" else "model"
             is_fallback_narrative = resolved_source == "fallback_template"
+            htf_context = {
+                "H4": (row.get("timeframe_ideas") or {}).get("H4", {}) if isinstance(row.get("timeframe_ideas"), dict) else {},
+                "D1": (row.get("timeframe_ideas") or {}).get("D1", {}) if isinstance(row.get("timeframe_ideas"), dict) else {},
+                "W1": (row.get("timeframe_ideas") or {}).get("W1", {}) if isinstance(row.get("timeframe_ideas"), dict) else {},
+            }
+            local_reasoning = self.generate_grok_reasoning(
+                symbol=symbol,
+                signal=str(row.get("signal") or ("BUY" if direction == "bullish" else "SELL" if direction == "bearish" else "WAIT")).upper(),
+                entry=entry,
+                sl=stop_loss,
+                tp=take_profit if take_profit != "—" else str(target),
+                selected_zone_type=str(row.get("selected_zone_type") or row.get("entry_source") or ""),
+                annotations=row.get("annotations") if isinstance(row.get("annotations"), dict) else {},
+                timeframe_ideas=row.get("timeframe_ideas") if isinstance(row.get("timeframe_ideas"), dict) else {},
+                htf_context=htf_context,
+                latest_candle_time=str(row.get("latest_candle_time") or row.get("updated_at") or ""),
+            )
             if not has_model_narrative:
-                full_text = self._build_full_text(
+                full_text = local_reasoning.get("text") or self._build_full_text(
                     row,
                     summary=str(summary),
                     idea_context=str(idea_context),
@@ -5365,7 +5468,9 @@ class TradeIdeaService:
                         "narrative_structured": row.get("narrative_structured") or detail_brief.get("narrative_structured"),
                         "update_explanation": row.get("update_explanation") or row.get("update_summary") or "",
                         "update_reason": row.get("update_reason") or "",
-                        "narrative_source": resolved_source,
+                        "narrative_source": "local_dynamic" if (not has_model_narrative and local_reasoning.get("text")) else resolved_source,
+                        "htf_context_used": bool(local_reasoning.get("htf_context_used")),
+                        "liquidity_context_used": bool(local_reasoning.get("liquidity_context_used")),
                         "narrative_quality": narrative_quality,
                         "narrative_uniqueness_hash": self._narrative_uniqueness_hash(
                             symbol=symbol,
