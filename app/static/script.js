@@ -21,6 +21,14 @@ let knownSignalIds = new Set();
 let knownNewsIds = new Set();
 let audioContext = null;
 let audioUnlocked = false;
+let speechVoice = null;
+
+const SIGNAL_SPEECH_SYMBOLS = {
+  EURUSD: 'евродоллар',
+  USDJPY: 'доллар йена',
+  GBPUSD: 'фунт доллар',
+  XAUUSD: 'золото',
+};
 
 function unlockAudio() {
   audioUnlocked = true;
@@ -861,14 +869,57 @@ function playNewsNotification() {
   playTone({ startFrequency: 620, endFrequency: 780, duration: 0.5, type: 'sine' });
 }
 
+function selectRussianSpeechVoice() {
+  if (!window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+
+  return voices.find((voice) => String(voice.lang || '').toLowerCase().startsWith('ru'))
+    || voices.find((voice) => String(voice.lang || '').toLowerCase().includes('ru'))
+    || voices[0];
+}
+
+function buildSignalSpeechText(signal) {
+  const symbol = String(signal?.symbol || '').toUpperCase();
+  const action = String(signal?.action || '').toUpperCase();
+  const spokenSymbol = SIGNAL_SPEECH_SYMBOLS[symbol];
+  if (!spokenSymbol) return null;
+  if (!['BUY', 'SELL'].includes(action)) return null;
+  const spokenAction = action === 'BUY' ? 'покупка' : 'продажа';
+  return `${spokenSymbol} ${spokenAction}`;
+}
+
+function speakSignalNotification(signals) {
+  if (!audioUnlocked || !window.speechSynthesis) return;
+  const phrases = signals.map(buildSignalSpeechText).filter(Boolean);
+  if (!phrases.length) return;
+
+  window.speechSynthesis.cancel();
+  if (!speechVoice) {
+    speechVoice = selectRussianSpeechVoice();
+  }
+
+  const utterance = new SpeechSynthesisUtterance(phrases.join('. '));
+  utterance.lang = 'ru-RU';
+  utterance.rate = 1.08;
+  utterance.pitch = 1.15;
+  utterance.volume = 1;
+  if (speechVoice) {
+    utterance.voice = speechVoice;
+  }
+  window.speechSynthesis.speak(utterance);
+}
+
 function notifyAboutNewSignals(signals) {
   const currentIds = new Set(signals.map((signal) => signal.signal_id));
-  const hasFreshTradableSignal = signals.some(
+  const freshTradableSignals = signals.filter(
     (signal) => signal.action !== 'NO_TRADE' && !knownSignalIds.has(signal.signal_id),
   );
+  const hasFreshTradableSignal = freshTradableSignals.length > 0;
 
   if (knownSignalIds.size && hasFreshTradableSignal) {
     playSignalNotification();
+    speakSignalNotification(freshTradableSignals);
   }
 
   knownSignalIds = currentIds;
@@ -897,6 +948,12 @@ function refreshCurrentPage() {
 }
 
 window.addEventListener('load', () => {
+  if (window.speechSynthesis) {
+    speechVoice = selectRussianSpeechVoice();
+    window.speechSynthesis.onvoiceschanged = () => {
+      speechVoice = selectRussianSpeechVoice();
+    };
+  }
   refreshCurrentPage();
   window.setInterval(refreshCurrentPage, refreshIntervalMs);
   window.setInterval(refreshLivePrices, livePriceRefreshMs);
