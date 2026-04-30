@@ -1,6 +1,17 @@
 const ideasContainer = document.getElementById("ideasContainer");
 const ideasUpdatedAt = document.getElementById("ideasUpdatedAt");
 
+const VOICE_STORAGE_KEY = "voice_notifications_enabled";
+const VOICE_REPEAT_WINDOW_MS = 60000;
+const VOICE_DEBOUNCE_MS = 1200;
+const VOICE_MAX_QUEUE = 3;
+
+let hasLoadedIdeasOnce = false;
+let previousIdeasState = new Map();
+let voiceDebounceTimer = null;
+let voicePendingQueue = [];
+let recentVoiceMessages = new Map();
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -40,6 +51,136 @@ function normalizeChartImageUrl(url) {
   if (raw.startsWith("static/")) return `/${raw}`;
   if (raw.startsWith("./")) return `/${raw.slice(2)}`;
   return `/static/${raw.replace(/^\/+/, "")}`;
+}
+
+function createIdeaStableKey(idea) {
+  const explicitId = idea?.id ?? idea?.idea_id ?? idea?.uid ?? idea?._id;
+  if (explicitId !== undefined && explicitId !== null && String(explicitId).trim()) {
+    return `id:${String(explicitId).trim()}`;
+  }
+  const symbol = String(idea?.instrument || idea?.symbol || "").trim();
+  const signal = String(idea?.signal || idea?.label || "").trim();
+  const entry = String(idea?.entry ?? "").trim();
+  const sl = String(idea?.sl ?? idea?.stop_loss ?? "").trim();
+  const tp = String(idea?.tp ?? idea?.target ?? "").trim();
+  return `fp:${symbol}|${signal}|${entry}|${sl}|${tp}`;
+}
+
+function createIdeaComparableState(idea) {
+  return {
+    status: String(idea?.status ?? "").trim(),
+    entry: String(idea?.entry ?? "").trim(),
+    sl: String(idea?.sl ?? idea?.stop_loss ?? "").trim(),
+    tp: String(idea?.tp ?? idea?.target ?? "").trim(),
+    signal: String(idea?.signal ?? idea?.label ?? "").trim(),
+  };
+}
+
+function formatVoiceMessage(type, idea) {
+  const symbol = String(idea?.instrument || idea?.symbol || "инструмент").trim() || "инструмент";
+  const signal = String(idea?.signal || idea?.label || "сигнал").trim() || "сигнал";
+  const entry = String(idea?.entry ?? "").trim();
+  const sl = String(idea?.sl ?? idea?.stop_loss ?? "").trim();
+  const tp = String(idea?.tp ?? idea?.target ?? "").trim();
+
+  const prefix = type === "new" ? "Новая идея" : "Обновление идеи";
+  const parts = [`${prefix} ${symbol}.`, `${signal}.`];
+  if (entry) parts.push(`Вход ${entry}.`);
+  if (sl) parts.push(`Стоп ${sl}.`);
+  if (tp) parts.push(`Цель ${tp}.`);
+  return parts.join(" ");
+}
+
+function isVoiceEnabled() {
+  return localStorage.getItem(VOICE_STORAGE_KEY) === "1";
+}
+
+function setVoiceEnabled(isEnabled) {
+  localStorage.setItem(VOICE_STORAGE_KEY, isEnabled ? "1" : "0");
+}
+
+function updateVoiceToggleLabel(button) {
+  if (!button) return;
+  button.textContent = `Голос: ${isVoiceEnabled() ? "ON" : "OFF"}`;
+}
+
+function initVoiceToggle() {
+  if (!ideasUpdatedAt || document.getElementById("voiceToggleButton")) return;
+  if (localStorage.getItem(VOICE_STORAGE_KEY) !== "1" && localStorage.getItem(VOICE_STORAGE_KEY) !== "0") {
+    setVoiceEnabled(false);
+  }
+
+  const button = document.createElement("button");
+  button.id = "voiceToggleButton";
+  button.type = "button";
+  button.style.marginLeft = "10px";
+  button.style.padding = "4px 10px";
+  button.style.fontSize = "12px";
+  button.style.cursor = "pointer";
+  updateVoiceToggleLabel(button);
+
+  button.addEventListener("click", () => {
+    setVoiceEnabled(!isVoiceEnabled());
+    updateVoiceToggleLabel(button);
+  });
+
+  ideasUpdatedAt.insertAdjacentElement("afterend", button);
+}
+
+function enqueueVoiceMessage(message) {
+  if (!message || !("speechSynthesis" in window)) return;
+
+  const now = Date.now();
+  for (const [text, ts] of recentVoiceMessages.entries()) {
+    if (now - ts > VOICE_REPEAT_WINDOW_MS) recentVoiceMessages.delete(text);
+  }
+  if (recentVoiceMessages.has(message)) return;
+
+  recentVoiceMessages.set(message, now);
+  voicePendingQueue.push(message);
+  if (voicePendingQueue.length > VOICE_MAX_QUEUE) {
+    voicePendingQueue = voicePendingQueue.slice(-VOICE_MAX_QUEUE);
+  }
+
+  if (voiceDebounceTimer) clearTimeout(voiceDebounceTimer);
+  voiceDebounceTimer = setTimeout(() => {
+    const batch = voicePendingQueue.splice(0, VOICE_MAX_QUEUE);
+    batch.forEach((text) => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "ru-RU";
+      window.speechSynthesis.speak(utterance);
+    });
+  }, VOICE_DEBOUNCE_MS);
+}
+
+function collectVoiceNotifications(ideas) {
+  const nextState = new Map();
+  const notifications = [];
+
+  ideas.forEach((idea) => {
+    const key = createIdeaStableKey(idea);
+    const state = createIdeaComparableState(idea);
+    nextState.set(key, state);
+
+    const prev = previousIdeasState.get(key);
+    if (!prev) {
+      notifications.push(formatVoiceMessage("new", idea));
+      return;
+    }
+
+    if (
+      prev.status !== state.status ||
+      prev.entry !== state.entry ||
+      prev.sl !== state.sl ||
+      prev.tp !== state.tp ||
+      prev.signal !== state.signal
+    ) {
+      notifications.push(formatVoiceMessage("updated", idea));
+    }
+  });
+
+  previousIdeasState = nextState;
+  return notifications;
 }
 
 function renderIdeaCard(idea) {
@@ -187,12 +328,21 @@ function renderIdeas(payload) {
 async function loadIdeas() {
   try {
     const payload = await getJson("/ideas/market");
+    const ideas = Array.isArray(payload?.ideas) ? payload.ideas : [];
+    const voiceMessages = collectVoiceNotifications(ideas);
+
     renderIdeas(payload);
+
+    if (hasLoadedIdeasOnce && isVoiceEnabled()) {
+      voiceMessages.forEach(enqueueVoiceMessage);
+    }
+    hasLoadedIdeasOnce = true;
   } catch {
     ideasContainer.innerHTML = `<div class="ideas-loading">Не удалось загрузить идеи.</div>`;
     if (ideasUpdatedAt) ideasUpdatedAt.textContent = "Обновление: ошибка загрузки";
   }
 }
 
+initVoiceToggle();
 loadIdeas();
 setInterval(loadIdeas, 60000);
