@@ -428,16 +428,51 @@ def api_heatmap(mode: str = "core", tf: str = "M15"):
 
 @app.get("/api/signals")
 def api_signals():
-    signals = [build_signal(symbol, detail=False) for symbol in SYMBOLS]
-    archive = load_json(ARCHIVE_FILE)
+    signals: list[dict[str, Any]] = []
+    failed_symbols: list[str] = []
+
+    for symbol in SYMBOLS:
+        try:
+            signal = build_signal(symbol, detail=False)
+            if isinstance(signal, dict) and signal:
+                signals.append(signal)
+            else:
+                failed_symbols.append(symbol)
+                logger.exception("api_signals: invalid signal payload for %s", symbol)
+        except Exception:
+            failed_symbols.append(symbol)
+            logger.exception("api_signals: failed to build signal for %s", symbol)
+
+    if signals:
+        archive = load_json(ARCHIVE_FILE)
+        return {
+            "signals": signals,
+            "ideas": signals,
+            "archive": archive,
+            "statistics": build_stats(),
+            "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
+            "updated_at_utc": now_utc(),
+        }
 
     return {
-        "signals": signals,
-        "ideas": signals,
-        "archive": archive,
-        "statistics": build_stats(),
+        "signals": [],
+        "ideas": [],
+        "archive": [],
+        "statistics": {
+            "total": 0,
+            "buy": 0,
+            "sell": 0,
+            "wait": 0,
+            "active": 0,
+            "blocked": 0,
+        },
         "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
         "updated_at_utc": now_utc(),
+        "ok": False,
+        "diagnostics": {
+            "error": "Не удалось сформировать сигналы ни по одному символу.",
+            "failed_symbols": failed_symbols,
+        },
     }
 
 
@@ -1118,25 +1153,31 @@ def build_timeframe_ideas(
     decision,
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
+    decision_reason = getattr(decision, "reason", "n/a")
+
+    if not isinstance(candles_by_tf, dict):
+        return result
 
     for tf, candles in candles_by_tf.items():
         try:
             candles_safe = candles if isinstance(candles, list) else []
+            candles_safe = [row for row in candles_safe if isinstance(row, dict)]
             if not candles_safe:
                 continue
+
             annotations = build_annotations(candles_safe)
             if not isinstance(annotations, dict):
                 annotations = {}
+
             structure = build_market_structure(candles_safe, annotations)
             if not isinstance(structure, dict):
                 structure = {}
-            bias = structure.get("trend", "neutral")
-            chart_annotations = build_chart_annotations(candles_safe, symbol)
-            if chart_annotations is None:
-                chart_annotations = {}
-            if not isinstance(chart_annotations, dict):
-                chart_annotations = {}
-            patterns = chart_annotations.get("patterns") or []
+
+            bias = structure.get("trend") if isinstance(structure.get("trend"), str) else "neutral"
+
+            chart_annotations_raw = build_chart_annotations(candles_safe, symbol)
+            chart_annotations = chart_annotations_raw if isinstance(chart_annotations_raw, dict) else {}
+            patterns = chart_annotations.get("patterns")
             trade_arrow = chart_annotations.get("trade_arrow")
 
             result[tf] = {
@@ -1151,13 +1192,30 @@ def build_timeframe_ideas(
                 "chartData": {"candles": candles_safe},
                 "annotations": chart_annotations if isinstance(chart_annotations, dict) else {},
                 "patterns": patterns if isinstance(patterns, list) else [],
-                "trade_arrow": trade_arrow,
-                "market_structure": structure,
-                "summary": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
-                "summary_ru": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision.reason}",
+                "trade_arrow": trade_arrow if isinstance(trade_arrow, dict) else None,
+                "market_structure": structure if isinstance(structure, dict) else {},
+                "summary": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision_reason}",
+                "summary_ru": f"{symbol} {tf}: структура {bias}. HTF-фильтр: {decision_reason}",
             }
         except Exception:
-            continue
+            logger.exception("build_timeframe_ideas: failed for %s %s", symbol, tf)
+            result[tf] = {
+                "symbol": symbol,
+                "timeframe": tf,
+                "tf": tf,
+                "signal": "WAIT",
+                "direction": "neutral",
+                "bias": "neutral",
+                "candles": [],
+                "chart_data": {"candles": []},
+                "chartData": {"candles": []},
+                "annotations": {},
+                "patterns": [],
+                "trade_arrow": None,
+                "market_structure": {},
+                "summary": f"{symbol} {tf}: данные временно недоступны.",
+                "summary_ru": f"{symbol} {tf}: данные временно недоступны.",
+            }
 
     return result
 
