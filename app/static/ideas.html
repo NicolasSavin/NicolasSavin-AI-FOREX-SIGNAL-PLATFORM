@@ -91,6 +91,32 @@
       margin: 22px 0;
     }
 
+    .voice-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, #132d52, #0a1c35);
+      color: var(--text);
+      font-weight: 800;
+      user-select: none;
+      cursor: pointer;
+    }
+
+    .voice-toggle input {
+      accent-color: var(--blue);
+      cursor: pointer;
+    }
+
+    .voice-status {
+      margin: -8px 0 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
     .ideas-performance-panel {
       margin-top: 18px;
       padding: 14px;
@@ -992,7 +1018,12 @@
             <option value="CLOSED">Архив</option>
           </select>
           <button id="refreshBtn">Обновить</button>
+          <label class="voice-toggle" for="ideasVoiceToggle">
+            <input type="checkbox" id="ideasVoiceToggle" />
+            🔊 Озвучивать изменения
+          </label>
         </section>
+        <div id="ideasVoiceStatus" class="voice-status">Голос: выключен</div>
       </div>
 
       <aside class="ideas-performance-panel">
@@ -1109,6 +1140,139 @@
     const modalTitle = document.getElementById("modalTitle");
     const modalSubtitle = document.getElementById("modalSubtitle");
     const modalContent = document.getElementById("modalContent");
+    const ideasVoiceToggle = document.getElementById("ideasVoiceToggle");
+    const ideasVoiceStatus = document.getElementById("ideasVoiceStatus");
+
+    const IDEAS_VOICE_ENABLED_KEY = "ideas_voice_enabled";
+    const IDEAS_VOICE_SPEAK_INITIAL_KEY = "ideas_voice_speak_initial";
+    const IDEAS_VOICE_THROTTLE_MS = 20000;
+
+    let lastVoiceAt = 0;
+    let hasLoadedIdeasOnce = false;
+    let previousIdeasState = new Map();
+
+    function isVoiceEnabled() {
+      return localStorage.getItem(IDEAS_VOICE_ENABLED_KEY) === "true";
+    }
+
+    function setVoiceEnabled(enabled) {
+      localStorage.setItem(IDEAS_VOICE_ENABLED_KEY, enabled ? "true" : "false");
+      updateVoiceStatusText();
+    }
+
+    function shouldSpeakOnInitialLoad() {
+      return localStorage.getItem(IDEAS_VOICE_SPEAK_INITIAL_KEY) === "true";
+    }
+
+    function updateVoiceStatusText() {
+      if (!ideasVoiceStatus) return;
+      ideasVoiceStatus.textContent = `Голос: ${isVoiceEnabled() ? "включён" : "выключен"}`;
+    }
+
+    function normalizeIdeaSnapshot(idea) {
+      return {
+        symbol: String(idea?.symbol || idea?.pair || "").trim(),
+        action: normalizeSignal(idea?.action || idea?.final_signal || idea?.signal || idea?.direction || idea?.bias),
+        status: String(idea?.status || "").trim().toUpperCase(),
+        entry: String(idea?.entry ?? "").trim(),
+        sl: String(idea?.sl ?? idea?.stop_loss ?? "").trim(),
+        tp: String(idea?.tp ?? idea?.target ?? "").trim(),
+        confidence: String(idea?.confidence ?? "").trim(),
+      };
+    }
+
+    function ideaStableKey(idea) {
+      const explicit = idea?.id ?? idea?.idea_id ?? idea?.uid ?? idea?._id;
+      if (explicit !== undefined && explicit !== null && String(explicit).trim()) return `id:${String(explicit).trim()}`;
+      const snapshot = normalizeIdeaSnapshot(idea);
+      return `fp:${snapshot.symbol}|${snapshot.action}`;
+    }
+
+    function isIdeaChanged(previous, next) {
+      return (
+        previous.symbol !== next.symbol ||
+        previous.action !== next.action ||
+        previous.status !== next.status ||
+        previous.entry !== next.entry ||
+        previous.sl !== next.sl ||
+        previous.tp !== next.tp ||
+        previous.confidence !== next.confidence
+      );
+    }
+
+    function speakIdeaChange(idea) {
+      if (!window.speechSynthesis) return;
+      if (localStorage.getItem("ideas_voice_enabled") !== "true") return;
+
+      const symbol = idea.symbol || "инструмент";
+      const action = idea.action || idea.signal || "WAIT";
+      const status = idea.status || "";
+      const entry = idea.entry ? `Вход ${idea.entry}.` : "";
+      const sl = idea.sl ? `Стоп ${idea.sl}.` : "";
+      const tp = idea.tp ? `Тейк ${idea.tp}.` : "";
+
+      const text = `Новая идея по ${symbol}. Сигнал ${action}. ${status}. ${entry} ${sl} ${tp}`;
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "ru-RU";
+      utterance.rate = 1;
+      utterance.pitch = 1;
+
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function ideaPriority(idea) {
+      const status = String(idea?.status || "").toUpperCase();
+      const action = String(idea?.action || idea?.signal || "").toUpperCase();
+      if (status.includes("ACTIVE")) return 3;
+      if (action === "BUY" || action === "SELL") return 2;
+      return 1;
+    }
+
+    function collectChangedIdeas(ideas) {
+      const nextState = new Map();
+      const changedIdeas = [];
+
+      ideas.forEach((idea) => {
+        const key = ideaStableKey(idea);
+        const snapshot = normalizeIdeaSnapshot(idea);
+        nextState.set(key, snapshot);
+
+        const previous = previousIdeasState.get(key);
+        if (!previous || isIdeaChanged(previous, snapshot)) {
+          changedIdeas.push({
+            ...snapshot,
+            signal: snapshot.action,
+          });
+        }
+      });
+
+      previousIdeasState = nextState;
+      return changedIdeas;
+    }
+
+    function maybeSpeakIdeaChanges(ideas) {
+      const changedIdeas = collectChangedIdeas(ideas);
+      const allowInitialSpeak = shouldSpeakOnInitialLoad();
+      const canSpeakNow = Date.now() - lastVoiceAt >= IDEAS_VOICE_THROTTLE_MS;
+      const shouldSpeak = isVoiceEnabled() && (hasLoadedIdeasOnce || allowInitialSpeak) && canSpeakNow;
+      if (!shouldSpeak || !changedIdeas.length) return;
+      changedIdeas.sort((a, b) => ideaPriority(b) - ideaPriority(a));
+      speakIdeaChange(changedIdeas[0]);
+      lastVoiceAt = Date.now();
+    }
+
+    if (ideasVoiceToggle) {
+      if (localStorage.getItem(IDEAS_VOICE_ENABLED_KEY) === null) {
+        localStorage.setItem(IDEAS_VOICE_ENABLED_KEY, "false");
+      }
+      ideasVoiceToggle.checked = isVoiceEnabled();
+      updateVoiceStatusText();
+      ideasVoiceToggle.addEventListener("change", () => {
+        setVoiceEnabled(ideasVoiceToggle.checked);
+      });
+    }
 
     function getCurrentIdeaDescriptionText() {
       const idea = state.activeIdea || state.currentIdea || {};
@@ -1205,6 +1369,8 @@
 
         state.ideas = Array.isArray(data) ? data : (data.ideas || data.signals || []);
         state.archive = Array.isArray(data.archive) ? data.archive : [];
+        maybeSpeakIdeaChanges(state.ideas);
+        hasLoadedIdeasOnce = true;
 
         fillPairFilter([...state.ideas, ...state.archive]);
         render();
