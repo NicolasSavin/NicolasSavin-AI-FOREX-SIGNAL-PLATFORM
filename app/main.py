@@ -920,6 +920,137 @@ def api_debug_sentiment(symbol: str):
     return fetch_forex_client_sentiment(symbol)
 
 
+def resolve_structure_based_trade_levels(
+    symbol: str,
+    signal: str,
+    candles: list[dict[str, Any]] | None,
+    annotations: dict[str, Any] | None,
+    current_price: float | None,
+) -> dict[str, Any]:
+    signal_norm = str(signal or "").upper()
+    result: dict[str, Any] = {"entry": None, "sl": None, "tp": None, "entry_source": "fallback"}
+    if signal_norm not in {"BUY", "SELL"} or current_price is None:
+        result["fallback_reason"] = "invalid_signal_or_price"
+        return result
+
+    candles_safe = [c for c in (candles or []) if isinstance(c, dict)]
+    annotations_safe = annotations if isinstance(annotations, dict) else {}
+    tol = symbol_tolerance(symbol)
+    sl_buffer = safe_float(tol.get("sl_buffer")) or 0.0006
+    precision = 3 if "JPY" in symbol else 5
+
+    def parse_zone(zone: dict[str, Any]) -> dict[str, Any] | None:
+        if not isinstance(zone, dict):
+            return None
+        lo = safe_float(zone.get("from_price"))
+        hi = safe_float(zone.get("to_price"))
+        if lo is None or hi is None:
+            lo = safe_float(zone.get("from"))
+            hi = safe_float(zone.get("to"))
+        if lo is None or hi is None:
+            lo = safe_float(zone.get("low") or zone.get("bottom"))
+            hi = safe_float(zone.get("high") or zone.get("top"))
+        if lo is None or hi is None:
+            return None
+        low = min(lo, hi)
+        high = max(lo, hi)
+        side = str(zone.get("side") or zone.get("direction") or zone.get("type") or zone.get("label") or "").lower()
+        zt = str(zone.get("type") or zone.get("label") or "").lower()
+        return {"raw": zone, "low": low, "high": high, "side": side, "zone_type": zt}
+
+    def collect_candidates() -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        groups = [
+            ("order_block", annotations_safe.get("ob")),
+            ("fvg", annotations_safe.get("fvg") or annotations_safe.get("imbalances")),
+            ("breaker", annotations_safe.get("breaker") or annotations_safe.get("breakers")),
+        ]
+        for source, zones in groups:
+            for zone in (zones or []):
+                parsed = parse_zone(zone)
+                if not parsed:
+                    continue
+                side = parsed["side"]
+                zt = parsed["zone_type"]
+                bullish = any(x in side or x in zt for x in ["bullish", "demand"])
+                bearish = any(x in side or x in zt for x in ["bearish", "supply"])
+                if signal_norm == "BUY" and not bullish:
+                    continue
+                if signal_norm == "SELL" and not bearish:
+                    continue
+                if signal_norm == "BUY":
+                    if parsed["high"] > current_price:
+                        continue
+                    distance = current_price - parsed["high"]
+                else:
+                    if parsed["low"] < current_price:
+                        continue
+                    distance = parsed["low"] - current_price
+                candidates.append({**parsed, "source": source, "distance": distance})
+        return candidates
+
+    candidates = collect_candidates()
+    if not candidates:
+        result["fallback_reason"] = "no_valid_zone_on_correct_side"
+        return result
+
+    source_priority = {"order_block": 0, "fvg": 1, "breaker": 2}
+    selected = sorted(candidates, key=lambda z: (source_priority.get(z["source"], 9), z["distance"]))[0]
+    low = float(selected["low"])
+    high = float(selected["high"])
+    entry = (low + high) / 2.0
+    if signal_norm == "BUY":
+        sl = low - sl_buffer
+    else:
+        sl = high + sl_buffer
+
+    liquidity = annotations_safe.get("liquidity") or []
+    target: float | None = None
+    if signal_norm == "BUY":
+        above = []
+        for z in liquidity:
+            p1 = safe_float((z or {}).get("from_price") or (z or {}).get("from") or (z or {}).get("low"))
+            p2 = safe_float((z or {}).get("to_price") or (z or {}).get("to") or (z or {}).get("high"))
+            if p1 is None and p2 is None:
+                continue
+            lvl = max(x for x in [p1, p2] if x is not None)
+            if lvl > current_price:
+                above.append(lvl)
+        highs = sorted([safe_float(c.get("high")) for c in candles_safe if safe_float(c.get("high")) is not None and safe_float(c.get("high")) > current_price])
+        candidates_tp = sorted(above + highs)
+        target = candidates_tp[0] if candidates_tp else None
+    else:
+        below = []
+        for z in liquidity:
+            p1 = safe_float((z or {}).get("from_price") or (z or {}).get("from") or (z or {}).get("low"))
+            p2 = safe_float((z or {}).get("to_price") or (z or {}).get("to") or (z or {}).get("high"))
+            if p1 is None and p2 is None:
+                continue
+            lvl = min(x for x in [p1, p2] if x is not None)
+            if lvl < current_price:
+                below.append(lvl)
+        lows = sorted([safe_float(c.get("low")) for c in candles_safe if safe_float(c.get("low")) is not None and safe_float(c.get("low")) < current_price], reverse=True)
+        candidates_tp = sorted(below + lows, reverse=True)
+        target = candidates_tp[0] if candidates_tp else None
+
+    if entry is None or sl is None:
+        result["fallback_reason"] = "invalid_selected_zone"
+        return result
+
+    result.update(
+        {
+            "entry": round(entry, precision),
+            "sl": round(sl, precision),
+            "tp": round(target, precision) if target is not None else None,
+            "entry_source": selected["source"],
+            "selected_zone_type": selected["zone_type"],
+            "selected_zone_low": round(low, precision),
+            "selected_zone_high": round(high, precision),
+        }
+    )
+    return result
+
+
 def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
     symbol = normalize_symbol(symbol)
     try:
@@ -949,8 +1080,25 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
             if existing:
                 trade = existing
             else:
-                entry = current_price
-                sl, tp, rr = build_levels(symbol, entry, signal)
+                m15_candles_for_levels = candles_by_tf.get("M15") or []
+                annotations_for_levels = build_chart_annotations(m15_candles_for_levels, symbol, signal, current_price)
+                structure_levels = resolve_structure_based_trade_levels(
+                    symbol=symbol,
+                    signal=signal,
+                    candles=m15_candles_for_levels,
+                    annotations=annotations_for_levels,
+                    current_price=current_price,
+                )
+                entry = safe_float(structure_levels.get("entry"))
+                sl = safe_float(structure_levels.get("sl"))
+                tp = safe_float(structure_levels.get("tp"))
+                if entry is None or sl is None or tp is None:
+                    entry = current_price
+                    sl, tp, _ = build_levels(symbol, entry, signal)
+                    structure_levels["entry_source"] = "fallback"
+                    structure_levels["fallback_reason"] = structure_levels.get("fallback_reason") or "missing_structure_levels"
+                rr = abs((tp - entry) / max(abs(entry - sl), 1e-9)) if entry is not None and sl is not None and tp is not None else 1.5
+                logger.info("entry_source %s %s -> %s (%s)", symbol, signal, structure_levels.get("entry_source"), structure_levels.get("fallback_reason"))
 
                 trade = {
                     "id": trade_id,
@@ -964,6 +1112,10 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
                     "status": "ACTIVE",
                     "htf_context": decision.context,
                     "htf_reason": decision.reason,
+                    "entry_source": structure_levels.get("entry_source"),
+                    "selected_zone_type": structure_levels.get("selected_zone_type"),
+                    "selected_zone_low": structure_levels.get("selected_zone_low"),
+                    "selected_zone_high": structure_levels.get("selected_zone_high"),
                 }
 
                 active.append(trade)
@@ -1092,6 +1244,10 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
             "tp": trade.get("tp"),
             "tp_warning_ru": tp_warning_ru,
             "execution_safety": execution_safety,
+            "entry_source": trade.get("entry_source", "fallback"),
+            "selected_zone_type": trade.get("selected_zone_type"),
+            "selected_zone_low": trade.get("selected_zone_low"),
+            "selected_zone_high": trade.get("selected_zone_high"),
             "risk_reward": trade.get("rr"),
             "rr": trade.get("rr"),
             "summary": summary,
@@ -1384,6 +1540,25 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         sl = round(entry + avg_range * 1.2, 6)
         tp = round(entry - avg_range * 1.8, 6)
 
+    structure_levels = {"entry_source": "fallback"}
+    if action in {"BUY", "SELL"}:
+        annotations_for_levels = build_chart_annotations(candles, symbol_norm, action, last_close)
+        structure_levels = resolve_structure_based_trade_levels(
+            symbol=symbol_norm,
+            signal=action,
+            candles=candles,
+            annotations=annotations_for_levels,
+            current_price=last_close,
+        )
+        if safe_float(structure_levels.get("entry")) is not None:
+            entry = round(float(structure_levels["entry"]), 6)
+        if safe_float(structure_levels.get("sl")) is not None:
+            sl = round(float(structure_levels["sl"]), 6)
+        if safe_float(structure_levels.get("tp")) is not None:
+            tp = round(float(structure_levels["tp"]), 6)
+        else:
+            logger.info("build_signal_from_candles fallback TP %s %s: %s", symbol_norm, action, structure_levels.get("fallback_reason"))
+
     return {
         "id": f"{symbol_norm}-{action}",
         "symbol": symbol_norm,
@@ -1398,6 +1573,10 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         "stop_loss": sl,
         "tp": tp,
         "take_profit": tp,
+        "entry_source": structure_levels.get("entry_source", "fallback"),
+        "selected_zone_type": structure_levels.get("selected_zone_type"),
+        "selected_zone_low": structure_levels.get("selected_zone_low"),
+        "selected_zone_high": structure_levels.get("selected_zone_high"),
         "confidence": int(confidence),
         "trade_permission": bool(trade_permission),
         "provider": provider,
