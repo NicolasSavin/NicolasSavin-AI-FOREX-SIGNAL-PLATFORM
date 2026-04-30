@@ -4,6 +4,7 @@
 
 ## Что обновлено в версии 3.8
 - Добавлен единый `CanonicalMarketService` и интерфейс `RealMarketDataProvider` для всех рыночных endpoint: `GET /price/{symbol}`, `GET /market`, `GET /chart/{symbol}/{tf}`, а также `GET /api/price/{symbol}`, `GET /api/market`, `GET /api/canonical/chart/{symbol}/{tf}`.
+- Добавлен MT4 Candle Bridge: `POST /api/mt4/push-candles` принимает реальные broker OHLC, хранит ограниченный in-memory буфер (до 600 баров на symbol/timeframe) и делает MT4 первичным источником в `fetch_candles()` с безопасным fallback на cache/TwelveData/Dukascopy при stale/empty bridge.
 - Trade idea графики переведены на server-side snapshot pipeline: при создании идеи backend получает реальные OHLC candles, строит PNG через `matplotlib`, сохраняет файл в `/static/charts/{symbol}_{timeframe}_{timestamp}.png` и возвращает путь как `chartImageUrl` (повторная генерация в modal больше не выполняется).
 - Исправлено восстановление legacy ideas без `chartImageUrl`: при наличии реальных candles снапшот теперь строится независимо от устаревшего `chartSnapshotStatus=rate_limited`, а при ошибке рендера статус принудительно переводится в `snapshot_failed`.
 - Добавлен безопасный one-time maintenance endpoint `POST /api/ideas/recover-missing-chart-snapshots` для ручного восстановления старых идей без дублирования `idea_id` и без изменения lifecycle TP/SL.

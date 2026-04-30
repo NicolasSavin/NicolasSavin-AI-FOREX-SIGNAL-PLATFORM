@@ -57,6 +57,7 @@ HEATMAP_PAIRS = [
 HEATMAP_CORE_PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD"]
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "").strip()
+MT4_BRIDGE_TOKEN = os.getenv("MT4_BRIDGE_TOKEN", "").strip()
 TRADING_ECONOMICS_KEY = os.getenv("TRADING_ECONOMICS_KEY", "").strip()
 FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
 FOREX_CLIENT_SENTIMENT_URL = "https://forexclientsentiment.com/forex-sentiment"
@@ -73,6 +74,9 @@ MT4_SIGNALS_CACHE: dict[str, Any] = {"updated_at": None, "payload": None}
 MT4_SIGNALS_CACHE_TTL_SECONDS = 30
 MT4_MARKUP_CACHE: dict[str, dict[str, Any]] = {}
 MT4_MARKUP_CACHE_TTL_SECONDS = 60
+MT4_CANDLE_STORE: dict[str, dict[str, Any]] = {}
+MT4_CANDLE_STORE_MAX_BARS = 600
+MT4_CANDLE_FRESH_SECONDS = 180
 SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
 SENTIMENT_CACHE_TTL_SECONDS = 900
 
@@ -519,6 +523,50 @@ def api_mt4_signals():
     return payload
 
 
+@app.post("/api/mt4/push-candles")
+async def api_mt4_push_candles(request: Request):
+    payload = await request.json()
+    token = str(payload.get("token") or "").strip()
+    if not is_mt4_bridge_authorized(token):
+        return Response(content=json.dumps({"ok": False, "error": "unauthorized"}), media_type="application/json", status_code=401)
+
+    symbol = normalize_mt4_symbol(payload.get("symbol"))
+    tf = str(payload.get("timeframe") or "").upper().strip()
+    candles_raw = payload.get("candles")
+    if not symbol or not tf or not isinstance(candles_raw, list):
+        return {"ok": False, "error": "invalid_payload"}
+
+    incoming = candles_raw[:300]
+    by_time: dict[int, dict[str, Any]] = {}
+    for row in incoming:
+        if not isinstance(row, dict):
+            continue
+        ts = int(row.get("time") or 0)
+        op = safe_float(row.get("open"))
+        hi = safe_float(row.get("high"))
+        lo = safe_float(row.get("low"))
+        cl = safe_float(row.get("close"))
+        vol = safe_float(row.get("volume")) or 0.0
+        if ts <= 0 or op is None or hi is None or lo is None or cl is None:
+            continue
+        if hi < max(op, cl) or lo > min(op, cl) or lo > hi:
+            continue
+        by_time[ts] = {"time": ts, "datetime": datetime.fromtimestamp(ts, timezone.utc).isoformat(), "open": float(op), "high": float(hi), "low": float(lo), "close": float(cl), "volume": float(vol)}
+    normalized_candles = [by_time[ts] for ts in sorted(by_time.keys())]
+    if not normalized_candles:
+        return {"ok": False, "error": "invalid_candles"}
+
+    key = f"{symbol}:{tf}"
+    existing = MT4_CANDLE_STORE.get(key, {})
+    existing_candles = existing.get("candles") if isinstance(existing.get("candles"), list) else []
+    merged_map = {int(c["time"]): c for c in existing_candles if isinstance(c, dict) and safe_float(c.get("time")) is not None}
+    for candle in normalized_candles:
+        merged_map[int(candle["time"])] = candle
+    merged = [merged_map[ts] for ts in sorted(merged_map.keys())][-MT4_CANDLE_STORE_MAX_BARS:]
+    updated_at = datetime.now(timezone.utc)
+    MT4_CANDLE_STORE[key] = {"updated_at": updated_at, "candles": merged}
+    return {"ok": True, "symbol": symbol, "timeframe": tf, "received": len(incoming), "stored": len(merged), "updated_at_utc": updated_at.isoformat()}
+
 
 @app.get("/api/mt4/markup/{symbol}")
 def api_mt4_markup(symbol: str, tf: str = "M15"):
@@ -662,6 +710,24 @@ def api_debug_api_usage():
         "provider_last_request_at": PROVIDER_LAST_REQUEST_AT,
         "api_budget_mode": "basic_safe",
     }
+
+
+@app.get("/api/debug/mt4-bridge")
+def api_debug_mt4_bridge():
+    now = datetime.now(timezone.utc)
+    items = []
+    for key, value in MT4_CANDLE_STORE.items():
+        symbol, tf = key.split(":", 1) if ":" in key else (key, "")
+        candles = value.get("candles") if isinstance(value.get("candles"), list) else []
+        updated_at = value.get("updated_at")
+        age_seconds = None if not isinstance(updated_at, datetime) else round((now - updated_at).total_seconds(), 3)
+        items.append({"symbol": symbol, "timeframe": tf, "count": len(candles), "age_seconds": age_seconds, "first": candles[0] if candles else None, "last": candles[-1] if candles else None})
+    return {"items": items}
+
+
+@app.get("/api/debug/mt4-bridge/{symbol}/{tf}")
+def api_debug_mt4_bridge_pair(symbol: str, tf: str, limit: int = 160):
+    return fetch_mt4_pushed_candles(symbol, tf, limit)
 
 
 @app.get("/api/debug/candles/{symbol}/{tf}")
@@ -1133,6 +1199,62 @@ def set_cached_candle_payload(cache_key: str, payload: dict):
         trim_candle_cache()
 
 
+def normalize_mt4_symbol(symbol: str) -> str:
+    raw = normalize_symbol(symbol)
+    if len(raw) == 6:
+        return raw
+    if len(raw) > 6:
+        base = raw[:6]
+        quote = {"USD", "EUR", "JPY", "GBP", "CHF", "CAD", "AUD", "NZD"}
+        if base[:3] in quote and base[3:] in quote:
+            return base
+    return raw
+
+
+def is_mt4_bridge_authorized(token: str) -> bool:
+    if MT4_BRIDGE_TOKEN:
+        return token == MT4_BRIDGE_TOKEN
+    env_name = str(os.getenv("ENV") or os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
+    is_render = bool(os.getenv("RENDER"))
+    is_production = is_render or env_name in {"prod", "production"}
+    return not is_production
+
+
+def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
+    symbol_norm = normalize_mt4_symbol(symbol)
+    tf_norm = str(tf or "M15").upper().strip()
+    key = f"{symbol_norm}:{tf_norm}"
+    item = MT4_CANDLE_STORE.get(key)
+    if not item:
+        return {}
+    updated_at = item.get("updated_at")
+    if not isinstance(updated_at, datetime):
+        return {}
+    age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
+    candles = item.get("candles") if isinstance(item.get("candles"), list) else []
+    if age_seconds > MT4_CANDLE_FRESH_SECONDS:
+        return {
+            "candles": [],
+            "provider": "mt4_bridge",
+            "source_symbol": symbol_norm,
+            "interval": tf_norm,
+            "cache_status": "stale",
+            "warning_ru": "MT4 bridge не присылал свежие свечи, выполнен fallback на другие источники.",
+            "diagnostics": {"stored_count": len(candles), "age_seconds": round(age_seconds, 3)},
+        }
+    safe_limit = min(max(int(limit), 1), MT4_CANDLE_STORE_MAX_BARS)
+    sliced = candles[-safe_limit:]
+    return {
+        "candles": sliced,
+        "provider": "mt4_bridge",
+        "source_symbol": symbol_norm,
+        "interval": tf_norm,
+        "cache_status": "live",
+        "warning_ru": None,
+        "diagnostics": {"stored_count": len(candles), "age_seconds": round(age_seconds, 3)},
+    }
+
+
 def parse_td_values(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candles: list[dict[str, Any]] = []
     for item in reversed(values):
@@ -1372,6 +1494,12 @@ def fetch_candles(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, A
     symbol_norm = normalize_symbol(symbol)
     tf_norm = str(tf or "M15").upper()
     cache_key = f"{symbol_norm}:{tf_norm}:{int(limit)}"
+
+    mt4 = fetch_mt4_pushed_candles(symbol_norm, tf_norm, limit)
+    if mt4.get("candles"):
+        mt4["providers_tried"] = ["mt4_bridge"]
+        set_cached_candle_payload(cache_key, mt4)
+        return mt4
 
     fresh = get_cached_candle_payload(cache_key, candle_ttl_for_tf(tf_norm))
     if fresh:
