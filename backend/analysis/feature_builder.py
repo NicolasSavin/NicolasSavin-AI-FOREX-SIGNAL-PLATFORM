@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from statistics import mean
 
 from backend.pattern_detector import PatternDetector
 
@@ -10,6 +11,20 @@ logger = logging.getLogger(__name__)
 class FeatureBuilder:
     """Converts provider output to structured features (AI should not use raw prices directly)."""
 
+    def _swing_trend(self, highs: list[float], lows: list[float]) -> str:
+        if len(highs) < 6 or len(lows) < 6:
+            return "unknown"
+        recent_highs = highs[-6:]
+        recent_lows = lows[-6:]
+        higher_highs = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i] > recent_highs[i - 1])
+        higher_lows = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i] > recent_lows[i - 1])
+        lower_highs = sum(1 for i in range(1, len(recent_highs)) if recent_highs[i] < recent_highs[i - 1])
+        lower_lows = sum(1 for i in range(1, len(recent_lows)) if recent_lows[i] < recent_lows[i - 1])
+        if higher_highs >= 3 and higher_lows >= 3:
+            return "up"
+        if lower_highs >= 3 and lower_lows >= 3:
+            return "down"
+        return "unknown"
     def __init__(self) -> None:
         self.pattern_detector = PatternDetector()
 
@@ -154,6 +169,67 @@ class FeatureBuilder:
         atr_percent = atr / max(closes[-1], 1e-9) * 100
         feature_completeness = "complete" if candle_count >= 20 and data_status in {"real", "delayed"} else "partial"
 
+        body_sizes = [abs(float(c["close"]) - float(c["open"])) for c in candles[-10:] if c.get("open") is not None]
+        avg_body = mean(body_sizes) if body_sizes else 0.0
+        strong_body_threshold = avg_body * 1.2
+        displacement_up = 0
+        displacement_down = 0
+        for candle in candles[-8:]:
+            try:
+                body = abs(float(candle["close"]) - float(candle["open"]))
+                if body < strong_body_threshold:
+                    displacement_up = 0
+                    displacement_down = 0
+                    continue
+                if float(candle["close"]) > float(candle["open"]):
+                    displacement_up += 1
+                    displacement_down = 0
+                elif float(candle["close"]) < float(candle["open"]):
+                    displacement_down += 1
+                    displacement_up = 0
+            except (TypeError, ValueError, KeyError):
+                continue
+
+        has_displacement = displacement_up >= 3 or displacement_down >= 3
+        displacement_side = "bullish" if displacement_up >= 3 else ("bearish" if displacement_down >= 3 else "none")
+
+        fvg_zone = None
+        has_fvg = False
+        for i in range(max(2, candle_count - 12), candle_count):
+            if i < 2:
+                continue
+            c1 = candles[i - 2]
+            c3 = candles[i]
+            try:
+                high_1 = float(c1["high"])
+                low_1 = float(c1["low"])
+                high_3 = float(c3["high"])
+                low_3 = float(c3["low"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            if low_3 > high_1:
+                has_fvg = True
+                fvg_zone = {"side": "bullish", "top": low_3, "bottom": high_1}
+            elif high_3 < low_1:
+                has_fvg = True
+                fvg_zone = {"side": "bearish", "top": low_1, "bottom": high_3}
+
+        swing_trend = self._swing_trend(highs, lows)
+        trend = swing_trend if swing_trend != "unknown" else ("up" if ma_fast >= ma_slow else "down")
+
+        ob_window = candles[-8:]
+        order_block_zone = None
+        if trend == "up":
+            bearish_candles = [c for c in ob_window if float(c["close"]) < float(c["open"])]
+            if bearish_candles:
+                c = bearish_candles[-1]
+                order_block_zone = {"type": "bullish", "top": float(c["high"]), "bottom": float(c["low"])}
+        elif trend == "down":
+            bullish_candles = [c for c in ob_window if float(c["close"]) > float(c["open"])]
+            if bullish_candles:
+                c = bullish_candles[-1]
+                order_block_zone = {"type": "bearish", "top": float(c["high"]), "bottom": float(c["low"])}
+
         bullish_patterns = int(summary.get("bullishPatternsCount", 0) or 0)
         bearish_patterns = int(summary.get("bearishPatternsCount", 0) or 0)
         pattern_score = float(summary.get("patternScore", 0.0) or 0.0)
@@ -168,6 +244,7 @@ class FeatureBuilder:
         return {
             "status": "ready",
             "trend": trend,
+            "swing_trend": swing_trend,
             "bos": (
                 bool(bos_window_highs)
                 and bool(bos_window_lows)
@@ -180,7 +257,11 @@ class FeatureBuilder:
                 and (highs[-1] > max(liquidity_window_highs) or lows[-1] < min(liquidity_window_lows))
             ),
             "order_block": "bullish" if trend == "up" else "bearish",
-            "fvg": abs(closes[-1] - closes[-2]) > abs(prev_delta),
+            "order_block_zone": order_block_zone,
+            "fvg": has_fvg,
+            "fvg_zone": fvg_zone,
+            "displacement": has_displacement,
+            "displacement_side": displacement_side,
             "divergence": "none",
             "pattern": "engulfing" if (closes[-1] - closes[-2]) * prev_delta < 0 else "inside_bar",
             "wave_context": "импульс вверх" if trend == "up" else "коррекция",

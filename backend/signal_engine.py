@@ -214,6 +214,48 @@ class SignalEngine:
             "risk_filter_passed": None,
             "live_snapshot_available": mtf.get("data_status") in {"real", "delayed"},
         }
+        htf_zone = self._resolve_htf_zone(htf_features)
+        ltf_confirmation = self._ltf_confirmation(ltf_features)
+        if not htf_zone["exists"]:
+            return self._no_trade(
+                symbol=symbol,
+                timeframe=timeframe,
+                snapshot=mtf,
+                reason="WAIT: на HTF не найдена валидная SMC/ICT зона (OB/FVG).",
+                chart_patterns=mtf_patterns,
+                pattern_summary=mtf_pattern_summary,
+            )
+        if mtf_features.get("atr_percent", 0.0) < 0.12:
+            return self._no_trade(
+                symbol=symbol,
+                timeframe=timeframe,
+                snapshot=mtf,
+                reason="WAIT: низкая волатильность, импульс недостаточный для входа.",
+                chart_patterns=mtf_patterns,
+                pattern_summary=mtf_pattern_summary,
+            )
+        price = float(mtf.get("close") or 0.0)
+        if price <= 0:
+            return self._no_trade(symbol=symbol, timeframe=timeframe, snapshot=mtf, reason="WAIT: нет валидной цены.")
+        if not (htf_zone["bottom"] <= price <= htf_zone["top"]):
+            return self._no_trade(
+                symbol=symbol,
+                timeframe=timeframe,
+                snapshot=mtf,
+                reason="WAIT: цена ещё не вернулась в HTF зону интереса.",
+                chart_patterns=mtf_patterns,
+                pattern_summary=mtf_pattern_summary,
+            )
+        if not ltf_confirmation["has_structure"]:
+            return self._no_trade(
+                symbol=symbol,
+                timeframe=timeframe,
+                snapshot=mtf,
+                reason="WAIT: на LTF нет BOS/CHoCH или локального импульса.",
+                chart_patterns=mtf_patterns,
+                pattern_summary=mtf_pattern_summary,
+            )
+
         if analysis_mode == "professional" and not has_confluence:
             return self._no_trade(
                 symbol=symbol,
@@ -229,14 +271,23 @@ class SignalEngine:
 
         action = infer_action(mtf_features["trend"])
         pattern_impact = self.pattern_detector.signal_impact(action=action, summary=mtf_pattern_summary)
-        price = mtf["close"]
         atr_percent = max(mtf_features.get("atr_percent", 0.2), 0.2)
         level_plan = build_trade_levels(action=action, price=price, atr_percent=atr_percent)
-        stop = level_plan["stop"]
-        take = level_plan["take"]
-        rr = level_plan["risk_reward"]
+        structure_pad = max(price * 0.0015, (mtf_features.get("atr_percent", 0.2) / 100) * price * 0.5)
+        if action == "BUY":
+            stop = min(level_plan["stop"], htf_zone["bottom"] - structure_pad)
+            take = max(level_plan["take"], htf_zone["liquidity_top"])
+        else:
+            stop = max(level_plan["stop"], htf_zone["top"] + structure_pad)
+            take = min(level_plan["take"], htf_zone["liquidity_bottom"])
+        if stop <= 0:
+            stop = max(1e-6, abs(price) * 0.95)
+        if take <= 0:
+            take = max(1e-6, abs(price) * 1.05)
+        rr = abs((take - price) / max(abs(price - stop), 1e-9))
 
         confidence = 62
+        confidence = 78 if htf_zone["exists"] and ltf_confirmation["has_structure"] else 45
         if confluence_flags["htf_alignment"]:
             confidence += 7
         if confluence_flags["ltf_pattern_confirmation"] and ltf_features.get("pattern") == "engulfing":
@@ -747,6 +798,36 @@ class SignalEngine:
                 "signal_created": False,
                 "reason_if_skipped": "no_close_price_for_default_signal",
             },
+        }
+
+    def _resolve_htf_zone(self, htf_features: dict) -> dict:
+        ob_zone = htf_features.get("order_block_zone") or {}
+        fvg_zone = htf_features.get("fvg_zone") or {}
+        zone = ob_zone or fvg_zone
+        if not zone:
+            return {"exists": False, "top": 0.0, "bottom": 0.0, "liquidity_top": 0.0, "liquidity_bottom": 0.0}
+        top = float(zone.get("top", 0.0) or 0.0)
+        bottom = float(zone.get("bottom", 0.0) or 0.0)
+        if top < bottom:
+            top, bottom = bottom, top
+        pad = max((top - bottom) * 1.5, 1e-6)
+        return {
+            "exists": top > 0 and bottom > 0,
+            "top": top,
+            "bottom": bottom,
+            "liquidity_top": top + pad,
+            "liquidity_bottom": max(1e-6, bottom - pad),
+        }
+
+    def _ltf_confirmation(self, ltf_features: dict) -> dict:
+        has_structure = bool(ltf_features.get("bos") or ltf_features.get("choch"))
+        has_impulse = bool(ltf_features.get("displacement") or ltf_features.get("delta_percent", 0.0) >= 0.12)
+        has_micro_fvg = bool(ltf_features.get("fvg"))
+        return {
+            "has_structure": has_structure and has_impulse,
+            "bos_or_choch": has_structure,
+            "local_impulse": has_impulse,
+            "micro_fvg": has_micro_fvg,
         }
 
     def _resolve_scenario_type(self, mtf_features: dict) -> str:
