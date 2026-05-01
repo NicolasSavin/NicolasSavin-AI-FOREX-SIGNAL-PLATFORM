@@ -148,9 +148,10 @@ def analytics_page():
 
 @app.post("/api/chat")
 async def api_chat(payload: ChatRequest):
+    use_fundamental = bool(getattr(payload, "context", {}).get("use_fundamental", False))
     analytics_pair = _extract_analytics_pair(payload.message)
     if analytics_pair:
-        return JSONResponse(await _build_mt4_chat_analytics_response(analytics_pair))
+        return JSONResponse(await _build_mt4_chat_analytics_response(analytics_pair, use_fundamental))
     return await chat_service.chat(payload)
 
 
@@ -164,7 +165,7 @@ def _extract_analytics_pair(message: str) -> str | None:
     return None
 
 
-async def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
+async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = False) -> dict[str, Any]:
     normalized_pair = (pair or "").upper().strip()
     store_key = f"{normalized_pair}:M15"
     snapshot = MT4_CANDLE_STORE.get(store_key) or {}
@@ -178,6 +179,8 @@ async def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
             "candles_count": 0,
             "summary": "Нет свежих MT4-свечей для этой пары",
             "confidence": 0,
+            "fundamental_used": use_fundamental,
+            "article_ru": "Нет свежих MT4-свечей для этой пары",
         }
 
     recent_candles = candles[-80:]
@@ -198,6 +201,8 @@ async def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
         "bias": bias,
         "summary": f"M15 MT4: {len(recent_candles)} свечей по {normalized_pair}, смещение {bias}.",
         "confidence": 0.8,
+        "fundamental_used": use_fundamental,
+        "article_ru": f"M15 MT4: {len(recent_candles)} свечей по {normalized_pair}, смещение {bias}.",
     }
 
     mt4_context = {
@@ -222,9 +227,18 @@ async def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
     if not chat_service.client:
         return base_response | {"ai_status": "fallback", "warning": "Grok временно недоступен"}
 
+    if use_fundamental:
+        fundamentals_rule = (
+            "Используй актуальные новости и макроэкономический контекст, если они найдены через web search. "
+            "Если релевантные новости не найдены, прямо укажи, что значимых новостных драйверов не обнаружено.\n"
+        )
+    else:
+        fundamentals_rule = "Не использовать внешние новости и макроэкономические события. Анализ только по данным MT4.\n"
+
     ai_prompt = (
         "Подготовь один цельный профессиональный рыночный материал на русском языке в стиле деловой журналистики.\n"
         "Используй только данные из переданного MT4 OHLC-контекста. Нельзя выдумывать новости, макро-события, опционные потоки, объёмы или индикаторы.\n"
+        f"{fundamentals_rule}"
         "Важно: описывай причинно-следственную логику (cause → effect) и разделяй наблюдение vs гипотеза.\n"
         "Если каких-то данных нет, прямо и явно укажи ограничения.\n\n"
         "В статье обязательно раскрой:\n"
@@ -247,19 +261,29 @@ async def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
         f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}"
     )
     try:
-        response = await chat_service.client.chat.completions.create(
-            model=chat_service.model,
-            messages=[
+        model_name = f"{chat_service.model}:online" if use_fundamental else chat_service.model
+        tools: list[dict[str, Any]] = []
+        if use_fundamental:
+            tools = [{"type": "openrouter:web_search", "max_results": 3}]
+        request_kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": [
                 {"role": "system", "content": "Ты профессиональный FX market desk аналитик. Пиши строго на русском языке."},
                 {"role": "user", "content": ai_prompt},
             ],
-            temperature=0.2,
-        )
+            "temperature": 0.2,
+        }
+        if use_fundamental:
+            request_kwargs["max_tokens"] = 400
+            request_kwargs["tools"] = tools
+
+        response = await chat_service.client.chat.completions.create(**request_kwargs)
         ai_text = (response.choices[0].message.content or "").strip() if response.choices else ""
         ai_json = json.loads(ai_text) if ai_text else {}
         return base_response | {
             "ai_provider": "grok",
-            "ai_model": chat_service.model,
+            "ai_model": model_name,
+            "fundamental_used": use_fundamental,
             "summary_ru": str(ai_json.get("summary_ru") or base_response["summary"]),
             "htf_bias_ru": str(ai_json.get("htf_bias_ru") or f"Текущее направление: {bias}."),
             "liquidity_ru": str(ai_json.get("liquidity_ru") or "Оценка ликвидности ограничена данными M15 MT4."),
@@ -286,7 +310,11 @@ async def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
             "ai_status": "ok",
         }
     except Exception:
-        return base_response | {"ai_status": "fallback", "warning": "Grok временно недоступен"}
+        return base_response | {
+            "ai_status": "fallback",
+            "warning": "Grok временно недоступен",
+            "fundamental_used": use_fundamental,
+        }
 def get_fallback_calendar_events() -> list[dict[str, Any]]:
     return [
         {
