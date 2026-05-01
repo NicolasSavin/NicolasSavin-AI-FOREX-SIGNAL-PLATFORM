@@ -1265,7 +1265,7 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
         active = load_json(ACTIVE_FILE)
         trade_id = f"{symbol}-{signal}"
 
-        existing = next((x for x in active if x.get("symbol") == symbol and str(x.get("status") or "").upper() == "ACTIVE"), None)
+        existing = next((x for x in active if x.get("symbol") == symbol and not bool(x.get("is_archived"))), None)
 
         if signal in {"BUY", "SELL"}:
             if existing:
@@ -1301,7 +1301,9 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
                     "tp": tp,
                     "rr": rr,
                     "created_at": now_utc(),
-                    "status": "ACTIVE",
+                    "timeframe": "M15",
+                    "status": "WAIT",
+                    "entry_touched": False,
                     "htf_context": decision.context,
                     "htf_reason": decision.reason,
                     "entry_source": structure_levels.get("entry_source"),
@@ -1341,6 +1343,12 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
 
         auto_close_eval = evaluate_trade_result_by_price(trade=trade, current_price=current_price)
 
+        if trade.get("signal") in {"BUY", "SELL"}:
+            if auto_close_eval.get("entry_touched") is True:
+                trade["entry_touched"] = True
+                if str(trade.get("status") or "").upper() == "WAIT":
+                    trade["status"] = "ACTIVE"
+
         if auto_close_allowed and auto_close_eval.get("is_closed"):
             close_result = auto_close_eval.get("result")
             archived = {
@@ -1366,8 +1374,40 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
             trade = archived
             runtime_status = str(archived.get("runtime_status") or runtime_status)
             runtime_text = str(archived.get("runtime_text") or runtime_text)
+        elif auto_close_eval.get("result") == "EXPIRED":
+            archived = {
+                **trade,
+                "result": "EXPIRED",
+                "status": "EXPIRED",
+                "runtime_status": "EXPIRED",
+                "runtime_text": auto_close_eval.get("reason_ru"),
+                "close_reason": auto_close_eval.get("close_reason") or "ttl_expired",
+                "close_reason_ru": auto_close_eval.get("reason_ru"),
+                "closed_at": now_utc(),
+                "is_archived": True,
+            }
+            move_to_archive(archived)
+            active = [x for x in load_json(ACTIVE_FILE) if x.get("id") != trade_id]
+            save_json(ACTIVE_FILE, active)
+            trade = archived
+            runtime_status = str(archived.get("runtime_status") or runtime_status)
+            runtime_text = str(archived.get("runtime_text") or runtime_text)
         elif not auto_close_allowed and trade.get("signal") in {"BUY", "SELL"}:
             trade["auto_close_skipped_ru"] = "Автозакрытие пропущено: нет реальной рыночной цены."
+
+
+        if trade.get("signal") in {"BUY", "SELL"} and not trade.get("is_archived"):
+            active_snapshot = load_json(ACTIVE_FILE)
+            for idx, item in enumerate(active_snapshot):
+                if item.get("id") == trade.get("id"):
+                    active_snapshot[idx] = {
+                        **item,
+                        "current_price": current_price,
+                        "entry_touched": bool(trade.get("entry_touched")),
+                        "status": trade.get("status") if trade.get("status") in {"WAIT", "ACTIVE"} else item.get("status"),
+                    }
+                    break
+            save_json(ACTIVE_FILE, active_snapshot)
 
         sentiment = fetch_forex_client_sentiment(symbol)
 
@@ -2987,6 +3027,14 @@ def build_market_structure(
     }
 
 
+
+def _entry_touched(signal: str, entry: float | None, current_price: float | None) -> bool:
+    if entry is None or current_price is None:
+        return False
+    tolerance = max(abs(entry) * 0.0002, 1e-6)
+    return abs(current_price - entry) <= tolerance
+
+
 def evaluate_trade_result_by_price(trade: dict[str, Any], current_price: float | None) -> dict[str, Any]:
     ttl_minutes = safe_float(trade.get("ttl_minutes"))
     created_at = _parse_utc_datetime(trade.get("created_at"))
@@ -3022,6 +3070,19 @@ def evaluate_trade_result_by_price(trade: dict[str, Any], current_price: float |
             "reason_ru": "Недостаточно уровней Entry/SL/TP для автоматического закрытия.",
         }
 
+    entry_touched = bool(trade.get("entry_touched"))
+    if not entry_touched and _entry_touched(signal, entry, current_price):
+        entry_touched = True
+
+    if not entry_touched:
+        return {
+            "is_closed": False,
+            "result": None,
+            "entry_touched": False,
+            "status": "WAIT",
+            "reason_ru": "Entry ещё не подтверждён касанием — TP/SL до входа не активны.",
+        }
+
     if signal == "BUY":
         if current_price >= tp:
             return {
@@ -3029,6 +3090,8 @@ def evaluate_trade_result_by_price(trade: dict[str, Any], current_price: float |
                 "result": "TP",
                 "close_reason": "take_profit_hit",
                 "reason_ru": "TP достигнут по реальной рыночной цене.",
+                "entry_touched": True,
+                "status": "TP",
             }
         if current_price <= sl:
             return {
@@ -3036,6 +3099,8 @@ def evaluate_trade_result_by_price(trade: dict[str, Any], current_price: float |
                 "result": "SL",
                 "close_reason": "stop_loss_hit",
                 "reason_ru": "SL достигнут по реальной рыночной цене.",
+                "entry_touched": True,
+                "status": "SL",
             }
 
     if signal == "SELL":
@@ -3045,6 +3110,8 @@ def evaluate_trade_result_by_price(trade: dict[str, Any], current_price: float |
                 "result": "TP",
                 "close_reason": "take_profit_hit",
                 "reason_ru": "TP достигнут по реальной рыночной цене.",
+                "entry_touched": True,
+                "status": "TP",
             }
         if current_price >= sl:
             return {
@@ -3052,12 +3119,16 @@ def evaluate_trade_result_by_price(trade: dict[str, Any], current_price: float |
                 "result": "SL",
                 "close_reason": "stop_loss_hit",
                 "reason_ru": "SL достигнут по реальной рыночной цене.",
+                "entry_touched": True,
+                "status": "SL",
             }
 
     return {
         "is_closed": False,
         "result": None,
-        "reason_ru": "Цена ещё не достигла TP или SL.",
+        "entry_touched": True,
+        "status": "ACTIVE",
+        "reason_ru": "Сделка активна: цена ещё не достигла TP или SL.",
     }
 
 
