@@ -441,7 +441,7 @@ def api_signals():
         try:
             signal = build_signal_from_candles(symbol, "M15")
             if isinstance(signal, dict) and signal:
-                signals.append(signal)
+                signals.append(_normalize_quote_signal(signal))
             else:
                 failed_symbols.append(symbol)
                 logger.exception("api_signals: invalid signal payload for %s", symbol)
@@ -500,7 +500,7 @@ def api_ideas():
             continue
 
         if isinstance(signal, dict) and signal:
-            signals.append(signal)
+            signals.append(_normalize_quote_signal(signal))
         else:
             failed_symbols.append(symbol)
 
@@ -1534,26 +1534,35 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         action = "SELL"
         reason_ru = "Быстрая средняя ниже медленной и есть нисходящий импульс."
 
-    entry = round(last_close, 6)
+    market_price_payload = get_price(symbol_norm)
+    current_price, current_price_source = _extract_numeric_price(market_price_payload)
+    if current_price is None:
+        current_price = last_close
+        current_price_source = "candles.close"
+    data_status = str(market_price_payload.get("data_status") or "").lower()
+    if current_price is None and data_status in {"real", "delayed"}:
+        data_status = "unavailable"
+
+    entry = round(current_price, 6) if current_price is not None else None
     sl = tp = None
-    trade_permission = action in {"BUY", "SELL"}
+    trade_permission = action in {"BUY", "SELL"} and entry is not None
     confidence = 35 if action == "WAIT" else 72
-    if action == "BUY":
+    if action == "BUY" and entry is not None:
         sl = round(entry - avg_range * 1.2, 6)
         tp = round(entry + avg_range * 1.8, 6)
-    elif action == "SELL":
+    elif action == "SELL" and entry is not None:
         sl = round(entry + avg_range * 1.2, 6)
         tp = round(entry - avg_range * 1.8, 6)
 
     structure_levels = {"entry_source": "fallback"}
-    if action in {"BUY", "SELL"}:
-        annotations_for_levels = build_chart_annotations(candles, symbol_norm, action, last_close)
+    if action in {"BUY", "SELL"} and current_price is not None:
+        annotations_for_levels = build_chart_annotations(candles, symbol_norm, action, current_price)
         structure_levels = resolve_structure_based_trade_levels(
             symbol=symbol_norm,
             signal=action,
             candles=candles,
             annotations=annotations_for_levels,
-            current_price=last_close,
+            current_price=current_price,
         )
         if safe_float(structure_levels.get("entry")) is not None:
             entry = round(float(structure_levels["entry"]), 6)
@@ -1563,6 +1572,11 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
             tp = round(float(structure_levels["tp"]), 6)
         else:
             logger.info("build_signal_from_candles fallback TP %s %s: %s", symbol_norm, action, structure_levels.get("fallback_reason"))
+    elif action in {"BUY", "SELL"}:
+        action = "WAIT"
+        reason_ru = "Нет валидной рыночной цены для расчёта уровней; сигнал переведён в WAIT."
+        confidence = 20
+        trade_permission = False
 
     return {
         "id": f"{symbol_norm}-{action}",
@@ -1572,12 +1586,18 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         "tf": tf_norm,
         "action": action,
         "signal": action,
-        "entry": entry,
+        "entry": entry if action in {"BUY", "SELL"} else None,
         "entry_price": entry,
-        "sl": sl,
-        "stop_loss": sl,
-        "tp": tp,
-        "take_profit": tp,
+        "sl": sl if action in {"BUY", "SELL"} else None,
+        "stop_loss": sl if action in {"BUY", "SELL"} else None,
+        "tp": tp if action in {"BUY", "SELL"} else None,
+        "take_profit": tp if action in {"BUY", "SELL"} else None,
+        "price": current_price,
+        "current_price": current_price,
+        "last": market_price_payload.get("last"),
+        "close": last_close,
+        "bid": market_price_payload.get("bid"),
+        "ask": market_price_payload.get("ask"),
         "entry_source": structure_levels.get("entry_source", "fallback"),
         "selected_zone_type": structure_levels.get("selected_zone_type"),
         "selected_zone_low": structure_levels.get("selected_zone_low"),
@@ -1589,8 +1609,14 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         "fallback_used": fallback_used,
         "reason_ru": reason_ru,
         "candles_count": len(candles),
-        "data_status": "real" if candles else "unavailable",
+        "data_status": data_status if current_price is not None else "unavailable",
         "updated_at": now_utc(),
+        "diagnostics": {
+            "market_price_source_field": current_price_source,
+            "market_price_provider": market_price_payload.get("source"),
+            "market_price_status": market_price_payload.get("data_status"),
+            "has_numeric_market_price": current_price is not None,
+        },
     }
 
 
@@ -3088,6 +3114,41 @@ def get_price(symbol: str) -> dict[str, Any]:
             "data_status": "unavailable",
             "warning_ru": str(exc),
         }
+
+
+def _extract_numeric_price(row: dict[str, Any] | None) -> tuple[float | None, str | None]:
+    if not isinstance(row, dict):
+        return None, None
+    for key in ("price", "current_price", "last", "close"):
+        value = safe_float(row.get(key))
+        if value is not None:
+            return float(value), key
+    bid = safe_float(row.get("bid"))
+    ask = safe_float(row.get("ask"))
+    if bid is not None and ask is not None:
+        return round((float(bid) + float(ask)) / 2, 6), "bid_ask_mid"
+    return None, None
+
+
+def _normalize_quote_signal(signal: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(signal or {})
+    price, source_field = _extract_numeric_price(normalized)
+    status_raw = str(normalized.get("data_status") or "").lower()
+    diagnostics = normalized.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    diagnostics["price_source_field"] = source_field
+    diagnostics["has_numeric_price"] = price is not None
+    if price is not None:
+        normalized["price"] = float(price)
+        normalized["current_price"] = float(price)
+    elif status_raw in {"real", "delayed"}:
+        normalized["data_status"] = "unavailable"
+        diagnostics["status_downgraded"] = True
+        diagnostics["status_downgrade_reason"] = "market_status_without_numeric_price"
+        normalized.setdefault("warning_ru", "Рыночная котировка недоступна или повреждена; используется fallback-статус.")
+    normalized["diagnostics"] = diagnostics
+    return normalized
 
 
 def _fetch_twelvedata_previous_close(symbol: str) -> float | None:
