@@ -290,12 +290,14 @@ class SignalHubService:
             candle_count=len(chart_data) + len(projected),
             original_candle_count=signal.get("source_candle_count") or signal.get("market_context", {}).get("mtf_candle_count") or 200,
         )
+        raw_action = signal.get("action", "NO_TRADE")
+        normalized_action = "NO_TRADE" if raw_action == "WAIT" else raw_action
         return SignalCard(
             signal_id=stable_id,
             symbol=signal["symbol"],
             timeframe=signal.get("timeframe", "H1"),
-            action=signal.get("action", "NO_TRADE"),
-            direction=direction_from_action(signal.get("action", "NO_TRADE")),
+            action=normalized_action,
+            direction=direction_from_action(normalized_action),
             entry=entry,
             stop_loss=stop_loss,
             take_profit=take_profit,
@@ -305,6 +307,10 @@ class SignalHubService:
             distance_to_target_percent=signal.get("distance_to_target_percent"),
             probability_percent=probability,
             confidence_percent=signal.get("confidence_percent", probability),
+            smc_score=signal.get("smc_score"),
+            smc_grade=signal.get("smc_grade"),
+            smc_factors=signal.get("smc_factors", {}),
+            trade_permission=bool(signal.get("trade_permission", normalized_action in {"BUY", "SELL"})),
             status=normalized_status,
             status_label_ru=status_label_ru(normalized_status),
             lifecycle_state=lifecycle_state,
