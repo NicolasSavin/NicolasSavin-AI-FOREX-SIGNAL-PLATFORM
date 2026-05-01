@@ -184,6 +184,7 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
         }
 
     recent_candles = candles[-80:]
+    ai_candles = recent_candles[-30:] if use_fundamental else recent_candles
     first_close = float(recent_candles[0].get("close", 0.0))
     last_close = float(recent_candles[-1].get("close", 0.0))
     if last_close > first_close:
@@ -208,7 +209,7 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
     mt4_context = {
         "pair": normalized_pair,
         "timeframe": "M15",
-        "candles_count": len(recent_candles),
+        "candles_count": len(ai_candles),
         "last_close": last_close,
         "first_close": first_close,
         "bias": bias,
@@ -220,7 +221,7 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
                 "low": candle.get("low"),
                 "close": candle.get("close"),
             }
-            for candle in recent_candles
+            for candle in ai_candles
         ],
     }
 
@@ -228,43 +229,34 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
         return base_response | {"ai_status": "fallback", "warning": "Grok временно недоступен"}
 
     if use_fundamental:
-        fundamentals_rule = (
-            "Используй актуальные новости и макроэкономический контекст, если они найдены через web search. "
-            "Если релевантные новости не найдены, прямо укажи, что значимых новостных драйверов не обнаружено.\n"
+        ai_prompt = (
+            "Сформируй ОДНУ компактную статью на русском по MT4 OHLC и web search (если есть данные). "
+            "Коротко раскрой: текущая ситуация, причина движения, ключевые уровни, фундаментальный драйвер (если найден), "
+            "основной сценарий, инвалидация, риск. "
+            "Не выдумывай данные. ICT/гармоники/волны/опционы/дивергенции/объёмы упоминай только при прямом подтверждении доступными данными. "
+            "Верни строго JSON без markdown и лишнего текста. Сохрани существующие поля и заполни: "
+            "summary_ru, htf_bias_ru, liquidity_ru, risk_ru, invalidation_ru, scenario_ru, journalistic_summary_ru, why_moves_ru, "
+            "smart_money_ru, ict_ru, patterns_ru, harmonic_ru, wave_ru, divergence_ru, volume_ru, options_ru, forecast_ru, article_ru.\n\n"
+            f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}"
         )
     else:
-        fundamentals_rule = "Не использовать внешние новости и макроэкономические события. Анализ только по данным MT4.\n"
-
-    ai_prompt = (
-        "Подготовь один цельный профессиональный рыночный материал на русском языке в стиле деловой журналистики.\n"
-        "Используй только данные из переданного MT4 OHLC-контекста. Нельзя выдумывать новости, макро-события, опционные потоки, объёмы или индикаторы.\n"
-        f"{fundamentals_rule}"
-        "Важно: описывай причинно-следственную логику (cause → effect) и разделяй наблюдение vs гипотеза.\n"
-        "Если каких-то данных нет, прямо и явно укажи ограничения.\n\n"
-        "В статье обязательно раскрой:\n"
-        "1) Что пара делает сейчас и как выглядит текущий price action.\n"
-        "2) Почему цена движется именно так (структура, импульс, реакция на уровни/ликвидность).\n"
-        "3) MT4 price action контекст и Smart Money / ICT контекст (BOS/CHoCH, sweep, FVG, OB, premium/discount если уместно).\n"
-        "4) Графические паттерны только если действительно просматриваются в OHLC.\n"
-        "5) Гармонические паттерны — только при поддержке данными, иначе напиши что подтверждения нет.\n"
-        "6) Волновая структура — только как рабочая гипотеза, не как факт.\n"
-        "7) Дивергенции: если RSI/MACD нет, обязательно напиши: 'Дивергенция не может быть подтверждена по OHLC без индикаторов.'\n"
-        "8) Объёмы: используй только если в контексте есть MT4 tick volume, иначе укажи ограничение.\n"
-        "9) Опционный слой: если опционных данных нет, обязательно напиши: 'Опционный слой недоступен: данные по опционам не переданы.'\n"
-        "10) Фундаментальный слой: если backend не передал live-news/calendar/fundamental данные, обязательно дословно напиши:\n"
-        "'Фундаментальный слой в текущем ответе ограничен: live-news данные не переданы в модель.'\n"
-        "11) Практический прогноз: основной сценарий, альтернативный сценарий, уровень инвалидации и риск-предупреждение без гарантий.\n\n"
-        "Верни строго JSON без markdown и лишнего текста.\n"
-        "Сохрани существующие поля и обязательно заполни поля:\n"
-        "summary_ru, htf_bias_ru, liquidity_ru, risk_ru, invalidation_ru, scenario_ru,\n"
-        "journalistic_summary_ru, why_moves_ru, smart_money_ru, ict_ru, patterns_ru, harmonic_ru, wave_ru, divergence_ru, volume_ru, options_ru, forecast_ru, article_ru.\n\n"
-        f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}"
-    )
+        ai_prompt = (
+            "Подготовь один цельный профессиональный рыночный материал на русском языке в стиле деловой журналистики.\n"
+            "Используй только данные из переданного MT4 OHLC-контекста. Нельзя выдумывать новости, макро-события, опционные потоки, объёмы или индикаторы.\n"
+            "Не использовать внешние новости и макроэкономические события. Анализ только по данным MT4.\n"
+            "Важно: описывай причинно-следственную логику (cause → effect) и разделяй наблюдение vs гипотеза.\n"
+            "Если каких-то данных нет, прямо и явно укажи ограничения.\n\n"
+            "Верни строго JSON без markdown и лишнего текста.\n"
+            "Сохрани существующие поля и обязательно заполни поля:\n"
+            "summary_ru, htf_bias_ru, liquidity_ru, risk_ru, invalidation_ru, scenario_ru,\n"
+            "journalistic_summary_ru, why_moves_ru, smart_money_ru, ict_ru, patterns_ru, harmonic_ru, wave_ru, divergence_ru, volume_ru, options_ru, forecast_ru, article_ru.\n\n"
+            f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}"
+        )
     try:
         model_name = f"{chat_service.model}:online" if use_fundamental else chat_service.model
         tools: list[dict[str, Any]] = []
         if use_fundamental:
-            tools = [{"type": "openrouter:web_search", "max_results": 3}]
+            tools = [{"type": "openrouter:web_search", "max_results": 2}]
         request_kwargs: dict[str, Any] = {
             "model": model_name,
             "messages": [
@@ -274,16 +266,31 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
             "temperature": 0.2,
         }
         if use_fundamental:
-            request_kwargs["max_tokens"] = 400
+            request_kwargs["max_tokens"] = 280
             request_kwargs["tools"] = tools
-
-        response = await chat_service.client.chat.completions.create(**request_kwargs)
+            request_kwargs["timeout"] = 15
+        online_attempted = bool(use_fundamental)
+        ai_status = "ok"
+        response = None
+        try:
+            response = await chat_service.client.chat.completions.create(**request_kwargs)
+        except Exception:
+            if use_fundamental:
+                retry_kwargs = dict(request_kwargs)
+                retry_kwargs.pop("tools", None)
+                response = await chat_service.client.chat.completions.create(**retry_kwargs)
+                ai_status = "ok_retry_no_web"
+            else:
+                raise
         ai_text = (response.choices[0].message.content or "").strip() if response.choices else ""
         ai_json = json.loads(ai_text) if ai_text else {}
         return base_response | {
             "ai_provider": "grok",
             "ai_model": model_name,
             "fundamental_used": use_fundamental,
+            "online_attempted": online_attempted,
+            "candles_sent_to_ai": len(ai_candles),
+            "search_results_limit": 2 if use_fundamental else 0,
             "summary_ru": str(ai_json.get("summary_ru") or base_response["summary"]),
             "htf_bias_ru": str(ai_json.get("htf_bias_ru") or f"Текущее направление: {bias}."),
             "liquidity_ru": str(ai_json.get("liquidity_ru") or "Оценка ликвидности ограничена данными M15 MT4."),
@@ -307,13 +314,20 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
                 or ai_json.get("summary_ru")
                 or base_response["summary"]
             ),
-            "ai_status": "ok",
+            "ai_status": ai_status,
         }
     except Exception:
         return base_response | {
             "ai_status": "fallback",
-            "warning": "Grok временно недоступен",
+            "warning": (
+                "Online-фундаментал временно недоступен, показан технический MT4-анализ"
+                if use_fundamental
+                else "Grok временно недоступен"
+            ),
             "fundamental_used": use_fundamental,
+            "online_attempted": bool(use_fundamental),
+            "candles_sent_to_ai": len(ai_candles),
+            "search_results_limit": 2 if use_fundamental else 0,
         }
 def get_fallback_calendar_events() -> list[dict[str, Any]]:
     return [
