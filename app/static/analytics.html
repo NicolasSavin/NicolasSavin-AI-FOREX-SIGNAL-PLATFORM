@@ -30,6 +30,14 @@ body{background:radial-gradient(circle at 15% 0%, #11254a 0%, #071123 35%, #0307
 .panel-title{margin:0 0 8px;font-size:1.35rem}
 .panel-subtitle{margin:0 0 20px;color:var(--muted)}
 .cards-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.fundamental-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px;padding:10px 14px;border:1px solid rgba(77,177,255,.36);border-radius:14px;background:rgba(7,18,36,.68)}
+.toggle-label{font-size:.92rem;color:#c8ddff}
+.toggle-switch{position:relative;display:inline-flex;align-items:center;width:52px;height:30px;border-radius:999px;border:1px solid rgba(95,182,255,.45);background:rgba(20,35,58,.9);box-shadow:0 0 12px rgba(72,180,255,.2);cursor:pointer;transition:all .2s}
+.toggle-switch .knob{position:absolute;left:4px;width:20px;height:20px;border-radius:999px;background:#9ccfff;box-shadow:0 0 10px rgba(156,207,255,.55);transition:all .2s}
+.toggle-switch.active{background:rgba(18,70,108,.9);border-color:#6eddff;box-shadow:0 0 18px rgba(91,220,255,.4)}
+.toggle-switch.active .knob{left:26px;background:#76f2ff;box-shadow:0 0 14px rgba(118,242,255,.8)}
+.toggle-state{font-size:.78rem;color:#99b5de;min-width:34px;text-align:right}
+.fundamental-badge{display:inline-flex;align-items:center;gap:6px;margin-left:10px;padding:4px 10px;border-radius:999px;border:1px solid rgba(95,224,255,.45);background:rgba(9,48,66,.45);color:#bff7ff;font-size:.78rem;box-shadow:0 0 15px rgba(95,224,255,.24)}
 .pair-card{border:none;border-radius:16px;padding:12px;cursor:pointer;text-align:left;background:var(--card);border:1px solid rgba(75,183,255,.42);box-shadow:var(--neon);color:var(--text);transition:transform .2s, border-color .2s, box-shadow .2s;min-height:108px;display:grid;gap:6px}
 .pair-card:hover{transform:translateY(-2px);border-color:var(--line-strong);box-shadow:0 0 0 1px rgba(90,205,255,.7),0 24px 46px rgba(1,7,22,.6),0 0 35px rgba(90,205,255,.24)}
 .pair-card.active{border-color:#7addff;box-shadow:0 0 0 1px #5edbff,0 28px 54px rgba(1,7,22,.7),0 0 38px rgba(94,219,255,.3)}
@@ -72,6 +80,13 @@ body{background:radial-gradient(circle at 15% 0%, #11254a 0%, #071123 35%, #0307
     <section class="analytics-panel">
       <h2 class="panel-title">Выбор инструмента</h2>
       <p class="panel-subtitle">Кликните карточку, чтобы отправить запрос в <code>/api/chat</code> и открыть разбор.</p>
+      <div class="fundamental-toggle">
+        <span class="toggle-label">Фундаментальный режим</span>
+        <button id="fundamentalToggle" class="toggle-switch" type="button" aria-pressed="false" onclick="toggleFundamentalMode()">
+          <span class="knob"></span>
+        </button>
+        <span id="fundamentalState" class="toggle-state">OFF</span>
+      </div>
       <div class="cards-grid" id="pairCards"></div>
     </section>
 
@@ -94,6 +109,7 @@ const pairs = [
   { name: 'USDJPY', status: 'MT4 data / waiting', text: 'Баланс доходностей и сила доллара, акцент на трендовую структуру.' },
   { name: 'XAUUSD', status: 'MT4 data / waiting', text: 'Золото: защита капитала, ключевые уровни и чувствительность к риску.' }
 ];
+let useFundamentalMode = false;
 
 function escapeHtml(value){
   return String(value)
@@ -158,7 +174,7 @@ async function requestPairAnalysis(pairName){
   const subtitle = document.getElementById('resultSubtitle');
 
   setActiveCard(pairName);
-  subtitle.textContent = `Инструмент: ${pairName}`;
+  subtitle.innerHTML = `Инструмент: ${escapeHtml(pairName)}`;
   status.textContent = `Запрос по ${pairName} выполняется...`;
   setLoadingCard(pairName);
   responseBox.innerHTML = '<p class="notice">Загрузка аналитики...</p>';
@@ -169,10 +185,12 @@ async function requestPairAnalysis(pairName){
     const r = await fetch('/api/chat', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ message })
+      body: JSON.stringify({ message, context: { use_fundamental: useFundamentalMode } })
     });
 
     const data = await r.json();
+    const fundamentalBadge = data && data.fundamental_used ? '<span class="fundamental-badge">🌐 С учетом новостей</span>' : '';
+    subtitle.innerHTML = `Инструмент: ${escapeHtml(pairName)}${fundamentalBadge}`;
     responseBox.innerHTML = renderReply(data);
     status.textContent = `Ответ по ${pairName} получен`;
     clearLoadingCards();
@@ -181,6 +199,15 @@ async function requestPairAnalysis(pairName){
     status.textContent = `Ошибка запроса по ${pairName}`;
     responseBox.innerHTML = `<p class="result-article">${escapeHtml(`Ошибка: ${e}`)}</p>`;
   }
+}
+
+function toggleFundamentalMode(){
+  useFundamentalMode = !useFundamentalMode;
+  const toggle = document.getElementById('fundamentalToggle');
+  const state = document.getElementById('fundamentalState');
+  toggle.classList.toggle('active', useFundamentalMode);
+  toggle.setAttribute('aria-pressed', useFundamentalMode ? 'true' : 'false');
+  state.textContent = useFundamentalMode ? 'ON' : 'OFF';
 }
 
 function initCards(){
