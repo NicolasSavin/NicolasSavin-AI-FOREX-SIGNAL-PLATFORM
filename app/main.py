@@ -148,9 +148,56 @@ def analytics_page():
 
 @app.post("/api/chat")
 async def api_chat(payload: ChatRequest):
+    analytics_pair = _extract_analytics_pair(payload.message)
+    if analytics_pair:
+        return JSONResponse(_build_mt4_chat_analytics_response(analytics_pair))
     return await chat_service.chat(payload)
 
 
+
+
+def _extract_analytics_pair(message: str) -> str | None:
+    text = (message or "").upper()
+    for pair in DEFAULT_IDEA_SYMBOLS:
+        if pair in text:
+            return pair
+    return None
+
+
+def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
+    normalized_pair = (pair or "").upper().strip()
+    store_key = f"{normalized_pair}:M15"
+    snapshot = MT4_CANDLE_STORE.get(store_key) or {}
+    updated_at = snapshot.get("updated_at") if isinstance(snapshot, dict) else None
+    candles = snapshot.get("candles") if isinstance(snapshot, dict) else []
+    is_fresh = isinstance(updated_at, datetime) and (datetime.now(timezone.utc) - updated_at).total_seconds() <= MT4_CANDLE_FRESH_SECONDS
+    if not isinstance(candles, list) or not candles or not is_fresh:
+        return {
+            "pair": normalized_pair,
+            "data_source": "mt4_bridge",
+            "candles_count": 0,
+            "summary": "Нет свежих MT4-свечей для этой пары",
+            "confidence": 0,
+        }
+
+    first_close = float(candles[0].get("close", 0.0))
+    last_close = float(candles[-1].get("close", 0.0))
+    if last_close > first_close:
+        bias = "bullish"
+    elif last_close < first_close:
+        bias = "bearish"
+    else:
+        bias = "neutral"
+
+    return {
+        "pair": normalized_pair,
+        "data_source": "mt4_bridge",
+        "candles_count": len(candles),
+        "last_close": last_close,
+        "bias": bias,
+        "summary": f"M15 MT4: {len(candles)} свечей по {normalized_pair}, смещение {bias}.",
+        "confidence": 0.8,
+    }
 def get_fallback_calendar_events() -> list[dict[str, Any]]:
     return [
         {
