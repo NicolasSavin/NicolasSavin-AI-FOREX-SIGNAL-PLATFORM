@@ -1134,11 +1134,12 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
         active = load_json(ACTIVE_FILE)
         trade_id = f"{symbol}-{signal}"
 
-        existing = next((x for x in active if x.get("id") == trade_id), None)
+        existing = next((x for x in active if x.get("symbol") == symbol and str(x.get("status") or "").upper() == "ACTIVE"), None)
 
         if signal in {"BUY", "SELL"}:
             if existing:
                 trade = existing
+                trade_id = str(trade.get("id") or trade_id)
             else:
                 m15_candles_for_levels = candles_by_tf.get("M15") or []
                 annotations_for_levels = build_chart_annotations(m15_candles_for_levels, symbol, signal, current_price)
@@ -1215,8 +1216,8 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
                 **trade,
                 "current_price": current_price,
                 "result": close_result,
-                "status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL",
-                "runtime_status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL",
+                "status": str(close_result or "ACTIVE"),
+                "runtime_status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL" if close_result == "SL" else "CLOSED",
                 "runtime_text": auto_close_eval.get("reason_ru"),
                 "runtime_color": runtime_color,
                 "close_reason": auto_close_eval.get("close_reason"),
@@ -2856,6 +2857,18 @@ def build_market_structure(
 
 
 def evaluate_trade_result_by_price(trade: dict[str, Any], current_price: float | None) -> dict[str, Any]:
+    ttl_minutes = safe_float(trade.get("ttl_minutes"))
+    created_at = _parse_utc_datetime(trade.get("created_at"))
+    if ttl_minutes is not None and created_at is not None:
+        expire_at = created_at + timedelta(minutes=ttl_minutes)
+        if datetime.now(timezone.utc) > expire_at:
+            return {
+                "is_closed": True,
+                "result": "EXPIRED",
+                "close_reason": "ttl_expired",
+                "reason_ru": "TTL идеи истёк, идея перенесена в архив.",
+            }
+
     if current_price is None:
         return {
             "is_closed": False,
