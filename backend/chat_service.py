@@ -133,6 +133,9 @@ SMC_ANALYSIS_SYSTEM_PROMPT = """
 class ChatRequest(BaseModel):
     message: str = Field(min_length=2, max_length=4000)
     context: dict[str, Any] = Field(default_factory=dict)
+    mode: str | None = None
+    question: str | None = None
+    pair: str | None = None
 
 
 class ChatResponse(BaseModel):
