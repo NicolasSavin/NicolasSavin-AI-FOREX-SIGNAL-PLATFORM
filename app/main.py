@@ -138,11 +138,6 @@ def calendar_page():
     return FileResponse(STATIC_DIR / "calendar.html")
 
 
-@app.get("/analytics", include_in_schema=False)
-def analytics_page():
-    return FileResponse(STATIC_DIR / "analytics.html")
-
-
 def get_fallback_calendar_events() -> list[dict[str, Any]]:
     return [
         {
