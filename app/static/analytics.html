@@ -54,6 +54,13 @@ body{background:radial-gradient(circle at 15% 0%, #11254a 0%, #071123 35%, #0307
 .response{margin-top:12px;border-radius:18px;background:rgba(6,15,30,.82);border:1px solid rgba(103,157,219,.28);padding:22px;min-height:500px;max-height:none;overflow:auto}
 .result-article{margin:0;color:#d7e6ff;white-space:pre-wrap;line-height:1.72;font-size:1rem}
 .notice{color:#9fb5d6}
+.followup-box{margin-top:16px;padding:14px;border:1px solid rgba(77,177,255,.3);border-radius:14px;background:rgba(8,18,36,.65)}
+.followup-title{margin:0 0 8px;font-size:1rem}
+.followup-row{display:grid;grid-template-columns:1fr auto;gap:10px}
+.followup-input{width:100%;border:1px solid rgba(112,168,233,.35);background:rgba(7,15,30,.9);color:#dff0ff;padding:10px 12px;border-radius:10px}
+.followup-btn{border:1px solid rgba(101,206,255,.5);background:linear-gradient(120deg,rgba(26,95,136,.95),rgba(31,140,169,.95));color:#eaffff;font-weight:700;padding:0 14px;border-radius:10px;cursor:pointer}
+.followup-btn:disabled{opacity:.55;cursor:not-allowed}
+.followup-answer{margin-top:10px;color:#b9d7ff;line-height:1.5;white-space:pre-wrap;font-size:.92rem}
 @media (max-width:1024px){.cards-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.response{min-height:420px}}
 @media (max-width:680px){.cards-grid{grid-template-columns:1fr}.analytics-shell{width:min(1320px,calc(100% - 20px));padding-top:16px}}
 </style>
@@ -97,6 +104,14 @@ body{background:radial-gradient(circle at 15% 0%, #11254a 0%, #071123 35%, #0307
       <div class="response" id="response">
         <p class="notice">Выберите одну из карточек: EURUSD, GBPUSD, USDJPY, XAUUSD.</p>
       </div>
+      <div class="followup-box" id="followupBox" hidden>
+        <h3 class="followup-title">Уточнить по анализу</h3>
+        <div class="followup-row">
+          <input id="followupInput" class="followup-input" type="text" placeholder="Например: где лучше ждать вход? что отменит сценарий?" />
+          <button id="followupBtn" class="followup-btn" type="button" onclick="submitFollowup()">Спросить</button>
+        </div>
+        <div id="followupAnswer" class="followup-answer"></div>
+      </div>
     </section>
   </div>
 </div>
@@ -110,6 +125,7 @@ const pairs = [
   { name: 'XAUUSD', status: 'MT4 data / waiting', text: 'Золото: защита капитала, ключевые уровни и чувствительность к риску.' }
 ];
 let useFundamentalMode = false;
+let selectedPair = null;
 
 function escapeHtml(value){
   return String(value)
@@ -173,7 +189,12 @@ async function requestPairAnalysis(pairName){
   const responseBox = document.getElementById('response');
   const subtitle = document.getElementById('resultSubtitle');
 
+  selectedPair = pairName;
   setActiveCard(pairName);
+  const followupBox = document.getElementById('followupBox');
+  const followupAnswer = document.getElementById('followupAnswer');
+  if (followupBox) followupBox.hidden = false;
+  if (followupAnswer) followupAnswer.textContent = "";
   subtitle.innerHTML = `Инструмент: ${escapeHtml(pairName)}`;
   status.textContent = `Запрос по ${pairName} выполняется...`;
   setLoadingCard(pairName);
@@ -208,6 +229,45 @@ function toggleFundamentalMode(){
   toggle.classList.toggle('active', useFundamentalMode);
   toggle.setAttribute('aria-pressed', useFundamentalMode ? 'true' : 'false');
   state.textContent = useFundamentalMode ? 'ON' : 'OFF';
+}
+
+
+async function submitFollowup(){
+  const input = document.getElementById('followupInput');
+  const button = document.getElementById('followupBtn');
+  const answer = document.getElementById('followupAnswer');
+  if (!selectedPair) {
+    answer.textContent = 'Сначала откройте анализ по инструменту.';
+    return;
+  }
+  const question = (input.value || '').trim();
+  if (!question) {
+    answer.textContent = 'Введите уточняющий вопрос.';
+    return;
+  }
+  button.disabled = true;
+  answer.textContent = 'Отправка вопроса...';
+  try {
+    const r = await fetch('/api/chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        message: `${selectedPair} Уточнение: ${question}`,
+        context: {
+          mode: 'followup',
+          question,
+          pair: selectedPair,
+          use_fundamental: useFundamentalMode,
+        }
+      })
+    });
+    const data = await r.json();
+    answer.textContent = data.article_ru || data.reply || data.summary_ru || 'Ответ получен.';
+  } catch (e) {
+    answer.textContent = `Ошибка: ${e}`;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function initCards(){
