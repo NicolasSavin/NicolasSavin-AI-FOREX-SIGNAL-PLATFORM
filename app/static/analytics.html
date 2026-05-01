@@ -25,33 +25,28 @@ body{background:radial-gradient(circle at 15% 0%, #11254a 0%, #071123 35%, #0307
 .analytics-headline h1{margin:0;font-size:clamp(1.8rem,3.5vw,2.8rem)}
 .analytics-headline p{margin:8px 0 0;color:var(--muted);max-width:820px;line-height:1.6}
 .eyebrow{margin:0;text-transform:uppercase;letter-spacing:.22em;font-size:.72rem;color:#56d8ff}
-.analytics-grid{display:grid;grid-template-columns:1.12fr 1fr;gap:18px}
+.analytics-grid{display:grid;grid-template-columns:1fr;gap:18px}
 .analytics-panel{padding:22px}
 .panel-title{margin:0 0 8px;font-size:1.35rem}
 .panel-subtitle{margin:0 0 20px;color:var(--muted)}
-.cards-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-.pair-card{border:none;border-radius:22px;padding:18px;cursor:pointer;text-align:left;background:var(--card);border:1px solid rgba(75,183,255,.42);box-shadow:var(--neon);color:var(--text);transition:transform .2s, border-color .2s, box-shadow .2s;min-height:190px;display:grid;gap:10px}
+.cards-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.pair-card{border:none;border-radius:16px;padding:12px;cursor:pointer;text-align:left;background:var(--card);border:1px solid rgba(75,183,255,.42);box-shadow:var(--neon);color:var(--text);transition:transform .2s, border-color .2s, box-shadow .2s;min-height:108px;display:grid;gap:6px}
 .pair-card:hover{transform:translateY(-2px);border-color:var(--line-strong);box-shadow:0 0 0 1px rgba(90,205,255,.7),0 24px 46px rgba(1,7,22,.6),0 0 35px rgba(90,205,255,.24)}
 .pair-card.active{border-color:#7addff;box-shadow:0 0 0 1px #5edbff,0 28px 54px rgba(1,7,22,.7),0 0 38px rgba(94,219,255,.3)}
 .pair-card.loading{opacity:.8;pointer-events:none;position:relative}
 .pair-card.loading .pair-action{color:#7addff}
 .pair-card.loading .pair-action::after{content:"..."}
-.pair-name{margin:0;font-size:1.5rem;letter-spacing:.03em}
-.pair-status{display:inline-flex;align-items:center;gap:8px;font-size:.9rem;color:#b5c9e8}
-.pair-status::before{content:"";width:9px;height:9px;border-radius:999px;background:#57e8ff;box-shadow:0 0 12px #57e8ff}
-.pair-text{margin:0;color:#98acd0;line-height:1.45}
+.pair-name{margin:0;font-size:1.15rem;letter-spacing:.03em}
+.pair-status{display:inline-flex;align-items:center;gap:8px;font-size:.8rem;color:#b5c9e8}
+.pair-status::before{content:"";width:7px;height:7px;border-radius:999px;background:#57e8ff;box-shadow:0 0 10px #57e8ff}
+.pair-text{margin:0;color:#98acd0;line-height:1.35;font-size:.85rem}
 .pair-action{margin-top:auto;font-weight:700;color:#bfefff;display:inline-flex;align-items:center;gap:8px}
 .pair-action::after{content:"→"}
 .status{font-size:.95rem;color:var(--muted)}
-.response{margin-top:12px;border-radius:18px;background:rgba(6,15,30,.82);border:1px solid rgba(103,157,219,.28);padding:16px;min-height:340px;max-height:62vh;overflow:auto}
-.result-section{padding:12px 0;border-bottom:1px solid rgba(94,151,214,.2)}
-.result-section:last-child{border-bottom:none}
-.result-title{margin:0 0 8px;color:#75ddff;font-size:1rem}
-.result-list{margin:0;padding-left:18px;color:#d7e6ff}
-.result-list li{margin:4px 0}
-.result-text{margin:0;color:#d7e6ff;white-space:pre-wrap;line-height:1.55}
+.response{margin-top:12px;border-radius:18px;background:rgba(6,15,30,.82);border:1px solid rgba(103,157,219,.28);padding:22px;min-height:500px;max-height:none;overflow:auto}
+.result-article{margin:0;color:#d7e6ff;white-space:pre-wrap;line-height:1.72;font-size:1rem}
 .notice{color:#9fb5d6}
-@media (max-width:1024px){.analytics-grid{grid-template-columns:1fr}.response{max-height:none}}
+@media (max-width:1024px){.cards-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.response{min-height:420px}}
 @media (max-width:680px){.cards-grid{grid-template-columns:1fr}.analytics-shell{width:min(1320px,calc(100% - 20px));padding-top:16px}}
 </style>
 </head>
@@ -80,14 +75,14 @@ body{background:radial-gradient(circle at 15% 0%, #11254a 0%, #071123 35%, #0307
       <div class="cards-grid" id="pairCards"></div>
     </section>
 
-    <aside class="analytics-panel">
+    <section class="analytics-panel">
       <h2 class="panel-title">Результат анализа</h2>
       <p class="panel-subtitle" id="resultSubtitle">Ожидание выбора инструмента.</p>
       <div id="status" class="status">Готово к запросу</div>
       <div class="response" id="response">
         <p class="notice">Выберите одну из карточек: EURUSD, GBPUSD, USDJPY, XAUUSD.</p>
       </div>
-    </aside>
+    </section>
   </div>
 </div>
 
@@ -109,41 +104,29 @@ function escapeHtml(value){
     .replace(/'/g, '&#39;');
 }
 
-function formatKey(key){
-  return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function renderValue(key, value){
-  if (Array.isArray(value)) {
-    const items = value.map(item => `<li>${escapeHtml(typeof item === 'object' ? JSON.stringify(item) : item)}</li>`).join('');
-    return `<section class="result-section"><h3 class="result-title">${escapeHtml(formatKey(key))}</h3><ul class="result-list">${items || '<li>Нет данных</li>'}</ul></section>`;
-  }
-  if (value && typeof value === 'object') {
-    const inner = Object.entries(value).map(([k,v]) => renderValue(k, v)).join('');
-    return `<section class="result-section"><h3 class="result-title">${escapeHtml(formatKey(key))}</h3>${inner || '<p class="result-text">Нет данных</p>'}</section>`;
-  }
-  return `<section class="result-section"><h3 class="result-title">${escapeHtml(formatKey(key))}</h3><p class="result-text">${escapeHtml(value ?? 'Нет данных')}</p></section>`;
-}
-
 function renderReply(data){
   if (!data || typeof data !== 'object') {
-    return `<section class="result-section"><h3 class="result-title">Ответ</h3><p class="result-text">${escapeHtml(data || 'Пустой ответ')}</p></section>`;
+    return `<p class="result-article">${escapeHtml(data || 'Пустой ответ')}</p>`;
+  }
+
+  if (typeof data.article_ru === 'string' && data.article_ru.trim()) {
+    return `<p class="result-article">${escapeHtml(data.article_ru.trim())}</p>`;
+  }
+
+  const fallbackFields = [
+    data.summary_ru, data.journalistic_summary_ru, data.why_moves_ru, data.smart_money_ru,
+    data.patterns_ru, data.harmonic_ru, data.wave_ru, data.divergence_ru,
+    data.volume_ru, data.options_ru, data.forecast_ru, data.invalidation_ru, data.risk_ru
+  ].filter((value) => typeof value === 'string' && value.trim());
+
+  if (fallbackFields.length) {
+    return `<p class="result-article">${escapeHtml(fallbackFields.join('\n\n'))}</p>`;
   }
 
   if (data.reply && typeof data.reply === 'string') {
-    try {
-      const parsedReply = JSON.parse(data.reply);
-      return Object.entries(parsedReply).map(([k,v]) => renderValue(k, v)).join('');
-    } catch (_) {
-      // Ответ не JSON-строка, отображаем как текст ниже
-    }
+    return `<p class="result-article">${escapeHtml(data.reply)}</p>`;
   }
-
-  if (data.reply && typeof data.reply === 'object') {
-    return Object.entries(data.reply).map(([k,v]) => renderValue(k, v)).join('');
-  }
-
-  return Object.entries(data).map(([k,v]) => renderValue(k, v)).join('');
+  return `<p class="result-article">${escapeHtml('Ответ получен, но статья недоступна.')}</p>`;
 }
 
 function setActiveCard(pairName){
@@ -196,7 +179,7 @@ async function requestPairAnalysis(pairName){
   } catch (e) {
     clearLoadingCards();
     status.textContent = `Ошибка запроса по ${pairName}`;
-    responseBox.innerHTML = `<section class="result-section"><h3 class="result-title">Ошибка</h3><p class="result-text">${escapeHtml(e)}</p></section>`;
+    responseBox.innerHTML = `<p class="result-article">${escapeHtml(`Ошибка: ${e}`)}</p>`;
   }
 }
 
