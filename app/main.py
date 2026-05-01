@@ -223,10 +223,25 @@ async def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
         return base_response | {"ai_status": "fallback", "warning": "Grok временно недоступен"}
 
     ai_prompt = (
-        "Сформируй профессиональную рыночную сводку на русском языке в стиле market desk.\n"
-        "Используй только переданный MT4-контекст, ничего не выдумывай.\n"
-        "Верни строго JSON без markdown и без лишнего текста с полями:\n"
-        "summary_ru, htf_bias_ru, liquidity_ru, risk_ru, invalidation_ru, scenario_ru.\n\n"
+        "Подготовь профессиональный аналитический комментарий по FX-паре на русском языке в стиле деловой рыночной журналистики.\n"
+        "Используй только данные из переданного MT4 OHLC-контекста. Не придумывай отсутствующие данные.\n"
+        "Важно: четко разделяй факты (что видно из свечей) и интерпретации (рабочие гипотезы).\n"
+        "Если данных недостаточно — прямо так и пиши.\n\n"
+        "Структура и требования:\n"
+        "1) Что делает пара сейчас: растёт/падает/консолидируется и где цена относительно последнего диапазона.\n"
+        "2) Почему это происходит: структура рынка, импульс, ликвидность, реакция на уровни.\n"
+        "3) Smart Money / ICT: HTF bias, BOS/CHoCH, liquidity sweep, equal highs/equal lows, imbalance/FVG, order block, discount/premium.\n"
+        "4) Графические паттерны: trendline, channel, triangle, flag, wedge, double top/bottom, head and shoulders (если видно).\n"
+        "5) Гармонические паттерны: упоминать только если подтверждаются данными; иначе фраза 'явного гармонического паттерна нет'.\n"
+        "6) Волновой анализ: описать возможные импульс/коррекцию без чрезмерной уверенности в точной разметке Elliott.\n"
+        "7) Дивергенции: если RSI/MACD не переданы, укажи, что дивергенция не подтверждается по OHLC.\n"
+        "8) Объёмы: если объёмов нет в контексте, укажи, что подтверждение объёмом ограничено.\n"
+        "9) Опционы: не выдумывать option flow; если данных нет, указать недоступность слоя опционов и что полезно отслеживать (strikes, expiry, gamma zones, risk reversals).\n"
+        "10) Прогноз: основной и альтернативный сценарий, уровень инвалидации, риск-заметка.\n\n"
+        "Верни строго JSON без markdown и лишнего текста.\n"
+        "Сохрани существующие поля и обязательно заполни поля:\n"
+        "summary_ru, htf_bias_ru, liquidity_ru, risk_ru, invalidation_ru, scenario_ru,\n"
+        "journalistic_summary_ru, why_moves_ru, smart_money_ru, ict_ru, patterns_ru, harmonic_ru, wave_ru, divergence_ru, volume_ru, options_ru, forecast_ru, invalidation_ru, risk_ru.\n\n"
         f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}"
     )
     try:
@@ -249,6 +264,17 @@ async def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
             "risk_ru": str(ai_json.get("risk_ru") or "Основной риск: ускорение волатильности против текущего смещения."),
             "invalidation_ru": str(ai_json.get("invalidation_ru") or "Сценарий отменяется при устойчивом сломе текущей структуры M15."),
             "scenario_ru": str(ai_json.get("scenario_ru") or "Базовый сценарий: сопровождать смещение по факту подтверждения структуры."),
+            "journalistic_summary_ru": str(ai_json.get("journalistic_summary_ru") or ai_json.get("summary_ru") or base_response["summary"]),
+            "why_moves_ru": str(ai_json.get("why_moves_ru") or "Причины движения оцениваются по структуре M15 и реакции цены на локальные уровни."),
+            "smart_money_ru": str(ai_json.get("smart_money_ru") or "Smart Money контекст ограничен наблюдаемой структурой и ликвидностью на M15."),
+            "ict_ru": str(ai_json.get("ict_ru") or "ICT-сигналы интерпретируются только по свечной структуре MT4 без внешних источников."),
+            "patterns_ru": str(ai_json.get("patterns_ru") or "Явные графические паттерны требуют дополнительного подтверждения по следующим свечам."),
+            "harmonic_ru": str(ai_json.get("harmonic_ru") or "Явного гармонического паттерна нет."),
+            "wave_ru": str(ai_json.get("wave_ru") or "Возможна импульсно-коррекционная фаза, точная волновая разметка остаётся вероятностной."),
+            "divergence_ru": str(ai_json.get("divergence_ru") or "Дивергенция не может быть подтверждена по OHLC без RSI/MACD."),
+            "volume_ru": str(ai_json.get("volume_ru") or "Подтверждение объёмом ограничено: данные объёма в текущем MT4-контексте отсутствуют."),
+            "options_ru": str(ai_json.get("options_ru") or "Опционный слой недоступен; полезно отслеживать strikes, expiry, gamma zones и risk reversals."),
+            "forecast_ru": str(ai_json.get("forecast_ru") or ai_json.get("scenario_ru") or "Базовый сценарий вероятностный и требует подтверждения структурой."),
             "ai_status": "ok",
         }
     except Exception:
