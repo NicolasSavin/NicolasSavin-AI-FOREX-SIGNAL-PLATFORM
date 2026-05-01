@@ -1073,17 +1073,19 @@ class SignalEngine:
         normalized_sources = [source.split("_derived_h4")[0] for source in sources]
         has_yahoo = any(source == "yahoo_finance" for source in normalized_sources)
         has_twelvedata = any(source == "twelvedata" for source in normalized_sources)
+        has_mt4_bridge = any(source == "mt4_bridge" for source in normalized_sources)
         sufficient_candles = min(candles_counts) >= PROFESSIONAL_MIN_CANDLES if candles_counts else False
 
-        if has_twelvedata and sufficient_candles and not has_yahoo:
+        if sufficient_candles and not has_yahoo and (has_mt4_bridge or has_twelvedata):
+            preferred_provider = "mt4_bridge" if has_mt4_bridge else "twelvedata"
             return {
-                "data_provider": "twelvedata",
+                "data_provider": preferred_provider,
                 "analysis_mode": "professional",
                 "data_quality": "high",
                 "warning": "",
             }
         return {
-            "data_provider": "yahoo_finance" if has_yahoo else "yahoo_finance",
+            "data_provider": "yahoo_finance",
             "analysis_mode": "directional_fallback",
             "data_quality": "medium",
             "warning": FALLBACK_WARNING_RU,

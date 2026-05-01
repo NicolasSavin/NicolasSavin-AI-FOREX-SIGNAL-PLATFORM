@@ -209,6 +209,18 @@ def test_signal_engine_preserves_strict_confluence_for_high_quality_source(monke
     assert signal["signal_policy_mode"] == "strict_smc"
 
 
+def test_analysis_contract_prefers_mt4_bridge_for_professional_mode() -> None:
+    contract = SignalEngine._resolve_analysis_contract(
+        htf={"source": "mt4_bridge", "candles": _candles()},
+        mtf={"source": "mt4_bridge", "candles": _candles()},
+        ltf={"source": "mt4_bridge", "candles": _candles()},
+    )
+
+    assert contract["analysis_mode"] == "professional"
+    assert contract["data_quality"] == "high"
+    assert contract["data_provider"] == "mt4_bridge"
+
+
 def test_signal_engine_keeps_idea_when_snapshot_status_unavailable_but_candles_exist(monkeypatch) -> None:
     engine = SignalEngine()
     monkeypatch.setattr(
