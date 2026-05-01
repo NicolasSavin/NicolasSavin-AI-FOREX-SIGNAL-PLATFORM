@@ -4,7 +4,16 @@ from fastapi.responses import FileResponse
 
 from app.main import DEFAULT_PAIRS, app, signal_engine
 from app.main import canonical_market_service
+from backend.chat_service import ChatRequest, ForexChatService
 from backend.signal_engine import SUPPORTED_TIMEFRAMES
+
+chat_service = ForexChatService()
+
+
+@app.post('/api/chat')
+async def api_chat(payload: ChatRequest):
+    """Backend-only AI chat endpoint used by the Analytics page."""
+    return await chat_service.chat(payload)
 
 
 @app.get('/analytics', include_in_schema=False)
