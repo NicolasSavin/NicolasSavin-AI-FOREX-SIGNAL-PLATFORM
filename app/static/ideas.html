@@ -45,35 +45,44 @@
 
     .hero {
       display: flex;
-      justify-content: space-between;
-      gap: 18px;
-      align-items: flex-start;
+      flex-direction: column;
+      gap: 14px;
+      align-items: stretch;
       margin-bottom: 22px;
+      min-width: 0;
     }
 
     .hero nav {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: nowrap;
-      overflow-x: auto;
+      overflow-x: hidden;
       overflow-y: hidden;
-      scrollbar-width: thin;
-      padding-bottom: 2px;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      padding-bottom: 0;
       max-width: 100%;
+      min-width: 0;
+    }
+
+    .hero nav::-webkit-scrollbar {
+      display: none;
     }
 
     .hero nav .home-link {
-      padding: 8px 12px;
-      font-size: 13px;
+      padding: 7px 10px;
+      font-size: 12px;
       white-space: nowrap;
-      flex: 0 0 auto;
+      flex: 1 1 auto;
+      min-width: 0;
+      text-align: center;
     }
 
     .ideas-page-header {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 420px;
-      gap: 24px;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+      gap: 18px;
       align-items: start;
     }
 
@@ -137,8 +146,8 @@
     }
 
     .ideas-performance-panel {
-      margin-top: 18px;
-      padding: 10px;
+      margin-top: 12px;
+      padding: 8px;
       border-radius: 18px;
       background:
         radial-gradient(circle at 20% 0%, rgba(49,245,157,.18), transparent 35%),
