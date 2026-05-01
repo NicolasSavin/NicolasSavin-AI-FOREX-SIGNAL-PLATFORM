@@ -39,6 +39,7 @@ class SignalEngine:
         self.risk_engine = RiskEngine()
         self.sentiment_provider = build_sentiment_provider()
         self.sentiment_weight = float(os.getenv("SENTIMENT_WEIGHT", "0.12"))
+        self.smc_wait_threshold = int(os.getenv("SMC_WAIT_THRESHOLD", "40"))
 
     async def generate_live_signals(self, pairs: list[str], timeframes: list[str] | None = None) -> list[dict]:
         output: list[dict] = []
@@ -285,6 +286,13 @@ class SignalEngine:
         if take <= 0:
             take = max(1e-6, abs(price) * 1.05)
         rr = abs((take - price) / max(abs(price - stop), 1e-9))
+        smc_package = self._smc_score_package(
+            htf_features=htf_features,
+            mtf_features=mtf_features,
+            ltf_features=ltf_features,
+            rr=rr,
+            trend_conflict=trend_conflict,
+        )
 
         confidence = 62
         confidence = 78 if htf_zone["exists"] and ltf_confirmation["has_structure"] else 45
@@ -367,6 +375,19 @@ class SignalEngine:
                     pattern_summary=mtf_pattern_summary,
                     pattern_impact=pattern_impact,
                 )
+        if smc_package["score"] < self.smc_wait_threshold:
+            wait_signal = self._no_trade(
+                symbol=symbol,
+                timeframe=timeframe,
+                snapshot=mtf,
+                reason=f"WAIT: SMC-оценка слабая ({smc_package['score']}/100), вход отложен до подтверждения.",
+                chart_patterns=mtf_patterns,
+                pattern_summary=mtf_pattern_summary,
+                pattern_impact=pattern_impact,
+                smc_package=smc_package,
+            )
+            wait_signal["action"] = "WAIT"
+            return wait_signal
         elif (not directional_structure and not strict_confluence) or confidence < FALLBACK_MIN_CONFIDENCE:
             return self._no_trade(
                 symbol=symbol,
@@ -416,6 +437,10 @@ class SignalEngine:
             "distance_to_target_percent": round(abs((take - price) / price) * 100, 3),
             "probability_percent": confidence,
             "confidence_percent": confidence,
+            "smc_score": smc_package["score"],
+            "smc_grade": smc_package["grade"],
+            "smc_factors": smc_package["factors"],
+            "trade_permission": True,
             "status": status,
             "lifecycle_state": lifecycle_state,
             "description_ru": (
@@ -547,6 +572,10 @@ class SignalEngine:
             "distance_to_target_percent": round(abs((level_plan["take"] - price) / max(price, 1e-9)) * 100, 3),
             "probability_percent": confidence,
             "confidence_percent": confidence,
+            "smc_score": 35.0,
+            "smc_grade": "D",
+            "smc_factors": self._default_weak_smc_factors(),
+            "trade_permission": False,
             "status": "неподтверждён",
             "lifecycle_state": "developing",
             "description_ru": f"{symbol}: слабый сценарий {action} в рамках развивающейся структуры.",
@@ -656,6 +685,10 @@ class SignalEngine:
             "distance_to_target_percent": None,
             "probability_percent": scenario["confidence"],
             "confidence_percent": scenario["confidence"],
+            "smc_score": 30.0,
+            "smc_grade": "D",
+            "smc_factors": self._default_weak_smc_factors(),
+            "trade_permission": False,
             "status": "неподтверждён",
             "lifecycle_state": "developing",
             "description_ru": f"{symbol}: fallback-сценарий диапазона опубликован при неполной структуре.",
@@ -726,12 +759,14 @@ class SignalEngine:
         chart_patterns: list[dict] | None = None,
         pattern_summary: dict | None = None,
         pattern_impact: dict | None = None,
+        smc_package: dict | None = None,
     ) -> dict:
         signal_time = datetime.now(timezone.utc).isoformat()
         summary = pattern_summary or self.pattern_detector.detect([])["summary"]
         impact = pattern_impact or self.pattern_detector.signal_impact(action="NO_TRADE", summary=summary)
         analysis_contract = self._resolve_analysis_contract(htf=snapshot, mtf=snapshot, ltf=snapshot)
         policy_mode = "strict_smc" if analysis_contract["analysis_mode"] == "professional" else "fallback_directional"
+        smc = smc_package or {"score": 28.0, "grade": "D", "factors": self._default_weak_smc_factors()}
         return {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -745,6 +780,10 @@ class SignalEngine:
             "distance_to_target_percent": None,
             "probability_percent": 65,
             "confidence_percent": 65,
+            "smc_score": smc["score"],
+            "smc_grade": smc["grade"],
+            "smc_factors": smc["factors"],
+            "trade_permission": False,
             "status": "неактуален",
             "lifecycle_state": "closed",
             "description_ru": "NO TRADE: сигнал не опубликован до появления подтверждённого сетапа.",
@@ -798,6 +837,59 @@ class SignalEngine:
                 "signal_created": False,
                 "reason_if_skipped": "no_close_price_for_default_signal",
             },
+        }
+
+    def _smc_score_package(
+        self,
+        *,
+        htf_features: dict,
+        mtf_features: dict,
+        ltf_features: dict,
+        rr: float,
+        trend_conflict: bool,
+    ) -> dict:
+        htf_bias = 92.0 if htf_features.get("status") == "ready" and not trend_conflict else 40.0
+        liquidity = 85.0 if mtf_features.get("liquidity_sweep") else 42.0
+        displacement = 80.0 if ltf_features.get("displacement") or ltf_features.get("delta_percent", 0.0) >= 0.15 else 45.0
+        fvg_quality = 82.0 if mtf_features.get("fvg") or ltf_features.get("fvg") else 44.0
+        structure = 90.0 if (mtf_features.get("bos") or mtf_features.get("choch")) else 38.0
+        rr_score = min(100.0, max(20.0, rr * 45.0))
+        factors = {
+            "htf_bias_score": round(htf_bias, 2),
+            "liquidity_sweep_score": round(liquidity, 2),
+            "displacement_score": round(displacement, 2),
+            "fvg_imbalance_quality_score": round(fvg_quality, 2),
+            "structure_bos_choch_score": round(structure, 2),
+            "risk_reward_score": round(rr_score, 2),
+        }
+        weighted = (
+            htf_bias * 0.22
+            + liquidity * 0.15
+            + displacement * 0.15
+            + fvg_quality * 0.14
+            + structure * 0.22
+            + rr_score * 0.12
+        )
+        score = round(max(0.0, min(100.0, weighted)), 2)
+        if score >= 80:
+            grade = "A"
+        elif score >= 68:
+            grade = "B"
+        elif score >= 58:
+            grade = "C"
+        else:
+            grade = "D"
+        return {"score": score, "grade": grade, "factors": factors}
+
+    @staticmethod
+    def _default_weak_smc_factors() -> dict[str, float]:
+        return {
+            "htf_bias_score": 35.0,
+            "liquidity_sweep_score": 30.0,
+            "displacement_score": 32.0,
+            "fvg_imbalance_quality_score": 28.0,
+            "structure_bos_choch_score": 34.0,
+            "risk_reward_score": 40.0,
         }
 
     def _resolve_htf_zone(self, htf_features: dict) -> dict:

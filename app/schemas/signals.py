@@ -147,6 +147,10 @@ class SignalCard(BaseModel):
     distance_to_target_percent: Optional[float] = None
     probability_percent: int = 0
     confidence_percent: int = 0
+    smc_score: Optional[float] = None
+    smc_grade: Optional[str] = None
+    smc_factors: dict[str, float] = Field(default_factory=dict)
+    trade_permission: bool = True
     status: SignalStatus = SignalStatus.ACTIVE
     status_label_ru: str = "Актуален"
     lifecycle_state: SignalLifecycleState = SignalLifecycleState.ACTIVE
