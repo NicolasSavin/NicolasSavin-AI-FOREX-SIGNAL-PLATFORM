@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from typing import Any
 
 from openai import AsyncOpenAI
 
 from app.core.env import get_openrouter_api_key, get_openrouter_model
 from pydantic import BaseModel, Field
+
+
+logger = logging.getLogger(__name__)
 
 
 CHAT_SYSTEM_PROMPT = """
@@ -155,24 +160,25 @@ class ForexChatService:
                 if smc_analysis_mode
                 else CHAT_SYSTEM_PROMPT
             )
-            response = await self.client.responses.create(
+            response = await self.client.chat.completions.create(
                 model=self.model,
-                input=[
+                messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1 if explanation_mode else 0.2,
             )
-            text = (response.output_text or "").strip()
+            text = (response.choices[0].message.content or "").strip() if response.choices else ""
             if not text:
                 return self._fallback(
-                    "Модель не вернула содержательный ответ. Попробуйте уточнить вопрос по сигналу, риску или аналитике.",
+                    self._build_mock_analysis(message),
                     warnings=["empty_model_response"],
                 )
             return ChatResponse(reply=text, source="openrouter", dataStatus="live", warnings=[])
         except Exception:
+            logger.exception("Ошибка запроса к AI-модели в /api/chat")
             return self._fallback(
-                "Не удалось получить ответ от AI-модели. Попробуйте позже или задайте более узкий вопрос по forex-сценарию.",
+                self._build_mock_analysis(message),
                 warnings=["openrouter_request_failed"],
             )
 
@@ -284,3 +290,14 @@ class ForexChatService:
     @staticmethod
     def _fallback(message: str, *, warnings: list[str]) -> ChatResponse:
         return ChatResponse(reply=message, source="openrouter", dataStatus="fallback", warnings=warnings)
+
+    @staticmethod
+    def _build_mock_analysis(message: str) -> str:
+        pair_match = re.search(r"\b(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|NZDUSD|USDCAD|XAUUSD)\b", message.upper())
+        payload = {
+            "pair": pair_match.group(1) if pair_match else "EURUSD",
+            "bias": "neutral",
+            "summary": "Недостаточно данных для анализа",
+            "confidence": 0,
+        }
+        return json.dumps(payload, ensure_ascii=False)
