@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from app.services.htf_context_filter import HtfContextFilter
 from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
+from backend.chat_service import ChatRequest, ForexChatService
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -91,6 +92,8 @@ HTF_FILTER = HtfContextFilter()
 
 app = FastAPI(title="AI FOREX SIGNAL PLATFORM", version="htf-context-real-candles-1.0")
 
+chat_service = ForexChatService()
+
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -141,6 +144,11 @@ def calendar_page():
 @app.get("/analytics", include_in_schema=False)
 def analytics_page():
     return FileResponse(STATIC_DIR / "analytics.html")
+
+
+@app.post("/api/chat")
+async def api_chat(payload: ChatRequest):
+    return await chat_service.chat(payload)
 
 
 def get_fallback_calendar_events() -> list[dict[str, Any]]:
