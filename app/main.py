@@ -150,7 +150,7 @@ def analytics_page():
 async def api_chat(payload: ChatRequest):
     analytics_pair = _extract_analytics_pair(payload.message)
     if analytics_pair:
-        return JSONResponse(_build_mt4_chat_analytics_response(analytics_pair))
+        return JSONResponse(await _build_mt4_chat_analytics_response(analytics_pair))
     return await chat_service.chat(payload)
 
 
@@ -164,7 +164,7 @@ def _extract_analytics_pair(message: str) -> str | None:
     return None
 
 
-def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
+async def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
     normalized_pair = (pair or "").upper().strip()
     store_key = f"{normalized_pair}:M15"
     snapshot = MT4_CANDLE_STORE.get(store_key) or {}
@@ -180,8 +180,9 @@ def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
             "confidence": 0,
         }
 
-    first_close = float(candles[0].get("close", 0.0))
-    last_close = float(candles[-1].get("close", 0.0))
+    recent_candles = candles[-80:]
+    first_close = float(recent_candles[0].get("close", 0.0))
+    last_close = float(recent_candles[-1].get("close", 0.0))
     if last_close > first_close:
         bias = "bullish"
     elif last_close < first_close:
@@ -189,15 +190,69 @@ def _build_mt4_chat_analytics_response(pair: str) -> dict[str, Any]:
     else:
         bias = "neutral"
 
-    return {
+    base_response = {
         "pair": normalized_pair,
         "data_source": "mt4_bridge",
-        "candles_count": len(candles),
+        "candles_count": len(recent_candles),
         "last_close": last_close,
         "bias": bias,
-        "summary": f"M15 MT4: {len(candles)} свечей по {normalized_pair}, смещение {bias}.",
+        "summary": f"M15 MT4: {len(recent_candles)} свечей по {normalized_pair}, смещение {bias}.",
         "confidence": 0.8,
     }
+
+    mt4_context = {
+        "pair": normalized_pair,
+        "timeframe": "M15",
+        "candles_count": len(recent_candles),
+        "last_close": last_close,
+        "first_close": first_close,
+        "bias": bias,
+        "candles": [
+            {
+                "time": candle.get("time"),
+                "open": candle.get("open"),
+                "high": candle.get("high"),
+                "low": candle.get("low"),
+                "close": candle.get("close"),
+            }
+            for candle in recent_candles
+        ],
+    }
+
+    if not chat_service.client:
+        return base_response | {"ai_status": "fallback", "warning": "Grok временно недоступен"}
+
+    ai_prompt = (
+        "Сформируй профессиональную рыночную сводку на русском языке в стиле market desk.\n"
+        "Используй только переданный MT4-контекст, ничего не выдумывай.\n"
+        "Верни строго JSON без markdown и без лишнего текста с полями:\n"
+        "summary_ru, htf_bias_ru, liquidity_ru, risk_ru, invalidation_ru, scenario_ru.\n\n"
+        f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}"
+    )
+    try:
+        response = await chat_service.client.chat.completions.create(
+            model=chat_service.model,
+            messages=[
+                {"role": "system", "content": "Ты профессиональный FX market desk аналитик. Пиши строго на русском языке."},
+                {"role": "user", "content": ai_prompt},
+            ],
+            temperature=0.2,
+        )
+        ai_text = (response.choices[0].message.content or "").strip() if response.choices else ""
+        ai_json = json.loads(ai_text) if ai_text else {}
+        return base_response | {
+            "ai_provider": "grok",
+            "ai_model": chat_service.model,
+            "summary_ru": str(ai_json.get("summary_ru") or base_response["summary"]),
+            "htf_bias_ru": str(ai_json.get("htf_bias_ru") or f"Текущее направление: {bias}."),
+            "liquidity_ru": str(ai_json.get("liquidity_ru") or "Оценка ликвидности ограничена данными M15 MT4."),
+            "risk_ru": str(ai_json.get("risk_ru") or "Основной риск: ускорение волатильности против текущего смещения."),
+            "invalidation_ru": str(ai_json.get("invalidation_ru") or "Сценарий отменяется при устойчивом сломе текущей структуры M15."),
+            "scenario_ru": str(ai_json.get("scenario_ru") or "Базовый сценарий: сопровождать смещение по факту подтверждения структуры."),
+            "ai_status": "ok",
+        }
+    except Exception:
+        return base_response | {"ai_status": "fallback", "warning": "Grok временно недоступен"}
 def get_fallback_calendar_events() -> list[dict[str, Any]]:
     return [
         {
