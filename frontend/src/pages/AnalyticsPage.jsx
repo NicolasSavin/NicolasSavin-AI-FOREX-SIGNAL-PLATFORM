@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 
 const PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"];
 const ANALYTICS_PROMPT =
-  "Объективно оцени текущую рыночную обстановку по 4 валютным парам: EURUSD, GBPUSD, USDJPY, USDCHF. Для каждой пары укажи: Bias (Bullish/Bearish/Neutral), Situation, Confirmation, Invalidation, Risks. Не выдумывай котировки и новости. Если live-данных нет, прямо укажи fallback/unavailable. Форматируй структурно по каждой паре.";
+  "Ты — Grok AI аналитик. Сделай глубокий и структурный разбор 4 валютных пар: EURUSD, GBPUSD, USDJPY, USDCHF. По каждой паре обязательно используй: Smart Money + ICT (ликвидность, BOS/CHoCH, order blocks/FVG), объемный анализ, дивергенции, опционы (если нет данных — пометь как unavailable), волновой контекст, паттерны (графические и гармонические), фундаментальный фон (ключевые мировые события и макро-драйверы). Для каждой пары верни поля: Bias (Bullish/Bearish/Neutral), Situation, Confirmation, Invalidation, Risks. Не выдумывай котировки, новости или опционные метрики. Если live-данных нет, прямо укажи fallback/unavailable. Ответ строго структурируй по каждой паре.";
 
 const DEFAULT_SECTION = "Нет данных";
 
@@ -184,7 +184,7 @@ export default function AnalyticsPage() {
             <div>
               <p className="text-[11px] uppercase tracking-[0.24em] text-cyan-300/90">AI Desk Brief</p>
               <h1 className="mt-2 text-2xl md:text-3xl font-semibold tracking-tight">Аналитика</h1>
-              <p className="mt-2 text-sm text-slate-300">Объективный AI-обзор рынка по ключевым FX-парам</p>
+              <p className="mt-2 text-sm text-slate-300">Grok-разбор FX: SMC/ICT, объемы, дивергенции, опционы, волны, паттерны и фундаментал</p>
             </div>
             <span className={`inline-flex items-center rounded-md border px-3 py-1 text-xs font-semibold tracking-wide ${statusMeta.className}`}>
               {statusMeta.label}
