@@ -931,22 +931,30 @@ def api_stats():
 @app.get("/api/news")
 def api_news(limit: int = 12):
     safe_limit = min(max(limit, 1), 30)
+    sources_attempted: list[str] = []
     try:
         return fetch_public_news(limit=safe_limit)
-    except Exception:
+    except Exception as exc:
         return {
             "items": [],
             "updated_at_utc": now_utc(),
+            "data_status": "fallback",
+            "message_ru": "RSS-источники временно недоступны",
+            "sources_attempted": sources_attempted,
+            "real_items_count": 0,
+            "grok_processed_count": 0,
+            "fetch_error": str(exc),
             "diagnostics": {
                 "real_items_count": 0,
                 "fallback_items_count": 0,
-                "sources_attempted": [],
+                "sources_attempted": sources_attempted,
                 "sources_ok": [],
                 "sources_failed": [],
                 "grok_used_count": 0,
                 "generated_images_count": 0,
+                "fetch_error": str(exc),
             },
-            "warning": "Новости временно недоступны. Источники не ответили.",
+            "warning": "RSS-источники временно недоступны",
         }
 
 

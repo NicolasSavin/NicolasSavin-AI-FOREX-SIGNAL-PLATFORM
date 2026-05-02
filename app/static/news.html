@@ -135,7 +135,16 @@
 
       function renderNews(payload) {
         const items = Array.isArray(payload?.items) ? payload.items : [];
+        const dataStatus = payload?.data_status || "real";
         newsUpdatedAt.textContent = `Обновление: ${formatDate(payload?.updated_at_utc)}`;
+
+        if (dataStatus === "fallback") {
+          renderState(
+            "RSS-источники временно недоступны",
+            payload?.message_ru || "Не удалось получить подтверждённые новости из RSS-источников."
+          );
+          return;
+        }
 
         if (!items.length) {
           renderState(
@@ -164,7 +173,7 @@
             </div>
             <section class="news-detail-box"><h4>Немного юмора</h4><p class="news-card__text">${escapeHtml(item.humor_ru || "Рынок шутит свечами, мы — аккуратно словами.")}</p></section>
             <div class="news-card__footer">
-              <button class="news-link-button" type="button">Читать разбор</button>
+              ${item.source_url ? `<a class="news-link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'}
             </div>
           `;
           card.addEventListener("click", () => {

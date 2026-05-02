@@ -702,6 +702,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
     sources_failed: list[str] = []
 
     diagnostics: dict[str, Any] = {"grok_used_count": 0, "generated_images_count": 0}
+    fetch_error: str | None = None
     grok_processed = 0
     for source in PUBLIC_RSS_SOURCES:
         source_name = source["name"]
@@ -811,7 +812,8 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                 sources_ok.append(source_name)
             else:
                 sources_failed.append(source_name)
-        except Exception:
+        except Exception as exc:
+            fetch_error = str(exc)
             sources_failed.append(source_name)
             continue
 
@@ -826,52 +828,21 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
 
     final_items = deduped[:limit]
     if not final_items:
-        fallback_items: list[dict[str, Any]] = []
-        for idx in range(limit):
-            title = f"Рыночное обновление #{idx + 1}"
-            summary = "Публичные RSS-источники временно недоступны. Проверьте ленту позже для подтверждённых публикаций."
-            enriched = build_market_explanation(title=title, summary=summary)
-            fallback_items.append(
-                {
-                    "title": title,
-                    "source": "Fallback",
-                    "url": None,
-                    "published_at": now_utc.isoformat(),
-                    "summary": enriched["summary"],
-                    "impact": enriched["impact"],
-                    "markets": enriched["markets"],
-                    "affected_assets": enriched["markets"],
-                    "tone": enriched["tone"],
-                    "image_url": pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"]),
-                    "image_source": "placeholder",
-                    "image_alt": "Fallback иллюстрация новости",
-                    "title_original": title,
-                    "title_ru": title,
-                    "source_url": None,
-                    "summary_source": summary,
-                    "summary_ru": enriched["summary"],
-                    "preview_ru": enriched["summary"],
-                    "full_text_ru": enriched["summary"],
-                    "is_real_source": False,
-                    "data_origin": "fallback",
-                    "writer": "local_fallback",
-                    "what_happened_ru": f"Что случилось: {summary}",
-                    "why_it_matters_ru": "Почему это важно: без подтверждённых новостей нельзя делать выводы о направлении рынка.",
-                    "market_impact_ru": enriched["impact"],
-                    "sentiment": _build_sentiment_map(f"{title} {summary}", enriched["markets"]),
-                    "humor_ru": "Юмор с оговоркой: это резервный текст до восстановления источников.",
-                    "what_next_ru": "К чему может привести: дождитесь публикаций из реальных источников RSS.",
-                    "grok_style_comment_ru": "Комментарий: это fallback-контент, а не подтверждённая новость.",
-                    "long_story_ru": f"{summary} Это fallback-контент, созданный локально.",
-                }
-            )
-        final_items = fallback_items
+        final_items = []
 
     real_items_count = sum(1 for item in final_items if item.get("is_real_source") is True)
     fallback_items_count = len(final_items) - real_items_count
+    data_status = "real" if real_items_count > 0 else "fallback"
+    message_ru = "OK" if data_status == "real" else "RSS-источники временно недоступны"
     payload: dict[str, Any] = {
         "items": final_items,
         "updated_at_utc": now_utc.isoformat(),
+        "data_status": data_status,
+        "message_ru": message_ru,
+        "sources_attempted": sorted(set(sources_attempted)),
+        "real_items_count": real_items_count,
+        "grok_processed_count": diagnostics["grok_used_count"],
+        "fetch_error": fetch_error,
         "diagnostics": {
             "real_items_count": real_items_count,
             "fallback_items_count": fallback_items_count,
@@ -880,10 +851,11 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
             "sources_failed": sorted(set(sources_failed)),
             "grok_used_count": diagnostics["grok_used_count"],
             "generated_images_count": diagnostics["generated_images_count"],
+            "fetch_error": fetch_error,
         },
     }
     if real_items_count == 0:
-        payload["warning"] = "Новости временно недоступны. Источники не ответили."
+        payload["warning"] = message_ru
 
     NEWS_CACHE["updated_at"] = now_ts
     NEWS_CACHE["payload"] = payload
