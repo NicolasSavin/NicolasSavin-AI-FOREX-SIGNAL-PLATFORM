@@ -83,6 +83,14 @@
         return list.map((item) => `<span class="news-chip">${escapeHtml(item)}</span>`).join("");
       }
 
+      function buildSentiment(sentiment) {
+        const entries = sentiment && typeof sentiment === "object" ? Object.entries(sentiment) : [];
+        if (!entries.length) return '<span class="news-chip news-chip--muted">Сентимент: н/д</span>';
+        return entries
+          .map(([asset, mood]) => `<span class="news-chip">${escapeHtml(asset)}: ${escapeHtml(mood || "neutral")}</span>`)
+          .join("");
+      }
+
       function imageHtml(item, big = false) {
         const wrapClass = big ? "news-image-wrap news-image-wrap--big" : "news-image-wrap";
         return `
@@ -104,7 +112,11 @@
           ${imageHtml(item, true)}
           <p class="news-card__eyebrow">Источник: ${escapeHtml(item.source || "Источник")} · ${formatDate(item.published_at)}</p>
           <h3 class="news-card__title">${escapeHtml(title)}</h3>
+          <section class="news-detail-box"><h4>Оригинальный заголовок</h4><p class="news-card__text">${escapeHtml(item.title_original || "—")}</p></section>
           <div class="news-chip-row">${buildMarkets(item.markets || item.assets)}</div>
+          <section class="news-detail-box"><h4>Влияние на рынок</h4><p class="news-card__text">${escapeHtml(item.market_impact_ru || "Оценка влияния ограничена.")}</p></section>
+          <section class="news-detail-box"><h4>Сентимент</h4><div class="news-chip-row">${buildSentiment(item.sentiment)}</div></section>
+          <section class="news-detail-box"><h4>Заметка с улыбкой</h4><p class="news-card__text">${escapeHtml(item.humor_ru || "Рынок сегодня без шуток, но с волатильностью.")}</p></section>
           <section class="news-modal__body"><p class="news-modal__story">${escapeHtml(fullText)}</p></section>
           <div class="news-card__footer">
             ${item.source_url ? `<a class="news-link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'}
@@ -145,10 +157,12 @@
               <h3 class="news-card__title">${escapeHtml(item.title_ru || item.title || "Новость без заголовка")}</h3>
             </div>
             <section class="news-detail-box"><h4>Коротко</h4><p class="news-card__text">${escapeHtml(item.preview_ru || item.summary || "Описание недоступно.")}</p></section>
+            <section class="news-detail-box"><h4>Влияние на рынок</h4><p class="news-card__text">${escapeHtml(item.market_impact_ru || "Оценка влияния ограничена.")}</p></section>
             <div class="news-card__assets">
               <span class="news-label">Рынки под прицелом</span>
-              <div class="news-chip-row">${buildMarkets(item.markets)}</div>
+              <div class="news-chip-row">${buildMarkets(item.affected_assets || item.markets)}</div>
             </div>
+            <section class="news-detail-box"><h4>Немного юмора</h4><p class="news-card__text">${escapeHtml(item.humor_ru || "Рынок шутит свечами, мы — аккуратно словами.")}</p></section>
             <div class="news-card__footer">
               <button class="news-link-button" type="button">Читать разбор</button>
             </div>

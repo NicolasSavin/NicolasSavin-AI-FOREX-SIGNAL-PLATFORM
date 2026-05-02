@@ -441,6 +441,7 @@ def _local_writer_payload(title: str, summary: str, markets: list[str], tone: st
     market_impact = paragraphs[3] if len(paragraphs) > 3 else paragraphs[-1]
     humor = "Лёгкий рыночный юмор встроен в основной текст без отдельного блока."
     return {
+        "title_ru": clean_title,
         "preview_ru": f"{clean_title}. {clean_summary[:130]}",
         "full_text_ru": full_text,
         "what_happened_ru": what_happened,
@@ -448,6 +449,30 @@ def _local_writer_payload(title: str, summary: str, markets: list[str], tone: st
         "market_impact_ru": market_impact,
         "humor_ru": humor,
     }
+
+
+def _build_sentiment_map(text: str, assets: list[str]) -> dict[str, str]:
+    lowered = text.lower()
+    if any(x in lowered for x in ["hot", "higher", "above forecast", "hawkish", "rate hike", "inflation up"]):
+        usd_sentiment = "bullish"
+        xau_sentiment = "bearish"
+    elif any(x in lowered for x in ["cooling", "below forecast", "dovish", "rate cut", "slowdown"]):
+        usd_sentiment = "bearish"
+        xau_sentiment = "bullish"
+    else:
+        usd_sentiment = "neutral"
+        xau_sentiment = "neutral"
+
+    sentiment: dict[str, str] = {"USD": usd_sentiment, "XAUUSD": xau_sentiment}
+    for code in ("EUR", "GBP", "JPY"):
+        sentiment[code] = "neutral"
+    if any(asset == "EURUSD" for asset in assets):
+        sentiment["EUR"] = "bearish" if usd_sentiment == "bullish" else "bullish" if usd_sentiment == "bearish" else "neutral"
+    if any(asset == "GBPUSD" for asset in assets):
+        sentiment["GBP"] = "bearish" if usd_sentiment == "bullish" else "bullish" if usd_sentiment == "bearish" else "neutral"
+    if any(asset == "USDJPY" for asset in assets):
+        sentiment["JPY"] = "bearish" if usd_sentiment == "bullish" else "bullish" if usd_sentiment == "bearish" else "neutral"
+    return sentiment
 
 
 def build_market_explanation(title: str, summary: str) -> dict[str, Any]:
@@ -586,6 +611,7 @@ def rewrite_news_with_xai(title: str, summary: str, markets: list[str]) -> dict[
         elif len(full_text) < 1200:
             return None
         cleaned = {
+            "title_ru": strip_html(str(parsed.get("title_ru") or "")).strip(),
             "preview_ru": strip_html(str(parsed.get("preview_ru") or "")).strip()[:160],
             "full_text_ru": full_text,
             "what_happened_ru": strip_html(str(parsed.get("what_happened_ru") or "")).strip(),
@@ -713,8 +739,8 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
                     rewrite = rewrite_news_with_xai(title=title, summary=summary, markets=enriched["markets"])
                     story = rewrite or _local_writer_payload(title=title, summary=summary, markets=enriched["markets"], tone=enriched["tone"])
-                    title_ru = strip_html(title)
-                    summary_ru = story["preview_ru"]
+                    title_ru = strip_html(story.get("title_ru") or title)
+                    summary_ru = story["preview_ru"] if len(strip_html(summary)) > 20 else f"{story['preview_ru']} Интерпретация ограничена: исходный текст слишком короткий."
                     writer = "grok" if rewrite else "local_fallback"
                     if rewrite:
                         diagnostics["grok_used_count"] += 1
@@ -727,9 +753,11 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     image_source = "placeholder"
                     image_alt = "Иллюстрация новости"
                     story = _local_writer_payload(title=title, summary=summary, markets=enriched["markets"], tone=enriched["tone"])
-                    title_ru = strip_html(title)
-                    summary_ru = story["preview_ru"]
+                    title_ru = strip_html(story.get("title_ru") or title)
+                    summary_ru = story["preview_ru"] if len(strip_html(summary)) > 20 else f"{story['preview_ru']} Интерпретация ограничена: исходный текст слишком короткий."
                     writer = "local_fallback"
+                affected_assets = enriched["markets"]
+                sentiment = _build_sentiment_map(f"{title} {summary}", affected_assets)
                 source_had_item = True
                 items.append(
                     {
@@ -739,7 +767,8 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         "published_at": published_iso,
                         "summary": summary_ru,
                         "impact": enriched["impact"],
-                        "markets": enriched["markets"],
+                        "markets": affected_assets,
+                        "affected_assets": affected_assets,
                         "tone": enriched["tone"],
                         "image_url": safe_image_url,
                         "image_source": image_source,
@@ -758,6 +787,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         "why_it_matters_ru": story["why_it_matters_ru"],
                         "market_impact_ru": story["market_impact_ru"],
                         "humor_ru": story["humor_ru"],
+                        "sentiment": sentiment,
                         "what_next_ru": "Следим за следующими релизами и реакцией долгового рынка.",
                         "grok_style_comment_ru": story["humor_ru"],
                         "long_story_ru": story["full_text_ru"],
@@ -796,6 +826,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     "summary": enriched["summary"],
                     "impact": enriched["impact"],
                     "markets": enriched["markets"],
+                    "affected_assets": enriched["markets"],
                     "tone": enriched["tone"],
                     "image_url": pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"]),
                     "image_source": "placeholder",
@@ -813,6 +844,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     "what_happened_ru": f"Что случилось: {summary}",
                     "why_it_matters_ru": "Почему это важно: без подтверждённых новостей нельзя делать выводы о направлении рынка.",
                     "market_impact_ru": enriched["impact"],
+                    "sentiment": _build_sentiment_map(f"{title} {summary}", enriched["markets"]),
                     "humor_ru": "Юмор с оговоркой: это резервный текст до восстановления источников.",
                     "what_next_ru": "К чему может привести: дождитесь публикаций из реальных источников RSS.",
                     "grok_style_comment_ru": "Комментарий: это fallback-контент, а не подтверждённая новость.",
