@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import lzma
+import logging
 import os
 import struct
 import time
@@ -18,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.services.htf_context_filter import HtfContextFilter
 from app.services.cme_scraper import get_cme_market_snapshot
+from app.services.mt4_options_bridge import save_options_levels
 from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
 from backend.chat_service import ChatRequest, ForexChatService
@@ -94,6 +96,7 @@ ARCHIVE_FILE = Path("archive.json")
 HTF_FILTER = HtfContextFilter()
 
 app = FastAPI(title="AI FOREX SIGNAL PLATFORM", version="htf-context-real-candles-1.0")
+logger = logging.getLogger(__name__)
 
 chat_service = ForexChatService()
 
@@ -907,6 +910,24 @@ async def api_mt4_push_candles(request: Request):
         return {"ok": True, "symbol": symbol, "timeframe": tf, "received": len(candles), "stored": len(merged_candles), "updated_at_utc": MT4_CANDLE_STORE[key]["updated_at"].isoformat()}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+
+
+@app.post("/api/mt4/options-levels")
+async def api_mt4_options_levels(request: Request):
+    try:
+        payload = await request.json()
+        token = str(payload.get("token") or "").strip()
+        if MT4_BRIDGE_TOKEN and token != MT4_BRIDGE_TOKEN:
+            return JSONResponse(status_code=401, content={"status": "error", "error": "unauthorized"})
+
+        saved = save_options_levels(payload)
+        levels = saved.get("levels") if isinstance(saved.get("levels"), list) else []
+        logger.info("MT4 options levels received symbol=%s count=%s", saved.get("symbol"), len(levels))
+        return {"status": "ok", "levels_received": len(levels)}
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"status": "error", "error": str(exc)})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"status": "error", "error": str(exc)})
 
 
 @app.get("/api/mt4/markup/{symbol}")

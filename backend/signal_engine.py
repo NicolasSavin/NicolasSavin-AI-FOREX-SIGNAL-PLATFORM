@@ -12,6 +12,7 @@ from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
 from backend.sentiment_provider import build_sentiment_provider
 from app.services.cme_scraper import get_cme_market_snapshot
+from app.services.mt4_options_bridge import get_latest_options_levels
 from backend.signals import build_trade_levels, default_invalidation_text, has_minimum_confluence, infer_action
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
@@ -58,7 +59,22 @@ class SignalEngine:
                 required_timeframes = self._required_stack_timeframes(requested_timeframes)
                 for stack_timeframe in required_timeframes:
                     snapshots_cache[stack_timeframe] = await self._snapshot_for(symbol, stack_timeframe, snapshots_cache)
-                options_snapshot = await get_cme_market_snapshot(symbol)
+                mt4_options = get_latest_options_levels(symbol)
+                if mt4_options:
+                    options_snapshot = {
+                        "available": True,
+                        "symbol": symbol,
+                        "source": "mt4_optionsfx",
+                        "analysis": {
+                            "available": True,
+                            "source": "mt4_optionsfx",
+                            "levels": mt4_options.get("levels") or [],
+                            "summary": mt4_options.get("summary") or {},
+                            "timestamp": mt4_options.get("timestamp").isoformat() if mt4_options.get("timestamp") else None,
+                        },
+                    }
+                else:
+                    options_snapshot = await get_cme_market_snapshot(symbol)
                 for timeframe in requested_timeframes:
                     try:
                         stack = TIMEFRAME_STACKS[timeframe]
