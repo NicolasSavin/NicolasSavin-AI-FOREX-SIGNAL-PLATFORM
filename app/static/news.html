@@ -93,10 +93,14 @@
 
       function imageHtml(item, big = false) {
         const wrapClass = big ? "news-image-wrap news-image-wrap--big" : "news-image-wrap";
+        const imageUrl = String(item?.image_url || "").trim();
+        if (!imageUrl) {
+          return `<div class="${wrapClass} is-fallback" aria-hidden="true"></div>`;
+        }
         return `
           <div class="${wrapClass}">
             <img
-              src="${escapeHtml(item.image_url || "")}"
+              src="${escapeHtml(imageUrl)}"
               alt="${escapeHtml(item.image_alt || item.title_ru || "Иллюстрация новости")}"
               loading="lazy"
               onerror="this.closest('.news-image-wrap').classList.add('is-fallback'); this.remove();"
@@ -107,16 +111,21 @@
 
       function renderExpanded(item) {
         const title = item.title_ru || item.title || "Новость без заголовка";
-        const fullText = item.full_text_ru || item.long_story_ru || item.summary || "Описание недоступно.";
+        const fullText = item.full_text_ru || item.long_story_ru || item.summary_ru || item.summary || "Описание недоступно.";
+        const description = item.preview_ru || item.summary_ru || item.summary || "Описание недоступно.";
+        const impact = item.market_impact_ru || "";
+        const sentiment = item.sentiment && typeof item.sentiment === "object" ? item.sentiment : null;
+        const humor = item.humor_ru || "";
         newsModalBody.innerHTML = `
           ${imageHtml(item, true)}
           <p class="news-card__eyebrow">Источник: ${escapeHtml(item.source || "Источник")} · ${formatDate(item.published_at)}</p>
           <h3 class="news-card__title">${escapeHtml(title)}</h3>
+          <section class="news-detail-box"><h4>Коротко</h4><p class="news-card__text">${escapeHtml(description)}</p></section>
           <section class="news-detail-box"><h4>Оригинальный заголовок</h4><p class="news-card__text">${escapeHtml(item.title_original || "—")}</p></section>
           <div class="news-chip-row">${buildMarkets(item.markets || item.assets)}</div>
-          <section class="news-detail-box"><h4>Влияние на рынок</h4><p class="news-card__text">${escapeHtml(item.market_impact_ru || "Оценка влияния ограничена.")}</p></section>
-          <section class="news-detail-box"><h4>Сентимент</h4><div class="news-chip-row">${buildSentiment(item.sentiment)}</div></section>
-          <section class="news-detail-box"><h4>Заметка с улыбкой</h4><p class="news-card__text">${escapeHtml(item.humor_ru || "Рынок сегодня без шуток, но с волатильностью.")}</p></section>
+          ${impact ? `<section class="news-detail-box"><h4>Влияние на рынок</h4><p class="news-card__text">${escapeHtml(impact)}</p></section>` : ""}
+          ${sentiment ? `<section class="news-detail-box"><h4>Сентимент</h4><div class="news-chip-row">${buildSentiment(sentiment)}</div></section>` : ""}
+          ${humor ? `<section class="news-detail-box"><h4>Заметка с улыбкой</h4><p class="news-card__text">${escapeHtml(humor)}</p></section>` : ""}
           <section class="news-modal__body"><p class="news-modal__story">${escapeHtml(fullText)}</p></section>
           <div class="news-card__footer">
             ${item.source_url ? `<a class="news-link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'}
@@ -165,13 +174,13 @@
               <p class="news-card__eyebrow">Источник: ${escapeHtml(item.source || "Источник")} · ${formatDate(item.published_at)}</p>
               <h3 class="news-card__title">${escapeHtml(item.title_ru || item.title || "Новость без заголовка")}</h3>
             </div>
-            <section class="news-detail-box"><h4>Коротко</h4><p class="news-card__text">${escapeHtml(item.preview_ru || item.summary || "Описание недоступно.")}</p></section>
-            <section class="news-detail-box"><h4>Влияние на рынок</h4><p class="news-card__text">${escapeHtml(item.market_impact_ru || "Оценка влияния ограничена.")}</p></section>
+            <section class="news-detail-box"><h4>Коротко</h4><p class="news-card__text">${escapeHtml(item.preview_ru || item.summary_ru || item.summary || "Описание недоступно.")}</p></section>
+            ${(item.market_impact_ru || "") ? `<section class="news-detail-box"><h4>Влияние на рынок</h4><p class="news-card__text">${escapeHtml(item.market_impact_ru)}</p></section>` : ""}
             <div class="news-card__assets">
               <span class="news-label">Рынки под прицелом</span>
               <div class="news-chip-row">${buildMarkets(item.affected_assets || item.markets)}</div>
             </div>
-            <section class="news-detail-box"><h4>Немного юмора</h4><p class="news-card__text">${escapeHtml(item.humor_ru || "Рынок шутит свечами, мы — аккуратно словами.")}</p></section>
+            ${(item.humor_ru || "") ? `<section class="news-detail-box"><h4>Немного юмора</h4><p class="news-card__text">${escapeHtml(item.humor_ru)}</p></section>` : ""}
             <div class="news-card__footer">
               ${item.source_url ? `<a class="news-link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'}
             </div>

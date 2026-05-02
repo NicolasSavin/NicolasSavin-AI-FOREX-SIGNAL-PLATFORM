@@ -209,6 +209,7 @@ class NewsService:
 
 
 RSS_TIMEOUT_SECONDS = 8
+RSS_HEADERS = {"User-Agent": "Mozilla/5.0"}
 NEWS_CACHE: dict[str, Any] = {
     "updated_at": None,
     "payload": None,
@@ -708,7 +709,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
         source_name = source["name"]
         sources_attempted.append(source_name)
         try:
-            response = requests.get(source["url"], timeout=RSS_TIMEOUT_SECONDS, headers={"User-Agent": "Mozilla/5.0"})
+            response = requests.get(source["url"], timeout=RSS_TIMEOUT_SECONDS, headers=RSS_HEADERS)
             response.raise_for_status()
             feed = feedparser.parse(response.content)
             entries = getattr(feed, "entries", [])[: max(limit, 12)]
@@ -733,7 +734,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     )
                     image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
                     rewrite = None
-                    if grok_processed < 5:
+                    if OPENROUTER_API_KEY or XAI_API_KEY:
                         rewrite = rewrite_news_with_xai(
                             title=title,
                             summary=summary,
@@ -743,15 +744,15 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         )
                     story = rewrite or {
                         "title_ru": strip_html(title),
-                        "summary_ru": "Не удалось обработать новость через Grok.",
-                        "market_impact_ru": "Трактовка временно недоступна.",
+                        "summary_ru": "Краткое описание новости временно недоступно",
+                        "market_impact_ru": "Оценка влияния временно недоступна",
                         "affected_assets": enriched["markets"],
                         "sentiment": "neutral",
                         "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
                         "full_text_ru": strip_html(summary) or strip_html(title),
                     }
                     title_ru = strip_html(story.get("title_ru") or title)
-                    base_summary = story.get("summary_ru") or story.get("preview_ru") or "Не удалось обработать новость через Grok."
+                    base_summary = story.get("summary_ru") or story.get("preview_ru") or "Краткое описание новости временно недоступно"
                     summary_ru = base_summary if len(strip_html(summary)) > 20 else f"{base_summary} Интерпретация ограничена: исходный текст слишком короткий."
                     writer = "grok" if rewrite else "local_fallback"
                     if rewrite:
@@ -812,6 +813,10 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                 sources_ok.append(source_name)
             else:
                 sources_failed.append(source_name)
+        except requests.Timeout as exc:
+            fetch_error = f"timeout: {exc}"
+            sources_failed.append(source_name)
+            continue
         except Exception as exc:
             fetch_error = str(exc)
             sources_failed.append(source_name)
@@ -828,7 +833,40 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
 
     final_items = deduped[:limit]
     if not final_items:
-        final_items = []
+        final_items = [
+            {
+                "title": "Рыночное обновление",
+                "source": "System fallback",
+                "url": None,
+                "published_at": now_utc.isoformat(),
+                "summary": "Основные RSS-источники временно недоступны. Следим за динамикой USD, EUR и XAUUSD до восстановления лент.",
+                "impact": "Фундаментальный фон уточняется после восстановления источников.",
+                "markets": ["USD", "EUR", "XAUUSD"],
+                "affected_assets": ["USD", "EUR", "XAUUSD"],
+                "tone": "neutral",
+                "image_url": pick_fallback_news_image("Рыночное обновление", "", ["USD", "EUR", "XAUUSD"]),
+                "image_source": "placeholder",
+                "image_alt": "Иллюстрация резервной новости",
+                "title_original": "Рыночное обновление",
+                "title_ru": "Рыночное обновление",
+                "source_url": None,
+                "summary_source": "",
+                "summary_ru": "Ключевые рыночные ленты временно недоступны. Отслеживаем фон по доллару, евро и золоту.",
+                "preview_ru": "Ключевые рыночные ленты временно недоступны. Отслеживаем фон по доллару, евро и золоту.",
+                "full_text_ru": "Ключевые рыночные ленты временно недоступны. Отслеживаем фон по доллару, евро и золоту.",
+                "is_real_source": False,
+                "data_origin": "fallback",
+                "writer": "local_fallback",
+                "what_happened_ru": "RSS-источники не ответили в ожидаемое время.",
+                "why_it_matters_ru": "Без потока новостей сложнее оперативно оценивать фундаментальные драйверы.",
+                "market_impact_ru": "Оценка влияния временно недоступна",
+                "humor_ru": "Ленты на паузе, но риск-менеджмент работает без выходных.",
+                "sentiment": {"USD": "neutral", "EUR": "neutral", "XAUUSD": "neutral"},
+                "what_next_ru": "Проверяем повторно и обновляем новостной поток после восстановления RSS.",
+                "grok_style_comment_ru": "Краткое описание новости временно недоступно",
+                "long_story_ru": "Краткое описание новости временно недоступно",
+            }
+        ]
 
     real_items_count = sum(1 for item in final_items if item.get("is_real_source") is True)
     fallback_items_count = len(final_items) - real_items_count
