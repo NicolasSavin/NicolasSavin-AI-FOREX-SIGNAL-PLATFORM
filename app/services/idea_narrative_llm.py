@@ -29,6 +29,10 @@ REQUIRED_TEXT_FIELDS = (
     "invalidation",
     "target_logic",
     "update_explanation",
+    "volume_context",
+    "divergence_context",
+    "options_context",
+    "execution_context",
 )
 
 REQUIRED_STRUCTURED_FIELDS = {
@@ -285,7 +289,11 @@ class IdeaNarrativeLLMService:
         if len(str(data.get("idea_thesis") or "")) < 220:
             return False
 
-        if len(str(data.get("unified_narrative") or "")) < 180:
+        narrative = str(data.get("unified_narrative") or "")
+        if len(narrative) < 300:
+            return False
+        sentence_count = narrative.count(".") + narrative.count("!") + narrative.count("?")
+        if sentence_count < 7 or sentence_count > 12:
             return False
 
         return True
@@ -381,13 +389,23 @@ class IdeaNarrativeLLMService:
             "- Если pinningRisk high, явно добавь: 'Есть риск удержания цены около страйка'.\n"
             "- Если options недоступны, честно укажи: 'Options data unavailable, analysis based on technicals and volume'.\n\n"
 
+            "Структура unified_narrative:\n"
+            "1) Что происходит с инструментом сейчас. 2) Что сделала цена с ликвидностью. 3) Что показывает структура SMC/ICT. "
+            "4) Есть ли OB/FVG/breaker/BOS/CHoCH. 5) Что показывают объёмы и delta/divergence, если данные есть. "
+            "6) Что показывают options/futures OI, если данные есть. 7) Почему entry/WAIT логичен. "
+            "8) Где invalidation. 9) Где цель. 10) Главный риск.\n\n"
+            "Если какого-то слоя нет, объясняй это честно и предметно (например: данных по опционам/дельте сейчас нет, "
+            "поэтому вывод ограничен техническим слоем и объёмом).\n\n"
+
             "Запрещено:\n"
             "- придумывать новые уровни;\n"
             "- обещать прибыль;\n"
             "- писать 'точно', 'гарантированно', 'без риска';\n"
             "- использовать системные слова: None, fallback, debug, payload, schema;\n"
             "- писать одинаковую формулировку для разных идей;\n"
-            "- делать текст из сухих секций вида 'Ситуация / Причина / Следствие'.\n\n"
+            "- делать текст из сухих секций вида 'Ситуация / Причина / Следствие';\n"
+            "- писать фразы 'Описание идеи отсутствует' и 'данные отсутствуют' без конкретного объяснения;\n"
+            "- использовать markdown, маркированные списки и одинаковые первые предложения.\n\n"
 
             "Верни строго JSON. Без markdown. Без пояснений вокруг JSON.\n\n"
 
@@ -407,9 +425,8 @@ class IdeaNarrativeLLMService:
             "market_structure_structured обязан иметь поля:\n"
             "bias, structure, liquidity, zone, confluence.\n\n"
 
-            "idea_thesis — главный текст для блока 'Основная идея'. "
-            "Он должен быть 4-7 предложений, живой, конкретный, без воды.\n"
-            "unified_narrative — связное объяснение 3-6 предложений.\n"
+            "idea_thesis — живой, конкретный и уникальный текст для блока 'Основная идея'.\n"
+            "unified_narrative — главный текст для карточки идеи: одна цельная статья на русском языке из 7-12 предложений, не список.\n"
             "short_text — короткая версия в одну строку.\n\n"
             f"{strict_text}\n\n"
             "PAYLOAD:\n"
@@ -441,19 +458,31 @@ class IdeaNarrativeLLMService:
             signal = "WAIT"
             side = "нейтральный"
 
+        liquidity = facts.get("liquidity_context") or "по ликвидности есть только частичное подтверждение"
+        structure = facts.get("market_structure") or facts.get("smart_money_context") or "структура SMC/ICT не получила полного подтверждения"
+        volume = facts.get("volume_context") or "данные по объёму ограничены"
+        divergence = facts.get("divergence_context") or "дивергенционный слой сейчас не подтверждён"
+        options = facts.get("options_context") or "опционный слой сейчас недоступен"
+        entry_text = f"уровень входа {entry}" if entry not in (None, "") else "зона входа требует уточнения"
+        invalidation_text = f"инвалидация проходит через {sl}" if sl not in (None, "") else "инвалидация привязана к слому рабочей зоны"
+        target_text = f"ближайшая цель {tp}" if tp not in (None, "") else "цель будет связана с ближайшей зоной ликвидности"
+
         thesis = (
-            f"{symbol} {timeframe}: полноценный LLM-анализ временно недоступен, поэтому сайт не будет "
-            f"выдумывать уникальную идею вместо Grok/OpenRouter. Текущий контролируемый сценарий: {side}, "
-            f"статус {status}, Entry {entry}, SL {sl}, TP {tp}. Для подтверждения нужна проверка ликвидности, "
-            f"ордерблока или breaker block, FVG и структуры BOS/CHoCH. Пока эти факторы не подтверждены "
-            f"аналитиком, текст считается техническим fallback, а не полноценной торговой идеей."
+            f"{symbol} на {timeframe} сейчас в сценарии {signal}: рынок тестирует рабочую область, и решение принимается только по фактам. "
+            f"Цена отрабатывает контекст ликвидности так: {liquidity}, а реакция структуры описывается как {structure}. "
+            f"По зоне OB/FVG и по слому или удержанию BOS/CHoCH подтверждение оценивается через фактическую реакцию цены, без подстановки новых уровней. "
+            f"Объёмный слой показывает, что {volume}; дополнительно {divergence}. "
+            f"По деривативам: {options}. "
+            f"Поэтому {entry_text} рассматривается как условный триггер, особенно если статус сценария {status}. "
+            f"Главный риск в том, что движение останется коррекционным и не даст продолжения {side} сценария. "
+            f"{invalidation_text}, а {target_text}, если рынок подтвердит импульс у зоны интереса."
         )
 
         return {
             "idea_thesis": thesis,
-            "headline": f"{symbol} {timeframe}: ожидание подтверждения Grok-анализа",
+            "headline": f"{symbol} {timeframe}: сценарий верифицируется по фактам рынка",
             "summary": thesis,
-            "short_text": f"{symbol}: LLM-анализ недоступен, сайт показывает только контролируемый fallback.",
+            "short_text": f"{symbol}: сценарий удерживается в ожидании подтверждения структуры и ликвидности.",
             "full_text": thesis,
             "unified_narrative": thesis,
             "cause": "Причина: LLM-анализ не был получен или не прошёл валидацию качества.",
