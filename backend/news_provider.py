@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Iterable
+from urllib.parse import urljoin
 from xml.etree import ElementTree
 
 import feedparser
@@ -166,12 +167,20 @@ class MarketNewsProvider:
 
         clean_title = self._normalize_title(raw_title, source)
         clean_summary = self._clean_description(raw_description, clean_title)
+        image_url = self._extract_image_url(raw_description, raw_link)
+        article_text = ""
+        if not clean_summary and raw_link:
+            fetched_summary, fetched_image, article_text = self._fetch_article_details(raw_link)
+            clean_summary = self._clean_description(fetched_summary, clean_title)
+            image_url = image_url or fetched_image
         return {
             "title_original": clean_title,
             "summary_original": clean_summary,
             "source": source,
             "source_url": raw_link or None,
             "published_at": published_at.isoformat() if published_at else None,
+            "image_url": image_url,
+            "article_original": article_text[:1500],
         }
 
     def _parse_feed_item(self, item: ElementTree.Element, feed_name: str) -> dict | None:
@@ -190,13 +199,56 @@ class MarketNewsProvider:
 
         clean_title = self._normalize_title(raw_title, source)
         clean_summary = self._clean_description(raw_description, clean_title)
+        image_url = self._extract_image_url(raw_description, raw_link)
+        article_text = ""
+        if not clean_summary and raw_link:
+            fetched_summary, fetched_image, article_text = self._fetch_article_details(raw_link)
+            clean_summary = self._clean_description(fetched_summary, clean_title)
+            image_url = image_url or fetched_image
         return {
             "title_original": clean_title,
             "summary_original": clean_summary,
             "source": source,
             "source_url": raw_link or None,
             "published_at": published_at.isoformat() if published_at else None,
+            "image_url": image_url,
+            "article_original": article_text[:1500],
         }
+
+
+    def _extract_image_url(self, raw_description: str, link: str) -> str | None:
+        if not raw_description:
+            return None
+        soup = BeautifulSoup(raw_description, "html.parser")
+        tag = soup.find("img")
+        if not tag:
+            return None
+        src = (tag.get("src") or "").strip()
+        if not src:
+            return None
+        return urljoin(link, src) if link else src
+
+    def _fetch_article_details(self, link: str) -> tuple[str, str | None, str | None]:
+        if not link:
+            return "", None, None
+        try:
+            response = self._session.get(link, timeout=self._request_timeout_seconds, headers={"User-Agent": "Mozilla/5.0"})
+            response.raise_for_status()
+        except requests.RequestException:
+            return "", None, None
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        og_desc = (soup.find("meta", attrs={"property": "og:description"}) or {}).get("content", "").strip()
+        meta_desc = (soup.find("meta", attrs={"name": "description"}) or {}).get("content", "").strip()
+        article_text = ""
+        paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
+        joined = " ".join(x for x in paragraphs if x)
+        if joined:
+            article_text = joined[:1500]
+        image_tag = soup.find("meta", attrs={"property": "og:image"})
+        image_url = image_tag.get("content", "").strip() if image_tag else None
+        summary = og_desc or meta_desc or article_text
+        return summary, image_url or None, article_text
 
     def _attach_signal_relations(self, payload: dict, active_signals: list[dict]) -> dict:
         items = [self._intelligence.enrich(item, active_signals) for item in payload.get("news", [])]

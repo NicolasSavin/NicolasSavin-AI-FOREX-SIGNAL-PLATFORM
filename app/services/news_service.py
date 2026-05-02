@@ -292,6 +292,24 @@ def extract_news_image(entry: dict) -> str | None:
     return None
 
 
+def extract_article_text(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        resp = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        if not resp.ok:
+            return ""
+        html_text = resp.text
+        og = re.search(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']', html_text, flags=re.I)
+        md = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']', html_text, flags=re.I)
+        base = html.unescape((og.group(1) if og else '') or (md.group(1) if md else ''))
+        text = strip_html(html_text)
+        tail = text[:1500]
+        combined = f"{base} {tail}".strip()
+        return combined[:1500]
+    except Exception:
+        return ""
+
 def extract_article_page_image(url: str) -> str | None:
     try:
         resp = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
@@ -568,6 +586,7 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
         "- summary_ru\n"
         "- market_impact_ru\n"
         "- affected_assets\n"
+        "- article_ru\n"
         "- sentiment\n"
         "- humor_ru\n\n"
         "Используй только переданные данные, без новых фактов.\n"
@@ -631,9 +650,11 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
             summary_ru = strip_html(str(parsed.get("summary_ru") or "")).strip()
             impact_ru = strip_html(str(parsed.get("market_impact_ru") or "")).strip()
             plain_text_summary = strip_html(content_text).strip()
+            article_ru = strip_html(str(parsed.get("article_ru") or "")).strip()
             cleaned = {
                 "title_ru": strip_html(str(parsed.get("title_ru") or "")).strip() or strip_html(title),
                 "summary_ru": summary_ru or plain_text_summary or "Не удалось обработать новость через Grok.",
+                "article_ru": article_ru or summary_ru or plain_text_summary,
                 "market_impact_ru": impact_ru or "Трактовка по влиянию ограничена: модель вернула свободный текст.",
                 "affected_assets": parsed.get("affected_assets") if isinstance(parsed.get("affected_assets"), list) else markets[:4],
                 "sentiment": strip_html(str(parsed.get("sentiment") or "neutral")).strip().lower()[:20] or "neutral",
@@ -658,6 +679,7 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
             "title_ru": strip_html(title),
             "summary_ru": "Не удалось обработать новость через Grok.",
             "market_impact_ru": "Оценка влияния временно недоступна.",
+            "article_ru": strip_html(summary)[:1200] or strip_html(title),
             "affected_assets": markets[:4],
             "sentiment": "neutral",
             "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
@@ -784,7 +806,12 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     published_iso, _ = parse_entry_datetime(entry=entry, fallback=now_utc)
                     image_entry = entry
 
-                enriched = build_market_explanation(title=title, summary=summary)
+                summary_original = strip_html(summary)[:1500]
+                article_original = summary_original
+                if source_url and not summary_original:
+                    article_original = extract_article_text(source_url)
+                    summary_original = article_original[:420]
+                enriched = build_market_explanation(title=title, summary=summary_original)
                 safe_image_url, image_source = _resolve_news_image(
                     title=title,
                     summary=summary,
@@ -797,7 +824,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                 if (OPENROUTER_API_KEY or XAI_API_KEY) and grok_processed < grok_limit:
                     rewrite = rewrite_news_with_xai(
                         title=title,
-                        summary=summary,
+                        summary=article_original or summary_original,
                         source=source_name,
                         published_at=published_iso,
                         markets=enriched["markets"],
@@ -807,6 +834,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     "title_ru": strip_html(title),
                     "summary_ru": "Новость получена, но AI-обработка временно недоступна.",
                     "market_impact_ru": "Оценка влияния будет доступна после восстановления AI-обработки.",
+                    "article_ru": summary_original or strip_html(title),
                     "affected_assets": enriched["markets"],
                     "sentiment": "neutral",
                     "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
@@ -821,7 +849,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     "source": source_name,
                     "url": source_url,
                     "published_at": published_iso,
-                    "summary": story.get("summary_ru") or strip_html(summary)[:280],
+                    "summary": story.get("summary_ru") or summary_original[:280],
                     "impact": enriched["impact"],
                     "markets": enriched["markets"],
                     "affected_assets": story.get("affected_assets") if isinstance(story.get("affected_assets"), list) else enriched["markets"],
@@ -832,8 +860,10 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     "title_original": strip_html(title),
                     "title_ru": strip_html(story.get("title_ru") or title),
                     "source_url": source_url,
-                    "summary_source": strip_html(summary)[:1200],
-                    "summary_original": strip_html(summary)[:1200],
+                    "summary_source": summary_original,
+                    "summary_original": summary_original,
+                    "article_original": article_original,
+                    "article_ru": story.get("article_ru") or story.get("summary_ru") or summary_original,
                     "summary_ru": story.get("summary_ru") or "Новость получена, но AI-обработка временно недоступна.",
                     "market_impact_ru": story.get("market_impact_ru") or "Оценка влияния будет доступна после восстановления AI-обработки.",
                     "humor_ru": story.get("humor_ru") or "",
