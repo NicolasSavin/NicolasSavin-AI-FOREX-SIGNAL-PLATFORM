@@ -12,6 +12,7 @@ from typing import Any
 
 import feedparser
 import requests
+from app.core.env import get_openrouter_api_key, get_openrouter_model
 from app.schemas.contracts import NewsIngestRequest, NewsItemResponse, NewsListResponse
 from app.services.storage.json_storage import JsonStorage
 from backend.news_provider import MarketNewsProvider
@@ -227,9 +228,9 @@ PUBLIC_RSS_SOURCES = [
 ]
 
 XAI_TIMEOUT_SECONDS = 15
-XAI_MODEL = os.getenv("XAI_MODEL", os.getenv("OPENROUTER_MODEL", "x-ai/grok-3-mini")).strip()
+XAI_MODEL = os.getenv("XAI_MODEL", get_openrouter_model()).strip()
 XAI_API_KEY = os.getenv("XAI_API_KEY", "").strip()
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_API_KEY = (get_openrouter_api_key() or "").strip()
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 BING_IMAGE_SEARCH_KEY = os.getenv("BING_IMAGE_SEARCH_KEY", "").strip()
@@ -558,14 +559,18 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
         return cached.get("payload")
 
     user_content = (
-        "Используй только предоставленные данные новости, никаких выдуманных фактов.\n"
-        "Если текста мало, явно укажи, что интерпретация ограничена.\n"
-        "Верни строго JSON с полями: title_ru, summary_ru, market_impact_ru, affected_assets, sentiment, humor_ru.\n\n"
+        "Напиши на русском:\n"
+        "- title_ru\n"
+        "- summary_ru\n"
+        "- market_impact_ru\n"
+        "- affected_assets\n"
+        "- humor_ru\n\n"
+        "Если JSON вернуть сложно, верни просто читабельный русский текст.\n"
+        "Используй только переданные данные, без новых фактов.\n\n"
         f"title: {strip_html(title)}\n"
-        f"content: {strip_html(summary)[:1400]}\n"
         f"source: {strip_html(source)}\n"
         f"published_at: {published_at or 'unknown'}\n"
-        f"assets_hint: {', '.join(markets[:6])}\n"
+        f"content: {strip_html(summary)[:1200]}\n"
     )
     try:
         response = requests.post(
@@ -578,29 +583,41 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
             json={
                 "model": XAI_MODEL,
                 "temperature": 0.4,
-                "max_tokens": 220,
+                "max_tokens": 250,
                 "messages": [
                     {
                         "role": "system",
-                        "content": "Ты русскоязычный аналитик forex-новостей. Кратко объясни: что произошло, почему важно, какие активы могут реагировать и трактовку для forex/золота. "
-                        "Юмор: короткий, лёгкий, в стиле трейдера, не оскорбительный. Никаких новых фактов, только входной текст. "
-                        "Return valid JSON only.",
+                        "content": "Ты русскоязычный аналитик forex-новостей. Кратко объясни: что произошло, почему важно и какие активы могут реагировать. "
+                        "Юмор: короткий, лёгкий, в стиле трейдера, не оскорбительный. Никаких новых фактов, только входной текст.",
                     },
                     {"role": "user", "content": user_content},
                 ],
-                "response_format": {"type": "json_object"},
             },
         )
+        print(f"[news:grok] status_code={response.status_code}")
+        print(f"[news:grok] response_text={response.text[:500]}")
         response.raise_for_status()
         payload = response.json()
-        content = payload.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-        parsed = json.loads(content) if isinstance(content, str) else {}
+        content = payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+        content_text = str(content or "").strip()
+        parsed: dict[str, Any] = {}
+        if content_text:
+            try:
+                parsed = json.loads(content_text)
+            except Exception:
+                json_match = re.search(r"\{.*\}", content_text, flags=re.DOTALL)
+                if json_match:
+                    try:
+                        parsed = json.loads(json_match.group(0))
+                    except Exception:
+                        parsed = {}
         summary_ru = strip_html(str(parsed.get("summary_ru") or "")).strip()
         impact_ru = strip_html(str(parsed.get("market_impact_ru") or "")).strip()
+        plain_text_summary = strip_html(content_text).strip()
         cleaned = {
             "title_ru": strip_html(str(parsed.get("title_ru") or "")).strip() or strip_html(title),
-            "summary_ru": summary_ru or "Не удалось обработать новость через Grok.",
-            "market_impact_ru": impact_ru or "Трактовка временно недоступна.",
+            "summary_ru": summary_ru or plain_text_summary or "Не удалось обработать новость через Grok.",
+            "market_impact_ru": impact_ru or "Трактовка по влиянию ограничена: модель вернула свободный текст.",
             "affected_assets": parsed.get("affected_assets") if isinstance(parsed.get("affected_assets"), list) else markets[:4],
             "sentiment": strip_html(str(parsed.get("sentiment") or "neutral")).strip().lower()[:20] or "neutral",
             "humor_ru": strip_html(str(parsed.get("humor_ru") or "")).strip() or "Рынок шутит свечами, но без перегиба.",
@@ -715,7 +732,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     )
                     image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
                     rewrite = None
-                    if grok_processed < 10:
+                    if grok_processed < 5:
                         rewrite = rewrite_news_with_xai(
                             title=title,
                             summary=summary,
