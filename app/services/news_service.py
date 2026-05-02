@@ -13,6 +13,7 @@ from typing import Any
 
 import feedparser
 import requests
+from xml.etree import ElementTree
 from app.core.env import get_openrouter_api_key, get_openrouter_model
 from app.schemas.contracts import NewsIngestRequest, NewsItemResponse, NewsListResponse
 from app.services.storage.json_storage import JsonStorage
@@ -229,8 +230,8 @@ PUBLIC_RSS_SOURCES = [
 ]
 
 XAI_TIMEOUT_SECONDS = 15
-XAI_MODEL = os.getenv("OPENROUTER_MODEL", os.getenv("XAI_MODEL", get_openrouter_model())).strip()
-XAI_FALLBACK_MODEL = os.getenv("OPENROUTER_FALLBACK_MODEL", "meta-llama/llama-3.1-8b-instruct:free").strip()
+XAI_MODEL = os.getenv("OPENROUTER_MODEL", os.getenv("XAI_MODEL", get_openrouter_model() or "x-ai/grok-3-mini")).strip() or "x-ai/grok-3-mini"
+XAI_FALLBACK_MODEL = os.getenv("OPENROUTER_FALLBACK_MODEL", "meta-llama/llama-3.1-8b-instruct:free").strip() or "meta-llama/llama-3.1-8b-instruct:free"
 XAI_API_KEY = os.getenv("XAI_API_KEY", "").strip()
 OPENROUTER_API_KEY = (get_openrouter_api_key() or "").strip()
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
@@ -562,14 +563,16 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
         return cached.get("payload")
 
     user_content = (
-        "Напиши на русском:\n"
+        "Верни строго валидный JSON на русском:\n"
         "- title_ru\n"
         "- summary_ru\n"
         "- market_impact_ru\n"
         "- affected_assets\n"
+        "- sentiment\n"
         "- humor_ru\n\n"
-        "Если JSON вернуть сложно, верни просто читабельный русский текст.\n"
-        "Используй только переданные данные, без новых фактов.\n\n"
+        "Используй только переданные данные, без новых фактов.\n"
+        "Обязательно объясни причинно-следственную связь влияния на рынок.\n"
+        "Юмор — короткий и лёгкий.\n\n"
         f"title: {strip_html(title)}\n"
         f"source: {strip_html(source)}\n"
         f"published_at: {published_at or 'unknown'}\n"
@@ -622,6 +625,9 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
                         parsed = json.loads(json_match.group(0))
                     except Exception:
                         parsed = {}
+            if not isinstance(parsed, dict) or not parsed:
+                last_error = "invalid_json"
+                continue
             summary_ru = strip_html(str(parsed.get("summary_ru") or "")).strip()
             impact_ru = strip_html(str(parsed.get("market_impact_ru") or "")).strip()
             plain_text_summary = strip_html(content_text).strip()
@@ -734,147 +740,120 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
 
     items: list[dict[str, Any]] = []
     sources_attempted: list[str] = []
-    sources_ok: list[str] = []
-    sources_failed: list[str] = []
-
+    source_results: list[dict[str, Any]] = []
     diagnostics: dict[str, Any] = {"grok_used_count": 0, "generated_images_count": 0}
     fetch_error: str | None = None
     grok_processed = 0
     grok_limit = 5
-    source_status: dict[str, str] = {}
+
     logger.info("[news] sources_attempted=%s", [source["name"] for source in PUBLIC_RSS_SOURCES])
     for source in PUBLIC_RSS_SOURCES:
         source_name = source["name"]
         sources_attempted.append(source_name)
         status_code: int | None = None
+        source_items_count = 0
+        source_error: str | None = None
         try:
             response = requests.get(source["url"], timeout=RSS_TIMEOUT_SECONDS, headers=RSS_HEADERS)
             status_code = response.status_code
             response.raise_for_status()
-            feed = feedparser.parse(response.content)
-            entries = getattr(feed, "entries", [])[: max(limit, 12)]
+
+            entries: list[Any] = []
+            try:
+                root = ElementTree.fromstring(response.text)
+                entries = [*root.findall("./channel/item"), *root.findall("{http://purl.org/rss/1.0/}item")]
+            except ElementTree.ParseError as exc:
+                source_error = f"xml_parse_error: {exc}"
+
             if not entries:
-                print("[news] source", source_name, "status", status_code, "items", 0)
-                sources_failed.append(source_name)
-                continue
-            source_had_item = False
-            source_items_count = 0
-            for entry in entries:
-                source_url = str(entry.get("link") or "").strip() or None
-                try:
+                feed = feedparser.parse(response.text)
+                entries = list(getattr(feed, "entries", []))
+
+            for entry in entries[: max(limit, 12)]:
+                if isinstance(entry, ElementTree.Element):
+                    title = str(MarketNewsProvider._find_text(entry, "title") or "Новость без заголовка").strip()
+                    summary = str(MarketNewsProvider._find_text(entry, "description") or MarketNewsProvider._find_text(entry, "encoded") or "").strip()
+                    source_url = str(MarketNewsProvider._find_text(entry, "link") or "").strip() or None
+                    entry_published = MarketNewsProvider._find_text(entry, "pubDate") or MarketNewsProvider._find_text(entry, "date")
+                    published_iso, _ = parse_entry_datetime(entry={"published": entry_published}, fallback=now_utc)
+                    image_entry: dict[str, Any] = {"summary": summary, "description": summary}
+                else:
                     title = str(entry.get("title") or "Новость без заголовка").strip()
                     summary = str(entry.get("summary") or entry.get("description") or "").strip()
-                    enriched = build_market_explanation(title=title, summary=summary)
+                    source_url = str(entry.get("link") or "").strip() or None
                     published_iso, _ = parse_entry_datetime(entry=entry, fallback=now_utc)
-                    safe_image_url, image_source = _resolve_news_image(
+                    image_entry = entry
+
+                enriched = build_market_explanation(title=title, summary=summary)
+                safe_image_url, image_source = _resolve_news_image(
+                    title=title,
+                    summary=summary,
+                    source=source_name,
+                    source_url=source_url,
+                    entry=image_entry,
+                    diagnostics=diagnostics,
+                )
+                rewrite = None
+                if (OPENROUTER_API_KEY or XAI_API_KEY) and grok_processed < grok_limit:
+                    rewrite = rewrite_news_with_xai(
                         title=title,
                         summary=summary,
                         source=source_name,
-                        source_url=source_url,
-                        entry=entry,
-                        diagnostics=diagnostics,
+                        published_at=published_iso,
+                        markets=enriched["markets"],
                     )
-                    image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
-                    rewrite = None
-                    if (OPENROUTER_API_KEY or XAI_API_KEY) and grok_processed < grok_limit:
-                        try:
-                            rewrite = rewrite_news_with_xai(
-                                title=title,
-                                summary=summary,
-                                source=source_name,
-                                published_at=published_iso,
-                                markets=enriched["markets"],
-                            )
-                        except Exception as grok_exc:
-                            print(f"[news:grok] failed source={source_name}: {grok_exc}")
-                    story = rewrite or {
-                        "title_ru": strip_html(title),
-                        "summary_ru": "Краткое описание новости временно недоступно",
-                        "market_impact_ru": "Оценка влияния временно недоступна",
-                        "affected_assets": enriched["markets"],
-                        "sentiment": "neutral",
-                        "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
-                        "full_text_ru": strip_html(summary) or strip_html(title),
-                    }
-                    title_ru = strip_html(story.get("title_ru") or title)
-                    base_summary = story.get("summary_ru") or story.get("preview_ru") or "Краткое описание новости временно недоступно"
-                    summary_ru = base_summary if len(strip_html(summary)) > 20 else f"{base_summary} Интерпретация ограничена: исходный текст слишком короткий."
-                    writer = "grok" if rewrite else "local_fallback"
-                    if rewrite:
-                        diagnostics["grok_used_count"] += 1
-                        grok_processed += 1
-                except Exception:
-                    title = str(entry.get("title") or "Новость без заголовка").strip()
-                    summary = str(entry.get("summary") or entry.get("description") or "").strip()
-                    published_iso, _ = parse_entry_datetime(entry=entry, fallback=now_utc)
-                    enriched = build_market_explanation(title=title, summary=summary)
-                    safe_image_url = pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"])
-                    image_source = "placeholder"
-                    image_alt = "Иллюстрация новости"
-                    story = _local_writer_payload(title=title, summary=summary, markets=enriched["markets"], tone=enriched["tone"])
-                    title_ru = strip_html(story.get("title_ru") or title)
-                    summary_ru = story["preview_ru"] if len(strip_html(summary)) > 20 else f"{story['preview_ru']} Интерпретация ограничена: исходный текст слишком короткий."
-                    writer = "local_fallback"
-                affected_assets = enriched["markets"]
-                sentiment = _build_sentiment_map(f"{title} {summary}", affected_assets)
-                if isinstance(story.get("sentiment"), str):
-                    sentiment["MARKET"] = str(story.get("sentiment"))
-                source_had_item = True
+
+                story = rewrite or {
+                    "title_ru": strip_html(title),
+                    "summary_ru": "Новость получена, но AI-обработка временно недоступна.",
+                    "market_impact_ru": "Оценка влияния будет доступна после восстановления AI-обработки.",
+                    "affected_assets": enriched["markets"],
+                    "sentiment": "neutral",
+                    "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
+                }
+                if rewrite:
+                    diagnostics["grok_used_count"] += 1
+                    grok_processed += 1
+
                 source_items_count += 1
-                items.append(
-                    {
-                        "title": title_ru,
-                        "source": source_name,
-                        "url": source_url,
-                        "published_at": published_iso,
-                        "summary": summary_ru,
-                        "impact": enriched["impact"],
-                        "markets": affected_assets,
-                        "affected_assets": affected_assets,
-                        "tone": enriched["tone"],
-                        "image_url": safe_image_url,
-                        "image_source": image_source,
-                        "image_alt": image_alt,
-                        "title_original": strip_html(title),
-                        "title_ru": title_ru,
-                        "source_url": source_url,
-                        "summary_source": strip_html(summary)[:1200],
-                        "summary_ru": summary_ru,
-                        "preview_ru": story.get("summary_ru") or story.get("preview_ru") or summary_ru,
-                        "full_text_ru": story.get("full_text_ru") or story.get("summary_ru") or summary_ru,
-                        "is_real_source": True,
-                        "data_origin": "rss",
-                        "writer": writer,
-                        "what_happened_ru": story.get("what_happened_ru") or (story.get("summary_ru") or summary_ru),
-                        "why_it_matters_ru": story.get("why_it_matters_ru") or "Влияние оценивается на основе ограниченного текста новости.",
-                        "market_impact_ru": story.get("market_impact_ru") or "Трактовка временно недоступна.",
-                        "humor_ru": story.get("humor_ru") or "Рынок любит сюрпризы, а риск-менеджмент — ещё больше.",
-                        "sentiment": sentiment,
-                        "what_next_ru": "Следим за следующими релизами и реакцией долгового рынка.",
-                        "grok_style_comment_ru": story["humor_ru"],
-                        "long_story_ru": story["full_text_ru"],
-                    }
-                )
-            if source_had_item:
-                print("[news] source", source_name, "status", status_code, "items", source_items_count)
-                sources_ok.append(source_name)
-                source_status[source_name] = "ok"
-            else:
-                print("[news] source", source_name, "status", status_code, "items", 0)
-                sources_failed.append(source_name)
-                source_status[source_name] = "empty_feed"
+                items.append({
+                    "title": strip_html(story.get("title_ru") or title),
+                    "source": source_name,
+                    "url": source_url,
+                    "published_at": published_iso,
+                    "summary": story.get("summary_ru") or strip_html(summary)[:280],
+                    "impact": enriched["impact"],
+                    "markets": enriched["markets"],
+                    "affected_assets": story.get("affected_assets") if isinstance(story.get("affected_assets"), list) else enriched["markets"],
+                    "tone": enriched["tone"],
+                    "image_url": safe_image_url or pick_fallback_news_image(title=title, summary=summary, markets=enriched["markets"]),
+                    "image_source": image_source,
+                    "image_alt": f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости",
+                    "title_original": strip_html(title),
+                    "title_ru": strip_html(story.get("title_ru") or title),
+                    "source_url": source_url,
+                    "summary_source": strip_html(summary)[:1200],
+                    "summary_original": strip_html(summary)[:1200],
+                    "summary_ru": story.get("summary_ru") or "Новость получена, но AI-обработка временно недоступна.",
+                    "market_impact_ru": story.get("market_impact_ru") or "Оценка влияния будет доступна после восстановления AI-обработки.",
+                    "humor_ru": story.get("humor_ru") or "",
+                    "sentiment": story.get("sentiment") or "neutral",
+                    "is_real_source": True,
+                    "data_origin": "rss",
+                    "ai_model_used": story.get("ai_model_used", ""),
+                    "ai_fallback_used": bool(story.get("ai_fallback_used", False)),
+                })
+
+            if source_items_count == 0 and not source_error:
+                source_error = "empty_feed"
+            source_results.append({"source": source_name, "status_code": status_code, "items_count": source_items_count, "error": source_error})
+            print("[news] source", source_name, "status", status_code, "items", source_items_count)
         except requests.Timeout as exc:
             fetch_error = f"timeout: {exc}"
-            print("[news] source", source_name, "status", status_code, "items", 0)
-            sources_failed.append(source_name)
-            source_status[source_name] = f"timeout: {exc}"
-            continue
+            source_results.append({"source": source_name, "status_code": status_code, "items_count": 0, "error": fetch_error})
         except Exception as exc:
             fetch_error = str(exc)
-            print("[news] source", source_name, "status", status_code, "items", 0)
-            sources_failed.append(source_name)
-            source_status[source_name] = f"error: {exc}"
-            continue
+            source_results.append({"source": source_name, "status_code": status_code, "items_count": 0, "error": f"error: {exc}"})
 
     deduped: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -886,43 +865,33 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
         deduped.append(item)
 
     final_items = deduped[:limit]
-    if not final_items:
-        final_items = []
-
-    real_items_count = sum(1 for item in final_items if item.get("is_real_source") is True)
-    fallback_items_count = len(final_items) - real_items_count
+    real_items_count = len(final_items)
     data_status = "real" if real_items_count > 0 else "fallback"
-    message_ru = "OK" if data_status == "real" else "RSS-источники временно недоступны"
+    ai_model_used = next((it.get("ai_model_used") for it in final_items if it.get("ai_model_used")), "")
+    ai_fallback_used = any(bool(it.get("ai_fallback_used")) for it in final_items)
     payload: dict[str, Any] = {
         "items": final_items,
         "updated_at_utc": now_utc.isoformat(),
         "data_status": data_status,
-        "message_ru": message_ru,
-        "sources_attempted": sorted(set(sources_attempted)),
+        "message_ru": "OK" if data_status == "real" else "Новостные источники временно недоступны",
+        "sources_attempted": sources_attempted,
+        "source_results": source_results,
         "real_items_count": real_items_count,
         "grok_processed_count": diagnostics["grok_used_count"],
+        "ai_model_used": ai_model_used,
+        "ai_fallback_used": ai_fallback_used,
         "cache_hit": False,
-        "fetch_error": fetch_error,
+        "fetch_error": fetch_error if real_items_count == 0 else None,
         "diagnostics": {
             "real_items_count": real_items_count,
-            "fallback_items_count": fallback_items_count,
-            "sources_attempted": sources_attempted,
-            "sources_ok": sorted(set(sources_ok)),
-            "sources_failed": sorted(set(sources_failed)),
+            "source_results": source_results,
             "grok_used_count": diagnostics["grok_used_count"],
             "generated_images_count": diagnostics["generated_images_count"],
-            "fetch_error": fetch_error,
-            "source_status": source_status,
+            "fetch_error": fetch_error if real_items_count == 0 else None,
         },
     }
     if real_items_count == 0:
-        payload["warning"] = message_ru
-    logger.info(
-        "[news] fetch_done real_items_count=%s grok_processed_count=%s sources_status=%s",
-        real_items_count,
-        diagnostics["grok_used_count"],
-        source_status,
-    )
+        payload["warning"] = "Новостные источники временно недоступны"
 
     NEWS_CACHE["updated_at"] = now_ts
     NEWS_CACHE["payload"] = payload
