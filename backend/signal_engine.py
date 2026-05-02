@@ -34,6 +34,7 @@ PROFESSIONAL_MIN_CONFIDENCE = 55
 FALLBACK_MIN_CONFIDENCE = 40
 DEFAULT_CONFLUENCE_FALLBACK_RU = "Идея сформирована на основе SMC, ликвидности, объёма и текущего рыночного контекста."
 DEFAULT_REASON_FALLBACK_RU = "Подробное объяснение временно недоступно, но сигнал прошёл базовые фильтры."
+EXECUTION_FALLBACK_RU = "Точка входа рассчитана по текущей структуре и риск-модели, но требует подтверждения."
 
 
 class SignalEngine:
@@ -152,7 +153,64 @@ class SignalEngine:
         signal["options_analysis"] = options_analysis
         if not str(market_context.get("confluence_summary_ru") or "").strip():
             market_context["confluence_summary_ru"] = confluence_summary_ru
+        self._ensure_execution_model_fields(signal)
         return signal
+
+    def _ensure_execution_model_fields(self, signal: dict) -> None:
+        action = str(signal.get("action") or "").upper()
+        entry = signal.get("entry")
+        stop = signal.get("stop_loss")
+        take = signal.get("take_profit")
+        confluence_flags = signal.get("confluence_flags") if isinstance(signal.get("confluence_flags"), dict) else {}
+        context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        confluence = signal.get("confluence_analysis") if isinstance(signal.get("confluence_analysis"), dict) else {}
+
+        has_order_block = bool(confluence_flags.get("order_block"))
+        has_liquidity_sweep = bool(confluence_flags.get("liquidity_sweep"))
+        has_fvg = bool(confluence_flags.get("fvg")) or bool(confluence.get("fvg"))
+        sweep_side = str(context.get("liquidity_sweep_side") or signal.get("liquidity_sweep_side") or "").strip()
+
+        entry_reason_parts: list[str] = []
+        if has_order_block:
+            entry_reason_parts.append("Вход выбран в зоне order block после возврата цены в область интереса.")
+        if has_liquidity_sweep:
+            entry_reason_parts.append("Перед входом была снята ликвидность, что усиливает вероятность реакции.")
+        if has_fvg:
+            entry_reason_parts.append("FVG выступает зоной imbalance для реакции цены.")
+        entry_reason_ru = " ".join(entry_reason_parts) if entry_reason_parts else EXECUTION_FALLBACK_RU
+
+        if action == "BUY":
+            stop_reason_ru = "SL расположен ниже зоны интереса/снятой ликвидности."
+            take_profit_reason_ru = "TP ориентирован на ближайшую buy-side ликвидность, swing high или расчётный target по RR."
+        elif action == "SELL":
+            stop_reason_ru = "SL расположен выше зоны интереса/снятой ликвидности."
+            take_profit_reason_ru = "TP ориентирован на ближайшую sell-side ликвидность, swing low или расчётный target по RR."
+        else:
+            stop_reason_ru = EXECUTION_FALLBACK_RU
+            take_profit_reason_ru = EXECUTION_FALLBACK_RU
+
+        liquidity_entry_model = "none"
+        if sweep_side:
+            liquidity_entry_model = f"sweep_{sweep_side}"
+        elif has_liquidity_sweep:
+            liquidity_entry_model = "sweep_detected"
+
+        invalidation_reason = str(signal.get("invalidation_reasoning") or "").strip() or str(signal.get("invalidation_ru") or "").strip()
+        if not invalidation_reason:
+            invalidation_reason = EXECUTION_FALLBACK_RU
+
+        signal["entry_reason_ru"] = str(signal.get("entry_reason_ru") or "").strip() or entry_reason_ru
+        signal["stop_reason_ru"] = str(signal.get("stop_reason_ru") or "").strip() or stop_reason_ru
+        signal["take_profit_reason_ru"] = str(signal.get("take_profit_reason_ru") or "").strip() or take_profit_reason_ru
+        signal["liquidity_entry_model"] = str(signal.get("liquidity_entry_model") or "").strip() or liquidity_entry_model
+        signal["invalidation_level_reason"] = str(signal.get("invalidation_level_reason") or "").strip() or invalidation_reason
+
+        if not str(signal.get("execution_summary_ru") or "").strip():
+            signal["execution_summary_ru"] = (
+                f"Entry: {signal['entry_reason_ru']} "
+                f"Stop: {signal['stop_reason_ru']} "
+                f"Target: {signal['take_profit_reason_ru']}"
+            )
 
     def _normalize_timeframes(self, timeframes: list[str] | None) -> list[str]:
         if not timeframes:
