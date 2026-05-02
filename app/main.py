@@ -20,6 +20,7 @@ from app.services.htf_context_filter import HtfContextFilter
 from app.services.cme_scraper import get_cme_market_snapshot
 from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
+from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from backend.chat_service import ChatRequest, ForexChatService
 
 
@@ -908,6 +909,22 @@ async def api_mt4_push_candles(request: Request):
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
+
+
+
+@app.post("/api/mt4/volume-clusters")
+async def api_mt4_volume_clusters(request: Request):
+    try:
+        payload = await request.json()
+        token = str(payload.get("token") or "").strip()
+        if MT4_BRIDGE_TOKEN and token != MT4_BRIDGE_TOKEN:
+            return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
+        if not isinstance(payload, dict):
+            return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_payload"})
+        saved = save_volume_cluster_payload(payload)
+        return {"ok": True, "symbol": saved.get("symbol"), "timeframe": saved.get("timeframe"), "updated_at_utc": now_utc()}
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
 @app.get("/api/mt4/markup/{symbol}")
 def api_mt4_markup(symbol: str, tf: str = "M15"):
