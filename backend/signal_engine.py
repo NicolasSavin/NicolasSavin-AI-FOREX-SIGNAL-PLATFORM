@@ -705,25 +705,36 @@ class SignalEngine:
         analysis = (options_snapshot or {}).get("analysis") if isinstance(options_snapshot, dict) else {}
         if not isinstance(analysis, dict) or not options_snapshot or not options_snapshot.get("available"):
             return {"available": False}
+        if analysis.get("stale"):
+            return {"available": False, "stale": True, "source": analysis.get("source") or options_snapshot.get("source")}
         put_call = analysis.get("putCallRatio")
         max_pain = analysis.get("maxPain")
-        key_strikes = analysis.get("keyStrikes") or []
-        bias = "neutral"
-        if isinstance(put_call, (int, float)):
+        key_strikes = analysis.get("keyStrikes") or analysis.get("keyLevels") or []
+        bias = str(analysis.get("bias") or "neutral").lower()
+        if bias not in {"bullish", "bearish", "neutral"}:
+            bias = "neutral"
+        if bias == "neutral" and isinstance(put_call, (int, float)):
             if put_call < 0.9:
                 bias = "bullish"
             elif put_call > 1.1:
                 bias = "bearish"
         pinning = "high" if max_pain in key_strikes else "low"
-        signal_payload = {
+        return {
             "available": True,
             "putCallRatio": put_call,
             "bias": bias,
             "keyStrikes": key_strikes,
+            "keyLevels": analysis.get("keyLevels") or key_strikes,
             "maxPain": max_pain,
             "pinningRisk": pinning,
+            "barrierZones": analysis.get("barrierZones") or {},
+            "targetLevels": analysis.get("targetLevels") or [],
+            "hedgeLevels": analysis.get("hedgeLevels") or [],
+            "source": analysis.get("source") or options_snapshot.get("source"),
+            "source_priority": analysis.get("source_priority") or options_snapshot.get("source_priority"),
+            "stale": bool(analysis.get("stale")),
+            "last_updated": analysis.get("last_updated") or options_snapshot.get("last_updated"),
         }
-        return self._ensure_idea_text_fields(signal_payload)
 
     def applyOptionsImpact(self, signal: dict, optionsAnalysis: dict, apply_confidence: bool = True) -> dict:
         if not optionsAnalysis or optionsAnalysis.get("available") is False:
@@ -735,9 +746,14 @@ class SignalEngine:
         price = float(signal.get("entry") or 0.0)
         bias = str(optionsAnalysis.get("bias") or "neutral").lower()
         put_call = optionsAnalysis.get("putCallRatio")
-        key_strikes = [float(v) for v in (optionsAnalysis.get("keyStrikes") or []) if isinstance(v, (int, float))]
+        key_strikes = [float(v) for v in (optionsAnalysis.get("keyStrikes") or optionsAnalysis.get("keyLevels") or []) if isinstance(v, (int, float))]
         max_pain = optionsAnalysis.get("maxPain")
         pinning = str(optionsAnalysis.get("pinningRisk") or "low").lower()
+        barriers = optionsAnalysis.get("barrierZones") if isinstance(optionsAnalysis.get("barrierZones"), dict) else {}
+        support = [float(v) for v in (barriers.get("support") or []) if isinstance(v, (int, float))]
+        resistance = [float(v) for v in (barriers.get("resistance") or []) if isinstance(v, (int, float))]
+        target_levels = [float(v) for v in (optionsAnalysis.get("targetLevels") or []) if isinstance(v, (int, float))]
+        hedge_levels = [float(v) for v in (optionsAnalysis.get("hedgeLevels") or []) if isinstance(v, (int, float))]
         impact = 0
         warnings: list[str] = []
         if action == "BUY":
@@ -752,6 +768,14 @@ class SignalEngine:
             if bias == "bearish":
                 impact -= 10
                 warnings.append("Options market conflicts with BUY signal")
+            if any(s < price for s in support):
+                impact += 3
+            if any(t > price for t in target_levels):
+                impact += 3
+            if any(h > price for h in hedge_levels):
+                impact -= 4
+            if any(r >= price for r in resistance):
+                impact -= 3
         if action == "SELL":
             if bias == "bearish":
                 impact += 8
@@ -764,6 +788,14 @@ class SignalEngine:
             if bias == "bullish":
                 impact -= 10
                 warnings.append("Options market conflicts with SELL signal")
+            if any(r > price for r in resistance):
+                impact += 3
+            if any(h < price for h in hedge_levels):
+                impact += 3
+            if any(t < price for t in target_levels):
+                impact -= 4
+            if any(s <= price for s in support):
+                impact -= 3
         if pinning == "high":
             impact -= 6
             warnings.append("High probability of price pinning near strike")

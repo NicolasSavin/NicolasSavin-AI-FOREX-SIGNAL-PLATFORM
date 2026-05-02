@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+from app.services.mt4_options_bridge import get_latest_options_levels
 
 PAIR_MAPPING: dict[str, dict[str, str]] = {
     "EURUSD": {"slug": "euro-fx", "code": "6E"},
@@ -116,8 +117,24 @@ def _analyze_options(options: dict[str, list[Any]]) -> dict[str, Any]:
 
 async def get_cme_market_snapshot(pair: str) -> dict[str, Any]:
     normalized = (pair or "").upper().strip()
+    mt4_snapshot = get_latest_options_levels(normalized)
+    mt4_analysis = mt4_snapshot.get("analysis") if isinstance(mt4_snapshot.get("analysis"), dict) else {}
+    if mt4_snapshot.get("available") and mt4_analysis.get("available"):
+        return {
+            "available": True,
+            "source": "mt4_optionsfx",
+            "source_priority": 1,
+            "symbol": normalized,
+            "analysis": mt4_analysis,
+            "options": {"levels": mt4_snapshot.get("levels") or []},
+            "last_updated": mt4_analysis.get("last_updated"),
+            "stale": bool(mt4_analysis.get("stale")),
+        }
+
     mapping = PAIR_MAPPING.get(normalized)
     if not mapping:
+        if mt4_snapshot.get("stale"):
+            return {"available": False, "reason": "No MT4 option levels received", "stale": True, "source": "mt4_optionsfx"}
         return {"available": False, "reason": "CME scraping failed"}
 
     cache_key = f"cme:{normalized}"
@@ -152,6 +169,7 @@ async def get_cme_market_snapshot(pair: str) -> dict[str, Any]:
         payload = {
             "available": True,
             "source": "cme_scraping",
+            "source_priority": 2,
             "symbol": mapping["code"],
             "futures": {
                 "volume": int(volume),
@@ -170,6 +188,6 @@ async def get_cme_market_snapshot(pair: str) -> dict[str, Any]:
         _CACHE.set(cache_key, payload)
         return payload
     except Exception:
-        fallback = {"available": False, "reason": "CME scraping failed"}
+        fallback = {"available": False, "reason": "CME scraping failed", "source_priority": 2}
         _CACHE.set(cache_key, fallback)
         return fallback

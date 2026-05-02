@@ -21,6 +21,7 @@ from app.services.cme_scraper import get_cme_market_snapshot
 from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
+from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
 from backend.chat_service import ChatRequest, ForexChatService
 
 
@@ -925,6 +926,35 @@ async def api_mt4_volume_clusters(request: Request):
         return {"ok": True, "symbol": saved.get("symbol"), "timeframe": saved.get("timeframe"), "updated_at_utc": now_utc()}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+
+
+@app.post("/api/mt4/options-levels")
+async def api_mt4_options_levels(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"status": "error", "error": "invalid_json"})
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=400, content={"status": "error", "error": "invalid_payload"})
+    symbol = str(payload.get("symbol") or "").strip()
+    levels = payload.get("levels")
+    if not symbol:
+        return JSONResponse(status_code=400, content={"status": "error", "error": "symbol_required"})
+    if levels is None or not isinstance(levels, list):
+        return JSONResponse(status_code=400, content={"status": "error", "error": "levels_required"})
+    saved = save_options_levels(payload)
+    return {"status": "ok", "symbol": saved.get("symbol"), "levels_received": len(saved.get("levels") or [])}
+
+
+@app.get("/api/mt4/options-levels/{symbol}")
+def api_mt4_options_levels_symbol(symbol: str):
+    payload = get_latest_options_levels(symbol)
+    if not payload.get("available"):
+        response = {"available": False, "reason": payload.get("reason") or "No MT4 option levels received"}
+        if payload.get("stale"):
+            response["stale"] = True
+        return response
+    return payload
 
 @app.get("/api/mt4/markup/{symbol}")
 def api_mt4_markup(symbol: str, tf: str = "M15"):
