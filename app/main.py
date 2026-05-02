@@ -96,6 +96,17 @@ app = FastAPI(title="AI FOREX SIGNAL PLATFORM", version="htf-context-real-candle
 
 chat_service = ForexChatService()
 
+OPENROUTER_FALLBACK_MODEL = os.getenv("OPENROUTER_FALLBACK_MODEL", "meta-llama/llama-3.1-8b-instruct:free").strip()
+
+
+def _ai_model_sequence(primary_model: str) -> list[str]:
+    models = [str(primary_model or "").strip()]
+    fallback_model = OPENROUTER_FALLBACK_MODEL
+    if fallback_model and fallback_model not in models:
+        models.append(fallback_model)
+    return [model for model in models if model]
+
+
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -261,40 +272,56 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
             f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}"
         )
     try:
-        model_name = f"{chat_service.model}:online" if use_fundamental else chat_service.model
-        tools: list[dict[str, Any]] = []
-        if use_fundamental:
-            tools = [{"type": "openrouter:web_search", "max_results": 2}]
-        request_kwargs: dict[str, Any] = {
-            "model": model_name,
-            "messages": [
-                {"role": "system", "content": "Ты профессиональный FX market desk аналитик. Пиши строго на русском языке."},
-                {"role": "user", "content": ai_prompt},
-            ],
-            "temperature": 0.2,
-        }
-        if use_fundamental:
-            request_kwargs["max_tokens"] = 280
-            request_kwargs["tools"] = tools
-            request_kwargs["timeout"] = 15
+        primary_model = f"{chat_service.model}:online" if use_fundamental else chat_service.model
+        model_sequence = _ai_model_sequence(primary_model)
+        tools: list[dict[str, Any]] = [{"type": "openrouter:web_search", "max_results": 2}] if use_fundamental else []
         online_attempted = bool(use_fundamental)
-        ai_status = "ok"
-        response = None
-        try:
-            response = await chat_service.client.chat.completions.create(**request_kwargs)
-        except Exception:
+        ai_status = "failed"
+        ai_model_used = model_sequence[-1] if model_sequence else ""
+        ai_fallback_used = False
+        ai_json: dict[str, Any] = {}
+        for idx, model_name in enumerate(model_sequence):
+            request_kwargs: dict[str, Any] = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": "Ты профессиональный FX market desk аналитик. Пиши строго на русском языке."},
+                    {"role": "user", "content": ai_prompt},
+                ],
+                "temperature": 0.2,
+                "timeout": 15,
+            }
             if use_fundamental:
-                retry_kwargs = dict(request_kwargs)
-                retry_kwargs.pop("tools", None)
-                response = await chat_service.client.chat.completions.create(**retry_kwargs)
-                ai_status = "ok_retry_no_web"
-            else:
-                raise
-        ai_text = (response.choices[0].message.content or "").strip() if response.choices else ""
-        ai_json = json.loads(ai_text) if ai_text else {}
+                request_kwargs["max_tokens"] = 280
+                request_kwargs["tools"] = tools
+            try:
+                response = await chat_service.client.chat.completions.create(**request_kwargs)
+            except Exception:
+                if use_fundamental:
+                    try:
+                        retry_kwargs = dict(request_kwargs)
+                        retry_kwargs.pop("tools", None)
+                        response = await chat_service.client.chat.completions.create(**retry_kwargs)
+                    except Exception:
+                        continue
+                else:
+                    continue
+            ai_text = (response.choices[0].message.content or "").strip() if response.choices else ""
+            if not ai_text:
+                continue
+            ai_json = json.loads(ai_text) if ai_text else {}
+            if not ai_json:
+                continue
+            ai_model_used = model_name
+            ai_fallback_used = idx > 0
+            ai_status = "ok" if not ai_fallback_used else "ok_fallback_model"
+            break
+        if ai_status.startswith("failed"):
+            raise RuntimeError("all_models_failed")
         return base_response | {
             "ai_provider": "grok",
-            "ai_model": model_name,
+            "ai_model": ai_model_used,
+            "ai_model_used": ai_model_used,
+            "ai_fallback_used": ai_fallback_used,
             "fundamental_used": use_fundamental,
             "online_attempted": online_attempted,
             "candles_sent_to_ai": len(ai_candles),
@@ -336,6 +363,8 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
             "online_attempted": bool(use_fundamental),
             "candles_sent_to_ai": len(ai_candles),
             "search_results_limit": 2 if use_fundamental else 0,
+            "ai_model_used": _ai_model_sequence(f"{chat_service.model}:online" if use_fundamental else chat_service.model)[-1] if _ai_model_sequence(f"{chat_service.model}:online" if use_fundamental else chat_service.model) else "",
+            "ai_fallback_used": True,
         }
 def get_fallback_calendar_events() -> list[dict[str, Any]]:
     return [
@@ -1599,16 +1628,24 @@ def generate_idea_description_ru(
     )
 
     async def _request() -> str:
-        response = await chat_service.client.chat.completions.create(
-            model=chat_service.model,
-            messages=[
-                {"role": "system", "content": "Ты профессиональный FX desk-аналитик. Пиши только на русском."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=180,
-        )
-        return (response.choices[0].message.content or "").strip() if response.choices else ""
+        for model_name in _ai_model_sequence(chat_service.model):
+            try:
+                response = await chat_service.client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": "Ты профессиональный FX desk-аналитик. Пиши только на русском."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.3,
+                    max_tokens=180,
+                    timeout=15,
+                )
+                text = (response.choices[0].message.content or "").strip() if response.choices else ""
+                if text:
+                    return text
+            except Exception:
+                continue
+        return ""
 
     try:
         text = asyncio.run(_request())

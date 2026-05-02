@@ -229,7 +229,8 @@ PUBLIC_RSS_SOURCES = [
 ]
 
 XAI_TIMEOUT_SECONDS = 15
-XAI_MODEL = os.getenv("XAI_MODEL", get_openrouter_model()).strip()
+XAI_MODEL = os.getenv("OPENROUTER_MODEL", os.getenv("XAI_MODEL", get_openrouter_model())).strip()
+XAI_FALLBACK_MODEL = os.getenv("OPENROUTER_FALLBACK_MODEL", "meta-llama/llama-3.1-8b-instruct:free").strip()
 XAI_API_KEY = os.getenv("XAI_API_KEY", "").strip()
 OPENROUTER_API_KEY = (get_openrouter_api_key() or "").strip()
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
@@ -574,36 +575,44 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
         f"published_at: {published_at or 'unknown'}\n"
         f"content: {strip_html(summary)[:1200]}\n"
     )
-    try:
-        response = requests.post(
-            f"{OPENROUTER_BASE_URL.rstrip('/')}/chat/completions",
-            timeout=XAI_TIMEOUT_SECONDS,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": XAI_MODEL,
-                "temperature": 0.4,
-                "max_tokens": 250,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Ты русскоязычный аналитик forex-новостей. Кратко объясни: что произошло, почему важно и какие активы могут реагировать. "
-                        "Юмор: короткий, лёгкий, в стиле трейдера, не оскорбительный. Никаких новых фактов, только входной текст.",
-                    },
-                    {"role": "user", "content": user_content},
-                ],
-            },
-        )
-        print(f"[news:grok] status_code={response.status_code}")
-        print(f"[news:grok] response_text={response.text[:500]}")
-        response.raise_for_status()
-        payload = response.json()
-        content = payload.get("choices", [{}])[0].get("message", {}).get("content", "")
-        content_text = str(content or "").strip()
-        parsed: dict[str, Any] = {}
-        if content_text:
+    models = [XAI_MODEL]
+    if XAI_FALLBACK_MODEL and XAI_FALLBACK_MODEL not in models:
+        models.append(XAI_FALLBACK_MODEL)
+    last_error = "unknown_error"
+    for idx, model_name in enumerate(models):
+        fallback_used = idx > 0
+        try:
+            response = requests.post(
+                f"{OPENROUTER_BASE_URL.rstrip('/')}/chat/completions",
+                timeout=XAI_TIMEOUT_SECONDS,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model_name,
+                    "temperature": 0.4,
+                    "max_tokens": 250,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "Ты русскоязычный аналитик forex-новостей. Кратко объясни: что произошло, почему важно и какие активы могут реагировать. "
+                            "Юмор: короткий, лёгкий, в стиле трейдера, не оскорбительный. Никаких новых фактов, только входной текст.",
+                        },
+                        {"role": "user", "content": user_content},
+                    ],
+                },
+            )
+            print(f"[news:grok] model={model_name} status_code={response.status_code}")
+            print(f"[news:grok] response_text={response.text[:500]}")
+            response.raise_for_status()
+            payload = response.json()
+            content = payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+            content_text = str(content or "").strip()
+            if not content_text:
+                last_error = "empty_text"
+                continue
+            parsed: dict[str, Any] = {}
             try:
                 parsed = json.loads(content_text)
             except Exception:
@@ -613,21 +622,45 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
                         parsed = json.loads(json_match.group(0))
                     except Exception:
                         parsed = {}
-        summary_ru = strip_html(str(parsed.get("summary_ru") or "")).strip()
-        impact_ru = strip_html(str(parsed.get("market_impact_ru") or "")).strip()
-        plain_text_summary = strip_html(content_text).strip()
-        cleaned = {
-            "title_ru": strip_html(str(parsed.get("title_ru") or "")).strip() or strip_html(title),
-            "summary_ru": summary_ru or plain_text_summary or "Не удалось обработать новость через Grok.",
-            "market_impact_ru": impact_ru or "Трактовка по влиянию ограничена: модель вернула свободный текст.",
-            "affected_assets": parsed.get("affected_assets") if isinstance(parsed.get("affected_assets"), list) else markets[:4],
-            "sentiment": strip_html(str(parsed.get("sentiment") or "neutral")).strip().lower()[:20] or "neutral",
-            "humor_ru": strip_html(str(parsed.get("humor_ru") or "")).strip() or "Рынок шутит свечами, но без перегиба.",
-        }
-        REWRITE_CACHE[cache_key] = {"ts": time(), "payload": cleaned}
-        return cleaned
-    except Exception:
-        return None
+            summary_ru = strip_html(str(parsed.get("summary_ru") or "")).strip()
+            impact_ru = strip_html(str(parsed.get("market_impact_ru") or "")).strip()
+            plain_text_summary = strip_html(content_text).strip()
+            cleaned = {
+                "title_ru": strip_html(str(parsed.get("title_ru") or "")).strip() or strip_html(title),
+                "summary_ru": summary_ru or plain_text_summary or "Не удалось обработать новость через Grok.",
+                "market_impact_ru": impact_ru or "Трактовка по влиянию ограничена: модель вернула свободный текст.",
+                "affected_assets": parsed.get("affected_assets") if isinstance(parsed.get("affected_assets"), list) else markets[:4],
+                "sentiment": strip_html(str(parsed.get("sentiment") or "neutral")).strip().lower()[:20] or "neutral",
+                "humor_ru": strip_html(str(parsed.get("humor_ru") or "")).strip() or "Рынок шутит свечами, но без перегиба.",
+                "ai_model_used": model_name,
+                "ai_fallback_used": fallback_used,
+                "ai_status": "ok" if not fallback_used else "ok_fallback_model",
+            }
+            REWRITE_CACHE[cache_key] = {"ts": time(), "payload": cleaned}
+            return cleaned
+        except requests.Timeout:
+            last_error = "timeout"
+        except requests.RequestException as req_exc:
+            code = getattr(getattr(req_exc, 'response', None), 'status_code', None)
+            last_error = f"http_{code}" if code else "http_error"
+        except Exception:
+            last_error = "error"
+
+    REWRITE_CACHE[cache_key] = {
+        "ts": time(),
+        "payload": {
+            "title_ru": strip_html(title),
+            "summary_ru": "Не удалось обработать новость через Grok.",
+            "market_impact_ru": "Оценка влияния временно недоступна.",
+            "affected_assets": markets[:4],
+            "sentiment": "neutral",
+            "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
+            "ai_model_used": models[-1],
+            "ai_fallback_used": len(models) > 1,
+            "ai_status": f"failed:{last_error}",
+        },
+    }
+    return REWRITE_CACHE[cache_key]["payload"]
 
 
 def _placeholder_svg_for_title(title: str) -> str:
