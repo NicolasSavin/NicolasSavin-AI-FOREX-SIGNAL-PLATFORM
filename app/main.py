@@ -1271,6 +1271,7 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
             if existing:
                 trade = existing
                 trade_id = str(trade.get("id") or trade_id)
+                signal = str(trade.get("signal") or signal).upper()
             else:
                 m15_candles_for_levels = candles_by_tf.get("M15") or []
                 annotations_for_levels = build_chart_annotations(m15_candles_for_levels, symbol, signal, current_price)
@@ -1355,11 +1356,11 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
                 **trade,
                 "current_price": current_price,
                 "result": close_result,
-                "status": str(close_result or "ACTIVE"),
+                "status": "archived",
                 "runtime_status": "CLOSED_TP" if close_result == "TP" else "CLOSED_SL" if close_result == "SL" else "CLOSED",
                 "runtime_text": auto_close_eval.get("reason_ru"),
                 "runtime_color": runtime_color,
-                "close_reason": auto_close_eval.get("close_reason"),
+                "close_reason": auto_close_eval.get("reason_ru") or auto_close_eval.get("close_reason"),
                 "close_reason_ru": auto_close_eval.get("reason_ru"),
                 "closed_at": now_utc(),
                 "closed_price": current_price,
@@ -1378,12 +1379,13 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
             archived = {
                 **trade,
                 "result": "EXPIRED",
-                "status": "EXPIRED",
+                "status": "archived",
                 "runtime_status": "EXPIRED",
                 "runtime_text": auto_close_eval.get("reason_ru"),
-                "close_reason": auto_close_eval.get("close_reason") or "ttl_expired",
+                "close_reason": auto_close_eval.get("reason_ru") or auto_close_eval.get("close_reason") or "ttl_expired",
                 "close_reason_ru": auto_close_eval.get("reason_ru"),
                 "closed_at": now_utc(),
+                "closed_price": current_price,
                 "is_archived": True,
             }
             move_to_archive(archived)
@@ -3575,13 +3577,20 @@ def build_stats() -> dict[str, Any]:
     archive = load_json(ARCHIVE_FILE)
     wins = sum(1 for x in archive if x.get("result") == "TP")
     losses = sum(1 for x in archive if x.get("result") == "SL")
-    total = wins + losses
+    expired = sum(1 for x in archive if x.get("result") == "EXPIRED")
+    closed = wins + losses + expired
+    winrate_base = wins + losses
 
     return {
-        "total": total,
+        "total": closed,
         "wins": wins,
         "losses": losses,
-        "winrate": round((wins / total * 100), 2) if total else 0,
+        "plus": wins,
+        "minus": losses,
+        "expired": expired,
+        "not_worked": expired,
+        "closed": closed,
+        "winrate": round((wins / winrate_base * 100), 2) if winrate_base else 0,
     }
 
 
