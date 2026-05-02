@@ -212,9 +212,9 @@ NEWS_CACHE: dict[str, Any] = {
     "updated_at": None,
     "payload": None,
 }
-NEWS_CACHE_TTL_SECONDS = 900
+NEWS_CACHE_TTL_SECONDS = 1800
 REWRITE_CACHE: dict[str, dict[str, Any]] = {}
-REWRITE_CACHE_TTL_SECONDS = 21600
+REWRITE_CACHE_TTL_SECONDS = 1800
 IMAGE_CACHE: dict[str, dict[str, Any]] = {}
 IMAGE_CACHE_TTL_SECONDS = 86400
 PUBLIC_RSS_SOURCES = [
@@ -227,8 +227,10 @@ PUBLIC_RSS_SOURCES = [
 ]
 
 XAI_TIMEOUT_SECONDS = 15
-XAI_MODEL = os.getenv("XAI_MODEL", "grok-2-latest").strip()
+XAI_MODEL = os.getenv("XAI_MODEL", os.getenv("OPENROUTER_MODEL", "x-ai/grok-3-mini")).strip()
 XAI_API_KEY = os.getenv("XAI_API_KEY", "").strip()
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 BING_IMAGE_SEARCH_KEY = os.getenv("BING_IMAGE_SEARCH_KEY", "").strip()
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
@@ -546,54 +548,42 @@ def parse_entry_datetime(entry: dict, fallback: datetime) -> tuple[str, datetime
     return fallback.isoformat(), fallback
 
 
-def rewrite_news_with_xai(title: str, summary: str, markets: list[str]) -> dict[str, str] | None:
-    if not XAI_API_KEY:
+def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: str | None, markets: list[str]) -> dict[str, Any] | None:
+    api_key = OPENROUTER_API_KEY or XAI_API_KEY
+    if not api_key:
         return None
-    cache_key = _source_hash(f"{title}|{summary}")
+    cache_key = _source_hash(f"{title}|{summary}|{source}|{published_at or ''}")
     cached = REWRITE_CACHE.get(cache_key)
     if cached and time() - cached.get("ts", 0) < REWRITE_CACHE_TTL_SECONDS:
         return cached.get("payload")
 
     user_content = (
-        f"Source title: {strip_html(title)}\n"
-        f"Source summary: {strip_html(summary)[:1400]}\n"
-        "Source: RSS\n"
-        f"Markets: {', '.join(markets[:5])}\n\n"
-        "Return JSON:\n"
-        "{\n"
-        '  "title_ru": "short Russian headline",\n'
-        '  "preview_ru": "one short Russian sentence, max 160 characters",\n'
-        '  "full_text_ru": "6-9 short paragraphs, 1800-3000 characters, humorous and clear, no separate humor block",\n'
-        '  "markets_ru": ["..."]\n'
-        "}"
+        "Используй только предоставленные данные новости, никаких выдуманных фактов.\n"
+        "Если текста мало, явно укажи, что интерпретация ограничена.\n"
+        "Верни строго JSON с полями: title_ru, summary_ru, market_impact_ru, affected_assets, sentiment, humor_ru.\n\n"
+        f"title: {strip_html(title)}\n"
+        f"content: {strip_html(summary)[:1400]}\n"
+        f"source: {strip_html(source)}\n"
+        f"published_at: {published_at or 'unknown'}\n"
+        f"assets_hint: {', '.join(markets[:6])}\n"
     )
     try:
         response = requests.post(
-            "https://api.x.ai/v1/chat/completions",
+            f"{OPENROUTER_BASE_URL.rstrip('/')}/chat/completions",
             timeout=XAI_TIMEOUT_SECONDS,
             headers={
-                "Authorization": f"Bearer {XAI_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
             json={
                 "model": XAI_MODEL,
-                "temperature": 0.2,
+                "temperature": 0.4,
+                "max_tokens": 220,
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a witty Russian financial news explainer for a forex analytics website.\n"
-                        "Use ONLY facts from the provided title and summary. Do not invent numbers, quotes, dates, or claims.\n"
-                        "Write in Russian.\n"
-                        "Every article must be unique: vary structure, openings, metaphors, rhythm, and jokes.\n"
-                        "Explain the news so a beginner understands it.\n"
-                        "Make it lively, funny, and useful, but not clownish.\n"
-                        "Explain:\n"
-                        "- what happened,\n"
-                        "- why it matters,\n"
-                        "- how it may affect USD, EURUSD, GBPUSD, XAUUSD, oil, stocks or risk sentiment when relevant,\n"
-                        "- what traders may watch next.\n"
-                        "Do not give direct trading advice.\n"
-                        "Do not use headings for every paragraph unless needed.\n"
+                        "content": "Ты русскоязычный аналитик forex-новостей. Кратко объясни: что произошло, почему важно, какие активы могут реагировать и трактовку для forex/золота. "
+                        "Юмор: короткий, лёгкий, в стиле трейдера, не оскорбительный. Никаких новых фактов, только входной текст. "
                         "Return valid JSON only.",
                     },
                     {"role": "user", "content": user_content},
@@ -605,34 +595,20 @@ def rewrite_news_with_xai(title: str, summary: str, markets: list[str]) -> dict[
         payload = response.json()
         content = payload.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         parsed = json.loads(content) if isinstance(content, str) else {}
-        full_text = strip_html(str(parsed.get("full_text_ru") or "")).strip()
-        if 1800 <= len(full_text) <= 3200:
-            pass
-        elif len(full_text) < 1200:
-            return None
+        summary_ru = strip_html(str(parsed.get("summary_ru") or "")).strip()
+        impact_ru = strip_html(str(parsed.get("market_impact_ru") or "")).strip()
         cleaned = {
-            "title_ru": strip_html(str(parsed.get("title_ru") or "")).strip(),
-            "preview_ru": strip_html(str(parsed.get("preview_ru") or "")).strip()[:160],
-            "full_text_ru": full_text,
-            "what_happened_ru": strip_html(str(parsed.get("what_happened_ru") or "")).strip(),
-            "why_it_matters_ru": strip_html(str(parsed.get("why_it_matters_ru") or "")).strip(),
-            "market_impact_ru": strip_html(str(parsed.get("market_impact_ru") or "")).strip(),
-            "humor_ru": strip_html(str(parsed.get("humor_ru") or "")).strip(),
+            "title_ru": strip_html(str(parsed.get("title_ru") or "")).strip() or strip_html(title),
+            "summary_ru": summary_ru or "Не удалось обработать новость через Grok.",
+            "market_impact_ru": impact_ru or "Трактовка временно недоступна.",
+            "affected_assets": parsed.get("affected_assets") if isinstance(parsed.get("affected_assets"), list) else markets[:4],
+            "sentiment": strip_html(str(parsed.get("sentiment") or "neutral")).strip().lower()[:20] or "neutral",
+            "humor_ru": strip_html(str(parsed.get("humor_ru") or "")).strip() or "Рынок шутит свечами, но без перегиба.",
         }
-        if cleaned["preview_ru"] and cleaned["full_text_ru"]:
-            if not cleaned["what_happened_ru"]:
-                cleaned["what_happened_ru"] = cleaned["full_text_ru"][:260]
-            if not cleaned["why_it_matters_ru"]:
-                cleaned["why_it_matters_ru"] = "Рынок пересматривает ожидания после публикации этой новости."
-            if not cleaned["market_impact_ru"]:
-                cleaned["market_impact_ru"] = f"Реакция обычно проходит через {', '.join(markets[:4])}."
-            if not cleaned["humor_ru"]:
-                cleaned["humor_ru"] = "Лёгкий юмор уже встроен в основной текст."
-            REWRITE_CACHE[cache_key] = {"ts": time(), "payload": cleaned}
-            return cleaned
+        REWRITE_CACHE[cache_key] = {"ts": time(), "payload": cleaned}
+        return cleaned
     except Exception:
         return None
-    return None
 
 
 def _placeholder_svg_for_title(title: str) -> str:
@@ -709,6 +685,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
     sources_failed: list[str] = []
 
     diagnostics: dict[str, Any] = {"grok_used_count": 0, "generated_images_count": 0}
+    grok_processed = 0
     for source in PUBLIC_RSS_SOURCES:
         source_name = source["name"]
         sources_attempted.append(source_name)
@@ -737,13 +714,31 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         diagnostics=diagnostics,
                     )
                     image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
-                    rewrite = rewrite_news_with_xai(title=title, summary=summary, markets=enriched["markets"])
-                    story = rewrite or _local_writer_payload(title=title, summary=summary, markets=enriched["markets"], tone=enriched["tone"])
+                    rewrite = None
+                    if grok_processed < 10:
+                        rewrite = rewrite_news_with_xai(
+                            title=title,
+                            summary=summary,
+                            source=source_name,
+                            published_at=published_iso,
+                            markets=enriched["markets"],
+                        )
+                    story = rewrite or {
+                        "title_ru": strip_html(title),
+                        "summary_ru": "Не удалось обработать новость через Grok.",
+                        "market_impact_ru": "Трактовка временно недоступна.",
+                        "affected_assets": enriched["markets"],
+                        "sentiment": "neutral",
+                        "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
+                        "full_text_ru": strip_html(summary) or strip_html(title),
+                    }
                     title_ru = strip_html(story.get("title_ru") or title)
-                    summary_ru = story["preview_ru"] if len(strip_html(summary)) > 20 else f"{story['preview_ru']} Интерпретация ограничена: исходный текст слишком короткий."
+                    base_summary = story.get("summary_ru") or story.get("preview_ru") or "Не удалось обработать новость через Grok."
+                    summary_ru = base_summary if len(strip_html(summary)) > 20 else f"{base_summary} Интерпретация ограничена: исходный текст слишком короткий."
                     writer = "grok" if rewrite else "local_fallback"
                     if rewrite:
                         diagnostics["grok_used_count"] += 1
+                        grok_processed += 1
                 except Exception:
                     title = str(entry.get("title") or "Новость без заголовка").strip()
                     summary = str(entry.get("summary") or entry.get("description") or "").strip()
@@ -758,6 +753,8 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     writer = "local_fallback"
                 affected_assets = enriched["markets"]
                 sentiment = _build_sentiment_map(f"{title} {summary}", affected_assets)
+                if isinstance(story.get("sentiment"), str):
+                    sentiment["MARKET"] = str(story.get("sentiment"))
                 source_had_item = True
                 items.append(
                     {
@@ -778,15 +775,15 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         "source_url": source_url,
                         "summary_source": strip_html(summary)[:1200],
                         "summary_ru": summary_ru,
-                        "preview_ru": story["preview_ru"],
-                        "full_text_ru": story["full_text_ru"],
+                        "preview_ru": story.get("summary_ru") or story.get("preview_ru") or summary_ru,
+                        "full_text_ru": story.get("full_text_ru") or story.get("summary_ru") or summary_ru,
                         "is_real_source": True,
                         "data_origin": "rss",
                         "writer": writer,
-                        "what_happened_ru": story["what_happened_ru"],
-                        "why_it_matters_ru": story["why_it_matters_ru"],
-                        "market_impact_ru": story["market_impact_ru"],
-                        "humor_ru": story["humor_ru"],
+                        "what_happened_ru": story.get("what_happened_ru") or (story.get("summary_ru") or summary_ru),
+                        "why_it_matters_ru": story.get("why_it_matters_ru") or "Влияние оценивается на основе ограниченного текста новости.",
+                        "market_impact_ru": story.get("market_impact_ru") or "Трактовка временно недоступна.",
+                        "humor_ru": story.get("humor_ru") or "Рынок любит сюрпризы, а риск-менеджмент — ещё больше.",
                         "sentiment": sentiment,
                         "what_next_ru": "Следим за следующими релизами и реакцией долгового рынка.",
                         "grok_style_comment_ru": story["humor_ru"],
