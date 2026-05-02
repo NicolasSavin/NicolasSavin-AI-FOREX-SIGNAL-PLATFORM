@@ -277,17 +277,23 @@ function renderIdeaCard(idea) {
 
 function resolveVisibleNarrative(idea) {
   const sanitize = (value) => String(value || "").replace(/\(\s*none\s*\)/gi, "").replace(/\bnone\b/gi, "").trim();
-  const thesis = sanitize(idea?.idea_thesis);
-  if (thesis) return thesis;
   const unified = sanitize(idea?.unified_narrative);
   if (unified) return unified;
   const fullText = sanitize(idea?.full_text);
   if (fullText) return fullText;
-  const fallbackNarrative = sanitize(idea?.fallback_narrative);
-  if (fallbackNarrative) return fallbackNarrative;
-  const summary = sanitize(idea?.summary || idea?.short_text);
-  if (summary) return summary;
-  return "Сценарий в режиме fallback: модельный нарратив временно недоступен.";
+  const confluence = sanitize(idea?.confluence_summary_ru);
+  if (confluence) return confluence;
+  const reason = sanitize(idea?.reason_ru);
+  if (reason) return reason;
+  const description = sanitize(idea?.description_ru);
+  if (description) return description;
+  const shortScenario = sanitize(idea?.short_scenario_ru);
+  if (shortScenario) return shortScenario;
+  const rationale = sanitize(idea?.rationale);
+  if (rationale) return rationale;
+  const currentReasoning = sanitize(idea?.current_reasoning);
+  if (currentReasoning) return currentReasoning;
+  return "Идея основана на структуре рынка, ликвидности и текущем импульсе. Сценарий ожидает подтверждения или обновления рыночных данных.";
 }
 
 function renderChartBlock(idea, chartImageUrl) {

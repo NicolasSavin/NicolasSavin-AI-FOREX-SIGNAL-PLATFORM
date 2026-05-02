@@ -571,3 +571,12 @@ def test_ideas_frontend_fallback_chain_contains_text_fields() -> None:
     assert "idea.description_ru ||" in content
     assert "idea.short_scenario_ru ||" in content
     assert "Описание временно недоступно." in content
+
+
+def test_ideas_frontend_js_uses_extended_fallback_chain() -> None:
+    content = Path("app/static/ideas.js").read_text(encoding="utf-8")
+    assert "idea?.unified_narrative" in content
+    assert "idea?.full_text" in content
+    assert "idea?.confluence_summary_ru" in content
+    assert "idea?.reason_ru" in content
+    assert "idea?.description_ru" in content

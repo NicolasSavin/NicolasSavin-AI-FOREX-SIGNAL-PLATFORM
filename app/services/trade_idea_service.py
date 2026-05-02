@@ -43,6 +43,15 @@ IDEA_STATUS_ARCHIVED = "archived"
 ACTIVE_STATUSES = {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING, IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE}
 CLOSED_STATUSES = {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT, IDEA_STATUS_ARCHIVED}
 TERMINAL_STATUSES = {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT}
+ALLOWED_LIFECYCLE_TRANSITIONS = {
+    IDEA_STATUS_CREATED: {IDEA_STATUS_WAITING},
+    IDEA_STATUS_WAITING: {IDEA_STATUS_TRIGGERED},
+    IDEA_STATUS_TRIGGERED: {IDEA_STATUS_ACTIVE},
+    IDEA_STATUS_ACTIVE: {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT},
+    IDEA_STATUS_TP_HIT: {IDEA_STATUS_ARCHIVED},
+    IDEA_STATUS_SL_HIT: {IDEA_STATUS_ARCHIVED},
+    IDEA_STATUS_ARCHIVED: set(),
+}
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_SYSTEM_PROMPT = "Ты профессиональный трейдинг-аналитик (Forex, SMC, liquidity).\n\nОтвечай ТОЛЬКО JSON массивом без текста."
 OPENROUTER_IDEA_SPECS = [
@@ -90,6 +99,11 @@ GENERIC_NARRATIVE_PHRASES = (
 class TradeIdeaService:
     MEANINGFUL_CONFIDENCE_DELTA = 5
 
+    DESCRIPTION_FALLBACK_TEXT = (
+        "Идея основана на структуре рынка, ликвидности и текущем импульсе. "
+        "Сценарий ожидает подтверждения или обновления рыночных данных."
+    )
+
     def __init__(self, signal_engine: SignalEngine, chart_data_service: ChartDataService | None = None) -> None:
         self.signal_engine = signal_engine
         self.data_provider = DataProvider()
@@ -108,6 +122,17 @@ class TradeIdeaService:
         self._grok_reasoning_cache: dict[str, dict[str, Any]] = {}
         self._refresh_lock = Lock()
         self._refresh_in_progress = False
+
+    @classmethod
+    def preserve_valid_levels(cls, existing_idea: dict[str, Any] | None, new_idea: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(existing_idea, dict):
+            return new_idea
+        for level_key in ("entry", "stop_loss", "take_profit"):
+            new_level = cls._extract_numeric(new_idea.get(level_key))
+            existing_level = cls._extract_numeric(existing_idea.get(level_key))
+            if (new_level is None or new_level == 0.0) and (existing_level is not None and existing_level != 0.0):
+                new_idea[level_key] = existing_level
+        return new_idea
 
     async def generate_or_refresh(self, pairs: list[str] | None = None, *, force: bool = False) -> dict[str, Any]:
         pairs = pairs or self.get_market_symbols()
@@ -1352,11 +1377,13 @@ class TradeIdeaService:
         signal_smart_money_context = signal.get("smart_money_context") if isinstance(signal.get("smart_money_context"), dict) else None
         created_at = existing.get("created_at") if existing else now.isoformat()
         version = int(existing.get("version", 1)) + 1 if existing else 1
+        signal = self.preserve_valid_levels(existing, signal)
         entry_value = self._extract_numeric(signal.get("entry"))
         stop_loss = self._extract_numeric(signal.get("stop_loss"))
         take_profit = self._extract_numeric(signal.get("take_profit"))
         idea_id = existing.get("idea_id") if existing else self._idea_id(symbol, timeframe, setup_type, created_at)
         status = self._status_from_signal(signal, existing=existing)
+        status, lifecycle_guard_note = self._apply_lifecycle_guard(existing=existing, next_status=status)
         latest_close = self._extract_latest_close(signal)
         rationale = signal.get("reason_ru") or signal.get("description_ru") or "Структурное подтверждение сценария ограничено."
         summary_text = signal.get("description_ru") or f"{symbol} {timeframe}: торговая идея обновлена."
@@ -1587,6 +1614,8 @@ class TradeIdeaService:
             close_explanation=close_explanation,
             signal=signal,
         )
+        if lifecycle_guard_note:
+            history = self._append_history_event(history, event_type="guarded_status", note=lifecycle_guard_note, at=now.isoformat())
         updates = self._history_to_updates(history)
         persisted_status = IDEA_STATUS_ARCHIVED if is_terminal else status
         existing_narrative_version = int(existing.get("narrative_version") or 1) if existing else 0
@@ -1673,6 +1702,9 @@ class TradeIdeaService:
             "headline": llm_result.data.get("headline") or f"{symbol} {timeframe}",
             "summary": llm_result.data.get("summary") or short_scenario,
             "summary_ru": short_scenario,
+            "description_ru": str(signal.get("description_ru") or "").strip(),
+            "reason_ru": str(signal.get("reason_ru") or rationale).strip(),
+            "confluence_summary_ru": str(signal.get("confluence_summary_ru") or "").strip(),
             "short_scenario_ru": short_scenario,
             "short_text": short_scenario,
             "full_text": full_text,
@@ -1776,6 +1808,13 @@ class TradeIdeaService:
             symbol=symbol,
             timeframe=timeframe,
         )
+        payload["description_ru"] = self._resolve_idea_description(payload)
+        if not str(payload.get("reason_ru") or "").strip():
+            payload["reason_ru"] = payload["description_ru"]
+        if not str(payload.get("confluence_summary_ru") or "").strip():
+            payload["confluence_summary_ru"] = payload["description_ru"]
+        if not str(payload.get("unified_narrative") or "").strip():
+            payload["unified_narrative"] = payload["description_ru"]
         return self._attach_trade_result_metrics(payload)
 
     @classmethod
@@ -3696,6 +3735,39 @@ class TradeIdeaService:
             return " ".join(parts), total_seconds
         except ValueError:
             return None, None
+
+    @classmethod
+    def _apply_lifecycle_guard(cls, *, existing: dict[str, Any] | None, next_status: str) -> tuple[str, str | None]:
+        if existing is None:
+            return next_status, None
+        current_status = str(existing.get("status") or "").lower()
+        candidate_status = str(next_status or "").lower()
+        if not current_status or current_status == candidate_status:
+            return candidate_status, None
+        if current_status == IDEA_STATUS_ARCHIVED:
+            return IDEA_STATUS_ARCHIVED, None
+        if candidate_status in ALLOWED_LIFECYCLE_TRANSITIONS.get(current_status, set()):
+            return candidate_status, None
+        if current_status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED} and candidate_status == IDEA_STATUS_WAITING:
+            return current_status, "Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation."
+        return current_status, None
+
+    @classmethod
+    def _resolve_idea_description(cls, idea: dict[str, Any]) -> str:
+        for key in (
+            "unified_narrative",
+            "full_text",
+            "confluence_summary_ru",
+            "reason_ru",
+            "description_ru",
+            "short_scenario_ru",
+            "rationale",
+            "current_reasoning",
+        ):
+            value = str(idea.get(key) or "").strip()
+            if value:
+                return value
+        return cls.DESCRIPTION_FALLBACK_TEXT
 
     @staticmethod
     def _status_from_signal(signal: dict, existing: dict[str, Any] | None = None) -> str:

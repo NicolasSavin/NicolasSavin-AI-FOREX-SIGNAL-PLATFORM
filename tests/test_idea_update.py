@@ -219,3 +219,32 @@ def test_build_narrative_facts_contains_smc_contract() -> None:
     assert facts["location"] == "discount"
     assert facts["target_liquidity"] == "1.12"
     assert "HL" in facts["invalidation_logic"]
+
+
+def test_lifecycle_guards_disallow_waiting_regressions() -> None:
+    assert TradeIdeaService._apply_lifecycle_guard(existing={"status": "active"}, next_status="waiting")[0] == "active"
+    assert TradeIdeaService._apply_lifecycle_guard(existing={"status": "triggered"}, next_status="waiting")[0] == "triggered"
+    assert TradeIdeaService._apply_lifecycle_guard(existing={"status": "archived"}, next_status="active")[0] == "archived"
+
+
+def test_preserve_valid_levels_keeps_existing_values() -> None:
+    existing = {"entry": 1.2, "stop_loss": 1.19, "take_profit": 1.22}
+    updated = TradeIdeaService.preserve_valid_levels(existing, {"entry": 0, "stop_loss": 0, "take_profit": None})
+    assert updated["entry"] == 1.2
+    assert updated["stop_loss"] == 1.19
+    assert updated["take_profit"] == 1.22
+
+
+def test_status_from_signal_buy_sell_tp_sl_conditions() -> None:
+    buy_existing = {"status": "active", "direction": "bullish"}
+    sell_existing = {"status": "active", "direction": "bearish"}
+
+    assert TradeIdeaService._status_from_signal({"entry": 1.1, "stop_loss": 1.09, "take_profit": 1.12, "latest_close": 1.1201}, existing=buy_existing) == "tp_hit"
+    assert TradeIdeaService._status_from_signal({"entry": 1.1, "stop_loss": 1.09, "take_profit": 1.12, "latest_close": 1.0899}, existing=buy_existing) == "sl_hit"
+    assert TradeIdeaService._status_from_signal({"entry": 1.1, "stop_loss": 1.11, "take_profit": 1.08, "latest_close": 1.0799}, existing=sell_existing) == "tp_hit"
+    assert TradeIdeaService._status_from_signal({"entry": 1.1, "stop_loss": 1.11, "take_profit": 1.08, "latest_close": 1.1101}, existing=sell_existing) == "sl_hit"
+
+
+def test_description_fallback_is_always_non_empty() -> None:
+    assert TradeIdeaService._resolve_idea_description({"reason_ru": "Причина"}) == "Причина"
+    assert TradeIdeaService._resolve_idea_description({}) != ""
