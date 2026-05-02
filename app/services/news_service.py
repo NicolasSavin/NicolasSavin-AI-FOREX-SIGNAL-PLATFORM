@@ -209,7 +209,7 @@ class NewsService:
 
 
 RSS_TIMEOUT_SECONDS = 8
-RSS_HEADERS = {"User-Agent": "Mozilla/5.0"}
+RSS_HEADERS = {"User-Agent": "AI-Forex-Signal-Platform/1.0 (+https://render.com)", "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8"}
 NEWS_CACHE: dict[str, Any] = {
     "updated_at": None,
     "payload": None,
@@ -220,10 +220,9 @@ REWRITE_CACHE_TTL_SECONDS = 1800
 IMAGE_CACHE: dict[str, dict[str, Any]] = {}
 IMAGE_CACHE_TTL_SECONDS = 86400
 PUBLIC_RSS_SOURCES = [
-    {"name": "Reuters Markets", "url": "https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best"},
     {"name": "CNBC Markets", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html"},
-    {"name": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"},
-    {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex"},
+    {"name": "Reuters Markets", "url": "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best"},
+    {"name": "ForexLive", "url": "https://www.forexlive.com/feed/news"},
     {"name": "FXStreet", "url": "https://www.fxstreet.com/rss/news"},
     {"name": "Investing.com", "url": "https://www.investing.com/rss/news_285.rss"},
 ]
@@ -695,6 +694,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
     cached_payload = NEWS_CACHE.get("payload")
 
     if isinstance(cached_at, float) and cached_payload and now_ts - cached_at < NEWS_CACHE_TTL_SECONDS:
+        cached_payload["cache_hit"] = True
         return cached_payload
 
     items: list[dict[str, Any]] = []
@@ -705,6 +705,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
     diagnostics: dict[str, Any] = {"grok_used_count": 0, "generated_images_count": 0}
     fetch_error: str | None = None
     grok_processed = 0
+    grok_limit = 5
     for source in PUBLIC_RSS_SOURCES:
         source_name = source["name"]
         sources_attempted.append(source_name)
@@ -734,7 +735,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     )
                     image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
                     rewrite = None
-                    if OPENROUTER_API_KEY or XAI_API_KEY:
+                    if (OPENROUTER_API_KEY or XAI_API_KEY) and grok_processed < grok_limit:
                         rewrite = rewrite_news_with_xai(
                             title=title,
                             summary=summary,
@@ -833,40 +834,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
 
     final_items = deduped[:limit]
     if not final_items:
-        final_items = [
-            {
-                "title": "Рыночное обновление",
-                "source": "System fallback",
-                "url": None,
-                "published_at": now_utc.isoformat(),
-                "summary": "Основные RSS-источники временно недоступны. Следим за динамикой USD, EUR и XAUUSD до восстановления лент.",
-                "impact": "Фундаментальный фон уточняется после восстановления источников.",
-                "markets": ["USD", "EUR", "XAUUSD"],
-                "affected_assets": ["USD", "EUR", "XAUUSD"],
-                "tone": "neutral",
-                "image_url": pick_fallback_news_image("Рыночное обновление", "", ["USD", "EUR", "XAUUSD"]),
-                "image_source": "placeholder",
-                "image_alt": "Иллюстрация резервной новости",
-                "title_original": "Рыночное обновление",
-                "title_ru": "Рыночное обновление",
-                "source_url": None,
-                "summary_source": "",
-                "summary_ru": "Ключевые рыночные ленты временно недоступны. Отслеживаем фон по доллару, евро и золоту.",
-                "preview_ru": "Ключевые рыночные ленты временно недоступны. Отслеживаем фон по доллару, евро и золоту.",
-                "full_text_ru": "Ключевые рыночные ленты временно недоступны. Отслеживаем фон по доллару, евро и золоту.",
-                "is_real_source": False,
-                "data_origin": "fallback",
-                "writer": "local_fallback",
-                "what_happened_ru": "RSS-источники не ответили в ожидаемое время.",
-                "why_it_matters_ru": "Без потока новостей сложнее оперативно оценивать фундаментальные драйверы.",
-                "market_impact_ru": "Оценка влияния временно недоступна",
-                "humor_ru": "Ленты на паузе, но риск-менеджмент работает без выходных.",
-                "sentiment": {"USD": "neutral", "EUR": "neutral", "XAUUSD": "neutral"},
-                "what_next_ru": "Проверяем повторно и обновляем новостной поток после восстановления RSS.",
-                "grok_style_comment_ru": "Краткое описание новости временно недоступно",
-                "long_story_ru": "Краткое описание новости временно недоступно",
-            }
-        ]
+        final_items = []
 
     real_items_count = sum(1 for item in final_items if item.get("is_real_source") is True)
     fallback_items_count = len(final_items) - real_items_count
@@ -880,6 +848,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
         "sources_attempted": sorted(set(sources_attempted)),
         "real_items_count": real_items_count,
         "grok_processed_count": diagnostics["grok_used_count"],
+        "cache_hit": False,
         "fetch_error": fetch_error,
         "diagnostics": {
             "real_items_count": real_items_count,

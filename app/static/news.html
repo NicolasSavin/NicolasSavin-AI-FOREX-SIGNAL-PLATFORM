@@ -3,222 +3,39 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Новости для трейдера</title>
+    <title>Новости рынка</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body data-page="news">
     <div class="page-shell">
       <header class="site-header">
-        <div>
-          <p class="eyebrow">Новости</p>
-          <h1>Новости для трейдера</h1>
-          <p class="lead">
-            Здесь собраны только новости из открытых источников: RSS-ленты, официальные публикации и открытые
-            рыночные фиды. Каждая новость кратко пересказана на русском и дополнена оценкой влияния на рынок.
-          </p>
-        </div>
-        <nav class="top-nav">
-          <a href="/">Главная</a>
-          <a href="/ideas">Идеи</a>
-          <a href="/analytics">Аналитика</a>
-          <a href="/news">Новости</a>
-          <a href="/calendar">Календарь</a>
-          <a href="/heatmap/page">Тепловая карта</a>
-        </nav>
+        <div><p class="eyebrow">Market Desk</p><h1>Новости рынка</h1></div>
+        <nav class="top-nav"><a href="/">Главная</a><a href="/ideas">Идеи</a><a href="/analytics">Аналитика</a><a href="/news">Новости</a></nav>
       </header>
-
       <main class="content-stack">
         <section class="panel news-panel">
           <div class="panel-heading compact news-panel__heading">
-            <div>
-              <p class="section-kicker">Поток новостей</p>
-              <h2>Фундаментальные новости простым языком</h2>
-              <p class="section-text">
-                Объясняем, что произошло, почему это важно и как это может повлиять на USD, золото и риск-сентимент.
-              </p>
-            </div>
-            <div class="news-panel__meta">
-              <span class="panel-meta" id="newsUpdatedAt">Обновление: —</span>
-              <button class="news-link-button" id="refreshNewsButton" type="button">Обновить</button>
-            </div>
+            <div><h2>Лента в стиле Bloomberg Desk</h2><p class="section-text" id="deskMeta">—</p></div>
+            <button class="news-link-button" id="refreshNewsButton" type="button">Обновить</button>
           </div>
+          <div id="fallbackBox"></div>
+          <div id="leadStory"></div>
           <div class="news-list" id="newsList"></div>
         </section>
       </main>
     </div>
-    <dialog class="news-modal" id="newsModal">
-      <article class="news-modal__card">
-        <button class="news-modal__close" id="newsModalClose" type="button" aria-label="Закрыть">✕</button>
-        <div id="newsModalBody"></div>
-      </article>
-    </dialog>
-
-    <script>
-      const newsList = document.getElementById("newsList");
-      const newsUpdatedAt = document.getElementById("newsUpdatedAt");
-      const refreshButton = document.getElementById("refreshNewsButton");
-      const newsModal = document.getElementById("newsModal");
-      const newsModalClose = document.getElementById("newsModalClose");
-      const newsModalBody = document.getElementById("newsModalBody");
-
-      function escapeHtml(value) {
-        return String(value || "")
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      }
-
-      function formatDate(value) {
-        if (!value) return "—";
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return value;
-        return date.toLocaleString("ru-RU", { timeZone: "UTC" }) + " UTC";
-      }
-
-      function buildMarkets(markets) {
-        const list = Array.isArray(markets) ? markets : [];
-        if (!list.length) return '<span class="news-chip news-chip--muted">Нет меток</span>';
-        return list.map((item) => `<span class="news-chip">${escapeHtml(item)}</span>`).join("");
-      }
-
-      function buildSentiment(sentiment) {
-        const entries = sentiment && typeof sentiment === "object" ? Object.entries(sentiment) : [];
-        if (!entries.length) return '<span class="news-chip news-chip--muted">Сентимент: н/д</span>';
-        return entries
-          .map(([asset, mood]) => `<span class="news-chip">${escapeHtml(asset)}: ${escapeHtml(mood || "neutral")}</span>`)
-          .join("");
-      }
-
-      function imageHtml(item, big = false) {
-        const wrapClass = big ? "news-image-wrap news-image-wrap--big" : "news-image-wrap";
-        const imageUrl = String(item?.image_url || "").trim();
-        if (!imageUrl) {
-          return `<div class="${wrapClass} is-fallback" aria-hidden="true"></div>`;
-        }
-        return `
-          <div class="${wrapClass}">
-            <img
-              src="${escapeHtml(imageUrl)}"
-              alt="${escapeHtml(item.image_alt || item.title_ru || "Иллюстрация новости")}"
-              loading="lazy"
-              onerror="this.closest('.news-image-wrap').classList.add('is-fallback'); this.remove();"
-            />
-          </div>
-        `;
-      }
-
-      function renderExpanded(item) {
-        const title = item.title_ru || item.title || "Новость без заголовка";
-        const fullText = item.full_text_ru || item.long_story_ru || item.summary_ru || item.summary || "Описание недоступно.";
-        const description = item.preview_ru || item.summary_ru || item.summary || "Описание недоступно.";
-        const impact = item.market_impact_ru || "";
-        const sentiment = item.sentiment && typeof item.sentiment === "object" ? item.sentiment : null;
-        const humor = item.humor_ru || "";
-        newsModalBody.innerHTML = `
-          ${imageHtml(item, true)}
-          <p class="news-card__eyebrow">Источник: ${escapeHtml(item.source || "Источник")} · ${formatDate(item.published_at)}</p>
-          <h3 class="news-card__title">${escapeHtml(title)}</h3>
-          <section class="news-detail-box"><h4>Коротко</h4><p class="news-card__text">${escapeHtml(description)}</p></section>
-          <section class="news-detail-box"><h4>Оригинальный заголовок</h4><p class="news-card__text">${escapeHtml(item.title_original || "—")}</p></section>
-          <div class="news-chip-row">${buildMarkets(item.markets || item.assets)}</div>
-          ${impact ? `<section class="news-detail-box"><h4>Влияние на рынок</h4><p class="news-card__text">${escapeHtml(impact)}</p></section>` : ""}
-          ${sentiment ? `<section class="news-detail-box"><h4>Сентимент</h4><div class="news-chip-row">${buildSentiment(sentiment)}</div></section>` : ""}
-          ${humor ? `<section class="news-detail-box"><h4>Заметка с улыбкой</h4><p class="news-card__text">${escapeHtml(humor)}</p></section>` : ""}
-          <section class="news-modal__body"><p class="news-modal__story">${escapeHtml(fullText)}</p></section>
-          <div class="news-card__footer">
-            ${item.source_url ? `<a class="news-link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'}
-          </div>
-        `;
-      }
-
-      function renderState(title, text) {
-        newsList.innerHTML = `
-          <article class="news-card news-card--empty">
-            <p class="news-card__title">${escapeHtml(title)}</p>
-            <p class="news-card__text">${escapeHtml(text)}</p>
-          </article>
-        `;
-      }
-
-      function renderNews(payload) {
-        const items = Array.isArray(payload?.items) ? payload.items : [];
-        const dataStatus = payload?.data_status || "real";
-        newsUpdatedAt.textContent = `Обновление: ${formatDate(payload?.updated_at_utc)}`;
-
-        if (dataStatus === "fallback") {
-          renderState(
-            "RSS-источники временно недоступны",
-            payload?.message_ru || "Не удалось получить подтверждённые новости из RSS-источников."
-          );
-          return;
-        }
-
-        if (!items.length) {
-          renderState(
-            "Свежих новостей пока нет",
-            payload?.warning || "Источники молчат. Рынок, похоже, делает глубокий вдох перед новым движением."
-          );
-          return;
-        }
-
-        newsList.innerHTML = "";
-        items.forEach((item) => {
-          const card = document.createElement("article");
-          card.className = "news-card news-card--compact";
-          card.setAttribute("tabindex", "0");
-          card.innerHTML = `
-            ${imageHtml(item)}
-            <div class="news-card__header news-card__header--stacked">
-              <p class="news-card__eyebrow">Источник: ${escapeHtml(item.source || "Источник")} · ${formatDate(item.published_at)}</p>
-              <h3 class="news-card__title">${escapeHtml(item.title_ru || item.title || "Новость без заголовка")}</h3>
-            </div>
-            <section class="news-detail-box"><h4>Коротко</h4><p class="news-card__text">${escapeHtml(item.preview_ru || item.summary_ru || item.summary || "Описание недоступно.")}</p></section>
-            ${(item.market_impact_ru || "") ? `<section class="news-detail-box"><h4>Влияние на рынок</h4><p class="news-card__text">${escapeHtml(item.market_impact_ru)}</p></section>` : ""}
-            <div class="news-card__assets">
-              <span class="news-label">Рынки под прицелом</span>
-              <div class="news-chip-row">${buildMarkets(item.affected_assets || item.markets)}</div>
-            </div>
-            ${(item.humor_ru || "") ? `<section class="news-detail-box"><h4>Немного юмора</h4><p class="news-card__text">${escapeHtml(item.humor_ru)}</p></section>` : ""}
-            <div class="news-card__footer">
-              ${item.source_url ? `<a class="news-link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">Открыть источник</a>` : '<span class="news-link-button news-link-button--disabled">Ссылка недоступна</span>'}
-            </div>
-          `;
-          card.addEventListener("click", () => {
-            renderExpanded(item);
-            newsModal.showModal();
-          });
-          card.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              renderExpanded(item);
-              newsModal.showModal();
-            }
-          });
-          newsList.appendChild(card);
-        });
-      }
-
-      async function loadNews() {
-        renderState("Загрузка...", "Собираем новости из открытых RSS-источников.");
-        try {
-          const response = await fetch("/api/news", { cache: "no-store" });
-          const payload = await response.json();
-          renderNews(payload);
-        } catch (error) {
-          newsUpdatedAt.textContent = "Обновление: ошибка загрузки";
-          renderState("Новости временно недоступны", "Не удалось получить данные. Попробуйте обновить позже.");
-        }
-      }
-
-      refreshButton.addEventListener("click", loadNews);
-      newsModalClose.addEventListener("click", () => newsModal.close());
-      newsModal.addEventListener("click", (event) => {
-        if (event.target === newsModal) newsModal.close();
-      });
-      loadNews();
-    </script>
-    <script src="/static/nav.js"></script>
+<script>
+const newsList=document.getElementById('newsList'); const leadStory=document.getElementById('leadStory'); const fallbackBox=document.getElementById('fallbackBox'); const deskMeta=document.getElementById('deskMeta');
+const esc=(v)=>String(v||'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+const dt=(v)=>{const d=new Date(v); return Number.isNaN(d.getTime())?'—':d.toLocaleString('ru-RU',{timeZone:'UTC'})+' UTC'};
+const chips=(a)=> (Array.isArray(a)&&a.length?a:['N/A']).map(x=>`<span class="news-chip">${esc(x)}</span>`).join('');
+const img=(item,big=false)=> item.image_url?`<div class="news-image-wrap ${big?'news-image-wrap--big':''}"><img src="${esc(item.image_url)}" loading="lazy" onerror="this.parentElement.classList.add('is-fallback'); this.remove();"></div>`:`<div class="news-image-wrap ${big?'news-image-wrap--big':''} is-fallback"></div>`;
+function renderFallback(msg){leadStory.innerHTML=''; newsList.innerHTML=''; fallbackBox.innerHTML=`<article class="news-card news-card--empty"><h3 class="news-card__title">⚠️ Системный режим</h3><p class="news-card__text">${esc(msg)}</p></article>`;}
+function card(item,isLead=false){return `<article class="news-card ${isLead?'':'news-card--compact'}">${img(item,isLead)}<p class="news-card__eyebrow">${esc(item.source||'Источник')} · ${dt(item.published_at)}</p><h3 class="news-card__title">${esc(item.title_ru||item.title||'Новость')}</h3><p class="news-card__text">${esc(item.summary_ru||item.summary||'')}</p><p class="news-card__text"><strong>Влияние:</strong> ${esc(item.market_impact_ru||item.impact||'')}</p><div class="news-chip-row">${chips(item.affected_assets)}</div>${item.humor_ru?`<p class="news-card__text"><em>${esc(item.humor_ru)}</em></p>`:''}<div class="news-card__footer">${item.url?`<a class="news-link-button" href="${esc(item.url)}" target="_blank" rel="noopener">Открыть источник</a>`:''}</div></article>`}
+async function loadNews(){fallbackBox.innerHTML=''; leadStory.innerHTML=''; newsList.innerHTML='<article class="news-card news-card--empty"><p>Загрузка...</p></article>'; const r=await fetch('/api/news?limit=8',{cache:'no-store'}); const p=await r.json(); deskMeta.textContent=`Статус: ${p.data_status||'—'} · Источники: ${(p.sources_attempted||[]).join(', ')} · Реальных: ${p.real_items_count||0} · Grok: ${p.grok_processed_count||0} · Cache: ${p.cache_hit?'hit':'miss'}`;
+if(p.data_status==='fallback'){renderFallback(p.message_ru||'Новостные источники временно недоступны'); return;} const items=Array.isArray(p.items)?p.items:[]; if(!items.length){renderFallback('Нет подтверждённых новостей.'); return;} leadStory.innerHTML=card(items[0],true); newsList.innerHTML=items.slice(1).map(x=>card(x,false)).join('');}
+document.getElementById('refreshNewsButton').addEventListener('click',loadNews); loadNews();
+</script>
+<script src="/static/nav.js"></script>
   </body>
 </html>
