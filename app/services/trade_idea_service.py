@@ -3743,6 +3743,21 @@ class TradeIdeaService:
     def _build_structured_analysis(*, signal: dict[str, Any], bias: str, rationale: str) -> dict[str, Any]:
         market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
         proxy_label = "proxy" if signal.get("data_status") in {"unavailable", "delayed"} else "real"
+        options_snapshot = signal.get("options_analysis") if isinstance(signal.get("options_analysis"), dict) else {}
+        options_analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
+        options_available = bool(options_snapshot.get("available"))
+        options_text = str(signal.get("options_ru") or "").strip()
+        if not options_text:
+            if options_available:
+                pcr = options_analysis.get("putCallRatio")
+                strikes = options_analysis.get("keyStrikes") or []
+                max_pain = options_analysis.get("maxPain")
+                options_text = (
+                    f"CME options (реальные данные, возможна задержка): PCR={pcr}, key strikes={strikes}, max pain={max_pain}."
+                )
+            else:
+                options_text = "Опционный слой недоступен (реальные CME options не получены)."
+
         return {
             "smc": str(signal.get("smc_ru") or market_context.get("smcRu") or rationale),
             "ict": str(signal.get("ict_ru") or market_context.get("ictRu") or "ICT-контекст подтверждает приоритет работы от ликвидностной зоны."),
@@ -3763,6 +3778,12 @@ class TradeIdeaService:
             "divergence_ru": str(signal.get("divergence_ru") or ""),
             "cumdelta_ru": str(signal.get("cumdelta_ru") or signal.get("cumulative_delta_ru") or ""),
             "harmonic_ru": str(signal.get("harmonic_ru") or ""),
+            "options_ru": options_text,
+            "options_meta": {
+                "available": options_available,
+                "source": options_snapshot.get("source") if options_available else None,
+                "kind": "real_market_metric" if options_available else "unavailable_real_metric",
+            },
         }
 
     def _build_weighted_decision(self, *, signal: dict[str, Any], analysis: dict[str, Any], bias: str) -> dict[str, Any]:

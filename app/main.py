@@ -269,6 +269,13 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
     if not chat_service.client:
         return base_response | {"ai_status": "fallback", "warning": "Grok временно недоступен"}
 
+    cme_context_for_ai = {
+        "available": cme_available,
+        "analysis": (cme_data.get("analysis") if isinstance(cme_data.get("analysis"), dict) else {}),
+        "futures": (cme_data.get("futures") if isinstance(cme_data.get("futures"), dict) else {}),
+        "disclaimer": cme_disclaimer,
+    }
+
     if use_fundamental:
         ai_prompt = (
             "Сформируй ОДНУ компактную статью на русском по MT4 OHLC и web search (если есть данные). "
@@ -278,7 +285,8 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
             "Верни строго JSON без markdown и лишнего текста. Сохрани существующие поля и заполни: "
             "summary_ru, htf_bias_ru, liquidity_ru, risk_ru, invalidation_ru, scenario_ru, journalistic_summary_ru, why_moves_ru, "
             "smart_money_ru, ict_ru, patterns_ru, harmonic_ru, wave_ru, divergence_ru, volume_ru, options_ru, forecast_ru, article_ru.\n\n"
-            f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}"
+            f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}\n\n"
+            f"CME optionsAnalysis context (используй только если available=true):\n{json.dumps(cme_context_for_ai, ensure_ascii=False)}"
         )
     else:
         ai_prompt = (
@@ -291,7 +299,8 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
             "Сохрани существующие поля и обязательно заполни поля:\n"
             "summary_ru, htf_bias_ru, liquidity_ru, risk_ru, invalidation_ru, scenario_ru,\n"
             "journalistic_summary_ru, why_moves_ru, smart_money_ru, ict_ru, patterns_ru, harmonic_ru, wave_ru, divergence_ru, volume_ru, options_ru, forecast_ru, article_ru.\n\n"
-            f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}"
+            f"MT4 context:\n{json.dumps(mt4_context, ensure_ascii=False)}\n\n"
+            f"CME optionsAnalysis context (если available=false, явно напиши что опционный слой недоступен):\n{json.dumps(cme_context_for_ai, ensure_ascii=False)}"
         )
     try:
         primary_model = f"{chat_service.model}:online" if use_fundamental else chat_service.model

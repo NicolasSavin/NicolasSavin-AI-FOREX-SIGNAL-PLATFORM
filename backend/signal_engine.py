@@ -10,6 +10,7 @@ from backend.analysis.feature_builder import FeatureBuilder
 from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
 from backend.sentiment_provider import build_sentiment_provider
+from app.services.cme_scraper import get_cme_market_snapshot
 from backend.signals import build_trade_levels, default_invalidation_text, has_minimum_confluence, infer_action
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
@@ -52,6 +53,7 @@ class SignalEngine:
                 required_timeframes = self._required_stack_timeframes(requested_timeframes)
                 for stack_timeframe in required_timeframes:
                     snapshots_cache[stack_timeframe] = await self._snapshot_for(symbol, stack_timeframe, snapshots_cache)
+                options_snapshot = await get_cme_market_snapshot(symbol)
                 for timeframe in requested_timeframes:
                     try:
                         stack = TIMEFRAME_STACKS[timeframe]
@@ -91,6 +93,7 @@ class SignalEngine:
                             mtf_features,
                             ltf_features,
                             sentiment.model_dump(mode="json"),
+                            options_snapshot,
                         )
                     except Exception as exc:
                         logger.exception(
@@ -164,8 +167,12 @@ class SignalEngine:
         mtf_features: dict,
         ltf_features: dict,
         sentiment: dict,
+        options_snapshot: dict | None,
     ) -> dict:
         analysis_contract = self._resolve_analysis_contract(htf=htf, mtf=mtf, ltf=ltf)
+        options_snapshot = options_snapshot if isinstance(options_snapshot, dict) else {}
+        options_analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
+        options_available = bool(options_snapshot.get("available"))
         data_quality = analysis_contract["data_quality"]
         analysis_mode = analysis_contract["analysis_mode"]
         is_fallback_mode = analysis_mode == "directional_fallback"
@@ -476,6 +483,7 @@ class SignalEngine:
             "confluence_flags": confluence_flags,
             "missing_confirmations": missing_confirmations,
             "invalidation_reasoning": invalidation_reasoning,
+            "options_analysis": options_snapshot,
             "market_context": {
                 "htf_trend": htf_features["trend"],
                 "mtf_trend": mtf_features["trend"],
@@ -512,6 +520,10 @@ class SignalEngine:
                 "invalidation_reasoning": invalidation_reasoning,
                 "fallback_used": is_fallback_mode,
                 "signal_threshold": signal_threshold,
+                "options_available": options_available,
+                "options_put_call_ratio": options_analysis.get("putCallRatio"),
+                "options_key_strikes": options_analysis.get("keyStrikes") or [],
+                "options_max_pain": options_analysis.get("maxPain"),
             },
             "pipeline_debug": {
                 "candles_count": len(mtf.get("candles", [])),
