@@ -118,6 +118,73 @@ class TradeIdeaService:
         self._refresh_lock = Lock()
         self._refresh_in_progress = False
 
+    @classmethod
+    def buildTraderNarrative(cls, idea: dict[str, Any]) -> dict[str, str]:
+        symbol = str(idea.get("symbol") or "Инструмент").upper()
+        action = str(idea.get("action") or idea.get("signal") or "WAIT").upper()
+        entry = str(idea.get("entry") or "—")
+        sl = str(idea.get("stop_loss") or idea.get("stopLoss") or "—")
+        tp = str(idea.get("take_profit") or idea.get("takeProfit") or "—")
+        confidence = int(idea.get("confidence_percent") or idea.get("confidence") or 0)
+        confirmations = idea.get("confluence_confirmations") if isinstance(idea.get("confluence_confirmations"), list) else []
+        warnings = idea.get("confluence_warnings") if isinstance(idea.get("confluence_warnings"), list) else []
+        confirmation_text = ", ".join(str(x).strip() for x in confirmations if str(x).strip())
+        warning_text = ", ".join(str(x).strip() for x in warnings if str(x).strip())
+        options_blob = " ".join(
+            str(idea.get(key) or "")
+            for key in ("options_summary_ru", "options_analysis", "options", "options_context")
+        ).strip().lower()
+        options_available = not any(token in options_blob for token in ("unavailable", "недоступ", "n/a", "none"))
+
+        if action == "WAIT":
+            wait_text = (
+                "Идея находится в ожидании подтверждения. Структура пока не даёт полноценного входа, "
+                "поэтому сценарий нужно наблюдать до появления BOS/CHoCH, реакции от OB/FVG или снятия ликвидности."
+            )
+            return {
+                "unified_narrative": wait_text,
+                "short_scenario_ru": "Сценарий в режиме наблюдения до подтверждения структуры.",
+                "execution_summary_ru": wait_text,
+                "entry_reason_ru": "Активный вход не открыт: ждём структуру и триггер.",
+                "stop_reason_ru": "SL будет определён после подтверждения входа.",
+                "take_profit_reason_ru": "TP будет рассчитан после формирования активного сетапа.",
+                "risk_summary_ru": f"Риск ложного входа повышен, confidence {confidence}%.",
+            }
+
+        is_buy = action == "BUY"
+        side_word = "покупателя" if is_buy else "продавца"
+        liq_word = "sell-side ликвидность" if is_buy else "buy-side ликвидность"
+        impulse = "вверх" if is_buy else "вниз"
+        zone_word = "поддержки" if is_buy else "сопротивления"
+        cancel_line = "ниже" if is_buy else "выше"
+        options_line = (
+            "Опционный слой: put/call, max pain или key strikes поддерживают/ослабляют сценарий."
+            if options_available
+            else "Опционный слой сейчас недоступен, поэтому решение опирается на структуру, ликвидность и риск-модель."
+        )
+        narrative = (
+            f"{symbol} формирует {action}-сценарий: рыночная структура смещается в сторону {side_word}. "
+            f"Цена уже дала рабочую реакцию и тестирует область {entry}, где сценарий ищет продолжение импульса {impulse}. "
+            f"Ключевая ликвидность находится через {liq_word}, поэтому вход привязан к зоне {zone_word} рядом с entry. "
+            f"Подтверждение идеи идёт через confluence и структурные признаки BOS/CHoCH с реакцией от OB/FVG. "
+            f"Цель сценария ориентирована на {tp}, а защитный стоп вынесен к {sl} как область invalidation. "
+            f"Сценарий сохраняется, пока цена не уходит {cancel_line} уровня отмены и не ломает структуру. "
+            f"{options_line}"
+        )
+        if confirmation_text:
+            narrative += f" Подтверждения: {confirmation_text}."
+        if warning_text:
+            narrative += f" Риски: {warning_text}."
+        return {
+            "unified_narrative": re.sub(r"\s+", " ", narrative).strip(),
+            "short_scenario_ru": f"{symbol}: {action} от {entry} к {tp}, отмена у {sl}.",
+            "execution_summary_ru": f"Вход от {entry} по структуре {zone_word}, контроль риска через SL {sl}, цель {tp}.",
+            "entry_reason_ru": f"Entry выбран возле зоны {zone_word} и ликвидности ({liq_word}) с подтверждением структуры.",
+            "stop_reason_ru": f"SL {sl} стоит за зоной invalidation: пробой отменяет сценарий.",
+            "take_profit_reason_ru": f"TP {tp} размещён в направлении ожидаемого импульса {impulse} к ближайшей ликвидности.",
+            "risk_summary_ru": (f"Текущий риск-профиль: confidence {confidence}%." + (f" Риски: {warning_text}." if warning_text else "")),
+        }
+
     async def generate_or_refresh(self, pairs: list[str] | None = None, *, force: bool = False) -> dict[str, Any]:
         pairs = pairs or self.get_market_symbols()
         existing = self.idea_store.read()
@@ -1488,6 +1555,20 @@ class TradeIdeaService:
             unified_narrative=unified_narrative_text,
             full_text=full_text,
         )
+        deterministic_narrative = self.buildTraderNarrative(
+            {
+                **signal,
+                "symbol": symbol,
+                "signal": action,
+                "entry": entry_value,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+            }
+        )
+        if not str(unified_narrative_text or "").strip():
+            unified_narrative_text = deterministic_narrative["unified_narrative"]
+        short_scenario = str(short_scenario or deterministic_narrative["short_scenario_ru"]).strip() or deterministic_narrative["short_scenario_ru"]
+        full_text = str(full_text or deterministic_narrative["execution_summary_ru"]).strip() or deterministic_narrative["execution_summary_ru"]
         short_scenario = llm_result.data.get("short_text") or self._build_trade_scenario_line(
             direction=bias,
             entry=self._format_zone(entry_value),
@@ -1698,6 +1779,11 @@ class TradeIdeaService:
             "full_text": full_text,
             "idea_thesis": idea_thesis_text,
             "unified_narrative": unified_narrative_text,
+            "execution_summary_ru": deterministic_narrative["execution_summary_ru"],
+            "entry_reason_ru": deterministic_narrative["entry_reason_ru"],
+            "stop_reason_ru": deterministic_narrative["stop_reason_ru"],
+            "take_profit_reason_ru": deterministic_narrative["take_profit_reason_ru"],
+            "risk_summary_ru": deterministic_narrative["risk_summary_ru"],
             "signal": str(llm_result.data.get("signal") or ("BUY" if action == "BUY" else "SELL" if action == "SELL" else "WAIT")).upper(),
             "risk_note": str(llm_result.data.get("risk_note") or llm_result.data.get("risk") or ""),
             "summary_structured": narrative_structured.get("summary_structured"),
