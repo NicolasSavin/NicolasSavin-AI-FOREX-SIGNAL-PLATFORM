@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from hashlib import sha1
@@ -713,11 +714,30 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
             response = requests.get(source["url"], timeout=RSS_TIMEOUT_SECONDS, headers=RSS_HEADERS)
             response.raise_for_status()
             feed = feedparser.parse(response.content)
-            entries = getattr(feed, "entries", [])[: max(limit, 12)]
+            entries = getattr(feed, "entries", [])
             if not entries:
-                sources_failed.append(source_name)
-                continue
-            source_had_item = False
+                try:
+                    root = ET.fromstring(response.content)
+                    fallback_entries: list[dict[str, Any]] = []
+                    for node in root.findall(".//item"):
+                        title_node = node.find("title")
+                        link_node = node.find("link")
+                        date_node = node.find("pubDate")
+                        fallback_entries.append(
+                            {
+                                "title": (title_node.text if title_node is not None else "") or "",
+                                "link": (link_node.text if link_node is not None else "") or "",
+                                "published": (date_node.text if date_node is not None else "") or "",
+                                "summary": "",
+                                "description": "",
+                            }
+                        )
+                    entries = fallback_entries
+                except Exception:
+                    entries = []
+
+            entries = entries[: max(limit, 12)]
+            parsed_items: list[dict[str, Any]] = []
             for entry in entries:
                 source_url = str(entry.get("link") or "").strip() or None
                 try:
@@ -775,8 +795,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                 sentiment = _build_sentiment_map(f"{title} {summary}", affected_assets)
                 if isinstance(story.get("sentiment"), str):
                     sentiment["MARKET"] = str(story.get("sentiment"))
-                source_had_item = True
-                items.append(
+                parsed_items.append(
                     {
                         "title": title_ru,
                         "source": source_name,
@@ -810,10 +829,12 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         "long_story_ru": story["full_text_ru"],
                     }
                 )
-            if source_had_item:
-                sources_ok.append(source_name)
-            else:
+            print("[news] source:", source_name, "items:", len(parsed_items))
+            if len(parsed_items) == 0:
                 sources_failed.append(source_name)
+            else:
+                sources_ok.append(source_name)
+                items.extend(parsed_items)
         except requests.Timeout as exc:
             fetch_error = f"timeout: {exc}"
             sources_failed.append(source_name)
@@ -832,9 +853,11 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
         seen.add(key)
         deduped.append(item)
 
-    final_items = deduped[:limit]
-    if not final_items:
+    results = deduped
+    if len(results) == 0:
         final_items = []
+    else:
+        final_items = results[:5]
 
     real_items_count = sum(1 for item in final_items if item.get("is_real_source") is True)
     fallback_items_count = len(final_items) - real_items_count
