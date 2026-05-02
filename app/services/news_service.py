@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -238,6 +239,7 @@ SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID", "").strip()
 GOOGLE_SEARCH_API_KEY = os.getenv("GOOGLE_SEARCH_API_KEY", "").strip()
 GENERATED_NEWS_DIR = os.path.join("app", "static", "generated-news")
+logger = logging.getLogger(__name__)
 
 
 def strip_html(value: str) -> str:
@@ -706,6 +708,8 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
     fetch_error: str | None = None
     grok_processed = 0
     grok_limit = 5
+    source_status: dict[str, str] = {}
+    logger.info("[news] sources_attempted=%s", [source["name"] for source in PUBLIC_RSS_SOURCES])
     for source in PUBLIC_RSS_SOURCES:
         source_name = source["name"]
         sources_attempted.append(source_name)
@@ -812,15 +816,19 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                 )
             if source_had_item:
                 sources_ok.append(source_name)
+                source_status[source_name] = "ok"
             else:
                 sources_failed.append(source_name)
+                source_status[source_name] = "empty_feed"
         except requests.Timeout as exc:
             fetch_error = f"timeout: {exc}"
             sources_failed.append(source_name)
+            source_status[source_name] = f"timeout: {exc}"
             continue
         except Exception as exc:
             fetch_error = str(exc)
             sources_failed.append(source_name)
+            source_status[source_name] = f"error: {exc}"
             continue
 
     deduped: list[dict[str, Any]] = []
@@ -859,10 +867,17 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
             "grok_used_count": diagnostics["grok_used_count"],
             "generated_images_count": diagnostics["generated_images_count"],
             "fetch_error": fetch_error,
+            "source_status": source_status,
         },
     }
     if real_items_count == 0:
         payload["warning"] = message_ru
+    logger.info(
+        "[news] fetch_done real_items_count=%s grok_processed_count=%s sources_status=%s",
+        real_items_count,
+        diagnostics["grok_used_count"],
+        source_status,
+    )
 
     NEWS_CACHE["updated_at"] = now_ts
     NEWS_CACHE["payload"] = payload
