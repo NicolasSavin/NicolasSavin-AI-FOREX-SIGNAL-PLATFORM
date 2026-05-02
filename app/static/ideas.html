@@ -2649,17 +2649,11 @@
     function pickText(idea) {
       return (
         idea.unified_narrative ||
+        idea.full_text ||
         idea.confluence_summary_ru ||
         idea.reason_ru ||
         idea.description_ru ||
-        idea.short_scenario_ru ||
-        idea.idea_thesis ||
-        idea.full_text ||
-        idea.fullText ||
-        idea.summary_ru ||
-        idea.summary ||
-        idea.short_text ||
-        "Описание временно недоступно."
+        "Сценарий по инструменту основан на структуре рынка, ликвидности и текущем импульсе. Ожидается подтверждение перед входом."
       );
     }
 
