@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.services.htf_context_filter import HtfContextFilter
+from app.services.cme_scraper import get_cme_market_snapshot
 from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
 from backend.chat_service import ChatRequest, ForexChatService
@@ -243,6 +244,27 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
             for candle in ai_candles
         ],
     }
+    cme_data = await get_cme_market_snapshot(normalized_pair)
+    cme_available = bool(cme_data.get("available"))
+    volume_source = "cme_scraping" if cme_available else "mt4_tick_volume"
+    cme_disclaimer = "Data sourced from publicly available CME pages. Not real-time and may be delayed."
+    if cme_available:
+        futures = cme_data.get("futures") or {}
+        analysis = cme_data.get("analysis") or {}
+        base_response["cme"] = cme_data
+        base_response["volume_source"] = volume_source
+        base_response["volume_ru"] = (
+            f"CME ({cme_data.get('symbol')}) объём фьючерса: {futures.get('volume')}, "
+            f"open interest: {futures.get('openInterest')}. Источник: cme_scraping. {cme_disclaimer}"
+        )
+        base_response["options_ru"] = (
+            f"Ключевые страйки: {analysis.get('keyStrikes') or []}. "
+            f"Put/Call bias (PCR): {analysis.get('putCallRatio')}. Max Pain: {analysis.get('maxPain')}. "
+            f"{cme_disclaimer}"
+        )
+    else:
+        base_response["volume_source"] = volume_source
+        base_response["cme"] = cme_data
 
     if not chat_service.client:
         return base_response | {"ai_status": "fallback", "warning": "Grok временно недоступен"}
@@ -350,6 +372,9 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
                 or base_response["summary"]
             ),
             "ai_status": ai_status,
+            "volume_source": volume_source,
+            "cme": cme_data,
+            "cme_disclaimer": cme_disclaimer if cme_available else None,
         }
     except Exception:
         return base_response | {

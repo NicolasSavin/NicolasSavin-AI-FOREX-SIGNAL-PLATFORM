@@ -142,7 +142,21 @@ function renderReply(data){
   }
 
   if (typeof data.article_ru === 'string' && data.article_ru.trim()) {
-    return `<p class="result-article">${escapeHtml(data.article_ru.trim())}</p>`;
+    let cmeBlock = '';
+    if (data.cme && data.cme.available) {
+      const futures = data.cme.futures || {};
+      const analysis = data.cme.analysis || {};
+      cmeBlock = `<div class="notice" style="margin-bottom:12px">
+        <strong>CME объёмы и опционы</strong><br>
+        Futures volume: ${escapeHtml(String(futures.volume ?? 'n/a'))}<br>
+        Open interest: ${escapeHtml(String(futures.openInterest ?? 'n/a'))}<br>
+        Key strikes: ${escapeHtml(JSON.stringify(analysis.keyStrikes || []))}<br>
+        Put/Call bias: ${escapeHtml(String(analysis.putCallRatio ?? 'n/a'))}<br>
+        Max pain: ${escapeHtml(String(analysis.maxPain ?? 'n/a'))}<br>
+        <small>${escapeHtml(data.cme.disclaimer || "Data sourced from publicly available CME pages. Not real-time and may be delayed.")}</small>
+      </div>`;
+    }
+    return `${cmeBlock}<p class="result-article">${escapeHtml(data.article_ru.trim())}</p>`;
   }
 
   const fallbackFields = [
