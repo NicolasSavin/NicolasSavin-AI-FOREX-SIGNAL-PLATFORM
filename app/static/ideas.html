@@ -1666,6 +1666,7 @@
 
           <div class="modal-section-title">Основная идея</div>
           <div class="box modal-text">${escapeHtml(pickMainIdeaText(idea))}</div>
+          ${renderExecutionModel(idea)}
           ${renderSmartMoneyContext(idea)}
           ${renderFundamentalContext(idea)}
           <div class="status-reason">${escapeHtml(statusReason)}</div>
@@ -2720,6 +2721,28 @@
         .filter(Boolean);
       if (!lines.length) return "";
       return `<div class="box modal-text">${escapeHtml(lines.join(" "))}</div>`;
+    }
+
+    function renderExecutionModel(idea) {
+      const fallback = "Точка входа рассчитана по текущей структуре и риск-модели, но требует подтверждения.";
+      const entry = formatValue(idea.entry || idea.entry_price || idea.entry_zone);
+      const entryReason = String(idea.entry_reason_ru || "").trim() || fallback;
+      const stopReason = String(idea.stop_reason_ru || "").trim() || fallback;
+      const targetReason = String(idea.take_profit_reason_ru || "").trim() || fallback;
+      const liqModel = String(idea.liquidity_entry_model || "").trim() || "none";
+      const invalidation = String(idea.invalidation_level_reason || idea.invalidation_reasoning || idea.invalidation_ru || "").trim() || fallback;
+
+      return `
+        <div class="modal-section-title">Execution Model</div>
+        <div class="box modal-text">
+          <div><strong>Entry:</strong> ${escapeHtml(entry)}</div>
+          <div><strong>Why entry here:</strong> ${escapeHtml(entryReason)}</div>
+          <div><strong>Stop logic:</strong> ${escapeHtml(stopReason)}</div>
+          <div><strong>Target logic:</strong> ${escapeHtml(targetReason)}</div>
+          <div><strong>Liquidity model:</strong> ${escapeHtml(liqModel)}</div>
+          <div><strong>Invalidation:</strong> ${escapeHtml(invalidation)}</div>
+        </div>
+      `;
     }
 
     function normalizeSymbol(value) {
