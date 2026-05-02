@@ -2,12 +2,17 @@ import React from "react";
 
 function resolveIdeaDescription(idea) {
   const candidates = [
+    idea?.unified_narrative,
+    idea?.full_text,
     idea?.confluence_summary_ru,
     idea?.reason_ru,
     idea?.description_ru,
+    idea?.short_scenario_ru,
+    idea?.rationale,
+    idea?.current_reasoning,
     idea?.market_context?.confluence_summary_ru,
     idea?.market_context?.message,
-    "Описание идеи временно недоступно.",
+    "Идея основана на структуре рынка, ликвидности и текущем импульсе. Сценарий ожидает подтверждения или обновления рыночных данных.",
   ];
   return candidates.map((item) => String(item || "").trim()).find((item) => item) || "Описание идеи временно недоступно.";
 }
@@ -113,7 +118,7 @@ export function IdeaModal({ idea, onClose }) {
         />
 
         {aiFailed ? <Section title="AI" content="AI-пояснение временно недоступно" /> : null}
-        <Section title="Описание" content={idea.description_ru || "—"} />
+        <Section title="Описание" content={resolveIdeaDescription(idea)} />
         <Section title="Причина" content={idea.reason_ru || "—"} />
         <Section title="Confluence summary" content={idea?.confluence_analysis?.summary_ru || idea?.confluence_summary_ru || "—"} />
         <Section title="Подтверждения" content={(idea?.confluence_analysis?.confirmations || idea?.confluence_confirmations || []).join(", ") || "—"} />
