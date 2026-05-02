@@ -11,6 +11,7 @@ from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
 from backend.sentiment_provider import build_sentiment_provider
 from backend.signals import build_trade_levels, default_invalidation_text, has_minimum_confluence, infer_action
+from app.services.cme_scraper import get_cme_market_snapshot
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
 TIMEFRAME_STACKS = {
@@ -49,6 +50,7 @@ class SignalEngine:
             for symbol in pairs:
                 snapshots_cache: dict[str, dict] = {}
                 sentiment = self.sentiment_provider.get_snapshot(symbol)
+                options_snapshot = await get_cme_market_snapshot(symbol)
                 required_timeframes = self._required_stack_timeframes(requested_timeframes)
                 for stack_timeframe in required_timeframes:
                     snapshots_cache[stack_timeframe] = await self._snapshot_for(symbol, stack_timeframe, snapshots_cache)
@@ -91,6 +93,7 @@ class SignalEngine:
                             mtf_features,
                             ltf_features,
                             sentiment.model_dump(mode="json"),
+                            options_snapshot,
                         )
                     except Exception as exc:
                         logger.exception(
@@ -164,6 +167,7 @@ class SignalEngine:
         mtf_features: dict,
         ltf_features: dict,
         sentiment: dict,
+        options_snapshot: dict | None,
     ) -> dict:
         analysis_contract = self._resolve_analysis_contract(htf=htf, mtf=mtf, ltf=ltf)
         data_quality = analysis_contract["data_quality"]
@@ -340,6 +344,11 @@ class SignalEngine:
         )
         confidence += sentiment_delta
         confidence = max(20, min(confidence, 92))
+        options_applied = self.applyOptionsImpact(
+            signal={"action": action, "entry": price, "confidence_percent": confidence, "reason_ru": "", "warning": analysis_contract["warning"]},
+            optionsAnalysis=self._resolve_options_analysis(options_snapshot),
+        )
+        confidence = int(options_applied["confidence_percent"])
         signal_threshold = PROFESSIONAL_MIN_CONFIDENCE if analysis_mode == "professional" else FALLBACK_MIN_CONFIDENCE
 
         scenario_type = self._resolve_scenario_type(mtf_features)
@@ -460,6 +469,7 @@ class SignalEngine:
             "data_provider": analysis_contract["data_provider"],
             "analysis_mode": analysis_contract["analysis_mode"],
             "warning": analysis_contract["warning"],
+            "options_warning": options_applied.get("options_warning"),
             "fallback_used": is_fallback_mode,
             "signal_policy_mode": policy_mode,
             "created_at_utc": signal_time,
@@ -469,6 +479,9 @@ class SignalEngine:
             "chart_patterns": mtf_patterns,
             "pattern_summary": mtf_pattern_summary,
             "pattern_signal_impact": pattern_impact,
+            "options_analysis": options_applied.get("options_analysis"),
+            "options_impact": options_applied.get("options_impact"),
+            "options_summary_ru": options_applied.get("options_summary_ru"),
             "source_candle_count": len(mtf.get("candles", [])),
             "scenario_type": scenario_type,
             "validation_state": validation_state,
@@ -503,6 +516,9 @@ class SignalEngine:
                 "sentimentImpact": round(sentiment_delta / 100, 4),
                 "smart_money_context": smart_money_context,
                 "setup_quality": validation_state,
+                "optionsImpact": options_applied.get("options_impact", 0),
+                "optionsSummaryRu": options_applied.get("options_summary_ru"),
+                "optionsAnalysis": options_applied.get("options_analysis"),
                 "weak_reasons": weak_reasons,
                 "scenario_type": scenario_type,
                 "validation_state": validation_state,
@@ -520,6 +536,88 @@ class SignalEngine:
                 "reason_if_skipped": None,
             },
         }
+
+    def _resolve_options_analysis(self, options_snapshot: dict | None) -> dict:
+        analysis = (options_snapshot or {}).get("analysis") if isinstance(options_snapshot, dict) else {}
+        if not isinstance(analysis, dict) or not options_snapshot or not options_snapshot.get("available"):
+            return {"available": False}
+        put_call = analysis.get("putCallRatio")
+        max_pain = analysis.get("maxPain")
+        key_strikes = analysis.get("keyStrikes") or []
+        bias = "neutral"
+        if isinstance(put_call, (int, float)):
+            if put_call < 0.9:
+                bias = "bullish"
+            elif put_call > 1.1:
+                bias = "bearish"
+        pinning = "high" if max_pain in key_strikes else "low"
+        return {
+            "available": True,
+            "putCallRatio": put_call,
+            "bias": bias,
+            "keyStrikes": key_strikes,
+            "maxPain": max_pain,
+            "pinningRisk": pinning,
+        }
+
+    def applyOptionsImpact(self, signal: dict, optionsAnalysis: dict) -> dict:
+        if not optionsAnalysis or optionsAnalysis.get("available") is False:
+            signal["options_impact"] = 0
+            signal["options_summary_ru"] = "Options data unavailable, analysis based on technicals and volume"
+            signal["options_analysis"] = {"available": False}
+            return signal
+        action = str(signal.get("action") or "WAIT").upper()
+        price = float(signal.get("entry") or 0.0)
+        bias = str(optionsAnalysis.get("bias") or "neutral").lower()
+        put_call = optionsAnalysis.get("putCallRatio")
+        key_strikes = [float(v) for v in (optionsAnalysis.get("keyStrikes") or []) if isinstance(v, (int, float))]
+        max_pain = optionsAnalysis.get("maxPain")
+        pinning = str(optionsAnalysis.get("pinningRisk") or "low").lower()
+        impact = 0
+        warnings: list[str] = []
+        if action == "BUY":
+            if bias == "bullish":
+                impact += 8
+            if any(s <= price for s in key_strikes):
+                impact += 5
+            if isinstance(max_pain, (int, float)) and max_pain > price:
+                impact += 3
+            if isinstance(put_call, (int, float)) and put_call < 0.75:
+                impact += 4
+            if bias == "bearish":
+                impact -= 10
+                warnings.append("Options market conflicts with BUY signal")
+        if action == "SELL":
+            if bias == "bearish":
+                impact += 8
+            if any(s >= price for s in key_strikes):
+                impact += 5
+            if isinstance(max_pain, (int, float)) and max_pain < price:
+                impact += 3
+            if isinstance(put_call, (int, float)) and put_call > 1.25:
+                impact += 4
+            if bias == "bullish":
+                impact -= 10
+                warnings.append("Options market conflicts with SELL signal")
+        if pinning == "high":
+            impact -= 6
+            warnings.append("High probability of price pinning near strike")
+        impact = max(-15, min(15, impact))
+        signal["confidence_percent"] = max(0, min(100, int(round(float(signal.get("confidence_percent") or 0) + impact))))
+        signal["options_impact"] = impact
+        signal["options_warning"] = " | ".join(warnings) if warnings else None
+        signal["options_analysis"] = optionsAnalysis
+        if bias == "bullish":
+            summary = "Опционный рынок поддерживает движение вверх."
+        elif bias == "bearish":
+            summary = "Опционный рынок указывает на давление вниз."
+        else:
+            summary = "Опционный рынок нейтрален."
+        if warnings:
+            summary = f"{summary} {' '.join(warnings)}"
+        signal["options_summary_ru"] = summary
+        print("OPTIONS IMPACT", {"signal": signal.get("action"), "optionsAnalysis": optionsAnalysis, "scoreImpact": impact})
+        return signal
 
     def _weak_default_signal(
         self,

@@ -343,6 +343,10 @@ function buildSignalCard(signal, sectionLabel) {
   article.className = `signal-card premium-signal-card premium-signal-card--${signal.status}`;
 
   const detailsId = `signal-details-${signal.signal_id}`;
+  const options = signal.options_analysis || {};
+  const keyStrikes = Array.isArray(options.keyStrikes) && options.keyStrikes.length
+    ? options.keyStrikes.map((value) => formatPrice(value)).join(', ')
+    : '—';
 
   article.innerHTML = `
     <div class="premium-signal-card__surface">
@@ -426,7 +430,13 @@ function buildSignalCard(signal, sectionLabel) {
               <div><span>Прогресс к TP</span><strong>${formatPercent(signal.progressToTP || 0)}</strong></div>
               <div><span>Риск до SL</span><strong>${formatPercent(signal.progressToSL || 0)}</strong></div>
               <div><span>Текущая цена</span><strong>${formatPrice(signal.progress?.current_price)}</strong></div>
+              <div><span>Options Impact</span><strong>${escapeHtml(String(signal.options_impact ?? 0))}</strong></div>
+              <div><span>Bias</span><strong>${escapeHtml(String(options.bias || 'unavailable'))}</strong></div>
+              <div><span>Put/Call</span><strong>${escapeHtml(String(options.putCallRatio ?? '—'))}</strong></div>
+              <div><span>Max Pain</span><strong>${formatPrice(options.maxPain)}</strong></div>
+              <div><span>Key Strikes</span><strong>${escapeHtml(keyStrikes)}</strong></div>
             </div>
+            ${signal.options_summary_ru ? `<div class="idea-news-line">${escapeHtml(signal.options_summary_ru)}</div>` : ''}
             ${buildPatternBlock(signal)}
           </section>
         </div>

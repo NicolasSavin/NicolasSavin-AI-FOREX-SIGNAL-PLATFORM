@@ -4832,6 +4832,10 @@ class TradeIdeaService:
             "cumulative_delta": analysis.get("cumdelta_ru") or analysis.get("cumulative_delta_ru"),
             "divergence_context": analysis.get("divergence_ru"),
             "options_context": row.get("options_ru") or analysis.get("options_ru"),
+            "options_analysis": row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {
+                "available": False,
+                "note": "Options data unavailable, analysis based on technicals and volume",
+            },
             "fundamental_context": analysis.get("fundamental_ru"),
             "event_risk": row.get("event_risk"),
             "entry": cls._extract_numeric_level(row, "entry", "entry_zone"),
