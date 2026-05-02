@@ -209,8 +209,8 @@ class NewsService:
         return sha1(value.encode("utf-8")).hexdigest()[:12]
 
 
-RSS_TIMEOUT_SECONDS = 8
-RSS_HEADERS = {"User-Agent": "AI-Forex-Signal-Platform/1.0 (+https://render.com)", "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8"}
+RSS_TIMEOUT_SECONDS = 5
+RSS_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8"}
 NEWS_CACHE: dict[str, Any] = {
     "updated_at": None,
     "payload": None,
@@ -713,15 +713,19 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
     for source in PUBLIC_RSS_SOURCES:
         source_name = source["name"]
         sources_attempted.append(source_name)
+        status_code: int | None = None
         try:
             response = requests.get(source["url"], timeout=RSS_TIMEOUT_SECONDS, headers=RSS_HEADERS)
+            status_code = response.status_code
             response.raise_for_status()
             feed = feedparser.parse(response.content)
             entries = getattr(feed, "entries", [])[: max(limit, 12)]
             if not entries:
+                print("[news] source", source_name, "status", status_code, "items", 0)
                 sources_failed.append(source_name)
                 continue
             source_had_item = False
+            source_items_count = 0
             for entry in entries:
                 source_url = str(entry.get("link") or "").strip() or None
                 try:
@@ -740,13 +744,16 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     image_alt = f"{strip_html(title)[:110] or 'Иллюстрация новости'} — иллюстрация новости"
                     rewrite = None
                     if (OPENROUTER_API_KEY or XAI_API_KEY) and grok_processed < grok_limit:
-                        rewrite = rewrite_news_with_xai(
-                            title=title,
-                            summary=summary,
-                            source=source_name,
-                            published_at=published_iso,
-                            markets=enriched["markets"],
-                        )
+                        try:
+                            rewrite = rewrite_news_with_xai(
+                                title=title,
+                                summary=summary,
+                                source=source_name,
+                                published_at=published_iso,
+                                markets=enriched["markets"],
+                            )
+                        except Exception as grok_exc:
+                            print(f"[news:grok] failed source={source_name}: {grok_exc}")
                     story = rewrite or {
                         "title_ru": strip_html(title),
                         "summary_ru": "Краткое описание новости временно недоступно",
@@ -780,6 +787,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                 if isinstance(story.get("sentiment"), str):
                     sentiment["MARKET"] = str(story.get("sentiment"))
                 source_had_item = True
+                source_items_count += 1
                 items.append(
                     {
                         "title": title_ru,
@@ -815,18 +823,22 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     }
                 )
             if source_had_item:
+                print("[news] source", source_name, "status", status_code, "items", source_items_count)
                 sources_ok.append(source_name)
                 source_status[source_name] = "ok"
             else:
+                print("[news] source", source_name, "status", status_code, "items", 0)
                 sources_failed.append(source_name)
                 source_status[source_name] = "empty_feed"
         except requests.Timeout as exc:
             fetch_error = f"timeout: {exc}"
+            print("[news] source", source_name, "status", status_code, "items", 0)
             sources_failed.append(source_name)
             source_status[source_name] = f"timeout: {exc}"
             continue
         except Exception as exc:
             fetch_error = str(exc)
+            print("[news] source", source_name, "status", status_code, "items", 0)
             sources_failed.append(source_name)
             source_status[source_name] = f"error: {exc}"
             continue
