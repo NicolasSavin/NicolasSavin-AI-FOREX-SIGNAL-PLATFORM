@@ -5,6 +5,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.services.options_analysis import analyze_options
+
 logger = logging.getLogger(__name__)
 
 MT4_OPTIONS_LEVELS_TTL_SECONDS = int(os.getenv("MT4_OPTIONS_LEVELS_TTL_SECONDS", "21600"))
@@ -85,7 +87,6 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
 
     support = prices("support") + prices("put")
     resistance = prices("resistance") + prices("call")
-    max_pain = (prices("max_pain") or [None])[0]
     targets = prices("target_volume")
     hedges = prices("hedge_volume")
     key_levels = sorted(set(support + resistance + prices("balance") + prices("gamma_level") + targets + hedges))
@@ -94,22 +95,10 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
         price = float(underlying)
     except (TypeError, ValueError):
         price = None
-    bias = "neutral"
-    if price is not None:
-        below_support = any(level < price for level in support)
-        above_resistance = any(level > price for level in resistance)
-        target_above = any(level > price for level in targets)
-        hedge_above = any(level > price for level in hedges)
-        if (below_support or target_above) and not (above_resistance or hedge_above):
-            bias = "bullish"
-        elif (above_resistance or hedge_above) and not (below_support or target_above):
-            bias = "bearish"
-
-    summary_ru = "Опционные уровни MT4 получены, явного смещения не выявлено."
-    if bias == "bullish":
-        summary_ru = "Опционные уровни MT4 поддерживают сценарий BUY: поддержка/put ниже цены и цели выше."
-    elif bias == "bearish":
-        summary_ru = "Опционные уровни MT4 поддерживают сценарий SELL: сопротивление/call выше цены и защитные уровни давят сверху."
+    options_flow = analyze_options(levels, price)
+    max_pain = options_flow.get("max_pain")
+    bias = str(options_flow.get("bias") or "neutral")
+    summary_ru = str(options_flow.get("summary_ru") or "Опционные уровни MT4 получены, явного смещения не выявлено.")
 
     return {
         "available": bool(levels),
@@ -123,6 +112,10 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
         "summary_ru": summary_ru,
         "targetLevels": targets,
         "hedgeLevels": hedges,
+        "targets_above": options_flow.get("targets_above") or [],
+        "targets_below": options_flow.get("targets_below") or [],
+        "hedge_above": options_flow.get("hedge_above") or [],
+        "hedge_below": options_flow.get("hedge_below") or [],
         "stale": False,
         "last_updated": entry.get("received_at"),
     }

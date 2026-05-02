@@ -3945,11 +3945,20 @@ class TradeIdeaService:
                 pcr = options_analysis.get("putCallRatio")
                 strikes = options_analysis.get("keyStrikes") or []
                 max_pain = options_analysis.get("maxPain")
+                targets_up = options_analysis.get("targets_above") or []
+                targets_down = options_analysis.get("targets_below") or []
+                hedge_up = options_analysis.get("hedge_above") or []
+                hedge_down = options_analysis.get("hedge_below") or []
+                bias = options_analysis.get("bias") or "neutral"
                 options_text = (
-                    f"CME options (реальные данные, возможна задержка): PCR={pcr}, key strikes={strikes}, max pain={max_pain}."
+                    "Опционные уровни указывают на "
+                    f"{bias} смещение. Max Pain выступает ориентиром: {max_pain}. "
+                    f"Target levels выше цены: {targets_up}, ниже цены: {targets_down}. "
+                    f"Хеджирующие уровни ограничивают движение: сверху {hedge_up}, снизу {hedge_down}. "
+                    f"(source: {options_snapshot.get('source')}, PCR={pcr}, key strikes={strikes})"
                 )
             else:
-                options_text = "Опционный слой недоступен (реальные CME options не получены)."
+                options_text = "Опционный слой недоступен (available=false): анализ построен без options layer."
 
         return {
             "smc": str(signal.get("smc_ru") or market_context.get("smcRu") or rationale),

@@ -494,11 +494,15 @@ class SignalEngine:
         )
         confidence += sentiment_delta
         confidence = max(20, min(confidence, 92))
+        resolved_options = self._resolve_options_analysis(options_snapshot)
         options_applied = self.applyOptionsImpact(
             signal={"action": action, "entry": price, "confidence_percent": confidence, "reason_ru": "", "warning": analysis_contract["warning"]},
-            optionsAnalysis=self._resolve_options_analysis(options_snapshot),
+            optionsAnalysis=resolved_options,
             apply_confidence=False,
         )
+        options_direction_delta = self._options_direction_delta(action, resolved_options)
+        confidence += options_direction_delta
+        confidence = max(20, min(confidence, 92))
         signal_threshold = PROFESSIONAL_MIN_CONFIDENCE if analysis_mode == "professional" else FALLBACK_MIN_CONFIDENCE
 
         scenario_type = self._resolve_scenario_type(mtf_features)
@@ -633,6 +637,7 @@ class SignalEngine:
             "pattern_signal_impact": pattern_impact,
             "options_analysis": options_snapshot,
             "options_impact": options_applied.get("options_impact"),
+            "options_direction_delta": options_direction_delta,
             "options_summary_ru": options_applied.get("options_summary_ru"),
             "confluence_analysis": confluence_analysis,
             "confluence_breakdown": confluence_analysis.get("breakdown", {}),
@@ -689,6 +694,10 @@ class SignalEngine:
                 "options_put_call_ratio": options_analysis.get("putCallRatio"),
                 "options_key_strikes": options_analysis.get("keyStrikes") or [],
                 "options_max_pain": options_analysis.get("maxPain"),
+                "options_targets_above": options_analysis.get("targets_above") or [],
+                "options_targets_below": options_analysis.get("targets_below") or [],
+                "options_hedge_above": options_analysis.get("hedge_above") or [],
+                "options_hedge_below": options_analysis.get("hedge_below") or [],
                 "confluence_total_score": confluence_analysis.get("total_score"),
                 "confluence_grade": confluence_analysis.get("grade"),
             },
@@ -700,6 +709,23 @@ class SignalEngine:
             },
         }
         return self._ensure_idea_text_fields(signal_payload)
+
+    @staticmethod
+    def _options_direction_delta(action: str, options_analysis: dict) -> int:
+        if not isinstance(options_analysis, dict) or options_analysis.get("available") is False:
+            return 0
+        bias = str(options_analysis.get("bias") or "neutral").lower()
+        if action == "BUY":
+            if bias == "bullish":
+                return 5
+            if bias == "bearish":
+                return -5
+        if action == "SELL":
+            if bias == "bearish":
+                return 5
+            if bias == "bullish":
+                return -5
+        return 0
 
     def _resolve_options_analysis(self, options_snapshot: dict | None) -> dict:
         analysis = (options_snapshot or {}).get("analysis") if isinstance(options_snapshot, dict) else {}
