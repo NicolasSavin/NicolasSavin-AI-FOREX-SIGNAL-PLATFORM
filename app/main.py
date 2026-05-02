@@ -943,6 +943,7 @@ def api_news(limit: int = 12):
             "sources_attempted": sources_attempted,
             "real_items_count": 0,
             "grok_processed_count": 0,
+            "cache_hit": False,
             "fetch_error": str(exc),
             "diagnostics": {
                 "real_items_count": 0,
