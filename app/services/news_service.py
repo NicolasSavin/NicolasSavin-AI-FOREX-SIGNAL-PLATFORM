@@ -208,7 +208,7 @@ class NewsService:
         return sha1(value.encode("utf-8")).hexdigest()[:12]
 
 
-RSS_TIMEOUT_SECONDS = 8
+RSS_TIMEOUT_SECONDS = 5
 RSS_HEADERS = {"User-Agent": "Mozilla/5.0"}
 NEWS_CACHE: dict[str, Any] = {
     "updated_at": None,
@@ -220,12 +220,11 @@ REWRITE_CACHE_TTL_SECONDS = 1800
 IMAGE_CACHE: dict[str, dict[str, Any]] = {}
 IMAGE_CACHE_TTL_SECONDS = 86400
 PUBLIC_RSS_SOURCES = [
-    {"name": "Reuters Markets", "url": "https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best"},
-    {"name": "CNBC Markets", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html"},
-    {"name": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"},
-    {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex"},
+    {"name": "CNBC", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html"},
+    {"name": "ForexLive", "url": "https://www.forexlive.com/feed/news"},
     {"name": "FXStreet", "url": "https://www.fxstreet.com/rss/news"},
-    {"name": "Investing.com", "url": "https://www.investing.com/rss/news_285.rss"},
+    {"name": "Investing", "url": "https://www.investing.com/rss/news_285.rss"},
+    {"name": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"},
 ]
 
 XAI_TIMEOUT_SECONDS = 15
@@ -710,6 +709,7 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
         sources_attempted.append(source_name)
         try:
             response = requests.get(source["url"], timeout=RSS_TIMEOUT_SECONDS, headers=RSS_HEADERS)
+            print(f"[news:rss] source={source_name} status_code={response.status_code}")
             response.raise_for_status()
             feed = feedparser.parse(response.content)
             entries = getattr(feed, "entries", [])[: max(limit, 12)]
@@ -814,10 +814,13 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
             else:
                 sources_failed.append(source_name)
         except requests.Timeout as exc:
+            print(f"[news:rss] source_failed={source_name} reason=timeout error={exc}")
             fetch_error = f"timeout: {exc}"
             sources_failed.append(source_name)
             continue
         except Exception as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", "n/a")
+            print(f"[news:rss] source_failed={source_name} status_code={status_code} error={exc}")
             fetch_error = str(exc)
             sources_failed.append(source_name)
             continue
