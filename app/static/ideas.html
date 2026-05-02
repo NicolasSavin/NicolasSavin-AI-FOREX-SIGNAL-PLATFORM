@@ -1666,7 +1666,7 @@
 
           <div class="modal-section-title">Основная идея</div>
           <div class="box modal-text">${escapeHtml(pickMainIdeaText(idea))}</div>
-          ${renderExecutionModel(idea)}
+          ${renderOptionsAnalysis(idea)}${renderExecutionModel(idea)}
           ${renderSmartMoneyContext(idea)}
           ${renderFundamentalContext(idea)}
           <div class="status-reason">${escapeHtml(statusReason)}</div>
@@ -2728,7 +2728,7 @@
     }
 
     function renderExecutionModel(idea) {
-      const fallback = "Точка входа рассчитана по текущей структуре и риск-модели, но требует подтверждения.";
+      const fallback = "Логика исполнения требует дополнительного подтверждения структуры перед входом.";
       const entry = formatValue(idea.entry || idea.entry_price || idea.entry_zone);
       const entryReason = String(idea.entry_reason_ru || "").trim() || fallback;
       const stopReason = String(idea.stop_reason_ru || "").trim() || fallback;
@@ -2749,6 +2749,32 @@
           <div><strong>Execution summary:</strong> ${escapeHtml(executionSummary)}</div>
         </div>
       `;
+    }
+
+
+
+    function renderOptionsAnalysis(idea) {
+      const oa = idea && typeof idea.options_analysis === "object" ? idea.options_analysis : {};
+      const analysis = oa && typeof oa.analysis === "object" ? oa.analysis : {};
+      const available = Boolean(oa.available ?? idea.options_available);
+      const status = available ? "available" : "unavailable";
+      const pcr = analysis.putCallRatio ?? idea?.market_context?.options_put_call_ratio ?? "—";
+      const strikes = Array.isArray(analysis.keyStrikes) ? analysis.keyStrikes.join(", ") : (idea?.market_context?.options_key_strikes || "—");
+      const maxPain = analysis.maxPain ?? idea?.market_context?.options_max_pain ?? "—";
+      const bias = analysis.bias || idea.options_bias || "—";
+      const impact = idea.options_impact || idea?.options_analysis?.impact || "—";
+      const summary = idea.options_summary_ru || oa.summary_ru || (available ? "Данные options layer получены." : "Опционный слой CME сейчас недоступен, поэтому идея рассчитана без подтверждения options layer.");
+      return `
+      <div class="modal-section-title">Options Analysis</div>
+      <div class="box modal-text">
+        <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+        <div><strong>Put/Call ratio:</strong> ${escapeHtml(String(pcr))}</div>
+        <div><strong>Key strikes:</strong> ${escapeHtml(String(strikes))}</div>
+        <div><strong>Max pain:</strong> ${escapeHtml(String(maxPain))}</div>
+        <div><strong>Options bias:</strong> ${escapeHtml(String(bias))}</div>
+        <div><strong>Options impact:</strong> ${escapeHtml(String(impact))}</div>
+        <div><strong>Summary:</strong> ${escapeHtml(String(summary))}</div>
+      </div>`;
     }
 
     function normalizeSymbol(value) {

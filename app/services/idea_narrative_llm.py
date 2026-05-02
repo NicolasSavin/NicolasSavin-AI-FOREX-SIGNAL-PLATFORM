@@ -65,6 +65,7 @@ REQUIRED_STRUCTURED_FIELDS = {
 class NarrativeResult:
     data: dict[str, Any]
     source: str
+    error: str | None = None
 
 
 class IdeaNarrativeLLMService:
@@ -97,7 +98,7 @@ class IdeaNarrativeLLMService:
 
         if not self.api_key:
             logger.warning("idea_narrative_llm_missing_api_key")
-            return NarrativeResult(data=fallback, source="fallback")
+            return NarrativeResult(data=fallback, source="fallback", error="idea_narrative_llm_missing_api_key")
 
         payload = {
             "event_type": event_type,
@@ -116,7 +117,7 @@ class IdeaNarrativeLLMService:
             return NarrativeResult(data=second, source="llm")
 
         logger.warning("idea_narrative_llm_fallback_used event_type=%s", event_type)
-        return NarrativeResult(data=fallback, source="fallback")
+        return NarrativeResult(data=fallback, source="fallback", error="idea_narrative_llm_invalid_json_or_quality")
 
     def _request_llm(self, *, prompt: str) -> dict[str, Any] | None:
         try:
@@ -467,16 +468,30 @@ class IdeaNarrativeLLMService:
         invalidation_text = f"инвалидация проходит через {sl}" if sl not in (None, "") else "инвалидация привязана к слому рабочей зоны"
         target_text = f"ближайшая цель {tp}" if tp not in (None, "") else "цель будет связана с ближайшей зоной ликвидности"
 
-        thesis = (
-            f"{symbol} на {timeframe} сейчас в сценарии {signal}: рынок тестирует рабочую область, и решение принимается только по фактам. "
-            f"Цена отрабатывает контекст ликвидности так: {liquidity}, а реакция структуры описывается как {structure}. "
-            f"По зоне OB/FVG и по слому или удержанию BOS/CHoCH подтверждение оценивается через фактическую реакцию цены, без подстановки новых уровней. "
-            f"Объёмный слой показывает, что {volume}; дополнительно {divergence}. "
-            f"По деривативам: {options}. "
-            f"Поэтому {entry_text} рассматривается как условный триггер, особенно если статус сценария {status}. "
-            f"Главный риск в том, что движение останется коррекционным и не даст продолжения {side} сценария. "
-            f"{invalidation_text}, а {target_text}, если рынок подтвердит импульс у зоны интереса."
-        )
+        if signal == "WAIT":
+            thesis = (
+                f"{symbol} находится в режиме ожидания: структура ещё не дала подтверждённого входа, поэтому система не переводит сценарий в активную сделку. "
+                f"Цена подошла к зоне интереса, но без подтверждения по ликвидности, импульсу или реакции от OB/FVG вход остаётся преждевременным. "
+                f"{entry_text} рассчитан как ориентир, но не является командой на вход до появления подтверждения. "
+                f"Контекст: {liquidity}; структура: {structure}; объём/дельта: {volume}, {divergence}. "
+                f"Опционный слой: {options}. Риск сценария в том, что движение может остаться коррекционным, поэтому SL/TP не должны трактоваться как активный торговый план до подтверждения."
+            )
+        elif signal == "BUY":
+            thesis = (
+                f"{symbol} формирует покупательский сценарий на {timeframe}: цена забрала ликвидность и пытается закрепиться выше зоны интереса. "
+                f"Причина движения — {liquidity}; подтверждение структуры: {structure}. "
+                f"Если импульс удержится, {entry_text} становится рабочим, а {target_text} — логичным продолжением. "
+                f"Объём и дельта: {volume}; {divergence}. Опционный слой: {options}. "
+                f"Ключевой риск — ложный пробой и возврат под зону, поэтому {invalidation_text}."
+            )
+        else:
+            thesis = (
+                f"{symbol} развивает продавецкий сценарий на {timeframe}: после теста ликвидности рынок давит вниз от рабочей области. "
+                f"Причина движения — {liquidity}; подтверждение структуры: {structure}. "
+                f"При сохранении давления {entry_text} становится актуальным, а {target_text} — базовой целью. "
+                f"Объём/дельта: {volume}; {divergence}. Опционный слой: {options}. "
+                f"Ключевой риск — агрессивный выкуп и возврат в диапазон, поэтому {invalidation_text}."
+            )
 
         return {
             "idea_thesis": thesis,
