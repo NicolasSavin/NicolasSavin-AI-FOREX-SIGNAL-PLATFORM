@@ -1,6 +1,37 @@
 import React from "react";
 
+function resolveIdeaDescription(idea) {
+  const candidates = [
+    idea?.confluence_summary_ru,
+    idea?.reason_ru,
+    idea?.description_ru,
+    idea?.market_context?.confluence_summary_ru,
+    idea?.market_context?.message,
+    "Описание идеи временно недоступно.",
+  ];
+  return candidates.map((item) => String(item || "").trim()).find((item) => item) || "Описание идеи временно недоступно.";
+}
+
+function buildAvailableTextFields(idea) {
+  return {
+    confluence_summary_ru: Boolean(String(idea?.confluence_summary_ru || "").trim()),
+    reason_ru: Boolean(String(idea?.reason_ru || "").trim()),
+    description_ru: Boolean(String(idea?.description_ru || "").trim()),
+    market_context_confluence_summary_ru: Boolean(String(idea?.market_context?.confluence_summary_ru || "").trim()),
+    market_context_message: Boolean(String(idea?.market_context?.message || "").trim()),
+  };
+}
+
 export function IdeaCard({ idea, onOpen }) {
+  const visibleDescription = resolveIdeaDescription(idea);
+  const availableTextFields = buildAvailableTextFields(idea);
+  if (!Object.values(availableTextFields).some(Boolean)) {
+    console.warn("ideas_missing_text_fields", {
+      idea_id: idea?.idea_id || idea?.id || null,
+      symbol: idea?.symbol || null,
+      availableTextFields,
+    });
+  }
   return (
     <div
       className="bg-slate-900 rounded-2xl p-4 border border-slate-800 shadow-md hover:shadow-lg transition cursor-pointer"
@@ -25,7 +56,7 @@ export function IdeaCard({ idea, onOpen }) {
       </div>
 
       <p className="text-sm leading-snug text-slate-300 line-clamp-2 mb-3">
-        {idea.summary}
+        {visibleDescription}
       </p>
 
       <img
@@ -50,6 +81,8 @@ export function IdeaCard({ idea, onOpen }) {
 
 export function IdeaModal({ idea, onClose }) {
   if (!idea) return null;
+  const availableTextFields = buildAvailableTextFields(idea);
+  const aiFailed = Boolean(idea?.grok_analysis_failed || idea?.grok_failed || idea?.ai_analysis_failed);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 p-4 overflow-y-auto">
@@ -79,12 +112,16 @@ export function IdeaModal({ idea, onClose }) {
           className="w-full rounded-xl mb-5"
         />
 
-        <Section title="Summary" content={idea.summary} />
-        <Section title="Technical Logic" content={idea.technical} />
-        {idea.options ? <Section title="Options Analysis" content={idea.options} /> : null}
-        <Section title="Scenario" content={idea.scenario} />
-        <Section title="Targets" content={idea.targets} />
-        <Section title="Invalidation" content={idea.invalidation} />
+        {aiFailed ? <Section title="AI" content="AI-пояснение временно недоступно" /> : null}
+        <Section title="Описание" content={idea.description_ru || "—"} />
+        <Section title="Причина" content={idea.reason_ru || "—"} />
+        <Section title="Confluence summary" content={idea?.confluence_analysis?.summary_ru || idea?.confluence_summary_ru || "—"} />
+        <Section title="Подтверждения" content={(idea?.confluence_analysis?.confirmations || idea?.confluence_confirmations || []).join(", ") || "—"} />
+        <Section title="Риски / предупреждения" content={(idea?.confluence_analysis?.warnings || idea?.confluence_warnings || []).join(", ") || "—"} />
+        {idea?.options_analysis?.summary_ru || idea?.options_summary_ru ? (
+          <Section title="Options analysis" content={idea?.options_analysis?.summary_ru || idea?.options_summary_ru} />
+        ) : null}
+        {!Object.values(availableTextFields).some(Boolean) ? <Section title="Описание" content="Описание идеи временно недоступно." /> : null}
       </div>
     </div>
   );

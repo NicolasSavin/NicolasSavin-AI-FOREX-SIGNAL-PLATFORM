@@ -32,6 +32,8 @@ FALLBACK_WARNING_RU = (
 PROFESSIONAL_MIN_CANDLES = 20
 PROFESSIONAL_MIN_CONFIDENCE = 55
 FALLBACK_MIN_CONFIDENCE = 40
+DEFAULT_CONFLUENCE_FALLBACK_RU = "Идея сформирована на основе SMC, ликвидности, объёма и текущего рыночного контекста."
+DEFAULT_REASON_FALLBACK_RU = "Подробное объяснение временно недоступно, но сигнал прошёл базовые фильтры."
 
 
 class SignalEngine:
@@ -132,6 +134,25 @@ class SignalEngine:
                     len(requested_timeframes),
                 )
         return output
+
+    def _ensure_idea_text_fields(self, signal: dict) -> dict:
+        description_ru = str(signal.get("description_ru") or "").strip()
+        reason_ru = str(signal.get("reason_ru") or "").strip() or DEFAULT_REASON_FALLBACK_RU
+        confluence_summary_ru = str(signal.get("confluence_summary_ru") or "").strip() or DEFAULT_CONFLUENCE_FALLBACK_RU
+        market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        options_analysis = signal.get("options_analysis") if isinstance(signal.get("options_analysis"), dict) else {}
+
+        if not description_ru:
+            description_ru = confluence_summary_ru or reason_ru
+
+        signal["description_ru"] = description_ru
+        signal["reason_ru"] = reason_ru
+        signal["confluence_summary_ru"] = confluence_summary_ru
+        signal["market_context"] = market_context
+        signal["options_analysis"] = options_analysis
+        if not str(market_context.get("confluence_summary_ru") or "").strip():
+            market_context["confluence_summary_ru"] = confluence_summary_ru
+        return signal
 
     def _normalize_timeframes(self, timeframes: list[str] | None) -> list[str]:
         if not timeframes:
@@ -457,7 +478,7 @@ class SignalEngine:
         invalidation_reasoning = (
             "Сценарий теряет актуальность при сломе ключевой зоны и отмене рыночной структуры текущего таймфрейма."
         )
-        return {
+        signal_payload = {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
             "timeframe": timeframe,
@@ -574,6 +595,7 @@ class SignalEngine:
                 "reason_if_skipped": None,
             },
         }
+        return self._ensure_idea_text_fields(signal_payload)
 
     def _resolve_options_analysis(self, options_snapshot: dict | None) -> dict:
         analysis = (options_snapshot or {}).get("analysis") if isinstance(options_snapshot, dict) else {}
@@ -589,7 +611,7 @@ class SignalEngine:
             elif put_call > 1.1:
                 bias = "bearish"
         pinning = "high" if max_pain in key_strikes else "low"
-        return {
+        signal_payload = {
             "available": True,
             "putCallRatio": put_call,
             "bias": bias,
@@ -597,6 +619,7 @@ class SignalEngine:
             "maxPain": max_pain,
             "pinningRisk": pinning,
         }
+        return self._ensure_idea_text_fields(signal_payload)
 
     def applyOptionsImpact(self, signal: dict, optionsAnalysis: dict) -> dict:
         if not optionsAnalysis or optionsAnalysis.get("available") is False:
@@ -695,7 +718,7 @@ class SignalEngine:
         signal_time = datetime.now(timezone.utc).isoformat()
         analysis_contract = self._resolve_analysis_contract(htf=snapshot, mtf=snapshot, ltf=snapshot)
         policy_mode = "strict_smc" if analysis_contract["analysis_mode"] == "professional" else "fallback_directional"
-        return {
+        signal_payload = {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
             "timeframe": timeframe,
@@ -769,9 +792,10 @@ class SignalEngine:
                 "reason_if_skipped": "insufficient_mtf_structure_replaced_with_weak_default",
             },
         }
+        return self._ensure_idea_text_fields(signal_payload)
 
     def build_fallback_scenario(self, symbol: str, timeframe: str, features: dict) -> dict:
-        return {
+        signal_payload = {
             "symbol": symbol,
             "timeframe": timeframe,
             "bias": "neutral",
@@ -785,6 +809,7 @@ class SignalEngine:
             "reason": "Structure exists but confirmation is weak or missing",
             "features_used": bool(features),
         }
+        return self._ensure_idea_text_fields(signal_payload)
 
     def _fallback_signal(
         self,
