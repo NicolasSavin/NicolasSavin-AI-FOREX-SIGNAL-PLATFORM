@@ -7,6 +7,7 @@ from email.utils import parsedate_to_datetime
 from typing import Iterable
 from xml.etree import ElementTree
 
+import feedparser
 import requests
 from bs4 import BeautifulSoup
 
@@ -15,11 +16,11 @@ from app.services.storage.json_storage import JsonStorage
 
 
 DEFAULT_NEWS_FEEDS = (
-    {"name": "FXStreet", "url": "http://xml.fxstreet.com/news/forex-news/index.xml"},
-    {"name": "Investing Forex", "url": "https://www.investing.com/rss/forex.rss"},
-    {"name": "Investing News", "url": "https://www.investing.com/rss/news.rss"},
-    {"name": "ECB Press", "url": "https://www.ecb.europa.eu/rss/press.html"},
-    {"name": "Federal Reserve", "url": "https://www.federalreserve.gov/feeds/e2.xml"},
+    {"name": "CNBC Markets", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html"},
+    {"name": "ForexLive", "url": "https://www.forexlive.com/feed/news"},
+    {"name": "FXStreet", "url": "https://www.fxstreet.com/rss/news"},
+    {"name": "Investing.com", "url": "https://www.investing.com/rss/news_285.rss"},
+    {"name": "Reuters Markets", "url": "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best"},
 )
 
 
@@ -111,29 +112,67 @@ class MarketNewsProvider:
         return unique_items[: self._max_items]
 
     def _fetch_feed_items(self, feed: dict) -> Iterable[dict]:
+        source_name = feed.get("name") or "RSS"
+        status_code = None
         try:
             response = self._session.get(
                 feed["url"],
                 timeout=self._request_timeout_seconds,
-                headers={"User-Agent": "Mozilla/5.0 AI Forex Signal Platform"},
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+                },
             )
+            status_code = response.status_code
             response.raise_for_status()
         except requests.RequestException:
+            print("[news] source", source_name, "status", status_code, "items", 0)
             return []
 
+        parsed_items: list[dict] = []
         try:
             root = ElementTree.fromstring(response.text)
+            channel_items = root.findall("./channel/item")
+            rdf_items = root.findall("{http://purl.org/rss/1.0/}item")
+            for item in [*channel_items, *rdf_items]:
+                parsed = self._parse_feed_item(item, feed_name=source_name)
+                if parsed:
+                    parsed_items.append(parsed)
         except ElementTree.ParseError:
-            return []
+            feed_data = feedparser.parse(response.text)
+            for entry in feed_data.entries:
+                parsed = self._parse_feedparser_entry(entry, feed_name=source_name)
+                if parsed:
+                    parsed_items.append(parsed)
 
-        channel_items = root.findall("./channel/item")
-        rdf_items = root.findall("{http://purl.org/rss/1.0/}item")
-        parsed_items: list[dict] = []
-        for item in [*channel_items, *rdf_items]:
-            parsed = self._parse_feed_item(item, feed_name=feed.get("name") or "RSS")
-            if parsed:
-                parsed_items.append(parsed)
+        print("[news] source", source_name, "status", status_code, "items", len(parsed_items))
         return parsed_items
+
+    def _parse_feedparser_entry(self, entry: dict, feed_name: str) -> dict | None:
+        raw_title = (entry.get("title") or "").strip()
+        raw_link = (entry.get("link") or "").strip()
+        raw_description = entry.get("summary") or entry.get("description") or ""
+        source = entry.get("source", {}).get("title") if isinstance(entry.get("source"), dict) else None
+        source = source or (entry.get("author") or "").split("(")[0].strip() or feed_name
+        published_at = self._parse_pub_date(
+            entry.get("published")
+            or entry.get("updated")
+            or entry.get("pubDate")
+            or entry.get("date")
+        )
+
+        if not raw_title:
+            return None
+
+        clean_title = self._normalize_title(raw_title, source)
+        clean_summary = self._clean_description(raw_description, clean_title)
+        return {
+            "title_original": clean_title,
+            "summary_original": clean_summary,
+            "source": source,
+            "source_url": raw_link or None,
+            "published_at": published_at.isoformat() if published_at else None,
+        }
 
     def _parse_feed_item(self, item: ElementTree.Element, feed_name: str) -> dict | None:
         raw_title = self._find_text(item, "title").strip()
