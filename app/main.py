@@ -5,6 +5,7 @@ import lzma
 import os
 import struct
 import time
+import asyncio
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1319,6 +1320,21 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
                     "selected_zone_low": structure_levels.get("selected_zone_low"),
                     "selected_zone_high": structure_levels.get("selected_zone_high"),
                 }
+                idea_description = generate_idea_description_ru(
+                    symbol=symbol,
+                    signal=signal,
+                    timeframe="M15",
+                    entry=entry,
+                    sl=sl,
+                    tp=tp,
+                    confidence=resolve_confidence(decision),
+                    recent_candles=m15_candles_for_levels,
+                    structure=annotations_for_levels,
+                )
+                trade["description_ru"] = idea_description
+                trade["summary_ru"] = idea_description
+                trade["idea_thesis"] = idea_description
+                trade["unified_narrative"] = idea_description
 
                 active.append(trade)
                 save_json(ACTIVE_FILE, active)
@@ -1429,6 +1445,9 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
             htf_decision=decision,
             sentiment=sentiment,
         )
+        idea_text = str(trade.get("description_ru") or "").strip() or str(trade.get("summary_ru") or "").strip() or (
+            "Описание временно недоступно: сценарий сформирован по MT4-свечам, ожидается подтверждение структуры."
+        )
 
         m15_candles = candles_by_tf.get("M15", [])
         signal_side = str(trade.get("signal") or "")
@@ -1492,11 +1511,12 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
             "risk_reward": trade.get("rr"),
             "rr": trade.get("rr"),
             "summary": summary,
-            "summary_ru": summary,
+            "summary_ru": idea_text,
             "ai_explanation": summary,
             "short_text": summary,
-            "idea_thesis": summary,
-            "unified_narrative": summary,
+            "idea_thesis": str(trade.get("idea_thesis") or idea_text),
+            "unified_narrative": str(trade.get("unified_narrative") or idea_text),
+            "description_ru": idea_text,
             "full_text": summary,
             "compact_summary": summary,
             "warning_ru": human_price_warning(price_data),
@@ -1536,6 +1556,56 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
 def build_signal_from_candles(symbol: str, tf: str) -> dict[str, Any]:
     _ = tf
     return build_signal(symbol, detail=False)
+
+
+def generate_idea_description_ru(
+    symbol: str,
+    signal: str,
+    timeframe: str,
+    entry: float | None,
+    sl: float | None,
+    tp: float | None,
+    confidence: float,
+    recent_candles: list[dict[str, Any]],
+    structure: dict[str, Any] | None = None,
+) -> str:
+    fallback = "Описание временно недоступно: сценарий сформирован по MT4-свечам, ожидается подтверждение структуры."
+    if not chat_service.client:
+        return fallback
+    candles_payload = (recent_candles or [])[-24:]
+    structure_payload = structure or {}
+    prompt = (
+        "Сформируй 2-4 предложения на русском для карточки торговой идеи.\n"
+        "Нужно кратко объяснить: что за идея, почему выбран BUY/SELL/WAIT, где инвалидация, что подтвердит сценарий.\n"
+        "Стиль: профессиональный трейдер, чётко, без хайпа, без выдуманных фактов.\n"
+        f"symbol={symbol}\n"
+        f"action={signal}\n"
+        f"timeframe={timeframe}\n"
+        f"entry={entry}\n"
+        f"sl={sl}\n"
+        f"tp={tp}\n"
+        f"confidence={confidence}\n"
+        f"recent_mt4_candles={json.dumps(candles_payload, ensure_ascii=False)}\n"
+        f"detected_structure={json.dumps(structure_payload, ensure_ascii=False)}"
+    )
+
+    async def _request() -> str:
+        response = await chat_service.client.chat.completions.create(
+            model=chat_service.model,
+            messages=[
+                {"role": "system", "content": "Ты профессиональный FX desk-аналитик. Пиши только на русском."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=180,
+        )
+        return (response.choices[0].message.content or "").strip() if response.choices else ""
+
+    try:
+        text = asyncio.run(_request())
+        return text or fallback
+    except Exception:
+        return fallback
 
 
 def symbol_tolerance(symbol: str) -> dict[str, float | str]:
