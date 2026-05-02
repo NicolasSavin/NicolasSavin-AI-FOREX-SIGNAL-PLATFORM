@@ -21,6 +21,7 @@ from app.services.cme_scraper import get_cme_market_snapshot
 from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
+from app.services.mt4_options_bridge import get as get_mt4_options_levels, save as save_mt4_options_levels
 from backend.chat_service import ChatRequest, ForexChatService
 
 
@@ -911,6 +912,37 @@ async def api_mt4_push_candles(request: Request):
 
 
 
+
+
+
+@app.post("/api/mt4/options-levels")
+async def api_mt4_options_levels(request: Request):
+    payload = await request.json()
+    symbol = str(payload.get("symbol") or "").strip()
+    if not symbol:
+        return JSONResponse({"error": "symbol is required"}, status_code=400)
+
+    levels = payload.get("levels")
+    if not isinstance(levels, list):
+        levels = []
+    payload["levels"] = levels
+    payload["symbol"] = symbol
+
+    save_mt4_options_levels(payload)
+
+    return {
+        "status": "ok",
+        "symbol": symbol,
+        "levels_received": len(levels),
+    }
+
+
+@app.get("/api/mt4/options-levels/{symbol}")
+def api_mt4_options_levels_get(symbol: str):
+    data = get_mt4_options_levels(symbol)
+    if data is None:
+        return {"available": False, "reason": "no data"}
+    return data
 
 @app.post("/api/mt4/volume-clusters")
 async def api_mt4_volume_clusters(request: Request):
