@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.analysis.volume_cluster_adapter import build_volume_cluster_analysis
+
 
 class ConfluenceEngine:
     def evaluate(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -14,7 +16,7 @@ class ConfluenceEngine:
         sentiment = payload.get("sentiment") or {}
         risk = payload.get("risk") or {}
 
-        breakdown = {"smc": 0, "liquidity": 0, "options": 0, "volume": 0, "sentiment": 0, "risk": 0}
+        breakdown = {"smc": 0, "liquidity": 0, "options": 0, "volume": 0, "volume_cluster": 0, "sentiment": 0, "risk": 0}
         warnings: list[str] = []
         confirmations: list[str] = []
 
@@ -94,6 +96,18 @@ class ConfluenceEngine:
             if oi > 0:
                 breakdown["volume"] += 2
 
+        
+        vc = build_volume_cluster_analysis(
+            symbol=str(payload.get("symbol") or ""),
+            timeframe=str(payload.get("timeframe") or "H1"),
+            action=action,
+            entry=price,
+            price=price,
+        )
+        breakdown["volume_cluster"] = int(vc.get("scoreImpact") or 0)
+        if not vc.get("available"):
+            warnings.append("MT4 volume cluster data is not available")
+
         alignment = str((sentiment.get("alignment") or sentiment.get("signal_alignment") or "neutral")).lower()
         if (action == "BUY" and alignment in {"bullish", "buy"}) or (action == "SELL" and alignment in {"bearish", "sell"}):
             breakdown["sentiment"] += 5
@@ -137,6 +151,7 @@ class ConfluenceEngine:
             "warnings": warnings,
             "confirmations": confirmations,
             "summary_ru": summary_ru,
+            "volume_cluster_analysis": vc,
         }
 
     def _in_zone(self, price: float, zone: dict[str, Any]) -> bool:

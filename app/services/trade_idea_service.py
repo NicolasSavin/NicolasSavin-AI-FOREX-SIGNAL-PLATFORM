@@ -3936,6 +3936,8 @@ class TradeIdeaService:
         proxy_label = "proxy" if signal.get("data_status") in {"unavailable", "delayed"} else "real"
         options_snapshot = signal.get("options_analysis") if isinstance(signal.get("options_analysis"), dict) else {}
         options_analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
+        confluence_analysis = signal.get("confluence_analysis") if isinstance(signal.get("confluence_analysis"), dict) else {}
+        volume_cluster_analysis = confluence_analysis.get("volume_cluster_analysis") if isinstance(confluence_analysis.get("volume_cluster_analysis"), dict) else {}
         options_available = bool(options_snapshot.get("available"))
         options_text = str(signal.get("options_ru") or "").strip()
         if not options_text:
@@ -4369,6 +4371,8 @@ class TradeIdeaService:
         existing_m15_bias = str(existing.get("m15_bias_summary") or "") if isinstance(existing, dict) else ""
         options_snapshot = signal.get("options_analysis") if isinstance(signal.get("options_analysis"), dict) else {}
         options_analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
+        confluence_analysis = signal.get("confluence_analysis") if isinstance(signal.get("confluence_analysis"), dict) else {}
+        volume_cluster_analysis = confluence_analysis.get("volume_cluster_analysis") if isinstance(confluence_analysis.get("volume_cluster_analysis"), dict) else {}
         return {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -4404,6 +4408,16 @@ class TradeIdeaService:
             "divergence_facts": signal.get("divergence_ru"),
             "fundamental_facts": signal.get("fundamental_ru"),
             "confluence_analysis": signal.get("confluence_analysis"),
+            "volume_cluster_analysis": volume_cluster_analysis,
+            "volume_profile": volume_cluster_analysis.get("volume_profile") if isinstance(volume_cluster_analysis, dict) else {},
+            "delta": volume_cluster_analysis.get("delta") if isinstance(volume_cluster_analysis, dict) else {},
+            "clusters": volume_cluster_analysis.get("clusters") if isinstance(volume_cluster_analysis, dict) else [],
+            "absorption": volume_cluster_analysis.get("absorption") if isinstance(volume_cluster_analysis, dict) else {},
+            "imbalance": volume_cluster_analysis.get("imbalance") if isinstance(volume_cluster_analysis, dict) else [],
+            "poc": volume_cluster_analysis.get("poc") if isinstance(volume_cluster_analysis, dict) else None,
+            "vah": volume_cluster_analysis.get("vah") if isinstance(volume_cluster_analysis, dict) else None,
+            "val": volume_cluster_analysis.get("val") if isinstance(volume_cluster_analysis, dict) else None,
+            "divergence": (volume_cluster_analysis.get("delta") or {}).get("divergence") if isinstance(volume_cluster_analysis, dict) else None,
             "confluence_breakdown": signal.get("confluence_breakdown"),
             "confluence_warnings": signal.get("confluence_warnings"),
             "confluence_confirmations": signal.get("confluence_confirmations"),
