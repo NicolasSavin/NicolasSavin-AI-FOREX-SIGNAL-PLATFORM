@@ -25,7 +25,8 @@ def _ok_content() -> str:
         '"headline":"EURUSD H1 long","summary":"Кратко","cause":"После снятия ликвидности причина ясна","confirmation":"Подтверждение",'
         '"risk":"Риск","invalidation":"Инвалидация","target_logic":"Логика цели",'
         '"update_explanation":"Что изменилось","short_text":"Коротко","full_text":"После sweep ликвидности сформирован BOS, крупный покупатель защищает order block, объём и дельта подтверждают реакцию.",'
-        '"unified_narrative":"После sweep ликвидности под минимумом цена вернулась в диапазон, что показывает вход крупного покупателя. BOS подтверждает, что это скорее continuation после реакции, а не разворот. В зоне order block идёт набор позиции и защита уровня. Объём и дельта подтверждают импульс, дивергенция продавцов не усиливается. При сломе структуры сценарий отменяется.",'
+        '"volume_context":"Объём расширяется на импульсе и сжимается на откате.","divergence_context":"Дивергенция продавца не усиливается и не ломает импульс.","options_context":"Опционный слой ограничен: выраженного контр-сигнала нет.","execution_context":"Вход только после подтверждения реакции от зоны и удержания структуры.",'
+        '"unified_narrative":"EURUSD сейчас торгуется внутри рабочей зоны спроса после резкого возврата цены в диапазон. Сначала цена сняла sell-side ликвидность под локальными минимумами, и это вызвало быстрый разворот вверх. Такая реакция указывает, что крупный покупатель защищает discount-область по SMC/ICT. В структуре уже отмечен локальный BOS, поэтому базовый сценарий остаётся continuation, а не разворотом вниз. В зоне сохраняется order block и рядом виден FVG, который пока не закрыт полностью и поддерживает импульс. Объём расширяется на росте, а дельта и дивергенция не показывают усиления встречного давления. По опционному слою данных недостаточно для отдельного сигнала, поэтому вывод опирается на структуру и объём. Вход логичен только после повторного подтверждения реакции от зоны и удержания текущего импульса. Инвалидация сценария проходит при сломе локальной структуры и уходе ниже рабочей области. Цель размещается в ближайшем пуле buy-side ликвидности над диапазоном. Главный риск в том, что импульс может оказаться краткосрочным и рынок вернётся в коррекционную фазу.",'
         '"summary_structured":{"signal":"BUY","situation":"Рынок у зоны","cause":"Сняли ликвидность","effect":"Ожидаем импульс","action":"Ждать триггер и входить","risk_note":"Риск растет при сломе структуры"},'
         '"trade_plan_structured":{"entry_trigger":"BOS вверх","entry_zone":"1.0800-1.0810","stop_loss":"ниже 1.0790","take_profit":"1.0840","invalidation":"уход ниже 1.0790"},'
         '"market_structure_structured":{"bias":"бычий","structure":"локальный BOS","liquidity":"снята нижняя ликвидность","zone":"discount OB","confluence":"SMC + импульс"}}'
@@ -78,6 +79,8 @@ def test_fallback_after_invalid_retry(monkeypatch) -> None:
 
     assert result.source == "fallback"
     assert "EURUSD" in result.data["full_text"]
+    assert "LLM-анализ недоступен" not in result.data["full_text"]
+    assert "ликвидности" in result.data["unified_narrative"].lower()
 
 
 def test_rejects_banned_phrase_and_retries(monkeypatch) -> None:
@@ -136,3 +139,15 @@ def test_rejects_missing_cause_effect_chain_and_retries(monkeypatch) -> None:
 
     assert calls["n"] == 2
     assert result.source == "llm"
+
+
+def test_wait_fallback_is_descriptive_and_honest() -> None:
+    service = IdeaNarrativeLLMService()
+    result = service.generate(
+        event_type="idea_created",
+        facts={"symbol": "USDJPY", "timeframe": "H1", "direction": "neutral", "status": "waiting"},
+    )
+    assert result.source == "fallback"
+    text = result.data["unified_narrative"].lower()
+    assert "сценарии wait" in text
+    assert "опционный слой сейчас недоступен" in text

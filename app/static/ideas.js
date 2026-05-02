@@ -279,6 +279,8 @@ function resolveVisibleNarrative(idea) {
   const sanitize = (value) => String(value || "").replace(/\(\s*none\s*\)/gi, "").replace(/\bnone\b/gi, "").trim();
   const unified = sanitize(idea?.unified_narrative);
   if (unified) return unified;
+  const fullText = sanitize(idea?.full_text);
+  if (fullText) return fullText;
   const executionSummary = sanitize(idea?.execution_summary_ru);
   if (executionSummary) return executionSummary;
   const confluenceSummary = sanitize(idea?.confluence_summary_ru);
@@ -289,8 +291,6 @@ function resolveVisibleNarrative(idea) {
   if (description) return description;
   const thesis = sanitize(idea?.idea_thesis);
   if (thesis) return thesis;
-  const fullText = sanitize(idea?.full_text);
-  if (fullText) return fullText;
   const fallbackNarrative = sanitize(idea?.fallback_narrative);
   if (fallbackNarrative) return fallbackNarrative;
   const summary = sanitize(idea?.summary || idea?.short_text);
