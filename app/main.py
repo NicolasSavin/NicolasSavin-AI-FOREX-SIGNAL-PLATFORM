@@ -79,6 +79,7 @@ MT4_MARKUP_CACHE_TTL_SECONDS = 60
 MT4_CANDLE_STORE: dict[str, dict[str, Any]] = {}
 MT4_CANDLE_STORE_MAX_BARS = 600
 MT4_CANDLE_FRESH_SECONDS = 300
+MT4_CANDLE_STALE_MAX_SECONDS = int(os.getenv("MT4_CANDLE_STALE_MAX_SECONDS", "604800"))
 DATA_PRIMARY_PROVIDER = os.getenv("DATA_PRIMARY_PROVIDER", "mt4_bridge").strip()
 MT4_BRIDGE_FRESH_SECONDS = int(os.getenv("MT4_BRIDGE_FRESH_SECONDS", "180"))
 ALLOW_EXTERNAL_FALLBACK = os.getenv("ALLOW_EXTERNAL_FALLBACK", "1") == "1"
@@ -171,16 +172,19 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
     snapshot = MT4_CANDLE_STORE.get(store_key) or {}
     updated_at = snapshot.get("updated_at") if isinstance(snapshot, dict) else None
     candles = snapshot.get("candles") if isinstance(snapshot, dict) else []
-    is_fresh = isinstance(updated_at, datetime) and (datetime.now(timezone.utc) - updated_at).total_seconds() <= MT4_CANDLE_FRESH_SECONDS
-    if not isinstance(candles, list) or not candles or not is_fresh:
+    age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds() if isinstance(updated_at, datetime) else None
+    is_fresh = isinstance(age_seconds, (int, float)) and age_seconds <= MT4_CANDLE_FRESH_SECONDS
+    market_status = "open" if is_fresh else "closed"
+    if not isinstance(candles, list) or not candles:
         return {
             "pair": normalized_pair,
             "data_source": "mt4_bridge",
             "candles_count": 0,
-            "summary": "Нет свежих MT4-свечей для этой пары",
+            "market_status": market_status,
+            "summary": "Нет доступных MT4-свечей для этой пары",
             "confidence": 0,
             "fundamental_used": use_fundamental,
-            "article_ru": "Нет свежих MT4-свечей для этой пары",
+            "article_ru": "Нет доступных MT4-свечей для этой пары",
         }
 
     recent_candles = candles[-80:]
@@ -202,9 +206,12 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
         "bias": bias,
         "summary": f"M15 MT4: {len(recent_candles)} свечей по {normalized_pair}, смещение {bias}.",
         "confidence": 0.8,
+        "market_status": market_status,
         "fundamental_used": use_fundamental,
         "article_ru": f"M15 MT4: {len(recent_candles)} свечей по {normalized_pair}, смещение {bias}.",
     }
+    if market_status == "closed":
+        base_response["warning"] = "Рынок закрыт, используется последний доступный набор данных"
 
     mt4_context = {
         "pair": normalized_pair,
@@ -2015,10 +2022,22 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
 
     age_seconds = (datetime.now(timezone.utc) - item["updated_at"]).total_seconds()
     if age_seconds > MT4_BRIDGE_FRESH_SECONDS:
+        stale_candles = (item.get("candles") or [])[-int(limit):]
+        if stale_candles and age_seconds <= MT4_CANDLE_STALE_MAX_SECONDS:
+            return {
+                "candles": stale_candles,
+                "provider": "mt4_bridge",
+                "data_status": "stale",
+                "market_status": "closed",
+                "warning_ru": "Рынок закрыт, используется последний доступный набор данных",
+                "raw_error": None,
+                "diagnostics": {"age_seconds": age_seconds, "stale_fallback": True},
+            }
         return {
             "candles": [],
             "provider": "mt4_bridge",
             "data_status": "stale",
+            "market_status": "closed",
             "warning_ru": "MT4 bridge устарел, включается резервный провайдер.",
             "raw_error": "stale_mt4_data",
             "diagnostics": {"age_seconds": age_seconds},
@@ -2031,6 +2050,7 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
         "data_status": "real",
         "provider_priority": "primary",
         "fallback_used": False,
+        "market_status": "open",
         "source_symbol": symbol_norm,
         "interval": tf_norm,
         "warning_ru": None,
