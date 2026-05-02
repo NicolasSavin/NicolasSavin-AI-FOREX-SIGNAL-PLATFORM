@@ -548,3 +548,26 @@ def test_api_ideas_contract_keeps_market_price_null_when_unavailable(monkeypatch
     assert row["data_status"] == "unavailable"
     assert row["detail_brief"]["header"]["market_price"] == ""
     assert row["detail_brief"]["header"]["market_context"] == "Нет актуальных рыночных данных."
+
+
+def test_signal_engine_ensures_ideas_text_fields_are_present() -> None:
+    engine = SignalEngine()
+
+    idea = engine._ensure_idea_text_fields({"symbol": "EURUSD"})
+
+    assert idea["description_ru"]
+    assert idea["reason_ru"]
+    assert idea["confluence_summary_ru"]
+    assert idea["short_scenario_ru"]
+    assert idea["unified_narrative"]
+
+
+def test_ideas_frontend_fallback_chain_contains_text_fields() -> None:
+    content = Path("app/static/ideas.html").read_text(encoding="utf-8")
+
+    assert "idea.unified_narrative ||" in content
+    assert "idea.confluence_summary_ru ||" in content
+    assert "idea.reason_ru ||" in content
+    assert "idea.description_ru ||" in content
+    assert "idea.short_scenario_ru ||" in content
+    assert "Описание временно недоступно." in content

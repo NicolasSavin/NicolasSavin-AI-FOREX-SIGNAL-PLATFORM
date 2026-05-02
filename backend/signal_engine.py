@@ -13,7 +13,6 @@ from backend.risk_engine import RiskEngine
 from backend.sentiment_provider import build_sentiment_provider
 from app.services.cme_scraper import get_cme_market_snapshot
 from backend.signals import build_trade_levels, default_invalidation_text, has_minimum_confluence, infer_action
-from app.services.cme_scraper import get_cme_market_snapshot
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
 TIMEFRAME_STACKS = {
@@ -56,7 +55,6 @@ class SignalEngine:
             for symbol in pairs:
                 snapshots_cache: dict[str, dict] = {}
                 sentiment = self.sentiment_provider.get_snapshot(symbol)
-                options_snapshot = await get_cme_market_snapshot(symbol)
                 required_timeframes = self._required_stack_timeframes(requested_timeframes)
                 for stack_timeframe in required_timeframes:
                     snapshots_cache[stack_timeframe] = await self._snapshot_for(symbol, stack_timeframe, snapshots_cache)
@@ -144,11 +142,13 @@ class SignalEngine:
         options_analysis = signal.get("options_analysis") if isinstance(signal.get("options_analysis"), dict) else {}
 
         if not description_ru:
-            description_ru = confluence_summary_ru or reason_ru
+            description_ru = confluence_summary_ru or reason_ru or "Идея основана на структуре рынка, ликвидности и текущем импульсе."
 
         signal["description_ru"] = description_ru
         signal["reason_ru"] = reason_ru
         signal["confluence_summary_ru"] = confluence_summary_ru
+        signal["short_scenario_ru"] = str(signal.get("short_scenario_ru") or "").strip() or confluence_summary_ru or reason_ru
+        signal["unified_narrative"] = str(signal.get("unified_narrative") or "").strip() or description_ru
         signal["market_context"] = market_context
         signal["options_analysis"] = options_analysis
         if not str(market_context.get("confluence_summary_ru") or "").strip():
@@ -450,8 +450,8 @@ class SignalEngine:
         options_applied = self.applyOptionsImpact(
             signal={"action": action, "entry": price, "confidence_percent": confidence, "reason_ru": "", "warning": analysis_contract["warning"]},
             optionsAnalysis=self._resolve_options_analysis(options_snapshot),
+            apply_confidence=False,
         )
-        confidence = int(options_applied["confidence_percent"])
         signal_threshold = PROFESSIONAL_MIN_CONFIDENCE if analysis_mode == "professional" else FALLBACK_MIN_CONFIDENCE
 
         scenario_type = self._resolve_scenario_type(mtf_features)
@@ -584,7 +584,7 @@ class SignalEngine:
             "chart_patterns": mtf_patterns,
             "pattern_summary": mtf_pattern_summary,
             "pattern_signal_impact": pattern_impact,
-            "options_analysis": options_applied.get("options_analysis"),
+            "options_analysis": options_snapshot,
             "options_impact": options_applied.get("options_impact"),
             "options_summary_ru": options_applied.get("options_summary_ru"),
             "confluence_analysis": confluence_analysis,
@@ -599,7 +599,6 @@ class SignalEngine:
             "confluence_flags": confluence_flags,
             "missing_confirmations": missing_confirmations,
             "invalidation_reasoning": invalidation_reasoning,
-            "options_analysis": options_snapshot,
             "market_context": {
                 "htf_trend": htf_features["trend"],
                 "mtf_trend": mtf_features["trend"],
@@ -679,7 +678,7 @@ class SignalEngine:
         }
         return self._ensure_idea_text_fields(signal_payload)
 
-    def applyOptionsImpact(self, signal: dict, optionsAnalysis: dict) -> dict:
+    def applyOptionsImpact(self, signal: dict, optionsAnalysis: dict, apply_confidence: bool = True) -> dict:
         if not optionsAnalysis or optionsAnalysis.get("available") is False:
             signal["options_impact"] = 0
             signal["options_summary_ru"] = "Options data unavailable, analysis based on technicals and volume"
@@ -722,7 +721,8 @@ class SignalEngine:
             impact -= 6
             warnings.append("High probability of price pinning near strike")
         impact = max(-15, min(15, impact))
-        signal["confidence_percent"] = max(0, min(100, int(round(float(signal.get("confidence_percent") or 0) + impact))))
+        if apply_confidence:
+            signal["confidence_percent"] = max(0, min(100, int(round(float(signal.get("confidence_percent") or 0) + impact))))
         signal["options_impact"] = impact
         signal["options_warning"] = " | ".join(warnings) if warnings else None
         signal["options_analysis"] = optionsAnalysis
