@@ -18,22 +18,28 @@
             <div><h2>Лента в стиле Bloomberg Desk</h2><p class="section-text" id="deskMeta">—</p></div>
             <button class="news-link-button" id="refreshNewsButton" type="button">Обновить</button>
           </div>
-          <div id="fallbackBox"></div>
-          <div id="leadStory"></div>
-          <div class="news-list" id="newsList"></div>
+          <div id="fallbackBox"></div><div id="leadStory"></div><div class="news-list" id="newsList"></div>
         </section>
       </main>
     </div>
 <script>
-const newsList=document.getElementById('newsList'); const leadStory=document.getElementById('leadStory'); const fallbackBox=document.getElementById('fallbackBox'); const deskMeta=document.getElementById('deskMeta');
+const newsList=document.getElementById('newsList'),leadStory=document.getElementById('leadStory'),fallbackBox=document.getElementById('fallbackBox'),deskMeta=document.getElementById('deskMeta');
 const esc=(v)=>String(v||'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
 const dt=(v)=>{const d=new Date(v); return Number.isNaN(d.getTime())?'—':d.toLocaleString('ru-RU',{timeZone:'UTC'})+' UTC'};
-const chips=(a)=> (Array.isArray(a)&&a.length?a:['N/A']).map(x=>`<span class="news-chip">${esc(x)}</span>`).join('');
-const img=(item,big=false)=> item.image_url?`<div class="news-image-wrap ${big?'news-image-wrap--big':''}"><img src="${esc(item.image_url)}" loading="lazy" onerror="this.parentElement.classList.add('is-fallback'); this.remove();"></div>`:`<div class="news-image-wrap ${big?'news-image-wrap--big':''} is-fallback"></div>`;
+const chips=(a)=> (Array.isArray(a)&&a.length?a:[]).map(x=>`<span class="news-chip">${esc(x)}</span>`).join('');
+const img=(item,big=false)=> item.image_url?`<div class="news-image-wrap ${big?'news-image-wrap--big':''}"><img src="${esc(item.image_url)}" loading="lazy"></div>`:'';
+function row(label,val){return val?`<p class="news-card__text"><strong>${label}:</strong> ${esc(val)}</p>`:''}
+function openModal(item){
+ const body=`<article class="news-card">${img(item,true)}<h3 class="news-card__title">${esc(item.title_ru||item.title_original||'Новость')}</h3><p class="news-card__text" style="opacity:.75">${esc(item.title_original||'')}</p>${row('Источник',(item.source||'—')+' · '+dt(item.published_at))}${row('Объяснение',item.article_ru||item.summary_ru)}${row('Влияние',item.market_impact_ru)}${chips(item.affected_assets)?`<div class="news-chip-row">${chips(item.affected_assets)}</div>`:''}${item.source_url?`<p><a class="news-link-button" href="${esc(item.source_url)}" target="_blank" rel="noopener">Открыть источник</a></p>`:''}</article>`;
+ const modal=document.createElement('div'); modal.style='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;padding:24px;overflow:auto';
+ modal.innerHTML=`<div style="max-width:900px;margin:0 auto"><button class="news-link-button" id="closeModal">Закрыть</button>${body}</div>`;
+ modal.addEventListener('click',(e)=>{if(e.target===modal) modal.remove();}); document.body.appendChild(modal); document.getElementById('closeModal').onclick=()=>modal.remove();
+}
 function renderFallback(msg){leadStory.innerHTML=''; newsList.innerHTML=''; fallbackBox.innerHTML=`<article class="news-card news-card--empty"><h3 class="news-card__title">⚠️ Системный режим</h3><p class="news-card__text">${esc(msg)}</p></article>`;}
-function card(item,isLead=false){return `<article class="news-card ${isLead?'':'news-card--compact'}">${img(item,isLead)}<p class="news-card__eyebrow">${esc(item.source||'Источник')} · ${dt(item.published_at)}</p><h3 class="news-card__title">${esc(item.title_ru||item.title||'Новость')}</h3><p class="news-card__text">${esc(item.summary_ru||item.summary||'')}</p><p class="news-card__text"><strong>Влияние:</strong> ${esc(item.market_impact_ru||item.impact||'')}</p><div class="news-chip-row">${chips(item.affected_assets)}</div>${item.humor_ru?`<p class="news-card__text"><em>${esc(item.humor_ru)}</em></p>`:''}<div class="news-card__footer">${item.url?`<a class="news-link-button" href="${esc(item.url)}" target="_blank" rel="noopener">Открыть источник</a>`:''}</div></article>`}
+function card(item,isLead=false){const text=item.summary_ru||item.article_ru||''; return `<article class="news-card ${isLead?'':'news-card--compact'}" data-item='${esc(JSON.stringify(item))}' style="cursor:pointer">${img(item,isLead)}<p class="news-card__eyebrow">${esc(item.source||'Источник')} · ${dt(item.published_at)}</p><h3 class="news-card__title">${esc(item.title_ru||item.title_original||'Новость')}</h3><p class="news-card__text" style="opacity:.75">${esc(item.title_original||'')}</p>${text?`<p class="news-card__text">${esc(text.slice(0,260))}</p>`:''}${item.market_impact_ru?`<p class="news-card__text"><strong>Влияние:</strong> ${esc(item.market_impact_ru)}</p>`:''}${chips(item.affected_assets)?`<div class="news-chip-row">${chips(item.affected_assets)}</div>`:''}</article>`}
 async function loadNews(){fallbackBox.innerHTML=''; leadStory.innerHTML=''; newsList.innerHTML='<article class="news-card news-card--empty"><p>Загрузка...</p></article>'; const r=await fetch('/api/news?limit=8',{cache:'no-store'}); const p=await r.json(); deskMeta.textContent=`Статус: ${p.data_status||'—'} · Источники: ${(p.sources_attempted||[]).join(', ')} · Реальных: ${p.real_items_count||0} · Grok: ${p.grok_processed_count||0} · Cache: ${p.cache_hit?'hit':'miss'}`;
-if(p.data_status==='fallback'){renderFallback(p.message_ru||'Новостные источники временно недоступны'); return;} const items=Array.isArray(p.items)?p.items:[]; if(!items.length){renderFallback('Нет подтверждённых новостей.'); return;} leadStory.innerHTML=card(items[0],true); newsList.innerHTML=items.slice(1).map(x=>card(x,false)).join('');}
+if(p.data_status==='fallback'){renderFallback(p.message_ru||'Новостные источники временно недоступны'); return;} const items=Array.isArray(p.items)?p.items:[]; if(!items.length){renderFallback('Нет подтверждённых новостей.'); return;} leadStory.innerHTML=card(items[0],true); newsList.innerHTML=items.slice(1).map(x=>card(x,false)).join('');
+[...document.querySelectorAll('.news-card[data-item]')].forEach(el=>el.onclick=()=>openModal(JSON.parse(el.dataset.item)));}
 document.getElementById('refreshNewsButton').addEventListener('click',loadNews); loadNews();
 </script>
 <script src="/static/nav.js"></script>
