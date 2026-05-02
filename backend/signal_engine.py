@@ -141,8 +141,55 @@ class SignalEngine:
         market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
         options_analysis = signal.get("options_analysis") if isinstance(signal.get("options_analysis"), dict) else {}
 
+        action = str(signal.get("action") or "WAIT").upper().strip()
+        symbol = str(signal.get("symbol") or "инструмент").strip()
+        confluence_flags = signal.get("confluence_flags") if isinstance(signal.get("confluence_flags"), dict) else {}
+        trend = str(market_context.get("mtf_trend") or market_context.get("htf_trend") or "unknown")
+        bos = str(confluence_flags.get("bos") if confluence_flags.get("bos") is not None else market_context.get("bos") or "unknown")
+        liquidity_sweep = str(
+            confluence_flags.get("liquidity_sweep")
+            if confluence_flags.get("liquidity_sweep") is not None
+            else market_context.get("liquidity_sweep")
+            if market_context.get("liquidity_sweep") is not None
+            else "unknown"
+        )
+        order_block = str(
+            confluence_flags.get("order_block")
+            if confluence_flags.get("order_block") is not None
+            else market_context.get("order_block")
+            if market_context.get("order_block") is not None
+            else "unknown"
+        )
+        fvg = str(
+            confluence_flags.get("fvg")
+            if confluence_flags.get("fvg") is not None
+            else market_context.get("fvg")
+            if market_context.get("fvg") is not None
+            else "unknown"
+        )
+
+        if confluence_summary_ru:
+            description_ru = f"""
+{action} {symbol}
+
+Причины:
+- тренд: {trend}
+- BOS: {bos}
+- ликвидность: {liquidity_sweep}
+- order block: {order_block}
+- FVG: {fvg}
+
+{confluence_summary_ru}
+""".strip()
+
         if not description_ru:
-            description_ru = confluence_summary_ru or reason_ru or "Идея основана на структуре рынка, ликвидности и текущем импульсе."
+            description_ru = confluence_summary_ru
+
+        if not description_ru:
+            description_ru = reason_ru
+
+        if not description_ru:
+            description_ru = f"Сигнал {action} по {symbol} сформирован на основе структуры рынка, ликвидности и текущего импульса."
 
         signal["description_ru"] = description_ru
         signal["reason_ru"] = reason_ru
