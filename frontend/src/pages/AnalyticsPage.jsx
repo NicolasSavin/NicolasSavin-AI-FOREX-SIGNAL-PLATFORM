@@ -123,16 +123,19 @@ function getBiasMeta(bias) {
 function normalizeConfluence(value) {
   const safe = toSafeObject(value);
   return {
-    signal: typeof safe.signal === "string" ? safe.signal : "NEUTRAL",
-    score: Number.isFinite(safe.score) ? safe.score : 0,
-    confidence: Number.isFinite(safe.confidence) ? safe.confidence : 0,
-    summary: typeof safe.summary === "string" ? safe.summary : "Confluence summary недоступен.",
+    grade: typeof safe.grade === "string" ? safe.grade : "D",
+    score: Number.isFinite(safe.total_score) ? safe.total_score : (Number.isFinite(safe.score) ? safe.score : 0),
+    confidenceDelta: Number.isFinite(safe.confidence_delta) ? safe.confidence_delta : 0,
+    summary: typeof safe.summary_ru === "string" ? safe.summary_ru : (typeof safe.summary === "string" ? safe.summary : "Confluence summary недоступен."),
     warnings: normalizeWarnings(safe.warnings),
+    confirmations: normalizeWarnings(safe.confirmations),
     breakdown: {
-      smartMoney: Number.isFinite(safe?.breakdown?.smartMoney) ? safe.breakdown.smartMoney : 0,
+      smc: Number.isFinite(safe?.breakdown?.smc) ? safe.breakdown.smc : (Number.isFinite(safe?.breakdown?.smartMoney) ? safe.breakdown.smartMoney : 0),
       liquidity: Number.isFinite(safe?.breakdown?.liquidity) ? safe.breakdown.liquidity : 0,
       options: Number.isFinite(safe?.breakdown?.options) ? safe.breakdown.options : 0,
       volume: Number.isFinite(safe?.breakdown?.volume) ? safe.breakdown.volume : 0,
+      sentiment: Number.isFinite(safe?.breakdown?.sentiment) ? safe.breakdown.sentiment : 0,
+      risk: Number.isFinite(safe?.breakdown?.risk) ? safe.breakdown.risk : 0,
     },
   };
 }
@@ -234,20 +237,23 @@ export default function AnalyticsPage() {
               <p className="text-slate-400">Общий score</p><p className="text-2xl font-bold text-violet-200">{parsed.confluence.score}</p>
             </div>
             <div className="rounded-lg border border-slate-700/80 bg-slate-900/70 p-3">
-              <p className="text-slate-400">Confidence</p><p className="text-2xl font-bold text-cyan-200">{parsed.confluence.confidence}%</p>
+              <p className="text-slate-400">Δ Confidence</p><p className="text-2xl font-bold text-cyan-200">{parsed.confluence.confidenceDelta}</p>
             </div>
             <div className="rounded-lg border border-slate-700/80 bg-slate-900/70 p-3">
-              <p className="text-slate-400">Signal</p><p className="text-2xl font-bold text-emerald-200">{parsed.confluence.signal}</p>
+              <p className="text-slate-400">Grade</p><p className="text-2xl font-bold text-emerald-200">{parsed.confluence.grade}</p>
             </div>
           </div>
           <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-slate-300">
-            <p>SMC: {parsed.confluence.breakdown.smartMoney}</p>
+            <p>SMC: {parsed.confluence.breakdown.smc}</p>
             <p>Liquidity: {parsed.confluence.breakdown.liquidity}</p>
             <p>Options: {parsed.confluence.breakdown.options}</p>
             <p>Volume: {parsed.confluence.breakdown.volume}</p>
+            <p>Sentiment: {parsed.confluence.breakdown.sentiment}</p>
+            <p>Risk: {parsed.confluence.breakdown.risk}</p>
           </div>
           <p className="mt-3 whitespace-pre-line text-sm text-slate-200">{parsed.confluence.summary}</p>
-          <p className="mt-2 text-xs text-amber-200">{parsed.confluence.warnings.length ? parsed.confluence.warnings.join(" • ") : "Warnings: нет"}</p>
+          <p className="mt-2 text-xs text-emerald-200">{parsed.confluence.confirmations.length ? `Confirmations: ${parsed.confluence.confirmations.join(" • ")}` : "Confirmations: нет"}</p>
+          <p className="mt-2 text-xs text-amber-200">{parsed.confluence.warnings.length ? parsed.confluence.warnings.join(" • ") : "Warnings: options unavailable fallback активен или предупреждений нет"}</p>
         </section>
 
         <section className="grid grid-cols-1 md:grid-cols-2 gap-4">

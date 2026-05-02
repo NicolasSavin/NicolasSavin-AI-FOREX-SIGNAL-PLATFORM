@@ -50,6 +50,7 @@ class FeatureBuilder:
                 "bos": False,
                 "choch": False,
                 "liquidity_sweep": False,
+                "liquidity_sweep_side": "unknown",
                 "order_block": None,
                 "fvg": False,
                 "divergence": "none",
@@ -82,6 +83,7 @@ class FeatureBuilder:
                     "bos": False,
                     "choch": False,
                     "liquidity_sweep": False,
+                    "liquidity_sweep_side": "unknown",
                     "order_block": None,
                     "fvg": False,
                     "divergence": "none",
@@ -107,6 +109,7 @@ class FeatureBuilder:
                 "bos": False,
                 "choch": True,
                 "liquidity_sweep": False,
+                "liquidity_sweep_side": "unknown",
                 "order_block": "bullish" if direction == "up" else "bearish",
                 "fvg": False,
                 "divergence": "none",
@@ -137,6 +140,7 @@ class FeatureBuilder:
                 "bos": False,
                 "choch": False,
                 "liquidity_sweep": False,
+                "liquidity_sweep_side": "unknown",
                 "order_block": None,
                 "fvg": False,
                 "divergence": "none",
@@ -255,6 +259,15 @@ class FeatureBuilder:
                 bool(liquidity_window_highs)
                 and bool(liquidity_window_lows)
                 and (highs[-1] > max(liquidity_window_highs) or lows[-1] < min(liquidity_window_lows))
+            ),
+            "liquidity_sweep_side": (
+                "buy_side"
+                if bool(liquidity_window_highs) and highs[-1] > max(liquidity_window_highs)
+                else (
+                    "sell_side"
+                    if bool(liquidity_window_lows) and lows[-1] < min(liquidity_window_lows)
+                    else "unknown"
+                )
             ),
             "order_block": "bullish" if trend == "up" else "bearish",
             "order_block_zone": order_block_zone,

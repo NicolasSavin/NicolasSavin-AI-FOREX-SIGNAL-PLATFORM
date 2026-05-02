@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from backend.data_provider import DataProvider
 from backend.analysis.feature_builder import FeatureBuilder
+from backend.analysis.confluence_engine import ConfluenceEngine
 from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
 from backend.sentiment_provider import build_sentiment_provider
@@ -37,6 +38,7 @@ class SignalEngine:
     def __init__(self) -> None:
         self.data_provider = DataProvider()
         self.feature_builder = FeatureBuilder()
+        self.confluence_engine = ConfluenceEngine()
         self.pattern_detector = PatternDetector()
         self.risk_engine = RiskEngine()
         self.sentiment_provider = build_sentiment_provider()
@@ -340,6 +342,23 @@ class SignalEngine:
         if data_quality != "high":
             weak_reasons.append("Данные получены через fallback (Yahoo): подтверждение слабее профессионального режима")
 
+        confluence_analysis = self.confluence_engine.evaluate({
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "action": action,
+            "price": price,
+            "htf_features": htf_features,
+            "mtf_features": mtf_features,
+            "ltf_features": ltf_features,
+            "options_snapshot": options_snapshot,
+            "sentiment": sentiment,
+            "risk": risk,
+        })
+        confidence += int(confluence_analysis.get("confidence_delta", 0) or 0)
+        confidence = max(0, min(100, confidence))
+        if confluence_analysis.get("warnings"):
+            weak_reasons.extend(confluence_analysis["warnings"])
+
         sentiment_alignment = self._sentiment_alignment(action, sentiment)
         sentiment_delta = self._sentiment_delta(sentiment_alignment, sentiment)
         smart_money_context = self._smart_money_context(
@@ -460,12 +479,14 @@ class SignalEngine:
             "description_ru": (
                 f"{symbol}: {action} по структуре HTF {htf['timeframe']} → MTF {mtf['timeframe']} → LTF {ltf['timeframe']}, "
                 f"ATR {round(mtf_features.get('atr_percent', 0.0), 2)}% и подтверждённому импульсу {ltf_features['pattern']}. "
-                f"Паттерны: {pattern_summary_ru}"
+                f"Паттерны: {pattern_summary_ru}. "
+                f"Confluence: {confluence_analysis.get('summary_ru')}"
             ),
             "reason_ru": (
                 f"{reason_prefix}"
                 f"{weak_reason_text + '. ' if weak_reason_text else ''}"
-                f"Паттерн-модуль: {pattern_impact.get('patternAlignmentLabelRu', 'нейтрально')}."
+                f"Паттерн-модуль: {pattern_impact.get('patternAlignmentLabelRu', 'нейтрально')}. "
+                f"SMC/Liquidity/Options: {confluence_analysis.get('summary_ru')}"
             ),
             "invalidation_ru": default_invalidation_text(),
             "progress": progress,
@@ -487,6 +508,11 @@ class SignalEngine:
             "options_analysis": options_applied.get("options_analysis"),
             "options_impact": options_applied.get("options_impact"),
             "options_summary_ru": options_applied.get("options_summary_ru"),
+            "confluence_analysis": confluence_analysis,
+            "confluence_breakdown": confluence_analysis.get("breakdown", {}),
+            "confluence_warnings": confluence_analysis.get("warnings", []),
+            "confluence_confirmations": confluence_analysis.get("confirmations", []),
+            "confluence_summary_ru": confluence_analysis.get("summary_ru", ""),
             "source_candle_count": len(mtf.get("candles", [])),
             "scenario_type": scenario_type,
             "validation_state": validation_state,
@@ -538,6 +564,8 @@ class SignalEngine:
                 "options_put_call_ratio": options_analysis.get("putCallRatio"),
                 "options_key_strikes": options_analysis.get("keyStrikes") or [],
                 "options_max_pain": options_analysis.get("maxPain"),
+                "confluence_total_score": confluence_analysis.get("total_score"),
+                "confluence_grade": confluence_analysis.get("grade"),
             },
             "pipeline_debug": {
                 "candles_count": len(mtf.get("candles", [])),
