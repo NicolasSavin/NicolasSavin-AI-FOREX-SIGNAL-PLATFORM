@@ -2648,26 +2648,33 @@
 
     function pickText(idea) {
       return (
-        idea.idea_thesis ||
         idea.unified_narrative ||
+        idea.confluence_summary_ru ||
+        idea.reason_ru ||
+        idea.description_ru ||
+        idea.short_scenario_ru ||
+        idea.idea_thesis ||
         idea.full_text ||
         idea.fullText ||
         idea.summary_ru ||
         idea.summary ||
         idea.short_text ||
-        idea.description_ru ||
-        "Описание идеи отсутствует."
+        "Описание временно недоступно."
       );
     }
 
     function pickSubtitleText(idea) {
       const shortText = (
+        idea.unified_narrative ||
+        idea.confluence_summary_ru ||
+        idea.reason_ru ||
+        idea.description_ru ||
+        idea.short_scenario_ru ||
         idea.idea_thesis ||
         idea.summary_ru ||
         idea.summary ||
         idea.short_text ||
-        idea.description_ru ||
-        "Описание идеи отсутствует."
+        "Описание временно недоступно."
       );
       return trimToLength(shortText, 170);
     }
@@ -2676,20 +2683,23 @@
       const detailBrief = idea && typeof idea.detail_brief === "object" ? idea.detail_brief : null;
       return (
         idea.unified_narrative ||
+        idea.confluence_summary_ru ||
+        idea.reason_ru ||
+        idea.description_ru ||
+        idea.short_scenario_ru ||
         detailBrief?.summary_narrative ||
         idea.full_text ||
         idea.fullText ||
         idea.summary_ru ||
         idea.summary ||
         idea.short_text ||
-        idea.description_ru ||
-        "Описание идеи отсутствует."
+        "Описание временно недоступно."
       );
     }
 
     function trimToLength(text, maxLength = 170) {
       const normalized = String(text || "").replace(/\s+/g, " ").trim();
-      if (!normalized) return "Описание идеи отсутствует.";
+      if (!normalized) return "Описание временно недоступно.";
       if (normalized.length <= maxLength) return normalized;
       return `${normalized.slice(0, maxLength - 1).trim()}…`;
     }
@@ -2731,6 +2741,7 @@
       const targetReason = String(idea.take_profit_reason_ru || "").trim() || fallback;
       const liqModel = String(idea.liquidity_entry_model || "").trim() || "none";
       const invalidation = String(idea.invalidation_level_reason || idea.invalidation_reasoning || idea.invalidation_ru || "").trim() || fallback;
+      const executionSummary = String(idea.execution_summary_ru || "").trim() || `${entryReason} ${stopReason} ${targetReason}`;
 
       return `
         <div class="modal-section-title">Execution Model</div>
@@ -2741,6 +2752,7 @@
           <div><strong>Target logic:</strong> ${escapeHtml(targetReason)}</div>
           <div><strong>Liquidity model:</strong> ${escapeHtml(liqModel)}</div>
           <div><strong>Invalidation:</strong> ${escapeHtml(invalidation)}</div>
+          <div><strong>Execution summary:</strong> ${escapeHtml(executionSummary)}</div>
         </div>
       `;
     }
