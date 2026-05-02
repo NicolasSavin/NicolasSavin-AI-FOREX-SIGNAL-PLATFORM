@@ -43,6 +43,15 @@ IDEA_STATUS_ARCHIVED = "archived"
 ACTIVE_STATUSES = {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING, IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE}
 CLOSED_STATUSES = {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT, IDEA_STATUS_ARCHIVED}
 TERMINAL_STATUSES = {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT}
+ALLOWED_LIFECYCLE_TRANSITIONS = {
+    IDEA_STATUS_CREATED: {IDEA_STATUS_WAITING},
+    IDEA_STATUS_WAITING: {IDEA_STATUS_TRIGGERED},
+    IDEA_STATUS_TRIGGERED: {IDEA_STATUS_ACTIVE},
+    IDEA_STATUS_ACTIVE: {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT},
+    IDEA_STATUS_TP_HIT: {IDEA_STATUS_ARCHIVED},
+    IDEA_STATUS_SL_HIT: {IDEA_STATUS_ARCHIVED},
+    IDEA_STATUS_ARCHIVED: set(),
+}
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_SYSTEM_PROMPT = "Ты профессиональный трейдинг-аналитик (Forex, SMC, liquidity).\n\nОтвечай ТОЛЬКО JSON массивом без текста."
 OPENROUTER_IDEA_SPECS = [
@@ -1298,6 +1307,13 @@ class TradeIdeaService:
             len(payload.get("ideas", [])),
             skipped_reasons,
         )
+        payload["description_ru"] = self._resolve_idea_description(payload)
+        payload["reason_ru"] = str(payload.get("reason_ru") or payload["description_ru"]).strip() or payload["description_ru"]
+        payload["confluence_summary_ru"] = str(payload.get("confluence_summary_ru") or payload["reason_ru"]).strip() or payload["description_ru"]
+        payload["unified_narrative"] = str(payload.get("unified_narrative") or payload["description_ru"]).strip() or payload["description_ru"]
+        if status == str((existing or {}).get("status") or "").lower() and str(signal.get("action") or "").upper() == "NO_TRADE" and status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            payload["history"] = self._append_history_event(payload.get("history"), event_type="updated", note="Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation.", at=now.isoformat())
+            payload["updates"] = self._history_to_updates(payload.get("history"))
         return payload
 
     def _invalidate_matching(self, signal: dict) -> None:
@@ -1356,7 +1372,7 @@ class TradeIdeaService:
         stop_loss = self._extract_numeric(signal.get("stop_loss"))
         take_profit = self._extract_numeric(signal.get("take_profit"))
         idea_id = existing.get("idea_id") if existing else self._idea_id(symbol, timeframe, setup_type, created_at)
-        status = self._status_from_signal(signal, existing=existing)
+        status = self._enforce_lifecycle_transition(existing=existing, proposed_status=self._status_from_signal(signal, existing=existing), signal=signal)
         latest_close = self._extract_latest_close(signal)
         rationale = signal.get("reason_ru") or signal.get("description_ru") or "Структурное подтверждение сценария ограничено."
         summary_text = signal.get("description_ru") or f"{symbol} {timeframe}: торговая идея обновлена."
@@ -1428,6 +1444,10 @@ class TradeIdeaService:
             chart_overlays=model_chart_overlays,
             trigger=trigger,
         )
+        levels_payload = self.preserve_valid_levels(existing, {"entry": entry_value, "stop_loss": stop_loss, "take_profit": take_profit})
+        entry_value = self._extract_numeric(levels_payload.get("entry"))
+        stop_loss = self._extract_numeric(levels_payload.get("stop_loss"))
+        take_profit = self._extract_numeric(levels_payload.get("take_profit"))
         existing_idea_thesis = str((existing or {}).get("idea_thesis") or "").strip()
         existing_unified_narrative = str((existing or {}).get("unified_narrative") or "").strip()
         existing_full_text = str((existing or {}).get("full_text") or "").strip()
@@ -1811,6 +1831,13 @@ class TradeIdeaService:
                 tp = last_price * (1 + LEVEL_TAKE_PROFIT_OFFSET) if payload["signal"] == "BUY" else last_price * (1 - LEVEL_TAKE_PROFIT_OFFSET)
                 payload["take_profit"] = round(tp, 6)
                 payload["takeProfit"] = cls._format_price(payload["take_profit"])
+        payload["description_ru"] = self._resolve_idea_description(payload)
+        payload["reason_ru"] = str(payload.get("reason_ru") or payload["description_ru"]).strip() or payload["description_ru"]
+        payload["confluence_summary_ru"] = str(payload.get("confluence_summary_ru") or payload["reason_ru"]).strip() or payload["description_ru"]
+        payload["unified_narrative"] = str(payload.get("unified_narrative") or payload["description_ru"]).strip() or payload["description_ru"]
+        if status == str((existing or {}).get("status") or "").lower() and str(signal.get("action") or "").upper() == "NO_TRADE" and status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            payload["history"] = self._append_history_event(payload.get("history"), event_type="updated", note="Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation.", at=now.isoformat())
+            payload["updates"] = self._history_to_updates(payload.get("history"))
         return payload
 
     @classmethod
@@ -2018,7 +2045,14 @@ class TradeIdeaService:
             payload["meaningful_updated_at"] = now_iso
             payload["meaningful_update_reason"] = "idea_created"
             payload["update_reason"] = payload.get("update_summary") or "Создана новая идея."
-            return payload
+            payload["description_ru"] = self._resolve_idea_description(payload)
+        payload["reason_ru"] = str(payload.get("reason_ru") or payload["description_ru"]).strip() or payload["description_ru"]
+        payload["confluence_summary_ru"] = str(payload.get("confluence_summary_ru") or payload["reason_ru"]).strip() or payload["description_ru"]
+        payload["unified_narrative"] = str(payload.get("unified_narrative") or payload["description_ru"]).strip() or payload["description_ru"]
+        if status == str((existing or {}).get("status") or "").lower() and str(signal.get("action") or "").upper() == "NO_TRADE" and status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            payload["history"] = self._append_history_event(payload.get("history"), event_type="updated", note="Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation.", at=now.isoformat())
+            payload["updates"] = self._history_to_updates(payload.get("history"))
+        return payload
 
         reasons = cls._collect_meaningful_reasons(existing=existing, payload=payload, signal=signal)
         if reasons:
@@ -2026,12 +2060,26 @@ class TradeIdeaService:
             payload["meaningful_updated_at"] = now_iso
             payload["meaningful_update_reason"] = reasons[0]
             payload["update_reason"] = payload.get("update_summary") or cls._reason_to_text(reasons[0])
-            return payload
+            payload["description_ru"] = self._resolve_idea_description(payload)
+        payload["reason_ru"] = str(payload.get("reason_ru") or payload["description_ru"]).strip() or payload["description_ru"]
+        payload["confluence_summary_ru"] = str(payload.get("confluence_summary_ru") or payload["reason_ru"]).strip() or payload["description_ru"]
+        payload["unified_narrative"] = str(payload.get("unified_narrative") or payload["description_ru"]).strip() or payload["description_ru"]
+        if status == str((existing or {}).get("status") or "").lower() and str(signal.get("action") or "").upper() == "NO_TRADE" and status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            payload["history"] = self._append_history_event(payload.get("history"), event_type="updated", note="Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation.", at=now.isoformat())
+            payload["updates"] = self._history_to_updates(payload.get("history"))
+        return payload
 
         payload["has_meaningful_update"] = False
         payload["meaningful_updated_at"] = existing.get("meaningful_updated_at")
         payload["meaningful_update_reason"] = str(existing.get("meaningful_update_reason") or "")
         payload["update_reason"] = ""
+        payload["description_ru"] = self._resolve_idea_description(payload)
+        payload["reason_ru"] = str(payload.get("reason_ru") or payload["description_ru"]).strip() or payload["description_ru"]
+        payload["confluence_summary_ru"] = str(payload.get("confluence_summary_ru") or payload["reason_ru"]).strip() or payload["description_ru"]
+        payload["unified_narrative"] = str(payload.get("unified_narrative") or payload["description_ru"]).strip() or payload["description_ru"]
+        if status == str((existing or {}).get("status") or "").lower() and str(signal.get("action") or "").upper() == "NO_TRADE" and status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            payload["history"] = self._append_history_event(payload.get("history"), event_type="updated", note="Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation.", at=now.isoformat())
+            payload["updates"] = self._history_to_updates(payload.get("history"))
         return payload
 
     @classmethod
@@ -2649,6 +2697,13 @@ class TradeIdeaService:
             ),
             {k: len(payload.get(k) or []) for k in ("zones", "levels", "labels", "patterns", "arrows")},
         )
+        payload["description_ru"] = self._resolve_idea_description(payload)
+        payload["reason_ru"] = str(payload.get("reason_ru") or payload["description_ru"]).strip() or payload["description_ru"]
+        payload["confluence_summary_ru"] = str(payload.get("confluence_summary_ru") or payload["reason_ru"]).strip() or payload["description_ru"]
+        payload["unified_narrative"] = str(payload.get("unified_narrative") or payload["description_ru"]).strip() or payload["description_ru"]
+        if status == str((existing or {}).get("status") or "").lower() and str(signal.get("action") or "").upper() == "NO_TRADE" and status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            payload["history"] = self._append_history_event(payload.get("history"), event_type="updated", note="Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation.", at=now.isoformat())
+            payload["updates"] = self._history_to_updates(payload.get("history"))
         return payload
 
     def _build_unified_pipeline_context(self, *, signal: dict[str, Any], symbol: str, timeframe: str) -> dict[str, Any]:
@@ -3698,6 +3753,56 @@ class TradeIdeaService:
             return None, None
 
     @staticmethod
+    def _is_valid_level(value: Any) -> bool:
+        numeric = TradeIdeaService._extract_numeric(value)
+        return bool(numeric is not None and numeric > 0)
+
+    @classmethod
+    def preserve_valid_levels(cls, existing_idea: dict[str, Any] | None, new_idea: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(existing_idea, dict):
+            return new_idea
+        for key in ("entry", "stop_loss", "take_profit"):
+            incoming = new_idea.get(key)
+            if cls._is_valid_level(incoming):
+                continue
+            existing_value = cls._extract_numeric(existing_idea.get(key))
+            if cls._is_valid_level(existing_value):
+                new_idea[key] = existing_value
+        return new_idea
+
+    @classmethod
+    def _enforce_lifecycle_transition(cls, *, existing: dict[str, Any] | None, proposed_status: str, signal: dict[str, Any]) -> str:
+        if existing is None:
+            return proposed_status
+        current = str(existing.get("status") or "").lower()
+        proposed = str(proposed_status or "").lower()
+        if current == proposed:
+            return proposed
+        allowed = ALLOWED_LIFECYCLE_TRANSITIONS.get(current, set())
+        if proposed in allowed:
+            return proposed
+        if proposed == IDEA_STATUS_WAITING and current in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            return current
+        return current
+
+    @staticmethod
+    def _resolve_idea_description(payload: dict[str, Any]) -> str:
+        for key in (
+            "unified_narrative",
+            "full_text",
+            "confluence_summary_ru",
+            "reason_ru",
+            "description_ru",
+            "short_scenario_ru",
+            "rationale",
+            "current_reasoning",
+        ):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+        return "Идея основана на структуре рынка, ликвидности и текущем импульсе. Сценарий ожидает подтверждения или обновления рыночных данных."
+
+    @staticmethod
     def _status_from_signal(signal: dict, existing: dict[str, Any] | None = None) -> str:
         action = signal.get("action", "NO_TRADE")
         if action == "NO_TRADE":
@@ -3735,8 +3840,10 @@ class TradeIdeaService:
         current = str(existing.get("status") or "").lower()
         if current in {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING}:
             return IDEA_STATUS_WAITING
-        if current in {IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE}:
+        if current == IDEA_STATUS_TRIGGERED:
             return IDEA_STATUS_ACTIVE
+        if current in {IDEA_STATUS_ACTIVE, IDEA_STATUS_ARCHIVED}:
+            return current
         return IDEA_STATUS_WAITING
 
     @staticmethod
@@ -4343,6 +4450,13 @@ class TradeIdeaService:
                 "liquidity_context_used": False,
             }
         self._grok_reasoning_cache[cache_key] = {"expires_at": now_ts + self._grok_reasoning_cache_ttl_seconds, "payload": payload}
+        payload["description_ru"] = self._resolve_idea_description(payload)
+        payload["reason_ru"] = str(payload.get("reason_ru") or payload["description_ru"]).strip() or payload["description_ru"]
+        payload["confluence_summary_ru"] = str(payload.get("confluence_summary_ru") or payload["reason_ru"]).strip() or payload["description_ru"]
+        payload["unified_narrative"] = str(payload.get("unified_narrative") or payload["description_ru"]).strip() or payload["description_ru"]
+        if status == str((existing or {}).get("status") or "").lower() and str(signal.get("action") or "").upper() == "NO_TRADE" and status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            payload["history"] = self._append_history_event(payload.get("history"), event_type="updated", note="Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation.", at=now.isoformat())
+            payload["updates"] = self._history_to_updates(payload.get("history"))
         return payload
 
     @staticmethod
@@ -5914,6 +6028,13 @@ class TradeIdeaService:
             "levels_validated": True,
             "levels_source": "current_price_formula",
         }
+        payload["description_ru"] = self._resolve_idea_description(payload)
+        payload["reason_ru"] = str(payload.get("reason_ru") or payload["description_ru"]).strip() or payload["description_ru"]
+        payload["confluence_summary_ru"] = str(payload.get("confluence_summary_ru") or payload["reason_ru"]).strip() or payload["description_ru"]
+        payload["unified_narrative"] = str(payload.get("unified_narrative") or payload["description_ru"]).strip() or payload["description_ru"]
+        if status == str((existing or {}).get("status") or "").lower() and str(signal.get("action") or "").upper() == "NO_TRADE" and status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            payload["history"] = self._append_history_event(payload.get("history"), event_type="updated", note="Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation.", at=now.isoformat())
+            payload["updates"] = self._history_to_updates(payload.get("history"))
         return payload
 
     def _build_market_aligned_fallbacks(
@@ -6099,6 +6220,13 @@ class TradeIdeaService:
         payload["chart_status"] = chart_status or ("fallback_candles" if chart_snapshot_status != "ok" else "snapshot")
         payload["chartStatus"] = payload["chart_status"]
         payload["confidence"] = int(TradeIdeaService._extract_numeric(payload.get("confidence")) or 0)
+        payload["description_ru"] = self._resolve_idea_description(payload)
+        payload["reason_ru"] = str(payload.get("reason_ru") or payload["description_ru"]).strip() or payload["description_ru"]
+        payload["confluence_summary_ru"] = str(payload.get("confluence_summary_ru") or payload["reason_ru"]).strip() or payload["description_ru"]
+        payload["unified_narrative"] = str(payload.get("unified_narrative") or payload["description_ru"]).strip() or payload["description_ru"]
+        if status == str((existing or {}).get("status") or "").lower() and str(signal.get("action") or "").upper() == "NO_TRADE" and status in {IDEA_STATUS_ACTIVE, IDEA_STATUS_TRIGGERED}:
+            payload["history"] = self._append_history_event(payload.get("history"), event_type="updated", note="Новый расчёт временно не подтвердил структуру, но активная идея сохраняется до TP/SL или invalidation.", at=now.isoformat())
+            payload["updates"] = self._history_to_updates(payload.get("history"))
         return payload
 
     @classmethod

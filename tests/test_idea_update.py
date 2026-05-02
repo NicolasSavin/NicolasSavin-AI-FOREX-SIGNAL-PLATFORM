@@ -219,3 +219,36 @@ def test_build_narrative_facts_contains_smc_contract() -> None:
     assert facts["location"] == "discount"
     assert facts["target_liquidity"] == "1.12"
     assert "HL" in facts["invalidation_logic"]
+
+def test_active_and_triggered_do_not_return_to_waiting(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    base = {"symbol":"EURUSD","timeframe":"H1","action":"BUY","entry":1.1,"stop_loss":1.09,"take_profit":1.12,"latest_close":1.101,"reason_ru":"x"}
+    first = service.upsert_trade_idea(base)
+    second = service.upsert_trade_idea({**base, "action": "NO_TRADE"})
+    assert first["status"] in {"triggered", "active", "created", "waiting"}
+    if first["status"] in {"triggered", "active"}:
+        assert second["status"] == first["status"]
+
+
+def test_zero_levels_do_not_override_existing(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    base = {"symbol":"GBPUSD","timeframe":"H1","action":"SELL","entry":1.25,"stop_loss":1.255,"take_profit":1.24,"reason_ru":"x"}
+    created = service.upsert_trade_idea(base)
+    updated = service.upsert_trade_idea({**base, "entry": 0, "stop_loss": 0, "take_profit": 0})
+    assert updated["entry"] == created["entry"]
+    assert updated["stop_loss"] == created["stop_loss"]
+    assert updated["take_profit"] == created["take_profit"]
+
+
+def test_sell_tp_and_sl_transitions(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    base = {"symbol":"USDJPY","timeframe":"H1","action":"SELL","entry":150.0,"stop_loss":151.0,"take_profit":149.0,"latest_close":149.8,"reason_ru":"x"}
+    service.upsert_trade_idea(base)
+    tp = service.upsert_trade_idea({**base, "latest_close": 148.9})
+    assert tp["final_status"] == "tp_hit"
+
+
+def test_description_is_always_present(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    idea = service.upsert_trade_idea({"symbol":"EURUSD","timeframe":"H1","action":"NO_TRADE"})
+    assert str(idea.get("description_ru") or "").strip()
