@@ -1758,6 +1758,8 @@ class TradeIdeaService:
             "current_price": latest_close,
             "sentiment": signal_sentiment,
             "smart_money_context": signal_smart_money_context,
+            "options_available": bool(((signal.get("options_analysis") if isinstance(signal.get("options_analysis"), dict) else {}).get("available"))),
+            "options_source": ((signal.get("options_analysis") if isinstance(signal.get("options_analysis"), dict) else {}).get("source")),
             "rationale": rationale,
             "created_at": created_at,
             "updated_at": now.isoformat(),
@@ -1796,6 +1798,7 @@ class TradeIdeaService:
                 is_fallback=narrative_quality == "generic_fallback",
                 combined=False,
             ),
+            "narrative_error": llm_result.error,
             "narrative_quality": narrative_quality,
             "narrative_uniqueness_hash": self._narrative_uniqueness_hash(
                 symbol=symbol,
@@ -4364,6 +4367,8 @@ class TradeIdeaService:
         existing_h4_bias = str(existing.get("h4_bias_summary") or "") if isinstance(existing, dict) else ""
         existing_h1_bias = str(existing.get("h1_bias_summary") or "") if isinstance(existing, dict) else ""
         existing_m15_bias = str(existing.get("m15_bias_summary") or "") if isinstance(existing, dict) else ""
+        options_snapshot = signal.get("options_analysis") if isinstance(signal.get("options_analysis"), dict) else {}
+        options_analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
         return {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -5717,6 +5722,7 @@ class TradeIdeaService:
                         "update_explanation": row.get("update_explanation") or row.get("update_summary") or "",
                         "update_reason": row.get("update_reason") or "",
                         "narrative_source": "local_dynamic" if (not has_model_narrative and local_reasoning.get("text")) else resolved_source,
+                        "narrative_error": row.get("narrative_error"),
                         "htf_context_used": bool(local_reasoning.get("htf_context_used")),
                         "liquidity_context_used": bool(local_reasoning.get("liquidity_context_used")),
                         "narrative_quality": narrative_quality,
@@ -5751,6 +5757,8 @@ class TradeIdeaService:
                         "overlay_data": overlay_payload,
                         "chart_overlays": chart_overlays,
                         "chart_overlays_present": self.is_meaningful_overlay_payload(chart_overlays),
+                        "options_available": bool(((row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {}).get("available"))),
+                        "options_source": ((row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {}).get("source")),
                         "zones": overlay_payload.get("zones", []),
                         "levels": overlay_payload.get("levels", []),
                         "labels": overlay_payload.get("labels", []),
