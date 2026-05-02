@@ -129,6 +129,14 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
 
             payload["ideas"] = _safe_attach_live_market_contracts(payload.get("ideas") or [], field="ideas")
             payload["archive"] = _safe_attach_live_market_contracts(payload.get("archive") or [], field="archive")
+            for idea in payload["ideas"]:
+                if not str(
+                    idea.get("description_ru")
+                    or idea.get("unified_narrative")
+                    or idea.get("confluence_summary_ru")
+                    or ""
+                ).strip():
+                    logger.warning("IDEA WITHOUT DESCRIPTION %s", idea.get("idea_id") or f"{idea.get('symbol')}:{idea.get('timeframe')}")
             payload["market"] = _safe_market_contracts(list(DEFAULT_PAIRS))
             return _localize_output_layer(payload)
         except Exception as exc:
