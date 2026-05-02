@@ -1992,7 +1992,9 @@
       };
 
       const handleRangeChange = () => requestRedraw();
+      const handleTimeRangeChange = () => requestRedraw();
       chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
+      chart.timeScale().subscribeVisibleTimeRangeChange(handleTimeRangeChange);
 
       const resizeChartToContainer = () => {
         const nextSize = typeof getChartSize === "function"
@@ -2024,6 +2026,7 @@
           resizeObserver = null;
         }
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+        chart.timeScale().unsubscribeVisibleTimeRangeChange(handleTimeRangeChange);
         window.removeEventListener("resize", handleWindowResize);
         document.removeEventListener("fullscreenchange", handleWindowResize);
       };
@@ -2086,26 +2089,23 @@
       svg.style.inset = "0";
       overlay.appendChild(svg);
 
-      const timeToX = (time) => chart.timeScale().timeToCoordinate(time);
+      const timeToX = (time) => {
+        if (time === undefined || time === null) return null;
+        const x = chart.timeScale().timeToCoordinate(time);
+        return Number.isFinite(x) ? x : null;
+      };
+      const anchorFromIndex = (index) => {
+        if (!Number.isFinite(index) || !candles.length) return null;
+        const safeIndex = Math.max(0, Math.min(candles.length - 1, Math.round(index)));
+        const candleTime = candles[safeIndex]?.time;
+        return candleTime === undefined || candleTime === null ? null : { time: candleTime };
+      };
       const xByAnchor = (anchor) => {
         if (!anchor || typeof anchor !== "object") return null;
-
-        if (anchor.time !== undefined && anchor.time !== null) {
-          const byTime = timeToX(anchor.time);
-          if (Number.isFinite(byTime)) return byTime;
-        }
-
-        if (Number.isFinite(anchor.index)) {
-          const safeIndex = Math.max(0, Math.min(candles.length - 1, Math.round(anchor.index)));
-          const byCandleTime = timeToX(candles[safeIndex]?.time);
-          if (Number.isFinite(byCandleTime)) return byCandleTime;
-          const byLogical = chart.timeScale().logicalToCoordinate(safeIndex);
-          if (Number.isFinite(byLogical)) return byLogical;
-        }
-
+        if (anchor.time !== undefined && anchor.time !== null) return timeToX(anchor.time);
+        if (Number.isFinite(anchor.index)) return xByAnchor(anchorFromIndex(anchor.index));
         return null;
       };
-      const xByIndex = (index) => xByAnchor({ index });
       const yByPrice = (price) => {
         const y = series.priceToCoordinate(Number(price));
         return Number.isFinite(y) ? y : null;
@@ -2117,9 +2117,9 @@
         const isBreaker = zone.type === "breaker";
         drawZone(
           svg,
-          xByIndex(zone.start),
+          xByAnchor(anchorFromIndex(zone.start)),
           yByPrice(zone.high),
-          xByIndex(zone.end),
+          xByAnchor(anchorFromIndex(zone.end)),
           yByPrice(zone.low),
           isBreaker ? "#ff4d6d" : "#b77cff",
           isBreaker ? "rgba(255,77,109,0.25)" : "rgba(139,92,246,0.24)",
@@ -2130,9 +2130,9 @@
       for (const zone of detected.fvg) {
         drawZone(
           svg,
-          xByIndex(zone.start),
+          xByAnchor(anchorFromIndex(zone.start)),
           yByPrice(zone.high),
-          xByIndex(zone.end),
+          xByAnchor(anchorFromIndex(zone.end)),
           yByPrice(zone.low),
           "#ff9f1c",
           "rgba(245,158,11,0.20)",
