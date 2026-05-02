@@ -3,6 +3,7 @@
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
 ## Что обновлено в версии 3.8
+- Добавлен отдельный Confluence Engine (`services/confluence/confluenceEngine.ts`): объединяет SMC + Liquidity + Options + Volume в единый institutional score, даёт fallback при отсутствии слоя, учитывает conflict/pinning warnings и возвращает финальный `signal/confidence/summary` breakdown.
 - Добавлен единый `CanonicalMarketService` и интерфейс `RealMarketDataProvider` для всех рыночных endpoint: `GET /price/{symbol}`, `GET /market`, `GET /chart/{symbol}/{tf}`, а также `GET /api/price/{symbol}`, `GET /api/market`, `GET /api/canonical/chart/{symbol}/{tf}`.
 - Добавлен MT4 Candle Bridge: `POST /api/mt4/push-candles` принимает реальные broker OHLC, хранит ограниченный in-memory буфер (до 600 баров на symbol/timeframe) и делает MT4 первичным источником в `fetch_candles()` с безопасным fallback на cache/TwelveData/Dukascopy при stale/empty bridge.
 - Trade idea графики переведены на server-side snapshot pipeline: при создании идеи backend получает реальные OHLC candles, строит PNG через `matplotlib`, сохраняет файл в `/static/charts/{symbol}_{timeframe}_{timestamp}.png` и возвращает путь как `chartImageUrl` (повторная генерация в modal больше не выполняется).

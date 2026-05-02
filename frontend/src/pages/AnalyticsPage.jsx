@@ -119,6 +119,24 @@ function getBiasMeta(bias) {
   };
 }
 
+
+function normalizeConfluence(value) {
+  const safe = toSafeObject(value);
+  return {
+    signal: typeof safe.signal === "string" ? safe.signal : "NEUTRAL",
+    score: Number.isFinite(safe.score) ? safe.score : 0,
+    confidence: Number.isFinite(safe.confidence) ? safe.confidence : 0,
+    summary: typeof safe.summary === "string" ? safe.summary : "Confluence summary недоступен.",
+    warnings: normalizeWarnings(safe.warnings),
+    breakdown: {
+      smartMoney: Number.isFinite(safe?.breakdown?.smartMoney) ? safe.breakdown.smartMoney : 0,
+      liquidity: Number.isFinite(safe?.breakdown?.liquidity) ? safe.breakdown.liquidity : 0,
+      options: Number.isFinite(safe?.breakdown?.options) ? safe.breakdown.options : 0,
+      volume: Number.isFinite(safe?.breakdown?.volume) ? safe.breakdown.volume : 0,
+    },
+  };
+}
+
 function formatUpdatedAt(date) {
   if (!date) return "—";
   return new Intl.DateTimeFormat("ru-RU", {
@@ -145,7 +163,8 @@ export default function AnalyticsPage() {
     const dataStatus = typeof dataStatusRaw === "string" ? dataStatusRaw : "unknown";
     const warnings = normalizeWarnings(safe.warnings);
     const pairs = parsePairsFromReply(reply);
-    return { source, dataStatus, warnings, pairs };
+    const confluence = normalizeConfluence(safe.confluenceAnalysis ?? safe.confluence ?? null);
+    return { source, dataStatus, warnings, pairs, confluence };
   }, [analysis]);
 
   const statusMeta = getStatusMeta(parsed.dataStatus);
@@ -205,6 +224,30 @@ export default function AnalyticsPage() {
           {error && (
             <div className="mt-4 rounded-lg border border-rose-600/40 bg-rose-950/20 p-3 text-sm text-rose-200">{error}</div>
           )}
+        </section>
+
+
+        <section className="rounded-2xl border border-violet-500/30 bg-violet-950/10 p-5 shadow-xl shadow-violet-950/20">
+          <h2 className="text-lg font-semibold text-violet-200">Confluence Analysis</h2>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-lg border border-slate-700/80 bg-slate-900/70 p-3">
+              <p className="text-slate-400">Общий score</p><p className="text-2xl font-bold text-violet-200">{parsed.confluence.score}</p>
+            </div>
+            <div className="rounded-lg border border-slate-700/80 bg-slate-900/70 p-3">
+              <p className="text-slate-400">Confidence</p><p className="text-2xl font-bold text-cyan-200">{parsed.confluence.confidence}%</p>
+            </div>
+            <div className="rounded-lg border border-slate-700/80 bg-slate-900/70 p-3">
+              <p className="text-slate-400">Signal</p><p className="text-2xl font-bold text-emerald-200">{parsed.confluence.signal}</p>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-slate-300">
+            <p>SMC: {parsed.confluence.breakdown.smartMoney}</p>
+            <p>Liquidity: {parsed.confluence.breakdown.liquidity}</p>
+            <p>Options: {parsed.confluence.breakdown.options}</p>
+            <p>Volume: {parsed.confluence.breakdown.volume}</p>
+          </div>
+          <p className="mt-3 whitespace-pre-line text-sm text-slate-200">{parsed.confluence.summary}</p>
+          <p className="mt-2 text-xs text-amber-200">{parsed.confluence.warnings.length ? parsed.confluence.warnings.join(" • ") : "Warnings: нет"}</p>
         </section>
 
         <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
