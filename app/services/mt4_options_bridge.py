@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -11,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 MT4_OPTIONS_LEVELS_TTL_SECONDS = int(os.getenv("MT4_OPTIONS_LEVELS_TTL_SECONDS", "21600"))
 _OPTIONS_STORE: dict[str, dict[str, Any]] = {}
+_OPTIONS_STORAGE_PATH = Path("signals_data/mt4_options_levels.json")
 
 
 def normalize_symbol(symbol: str) -> str:
@@ -61,8 +64,35 @@ def save_options_levels(payload: dict[str, Any]) -> dict[str, Any]:
     }
     if symbol:
         _OPTIONS_STORE[symbol] = entry
+        _persist_options_store()
     logger.info("MT4 options levels received symbol=%s count=%s", symbol, len(levels))
     return entry
+
+
+def _persist_options_store() -> None:
+    try:
+        _OPTIONS_STORAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _OPTIONS_STORAGE_PATH.write_text(json.dumps(_OPTIONS_STORE, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("mt4_options_levels_persist_failed reason=%s", exc)
+
+
+def _load_options_store_from_disk() -> None:
+    if not _OPTIONS_STORAGE_PATH.exists():
+        return
+    try:
+        payload = json.loads(_OPTIONS_STORAGE_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("mt4_options_levels_load_failed reason=%s", exc)
+        return
+    if not isinstance(payload, dict):
+        return
+    for key, entry in payload.items():
+        if not isinstance(entry, dict):
+            continue
+        symbol = normalize_symbol(entry.get("symbol") or key)
+        if symbol:
+            _OPTIONS_STORE[symbol] = entry
 
 
 def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
@@ -124,6 +154,9 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
 def get_latest_options_levels(symbol: str) -> dict[str, Any]:
     normalized = normalize_symbol(symbol)
     entry = _OPTIONS_STORE.get(normalized)
+    if not entry:
+        _load_options_store_from_disk()
+        entry = _OPTIONS_STORE.get(normalized)
     if not entry:
         return {"available": False, "reason": "No MT4 option levels received"}
     stale = is_stale(entry.get("timestamp"))
