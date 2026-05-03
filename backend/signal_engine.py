@@ -116,6 +116,7 @@ class SignalEngine:
                         mtf = snapshots_cache.get(timeframe, {"candles": [], "data_status": "unavailable"})
                         signal = self._fallback_signal(symbol=symbol, timeframe=timeframe, snapshot=mtf, features={})
                         signal["pipeline_debug"]["reason_if_skipped"] = f"exception:{type(exc).__name__}"
+                    signal = self._attach_options_to_signal(signal, options_snapshot, symbol=symbol)
                     output.append(signal)
                     debug = signal.get("pipeline_debug", {})
                     logger.debug(
@@ -139,6 +140,39 @@ class SignalEngine:
                     len(requested_timeframes),
                 )
         return output
+
+    def _attach_options_to_signal(self, signal: dict, options_snapshot: dict | None, *, symbol: str | None = None) -> dict:
+        signal = signal if isinstance(signal, dict) else {}
+        snapshot = options_snapshot if isinstance(options_snapshot, dict) else {}
+        market_context = signal.get("market_context") if isinstance(signal.get("market_context"), dict) else {}
+        resolved_symbol = str(symbol or signal.get("symbol") or snapshot.get("symbol") or "").upper().strip()
+        analysis = snapshot.get("analysis") if isinstance(snapshot.get("analysis"), dict) else {}
+        available = bool(snapshot.get("available"))
+        source = str(snapshot.get("source") or analysis.get("source") or "unavailable")
+        summary_ru = str(analysis.get("summary_ru") or signal.get("options_summary_ru") or "").strip()
+        if available and source in {"mt4", "mt4_options"}:
+            source = "mt4_optionsfx"
+        if available and source not in {"mt4_optionsfx", "cme_scraping"}:
+            source = "mt4_optionsfx" if str(snapshot.get("provider") or "").lower().startswith("mt4") else "cme_scraping"
+        options_payload = {
+            "available": available,
+            "source": source if available else "unavailable",
+            "analysis": analysis if isinstance(analysis, dict) else {},
+            "summary_ru": summary_ru,
+        }
+        signal["options_analysis"] = options_payload
+        signal["options_source"] = options_payload["source"]
+        signal["options_available"] = available
+        signal["options_summary_ru"] = summary_ru or ("Опционный слой сейчас недоступен." if not available else "Данные options layer получены.")
+        signal["options_impact"] = signal.get("options_impact", 0)
+        market_context["optionsAnalysis"] = options_payload
+        market_context["options_available"] = available
+        market_context["options_source"] = options_payload["source"]
+        signal["market_context"] = market_context
+        signal["debug_options_source_selected"] = options_payload["source"]
+        signal["debug_options_available"] = available
+        signal["debug_options_symbol_checked"] = resolved_symbol
+        return signal
 
     def _ensure_idea_text_fields(self, signal: dict) -> dict:
         description_ru = str(signal.get("description_ru") or "").strip()

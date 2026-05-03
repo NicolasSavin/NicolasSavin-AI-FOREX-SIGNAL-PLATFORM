@@ -19,6 +19,7 @@ from app.services.narrative_generator import generate_signal_preview_text, gener
 from app.services.smc_detector import SmcDetector
 from app.services.storage.json_storage import JsonStorage
 from app.services.trade_idea_stats_service import TradeIdeaStatsService
+from app.services.mt4_options_bridge import get_latest_options_levels
 from backend.data_provider import DataProvider
 from backend.signal_engine import SignalEngine
 
@@ -258,6 +259,7 @@ class TradeIdeaService:
             payload = {"updated_at_utc": payload.get("updated_at_utc"), "ideas": ideas}
         active_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES]
         archived_ideas = [idea for idea in payload.get("ideas", []) if str(idea.get("status")).lower() in CLOSED_STATUSES]
+        active_ideas = [self._hydrate_live_options(idea) for idea in active_ideas]
         combined_active_ideas = self._combine_ideas_by_instrument(active_ideas)
         combined_active_ideas = self._attach_fundamental_context(combined_active_ideas)
         if not combined_active_ideas and not archived_ideas:
@@ -274,6 +276,38 @@ class TradeIdeaService:
         }
         self.legacy_store.write(legacy)
         return legacy
+
+    def _hydrate_live_options(self, idea: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(idea, dict):
+            return idea
+        symbol = str(idea.get("symbol") or "").upper().strip()
+        if not symbol:
+            return idea
+        options_snapshot = get_latest_options_levels(symbol)
+        if not bool(options_snapshot.get("available")):
+            return idea
+        analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
+        source = str(options_snapshot.get("source") or analysis.get("source") or "mt4_optionsfx")
+        if source in {"mt4", "mt4_options"}:
+            source = "mt4_optionsfx"
+        summary_ru = str(analysis.get("summary_ru") or "").strip()
+        options_payload = {
+            "available": True,
+            "source": source,
+            "analysis": analysis,
+            "summary_ru": summary_ru,
+        }
+        hydrated = dict(idea)
+        market_context = hydrated.get("market_context") if isinstance(hydrated.get("market_context"), dict) else {}
+        hydrated["options_analysis"] = options_payload
+        hydrated["options_source"] = source
+        hydrated["options_available"] = True
+        hydrated["options_summary_ru"] = summary_ru
+        market_context["optionsAnalysis"] = options_payload
+        market_context["options_available"] = True
+        market_context["options_source"] = source
+        hydrated["market_context"] = market_context
+        return hydrated
 
     @staticmethod
     def _parse_iso_utc(value: Any) -> datetime | None:
@@ -569,6 +603,8 @@ class TradeIdeaService:
             )
 
             card = dict(preferred_timeframe_idea)
+            options_source_idea = m15 or h1 or h4 or narrative_source_idea
+            options_market_context = options_source_idea.get("market_context") if isinstance(options_source_idea.get("market_context"), dict) else {}
             card.update(
                 {
                     "id": f"{symbol.lower()}-combined",
@@ -615,6 +651,14 @@ class TradeIdeaService:
                     "updated_at": latest_update,
                     "meaningful_updated_at": latest_update,
                     "tags": [symbol, "MTF", final_signal.upper(), *sorted(timeframe_map.keys())],
+                    "options_analysis": options_source_idea.get("options_analysis"),
+                    "options_source": options_source_idea.get("options_source"),
+                    "options_available": options_source_idea.get("options_available"),
+                    "options_summary_ru": options_source_idea.get("options_summary_ru"),
+                    "market_context": {
+                        **(card.get("market_context") if isinstance(card.get("market_context"), dict) else {}),
+                        "optionsAnalysis": options_market_context.get("optionsAnalysis"),
+                    },
                 }
             )
             combined_cards.append(card)
@@ -4485,7 +4529,41 @@ class TradeIdeaService:
 
     @staticmethod
     def _to_legacy_card(idea: dict[str, Any]) -> dict[str, Any]:
-        return idea
+        card = dict(idea) if isinstance(idea, dict) else {}
+        market_context = card.get("market_context") if isinstance(card.get("market_context"), dict) else {}
+        options_analysis = card.get("options_analysis") if isinstance(card.get("options_analysis"), dict) else {}
+        options_available = bool(
+            card.get("options_available")
+            or options_analysis.get("available")
+            or market_context.get("options_available")
+        )
+        options_source = str(
+            card.get("options_source")
+            or options_analysis.get("source")
+            or market_context.get("options_source")
+            or "unavailable"
+        )
+        options_summary = str(
+            card.get("options_summary_ru")
+            or options_analysis.get("summary_ru")
+            or ""
+        )
+        card["options_analysis"] = options_analysis
+        card["optionsSource"] = options_source
+        card["options_source"] = options_source
+        card["optionsAvailable"] = options_available
+        card["options_available"] = options_available
+        card["optionsSummaryRu"] = options_summary
+        card["options_summary_ru"] = options_summary
+        market_context["optionsAnalysis"] = (
+            market_context.get("optionsAnalysis")
+            if isinstance(market_context.get("optionsAnalysis"), dict)
+            else options_analysis
+        )
+        card["market_context"] = market_context
+        card["debug_options_source_selected"] = str(card.get("debug_options_source_selected") or options_source)
+        card["debug_options_available"] = bool(card.get("debug_options_available", options_available))
+        return card
 
     @staticmethod
     def _resolve_narrative_source_label(value: Any, *, is_fallback: bool = False, combined: bool = False) -> str:
