@@ -2763,7 +2763,7 @@
       const maxPain = analysis.maxPain ?? idea?.market_context?.options_max_pain ?? "—";
       const bias = analysis.bias || idea.options_bias || "—";
       const impact = idea.options_impact || idea?.options_analysis?.impact || "—";
-      const summary = idea.options_summary_ru || oa.summary_ru || (available ? "Данные options layer получены." : "Опционный слой CME сейчас недоступен, поэтому идея рассчитана без подтверждения options layer.");
+      const summary = idea.options_summary_ru || oa.summary_ru || (available ? "Данные options layer получены." : "Опционный слой сейчас недоступен, поэтому идея рассчитана без подтверждения options layer.");
       return `
       <div class="modal-section-title">Options Analysis</div>
       <div class="box modal-text">

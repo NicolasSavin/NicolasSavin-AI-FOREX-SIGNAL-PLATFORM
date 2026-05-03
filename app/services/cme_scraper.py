@@ -168,7 +168,7 @@ async def get_cme_market_snapshot(pair: str) -> dict[str, Any]:
 
         payload = {
             "available": True,
-            "source": "cme_scraping",
+            "source": "cme",
             "source_priority": 2,
             "symbol": mapping["code"],
             "futures": {

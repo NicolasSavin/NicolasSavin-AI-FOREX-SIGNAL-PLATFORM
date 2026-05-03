@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 import os
+from typing import Any
 from uuid import uuid4
 
 from backend.data_provider import DataProvider
@@ -12,6 +13,7 @@ from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
 from backend.sentiment_provider import build_sentiment_provider
 from app.services.cme_scraper import get_cme_market_snapshot
+from app.services.mt4_options_bridge import get_latest_options_levels
 from backend.signals import build_trade_levels, default_invalidation_text, has_minimum_confluence, infer_action
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
@@ -728,11 +730,29 @@ class SignalEngine:
         return 0
 
     def _resolve_options_analysis(self, options_snapshot: dict | None) -> dict:
-        analysis = (options_snapshot or {}).get("analysis") if isinstance(options_snapshot, dict) else {}
-        if not isinstance(analysis, dict) or not options_snapshot or not options_snapshot.get("available"):
-            return {"available": False}
+        snapshot = options_snapshot if isinstance(options_snapshot, dict) else {}
+        symbol = str(snapshot.get("symbol") or "").upper().strip()
+        mt4_snapshot = get_latest_options_levels(symbol) if symbol else {}
+        mt4_analysis = mt4_snapshot.get("analysis") if isinstance(mt4_snapshot.get("analysis"), dict) else {}
+
+        selected: dict[str, Any] = {}
+        source = "unavailable"
+        if mt4_snapshot.get("available") and mt4_analysis.get("available"):
+            selected = mt4_analysis
+            source = "mt4_optionsfx"
+        else:
+            cme_analysis = snapshot.get("analysis") if isinstance(snapshot.get("analysis"), dict) else {}
+            if snapshot.get("available") and isinstance(cme_analysis, dict):
+                selected = cme_analysis
+                source = "cme"
+
+        logger.info("Options source selected %s", source)
+        if not selected:
+            return {"available": False, "source": "unavailable"}
+
+        analysis = selected
         if analysis.get("stale"):
-            return {"available": False, "stale": True, "source": analysis.get("source") or options_snapshot.get("source")}
+            return {"available": False, "stale": True, "source": analysis.get("source") or source}
         put_call = analysis.get("putCallRatio")
         max_pain = analysis.get("maxPain")
         key_strikes = analysis.get("keyStrikes") or analysis.get("keyLevels") or []
@@ -756,10 +776,11 @@ class SignalEngine:
             "barrierZones": analysis.get("barrierZones") or {},
             "targetLevels": analysis.get("targetLevels") or [],
             "hedgeLevels": analysis.get("hedgeLevels") or [],
-            "source": analysis.get("source") or options_snapshot.get("source"),
-            "source_priority": analysis.get("source_priority") or options_snapshot.get("source_priority"),
+            "summary_ru": analysis.get("summary_ru"),
+            "source": "mt4_optionsfx" if source == "mt4_optionsfx" else "cme",
+            "source_priority": 1 if source == "mt4_optionsfx" else 2,
             "stale": bool(analysis.get("stale")),
-            "last_updated": analysis.get("last_updated") or options_snapshot.get("last_updated"),
+            "last_updated": analysis.get("last_updated") or snapshot.get("last_updated"),
         }
 
     def applyOptionsImpact(self, signal: dict, optionsAnalysis: dict, apply_confidence: bool = True) -> dict:
