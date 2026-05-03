@@ -257,9 +257,9 @@ class TradeIdeaService:
             self.idea_store.write(payload)
         else:
             payload = {"updated_at_utc": payload.get("updated_at_utc"), "ideas": ideas}
-        active_ideas = [idea for idea in payload.get("ideas", []) if idea.get("status") in ACTIVE_STATUSES]
+        ideas = [self._hydrate_live_options(idea) for idea in payload.get("ideas", [])]
+        active_ideas = [idea for idea in ideas if idea.get("status") in ACTIVE_STATUSES]
         archived_ideas = [idea for idea in payload.get("ideas", []) if str(idea.get("status")).lower() in CLOSED_STATUSES]
-        active_ideas = [self._hydrate_live_options(idea) for idea in active_ideas]
         combined_active_ideas = self._combine_ideas_by_instrument(active_ideas)
         combined_active_ideas = self._attach_fundamental_context(combined_active_ideas)
         if not combined_active_ideas and not archived_ideas:
@@ -280,32 +280,36 @@ class TradeIdeaService:
     def _hydrate_live_options(self, idea: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(idea, dict):
             return idea
+        hydrated = dict(idea)
         symbol = str(idea.get("symbol") or "").upper().strip()
+        hydrated["debug_options_symbol_checked"] = symbol
         if not symbol:
-            return idea
-        options_snapshot = get_latest_options_levels(symbol)
+            hydrated["debug_options_available"] = False
+            hydrated["debug_options_source_selected"] = "unavailable"
+            return hydrated
+        try:
+            options_snapshot = get_latest_options_levels(symbol)
+        except Exception:
+            options_snapshot = {"available": False, "source": "unavailable"}
+        mt4_available = bool(options_snapshot.get("available"))
+        mt4_source = str(options_snapshot.get("source") or "unavailable")
+        hydrated["debug_options_available"] = mt4_available
+        hydrated["debug_options_source_selected"] = mt4_source
         if not bool(options_snapshot.get("available")):
-            return idea
+            return hydrated
         analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
         source = str(options_snapshot.get("source") or analysis.get("source") or "mt4_optionsfx")
         if source in {"mt4", "mt4_options"}:
             source = "mt4_optionsfx"
         summary_ru = str(analysis.get("summary_ru") or "").strip()
-        options_payload = {
-            "available": True,
-            "source": source,
-            "analysis": analysis,
-            "summary_ru": summary_ru,
-        }
-        hydrated = dict(idea)
         market_context = hydrated.get("market_context") if isinstance(hydrated.get("market_context"), dict) else {}
-        hydrated["options_analysis"] = options_payload
-        hydrated["options_source"] = source
+        hydrated["options_analysis"] = analysis
+        hydrated["options_source"] = "mt4_optionsfx"
         hydrated["options_available"] = True
         hydrated["options_summary_ru"] = summary_ru
-        market_context["optionsAnalysis"] = options_payload
+        market_context["optionsAnalysis"] = analysis
         market_context["options_available"] = True
-        market_context["options_source"] = source
+        market_context["options_source"] = "mt4_optionsfx"
         hydrated["market_context"] = market_context
         return hydrated
 
@@ -603,7 +607,7 @@ class TradeIdeaService:
             )
 
             card = dict(preferred_timeframe_idea)
-            options_candidates = [item for item in (m15, h1, h4, narrative_source_idea) if isinstance(item, dict)]
+            options_candidates = [item for item in (m15, h1, h4, narrative_source_idea, symbol_ideas[0]) if isinstance(item, dict)]
             options_source_idea = next((item for item in options_candidates if item.get("options_analysis")), options_candidates[0] if options_candidates else {})
             options_market_context = options_source_idea.get("market_context") if isinstance(options_source_idea.get("market_context"), dict) else {}
 
@@ -663,6 +667,9 @@ class TradeIdeaService:
                     "options_source": _first_options_value("options_source"),
                     "options_available": bool(_first_options_value("options_available")),
                     "options_summary_ru": _first_options_value("options_summary_ru"),
+                    "debug_options_source_selected": _first_options_value("debug_options_source_selected"),
+                    "debug_options_available": bool(_first_options_value("debug_options_available")),
+                    "debug_options_symbol_checked": _first_options_value("debug_options_symbol_checked"),
                     "market_context": {
                         **(card.get("market_context") if isinstance(card.get("market_context"), dict) else {}),
                         "optionsAnalysis": options_market_context.get("optionsAnalysis"),
@@ -4540,22 +4547,9 @@ class TradeIdeaService:
         card = dict(idea) if isinstance(idea, dict) else {}
         market_context = card.get("market_context") if isinstance(card.get("market_context"), dict) else {}
         options_analysis = card.get("options_analysis") if isinstance(card.get("options_analysis"), dict) else {}
-        options_available = bool(
-            card.get("options_available")
-            or options_analysis.get("available")
-            or market_context.get("options_available")
-        )
-        options_source = str(
-            card.get("options_source")
-            or options_analysis.get("source")
-            or market_context.get("options_source")
-            or "unavailable"
-        )
-        options_summary = str(
-            card.get("options_summary_ru")
-            or options_analysis.get("summary_ru")
-            or ""
-        )
+        options_available = bool(card.get("options_available"))
+        options_source = str(card.get("options_source") or "unavailable")
+        options_summary = str(card.get("options_summary_ru") or "")
         card["options_analysis"] = options_analysis
         card["optionsSource"] = options_source
         card["options_source"] = options_source
@@ -4570,7 +4564,8 @@ class TradeIdeaService:
         )
         card["market_context"] = market_context
         card["debug_options_source_selected"] = str(card.get("debug_options_source_selected") or options_source)
-        card["debug_options_available"] = bool(card.get("debug_options_available", options_available))
+        card["debug_options_available"] = bool(card.get("debug_options_available"))
+        card["debug_options_symbol_checked"] = str(card.get("debug_options_symbol_checked") or card.get("symbol") or "")
         return card
 
     @staticmethod

@@ -72,7 +72,11 @@ def save_options_levels(payload: dict[str, Any]) -> dict[str, Any]:
 def _persist_options_store() -> None:
     try:
         _OPTIONS_STORAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _OPTIONS_STORAGE_PATH.write_text(json.dumps(_OPTIONS_STORE, ensure_ascii=False), encoding="utf-8")
+        payload = {
+            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "symbols": _OPTIONS_STORE,
+        }
+        _OPTIONS_STORAGE_PATH.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     except Exception as exc:
         logger.warning("mt4_options_levels_persist_failed reason=%s", exc)
 
@@ -87,7 +91,10 @@ def _load_options_store_from_disk() -> None:
         return
     if not isinstance(payload, dict):
         return
-    for key, entry in payload.items():
+    symbols_payload = payload.get("symbols") if isinstance(payload.get("symbols"), dict) else payload
+    if not isinstance(symbols_payload, dict):
+        return
+    for key, entry in symbols_payload.items():
         if not isinstance(entry, dict):
             continue
         symbol = normalize_symbol(entry.get("symbol") or key)
@@ -158,7 +165,7 @@ def get_latest_options_levels(symbol: str) -> dict[str, Any]:
         _load_options_store_from_disk()
         entry = _OPTIONS_STORE.get(normalized)
     if not entry:
-        return {"available": False, "reason": "No MT4 option levels received"}
+        return {"available": False, "reason": "No MT4 option levels received", "source": "unavailable"}
     stale = is_stale(entry.get("timestamp"))
     analysis = _build_analysis(entry)
     analysis["stale"] = stale
@@ -166,4 +173,5 @@ def get_latest_options_levels(symbol: str) -> dict[str, Any]:
     if stale:
         analysis["available"] = False
         analysis["reason"] = "No MT4 option levels received"
-    return {**entry, "analysis": analysis, "available": analysis["available"], "stale": stale, "source": "mt4_optionsfx"}
+    source = "mt4_optionsfx" if analysis["available"] else "unavailable"
+    return {**entry, "analysis": analysis, "available": analysis["available"], "stale": stale, "source": source}
