@@ -18,7 +18,10 @@ def get_openrouter_api_key() -> str | None:
 
 
 def get_openrouter_model() -> str:
-    return get_env("OPENROUTER_MODEL", "deepseek/deepseek-chat") or "deepseek/deepseek-chat"
+    model = get_env("OPENROUTER_MODEL")
+    if model:
+        return model
+    return "x-ai/grok-3-mini"
 
 
 def get_twelvedata_api_key() -> str | None:
