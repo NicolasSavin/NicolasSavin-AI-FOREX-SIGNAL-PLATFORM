@@ -500,7 +500,7 @@ class SignalEngine:
         )
         confidence += sentiment_delta
         confidence = max(20, min(confidence, 92))
-        resolved_options = self._resolve_options_analysis(options_snapshot)
+        resolved_options = self._resolve_options_analysis(options_snapshot, symbol=symbol)
         options_applied = self.applyOptionsImpact(
             signal={"action": action, "entry": price, "confidence_percent": confidence, "reason_ru": "", "warning": analysis_contract["warning"]},
             optionsAnalysis=resolved_options,
@@ -641,7 +641,9 @@ class SignalEngine:
             "chart_patterns": mtf_patterns,
             "pattern_summary": mtf_pattern_summary,
             "pattern_signal_impact": pattern_impact,
-            "options_analysis": options_snapshot,
+            "options_analysis": options_applied.get("options_analysis"),
+            "options_source": resolved_options.get("source") or "unavailable",
+            "options_available": bool(resolved_options.get("available")),
             "options_impact": options_applied.get("options_impact"),
             "options_direction_delta": options_direction_delta,
             "options_summary_ru": options_applied.get("options_summary_ru"),
@@ -687,6 +689,7 @@ class SignalEngine:
                 "optionsImpact": options_applied.get("options_impact", 0),
                 "optionsSummaryRu": options_applied.get("options_summary_ru"),
                 "optionsAnalysis": options_applied.get("options_analysis"),
+                "options_source": resolved_options.get("source") or "unavailable",
                 "weak_reasons": weak_reasons,
                 "scenario_type": scenario_type,
                 "validation_state": validation_state,
@@ -696,7 +699,7 @@ class SignalEngine:
                 "invalidation_reasoning": invalidation_reasoning,
                 "fallback_used": is_fallback_mode,
                 "signal_threshold": signal_threshold,
-                "options_available": options_available,
+                "options_available": bool(resolved_options.get("available")),
                 "options_put_call_ratio": options_analysis.get("putCallRatio"),
                 "options_key_strikes": options_analysis.get("keyStrikes") or [],
                 "options_max_pain": options_analysis.get("maxPain"),
@@ -733,10 +736,10 @@ class SignalEngine:
                 return -5
         return 0
 
-    def _resolve_options_analysis(self, options_snapshot: dict | None) -> dict:
+    def _resolve_options_analysis(self, options_snapshot: dict | None, *, symbol: str | None = None) -> dict:
         snapshot = options_snapshot if isinstance(options_snapshot, dict) else {}
-        symbol = str(snapshot.get("symbol") or "").upper().strip()
-        mt4_snapshot = get_latest_options_levels(symbol) if symbol else {}
+        resolved_symbol = str(symbol or snapshot.get("symbol") or "").upper().strip()
+        mt4_snapshot = get_latest_options_levels(resolved_symbol) if resolved_symbol else {}
         mt4_analysis = mt4_snapshot.get("analysis") if isinstance(mt4_snapshot.get("analysis"), dict) else {}
 
         selected: dict[str, Any] = {}
