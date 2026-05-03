@@ -1616,6 +1616,7 @@
         </div>
 
         <div class="box">${escapeHtml(summary)}</div>
+        ${renderOptionsCardSummary(idea)}
         <div class="status-line">
           <span class="badge ${statusView.badgeClass}">${escapeHtml(statusView.icon + " " + statusView.label)}</span>
         </div>
@@ -2773,17 +2774,35 @@
       const strikes = Array.isArray(strikesRaw) ? strikesRaw.join(", ") : (strikesRaw || "—");
       const maxPain = analysis.maxPain ?? idea?.market_context?.options_max_pain ?? "—";
       const bias = analysis.bias || idea.options_bias || "—";
-      const summary = analysis.summary_ru || idea.options_summary_ru || (available ? "Данные MT4 OptionsFX получены." : "Опционный слой CME сейчас недоступен.");
+      const support = Array.isArray(analysis?.barrierZones?.support) ? analysis.barrierZones.support.join(", ") : "—";
+      const resistance = Array.isArray(analysis?.barrierZones?.resistance) ? analysis.barrierZones.resistance.join(", ") : "—";
+      const summary = analysis.summary_ru || idea.options_summary_ru || (available ? "Опционные уровни получены." : "Опционный слой недоступен — нет свежих данных.");
+      if (!available) {
+        return `
+        <div class="modal-section-title">Опционный анализ</div>
+        <div class="box modal-text">Опционный слой недоступен — нет свежих данных.</div>`;
+      }
       return `
-      <div class="modal-section-title">Options Analysis</div>
+      <div class="modal-section-title">Опционный анализ</div>
       <div class="box modal-text">
-        <div><strong>Source:</strong> ${escapeHtml(source)}</div>
-        <div><strong>Status:</strong> ${escapeHtml(status)}</div>
-        <div><strong>Key levels:</strong> ${escapeHtml(String(strikes))}</div>
+        <div><strong>Источник:</strong> ${escapeHtml(source)}</div>
+        <div><strong>Смещение:</strong> ${escapeHtml(String(bias))}</div>
         <div><strong>Max pain:</strong> ${escapeHtml(String(maxPain))}</div>
-        <div><strong>Options bias:</strong> ${escapeHtml(String(bias))}</div>
-        <div><strong>Summary:</strong> ${escapeHtml(String(summary))}</div>
+        <div><strong>Key strikes/levels:</strong> ${escapeHtml(String(strikes))}</div>
+        <div><strong>Barrier support:</strong> ${escapeHtml(String(support))}</div>
+        <div><strong>Barrier resistance:</strong> ${escapeHtml(String(resistance))}</div>
+        <div><strong>Сводка:</strong> ${escapeHtml(String(summary))}</div>
       </div>`;
+    }
+
+    function renderOptionsCardSummary(idea) {
+      const optionsAvailable = Boolean(idea?.options_available);
+      const source = String(idea?.options_source || "unavailable");
+      const summary = String(idea?.options_summary_ru || "").trim();
+      if (!optionsAvailable) {
+        return `<div class="box">Опционный слой недоступен — нет свежих данных.</div>`;
+      }
+      return `<div class="box"><strong>Опционный анализ:</strong> ${escapeHtml(source)} • ${escapeHtml(summary || "Данные получены.")}</div>`;
     }
 
     function normalizeSymbol(value) {

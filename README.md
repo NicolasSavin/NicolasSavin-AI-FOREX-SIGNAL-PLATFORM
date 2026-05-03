@@ -369,3 +369,29 @@ TWELVEDATA_OUTPUTSIZE=50
 - В `TradeIdeaService` добавлена единая оркестрация для идеи: свечи нормализуются один раз и затем переиспользуются в SMC/overlay/chart/narrative этапах.
 - Диагностика расширена полями `candles_count_sent`, `candles_count_used`, `data_provider`, `analysis_mode`, `data_quality`, `fallback_used`, `chart_overlays_present`, `chart_snapshot_status`, `chartImageUrl`.
 - Рендер карточек `/ideas` переведён в режим «чистого рендера»: приоритет текста `idea_thesis -> unified_narrative -> full_text -> summary`, а при отсутствии PNG используется fallback-линейный chart по свечам из API.
+
+## Проверка ingest опционных уровней для /ideas
+
+Endpoint `POST /api/options/levels` позволяет загрузить реальные/ручные/MT4 уровни опционного слоя в Ideas без synthetic-данных. Прямой scraping CME остаётся отдельной задачей, но ingest-слой уже позволяет питать `/ideas/market` и `/api/ideas` актуальными уровнями из `manual | mt4_optionsfx | cme_public`.
+
+Проверка вручную:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/options/levels \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "EURUSD",
+    "underlying_price": 1.085,
+    "timestamp": "2026-05-03T12:00:00Z",
+    "source": "mt4_optionsfx",
+    "levels": [
+      {"type": "max_pain", "price": 1.08},
+      {"type": "put", "price": 1.075},
+      {"type": "call", "price": 1.095}
+    ],
+    "metadata": {}
+  }'
+
+curl http://127.0.0.1:8000/api/options/levels/EURUSD
+curl http://127.0.0.1:8000/ideas/market
+```

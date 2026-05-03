@@ -147,7 +147,7 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "available": bool(levels),
-        "source": "mt4_optionsfx",
+        "source": str(entry.get("source") or "mt4_optionsfx"),
         "source_priority": 1,
         "keyLevels": key_levels,
         "keyStrikes": key_levels,
@@ -181,5 +181,5 @@ def get_latest_options_levels(symbol: str) -> dict[str, Any]:
     if stale:
         analysis["available"] = False
         analysis["reason"] = "No MT4 option levels received"
-    source = "mt4_optionsfx" if analysis["available"] else "unavailable"
+    source = str(entry.get("source") or "mt4_optionsfx") if analysis["available"] else "unavailable"
     return {**entry, "analysis": analysis, "available": analysis["available"], "stale": stale, "source": source}
