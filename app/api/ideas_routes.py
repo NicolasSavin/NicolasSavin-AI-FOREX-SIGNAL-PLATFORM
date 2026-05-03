@@ -222,10 +222,27 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
         return services.trade_idea_service.rebuild_missing_idea_assets(force=True)
 
     @router.post("/api/ideas/regenerate-all-narratives")
-    async def regenerate_all_narratives():
-        logger.info("ideas_narrative_regenerate_all_started")
-        result = services.trade_idea_service.regenerate_all_narratives()
-        updated = int(result.get("updated") or 0) if isinstance(result, dict) else 0
+    def regenerate_all_narratives():
+        from app.services.trade_idea_service import TradeIdeaService
+
+        service = TradeIdeaService()
+        ideas = service.load_trade_ideas()
+
+        updated = 0
+        for idea in ideas:
+            context = service.build_context_for_idea(idea)
+            result = service.narrative_llm.generate(context)
+
+            if result:
+                idea["idea_article_ru"] = result.get("idea_article_ru") or result.get("unified_narrative")
+                idea["narrative_source"] = result.get("source")
+                idea["narrative_model"] = result.get("model")
+                idea["narrative_error"] = result.get("error")
+                updated += 1
+
+        service.save_trade_ideas(ideas)
+        service.refresh_market_ideas()
+
         return {
             "status": "ok",
             "updated": updated,
