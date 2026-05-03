@@ -47,3 +47,58 @@ def test_empty_levels_are_safe():
     save_options_levels({"symbol": "AUDUSD", "levels": []})
     payload = get_latest_options_levels("AUDUSD")
     assert payload["available"] is False
+
+
+def test_derived_straddle_from_call_put_same_strike():
+    save_options_levels({
+        "symbol": "EURUSD",
+        "underlying_price": 1.1000,
+        "levels": [
+            {"type": "call", "price": 1.1010},
+            {"type": "put", "price": 1.1010},
+        ],
+    })
+    payload = get_latest_options_levels("EURUSD")
+    assert any(item.get("type") == "straddle" for item in payload["analysis"]["derivedLevels"])
+
+
+def test_derived_strangle_around_price():
+    save_options_levels({
+        "symbol": "EURUSD",
+        "underlying_price": 1.1000,
+        "levels": [
+            {"type": "put", "price": 1.0990},
+            {"type": "call", "price": 1.1010},
+        ],
+    })
+    payload = get_latest_options_levels("EURUSD")
+    assert any(item.get("type") == "strangle" for item in payload["analysis"]["derivedLevels"])
+
+
+def test_derived_hedge_levels_from_call_and_put():
+    save_options_levels({
+        "symbol": "EURUSD",
+        "underlying_price": 1.1000,
+        "levels": [
+            {"type": "call", "price": 1.1020},
+            {"type": "put", "price": 1.0980},
+        ],
+    })
+    payload = get_latest_options_levels("EURUSD")
+    analysis = payload["analysis"]
+    assert 1.102 in analysis["hedge_above"]
+    assert 1.098 in analysis["hedge_below"]
+
+
+def test_derived_target_levels_when_mt4_missing_target_volume():
+    save_options_levels({
+        "symbol": "EURUSD",
+        "underlying_price": 1.1000,
+        "levels": [
+            {"type": "call", "price": 1.1030},
+            {"type": "put", "price": 1.0970},
+            {"type": "balance", "price": 1.1015},
+        ],
+    })
+    payload = get_latest_options_levels("EURUSD")
+    assert payload["analysis"]["targetLevels"]

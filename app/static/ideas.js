@@ -212,6 +212,14 @@ function renderIdeaCard(idea) {
   const providerLabel = String(idea.data_provider || "").toLowerCase() === "twelvedata" ? "TwelveData" : "Yahoo fallback";
   const warningText = String(idea.warning || "").trim();
   const sentiment = idea?.sentiment || {};
+  const optionsAnalysis = idea?.options_analysis || {};
+  const renderLevels = (arr) => Array.isArray(arr) && arr.length ? arr.join(", ") : "—";
+  const straddleText = Array.isArray(optionsAnalysis.straddle) && optionsAnalysis.straddle.length
+    ? optionsAnalysis.straddle.map((x) => x.price).join(", ")
+    : "—";
+  const strangleText = Array.isArray(optionsAnalysis.strangle) && optionsAnalysis.strangle.length
+    ? optionsAnalysis.strangle.map((x) => `${x.lower ?? "?"}-${x.upper ?? "?"}`).join(", ")
+    : "—";
   const hasSentiment = Number.isFinite(Number(sentiment.long_pct)) && Number.isFinite(Number(sentiment.short_pct));
   const sentimentLabel = hasSentiment
     ? `Sentiment: Long ${Number(sentiment.long_pct)}% / Short ${Number(sentiment.short_pct)}%`
@@ -253,6 +261,23 @@ function renderIdeaCard(idea) {
           <li><strong>Цель 1:</strong> ${escapeHtml(tradePlan.target_1 || "")}</li>
           <li><strong>Цель 2:</strong> ${escapeHtml(tradePlan.target_2 || "")}</li>
           <li><strong>Альтернатива:</strong> ${escapeHtml(tradePlan.alternative_scenario_ru || "")}</li>
+        </ul>
+      </section>
+
+
+      <section class="idea-section idea-section-plan">
+        <h4>Prop-level options</h4>
+        <ul class="trade-plan-list">
+          <li><strong>Prop bias:</strong> ${escapeHtml(optionsAnalysis.prop_bias || optionsAnalysis.bias || "neutral")}</li>
+          <li><strong>Score:</strong> ${escapeHtml(optionsAnalysis.prop_score ?? 0)}</li>
+          <li><strong>Call walls:</strong> ${escapeHtml(renderLevels(optionsAnalysis.callWalls))}</li>
+          <li><strong>Put walls:</strong> ${escapeHtml(renderLevels(optionsAnalysis.putWalls))}</li>
+          <li><strong>Target zones:</strong> ${escapeHtml(renderLevels(optionsAnalysis.targetLevels))}</li>
+          <li><strong>Hedge zones:</strong> ${escapeHtml(renderLevels(optionsAnalysis.hedgeLevels))}</li>
+          <li><strong>Straddle:</strong> ${escapeHtml(straddleText)}</li>
+          <li><strong>Strangle:</strong> ${escapeHtml(strangleText)}</li>
+          <li><strong>Pinning risk:</strong> ${escapeHtml(optionsAnalysis.pinningRisk || "low")}</li>
+          <li><strong>Range risk:</strong> ${escapeHtml(optionsAnalysis.rangeRisk || "low")}</li>
         </ul>
       </section>
 

@@ -140,10 +140,14 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
         price = float(underlying)
     except (TypeError, ValueError):
         price = None
-    options_flow = analyze_options(levels, price)
+    options_flow = analyze_options(levels, price, symbol=str(entry.get("symbol") or ""))
     max_pain = options_flow.get("max_pain")
     bias = str(options_flow.get("bias") or "neutral")
     summary_ru = str(options_flow.get("summary_ru") or "Опционные уровни MT4 получены, явного смещения не выявлено.")
+
+    target_levels = options_flow.get("targetLevels") or targets
+    hedge_levels = options_flow.get("hedgeLevels") or hedges
+    derived_levels = options_flow.get("derivedLevels") or []
 
     return {
         "available": bool(levels),
@@ -154,9 +158,18 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
         "maxPain": max_pain,
         "barrierZones": {"support": support, "resistance": resistance},
         "bias": bias,
+        "prop_bias": options_flow.get("prop_bias") or bias,
+        "prop_score": options_flow.get("prop_score") or 0,
+        "pinningRisk": options_flow.get("pinningRisk") or "low",
+        "rangeRisk": options_flow.get("rangeRisk") or "low",
+        "callWalls": options_flow.get("callWalls") or [],
+        "putWalls": options_flow.get("putWalls") or [],
         "summary_ru": summary_ru,
-        "targetLevels": targets,
-        "hedgeLevels": hedges,
+        "targetLevels": target_levels,
+        "hedgeLevels": hedge_levels,
+        "derivedLevels": derived_levels,
+        "straddle": options_flow.get("straddle") or [],
+        "strangle": options_flow.get("strangle") or [],
         "targets_above": options_flow.get("targets_above") or [],
         "targets_below": options_flow.get("targets_below") or [],
         "hedge_above": options_flow.get("hedge_above") or [],
