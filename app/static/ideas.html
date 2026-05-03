@@ -2756,7 +2756,9 @@
     function renderOptionsAnalysis(idea) {
       const oa = idea && typeof idea.options_analysis === "object" ? idea.options_analysis : {};
       const mc = idea && typeof idea.market_context === "object" ? idea.market_context : {};
-      const fallbackAnalysis = mc.optionsAnalysis && typeof mc.optionsAnalysis === "object" ? mc.optionsAnalysis : (idea.optionsAnalysis && typeof idea.optionsAnalysis === "object" ? idea.optionsAnalysis : {});
+      const fallbackAnalysis = idea.optionsAnalysis && typeof idea.optionsAnalysis === "object"
+        ? idea.optionsAnalysis
+        : (mc.optionsAnalysis && typeof mc.optionsAnalysis === "object" ? mc.optionsAnalysis : {});
       const analysis = oa && typeof oa.analysis === "object" ? oa.analysis : (Object.keys(oa).length ? oa : fallbackAnalysis);
       const available = Boolean(oa.available ?? analysis.available ?? idea.options_available ?? mc.options_available);
       const status = available ? "available" : "unavailable";
@@ -2765,7 +2767,7 @@
       const strikes = Array.isArray(strikesRaw) ? strikesRaw.join(", ") : (strikesRaw || "—");
       const maxPain = analysis.maxPain ?? idea?.market_context?.options_max_pain ?? "—";
       const bias = analysis.bias || idea.options_bias || "—";
-      const summary = analysis.summary_ru || idea.options_summary_ru || (available ? "Данные options layer получены." : "Опционный слой сейчас недоступен.");
+      const summary = analysis.summary_ru || idea.options_summary_ru || (available ? "Данные options layer получены." : "Опционный слой CME сейчас недоступен.");
       return `
       <div class="modal-section-title">Options Analysis</div>
       <div class="box modal-text">
