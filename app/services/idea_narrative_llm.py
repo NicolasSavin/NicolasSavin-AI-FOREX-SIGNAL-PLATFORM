@@ -87,6 +87,7 @@ class IdeaNarrativeLLMService:
     def __init__(self) -> None:
         self.api_key = (get_openrouter_api_key() or "").strip()
         self.model = get_openrouter_model()
+        self.fallback_model = (os.getenv("OPENROUTER_FALLBACK_MODEL", "") or "").strip()
         self.timeout = float(os.getenv("OPENROUTER_TIMEOUT", "30"))
 
     def generate(
@@ -132,83 +133,123 @@ class IdeaNarrativeLLMService:
         return NarrativeResult(data=fallback, source="fallback", error="idea_narrative_llm_invalid_json_or_quality", model=self.model, generated_at=generated_at)
 
     def _request_llm(self, *, prompt: str) -> dict[str, Any] | None:
-        try:
-            response = requests.post(
-                OPENROUTER_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Ты профессиональный SMC/ICT Forex-аналитик уровня desk analyst. "
-                                "Ты анализируешь рынок с точки зрения крупного игрока: ликвидность, "
-                                "накопление, распределение, ордерблоки, breaker block, FVG, BOS, CHoCH, "
-                                "dealing range, premium/discount, снятие стопов и реакция цены. "
-                                "Ты не выдумываешь уровни. Ты используешь только факты из payload. "
-                                "Ответ строго JSON без markdown."
-                            ),
-                        },
-                        {
-                            "role": "user",
-                            "content": prompt,
-                        },
-                    ],
-                    "temperature": 0.72,
-                    "top_p": 0.9,
-                },
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            parsed = self._parse_json(content)
+        for idx, model_used in enumerate(self._model_sequence()):
+            logger.info("LLM model used: %s", model_used)
+            try:
+                response = requests.post(
+                    OPENROUTER_URL,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model_used,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Ты профессиональный SMC/ICT Forex-аналитик уровня desk analyst. "
+                                    "Ты анализируешь рынок с точки зрения крупного игрока: ликвидность, "
+                                    "накопление, распределение, ордерблоки, breaker block, FVG, BOS, CHoCH, "
+                                    "dealing range, premium/discount, снятие стопов и реакция цены. "
+                                    "Ты не выдумываешь уровни. Ты используешь только факты из payload. "
+                                    "Ответ строго JSON без markdown."
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt,
+                            },
+                        ],
+                        "temperature": 0.72,
+                        "top_p": 0.9,
+                    },
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"]["content"]
+                parsed = self._parse_json(content)
 
-            if not parsed:
-                logger.warning("idea_narrative_llm_invalid_json_or_quality")
+                if not parsed:
+                    logger.warning("idea_narrative_llm_invalid_json_or_quality")
+                    return None
+
+                self.model = model_used
+                logger.info("idea_narrative_llm_success model=%s", self.model)
+                return parsed
+            except requests.exceptions.Timeout:
+                if idx < len(self._model_sequence()) - 1:
+                    logger.warning("idea_narrative_llm_timeout_try_fallback model=%s", model_used)
+                    continue
+                logger.exception("idea_narrative_llm_failure")
                 return None
-
-            logger.info("idea_narrative_llm_success model=%s", self.model)
-            return parsed
-
-        except Exception:
-            logger.exception("idea_narrative_llm_failure")
-            return None
+            except requests.exceptions.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code in {429, 500} and idx < len(self._model_sequence()) - 1:
+                    logger.warning("idea_narrative_llm_http_try_fallback model=%s status=%s", model_used, status_code)
+                    continue
+                logger.exception("idea_narrative_llm_failure")
+                return None
+            except Exception:
+                logger.exception("idea_narrative_llm_failure")
+                return None
+        return None
 
     def _request_llm_article(self, *, payload: dict[str, Any]) -> str | None:
-        try:
-            response = requests.post(
-                OPENROUTER_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": "Пиши только простой русский текст статьи без JSON и markdown. Только факты из payload."},
-                        {"role": "user", "content": self._build_article_prompt(payload)},
-                    ],
-                    "temperature": 0.7,
-                    "top_p": 0.9,
-                },
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            article = self._clean_visible_text(content)
-            if not article:
+        for idx, model_used in enumerate(self._model_sequence()):
+            logger.info("LLM model used: %s", model_used)
+            try:
+                response = requests.post(
+                    OPENROUTER_URL,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model_used,
+                        "messages": [
+                            {"role": "system", "content": "Пиши только простой русский текст статьи без JSON и markdown. Только факты из payload."},
+                            {"role": "user", "content": self._build_article_prompt(payload)},
+                        ],
+                        "temperature": 0.7,
+                        "top_p": 0.9,
+                    },
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"]["content"]
+                article = self._clean_visible_text(content)
+                if not article:
+                    return None
+                sentence_count = article.count(".") + article.count("!") + article.count("?")
+                if sentence_count < 5 or sentence_count > 10:
+                    return None
+                self.model = model_used
+                return article
+            except requests.exceptions.Timeout:
+                if idx < len(self._model_sequence()) - 1:
+                    logger.warning("idea_article_generation_timeout_try_fallback model=%s", model_used)
+                    continue
+                logger.exception("idea_article_generation_failed")
                 return None
-            sentence_count = article.count(".") + article.count("!") + article.count("?")
-            if sentence_count < 5 or sentence_count > 10:
+            except requests.exceptions.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code in {429, 500} and idx < len(self._model_sequence()) - 1:
+                    logger.warning("idea_article_generation_http_try_fallback model=%s status=%s", model_used, status_code)
+                    continue
+                logger.exception("idea_article_generation_failed")
                 return None
-            return article
-        except Exception:
-            logger.exception("idea_article_generation_failed")
-            return None
+            except Exception:
+                logger.exception("idea_article_generation_failed")
+                return None
+        return None
+
+    def _model_sequence(self) -> list[str]:
+        models = [self.model]
+        is_grok_primary = self.model.startswith("x-ai/grok")
+        if self.fallback_model and self.fallback_model not in models and not is_grok_primary:
+            models.append(self.fallback_model)
+        return [item for item in models if item]
 
     @staticmethod
     def _build_article_prompt(payload: dict[str, Any]) -> str:
