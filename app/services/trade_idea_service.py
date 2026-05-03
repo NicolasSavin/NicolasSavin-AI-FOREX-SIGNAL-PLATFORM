@@ -653,6 +653,7 @@ class TradeIdeaService:
                     "confidence": final_confidence,
                     "idea_thesis": idea_thesis,
                     "unified_narrative": unified_narrative,
+                        "idea_article_ru": str(row.get("idea_article_ru") or unified_narrative or full_text or "").strip(),
                     "full_text": full_text,
                     "fallback_narrative": fallback_narrative if combined_is_fallback else "",
                     "legacy_narrative": legacy_narrative,
@@ -1870,6 +1871,7 @@ class TradeIdeaService:
             "full_text": full_text,
             "idea_thesis": idea_thesis_text,
             "unified_narrative": unified_narrative_text,
+            "idea_article_ru": self._generate_idea_article_ru({**signal, "symbol": symbol, "timeframe": timeframe, "signal": action, "analysis": analysis_payload, "chart_overlays": chart_overlays, "options_analysis": signal.get("options_analysis"), "entry": self._format_zone(entry_value), "stopLoss": self._format_price(stop_loss), "takeProfit": self._format_price(take_profit)}),
             "execution_summary_ru": deterministic_narrative["execution_summary_ru"],
             "entry_reason_ru": deterministic_narrative["entry_reason_ru"],
             "stop_reason_ru": deterministic_narrative["stop_reason_ru"],
@@ -6022,6 +6024,59 @@ class TradeIdeaService:
                 )
             )
         return normalized
+
+    def _generate_idea_article_ru(self, idea: dict[str, Any]) -> str:
+        symbol = str(idea.get("symbol") or "—").upper()
+        timeframe = str(idea.get("timeframe") or "H1").upper()
+        signal = str(idea.get("signal") or "WAIT").upper()
+        analysis = idea.get("analysis") if isinstance(idea.get("analysis"), dict) else {}
+        options_analysis = idea.get("options_analysis") if isinstance(idea.get("options_analysis"), dict) else {}
+        options_inner = options_analysis.get("analysis") if isinstance(options_analysis.get("analysis"), dict) else options_analysis
+        overlays = idea.get("chart_overlays") if isinstance(idea.get("chart_overlays"), dict) else {}
+        payload = {
+            "symbol": symbol, "timeframe": timeframe, "signal": signal,
+            "trend_structure": str(idea.get("structure_state") or idea.get("direction") or idea.get("bias") or "—"),
+            "entry": idea.get("entry") or "—", "sl": idea.get("stop_loss") or idea.get("stopLoss") or "—", "tp": idea.get("take_profit") or idea.get("takeProfit") or "—",
+            "smc": {"order_blocks": overlays.get("order_blocks", []), "liquidity": overlays.get("liquidity", []), "fvg": overlays.get("fvg", [])},
+            "options": {"call_put_walls": options_inner.get("keyStrikes") or options_inner.get("keyLevels") or [], "max_pain": options_inner.get("maxPain"), "bias": options_inner.get("bias")},
+            "volume": analysis.get("volume_ru"), "divergence": analysis.get("divergence_ru"),
+        }
+        prompt = (
+            "Сформируй торговую идею как статью для трейдера.\nПиши простым русским языком.\n"
+            "Объясни:\n- что происходит на рынке\n- где находится ликвидность\n- что делает крупный игрок\n"
+            "- как влияют опционы\n- почему выбран сценарий\n- какие риски\n\n"
+            "Формат:\nкраткий заголовок\nзатем 5–10 предложений логичного текста\n\n"
+            "Не пиши списки, только связный текст.\n\n"
+            f"Контекст JSON:\n{json.dumps(payload, ensure_ascii=False)}"
+        )
+        try:
+            response = requests.post(
+                OPENROUTER_URL,
+                headers={"Authorization": f"Bearer {get_openrouter_api_key()}", "Content-Type": "application/json"},
+                json={"model": get_openrouter_model(), "messages": [{"role": "user", "content": prompt}], "temperature": 0.35},
+                timeout=20,
+            )
+            response.raise_for_status()
+            article = str(response.json()["choices"][0]["message"]["content"] or "").strip()
+            return re.sub(r"\s+\n", "\n", article)
+        except Exception:
+            logger.exception("idea_article_generation_failed symbol=%s timeframe=%s", symbol, timeframe)
+            return str(idea.get("unified_narrative") or idea.get("full_text") or "").strip()
+
+    def regenerate_idea_article(self, idea_id: str) -> dict[str, Any]:
+        store = self.idea_store.read()
+        ideas = store.get("ideas") if isinstance(store.get("ideas"), list) else []
+        for idx, idea in enumerate(ideas):
+            if str(idea.get("idea_id") or idea.get("id")) == str(idea_id):
+                updated = dict(idea)
+                updated["idea_article_ru"] = self._generate_idea_article_ru(updated)
+                updated["updated_at"] = datetime.now(timezone.utc).isoformat()
+                ideas[idx] = updated
+                store["ideas"] = ideas
+                store["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
+                self.idea_store.write(store)
+                return updated
+        return {}
 
     def _log_api_pipeline(self, ideas: list[dict[str, Any]], *, stage: str) -> None:
         if not ideas:
