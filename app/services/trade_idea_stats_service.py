@@ -5,7 +5,7 @@ from typing import Any
 
 
 class TradeIdeaStatsService:
-    CLOSED_FINAL_STATUSES = {"tp_hit", "sl_hit", "invalidated"}
+    CLOSED_FINAL_STATUSES = {"tp_hit", "sl_hit"}
 
     @classmethod
     def aggregate(cls, ideas: list[dict[str, Any]]) -> dict[str, float | int]:
@@ -14,11 +14,14 @@ class TradeIdeaStatsService:
         rr_values = [float(idea["rr"]) for idea in closed if cls._is_number(idea.get("rr"))]
 
         total = len(closed)
-        wins = sum(1 for idea in closed if idea.get("result") == "win")
-        losses = sum(1 for idea in closed if idea.get("result") == "loss")
+        wins = sum(1 for idea in closed if str(idea.get("result") or "").lower() in {"tp", "win"})
+        losses = sum(1 for idea in closed if str(idea.get("result") or "").lower() in {"sl", "loss"})
         winrate = (wins / total * 100) if total else 0.0
 
         return {
+            "total": total,
+            "tp_count": wins,
+            "sl_count": losses,
             "total_trades": total,
             "wins": wins,
             "losses": losses,
