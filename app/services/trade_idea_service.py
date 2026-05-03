@@ -3377,7 +3377,7 @@ class TradeIdeaService:
         ideas = payload.get("ideas") if isinstance(payload.get("ideas"), list) else []
         if not ideas:
             self.legacy_store.write({"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": [], "archive": [], "statistics": {}})
-            return {"ok": True, "updated": 0, "total": 0}
+            return {"status": "ok", "updated": 0}
         now_iso = datetime.now(timezone.utc).isoformat()
         updated_total = 0
         refreshed: list[dict[str, Any]] = []
@@ -3420,7 +3420,7 @@ class TradeIdeaService:
             refreshed.append(idea)
         self.idea_store.write({"updated_at_utc": now_iso, "ideas": refreshed})
         self.refresh_market_ideas()
-        return {"ok": True, "updated": updated_total, "total": len(refreshed)}
+        return {"status": "ok", "updated": updated_total}
 
     def _recover_missing_overlay_payload(self, ideas: list[dict[str, Any]], *, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
         rebuilt: list[dict[str, Any]] = []
