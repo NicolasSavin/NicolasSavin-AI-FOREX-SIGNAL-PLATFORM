@@ -17,7 +17,15 @@ _OPTIONS_STORAGE_PATH = Path("signals_data/mt4_options_levels.json")
 
 
 def normalize_symbol(symbol: str) -> str:
-    return str(symbol or "").upper().strip().replace("/", "")
+    original = symbol
+    s = str(symbol or "").upper().strip()
+
+    if "." in s:
+        s = s.split(".")[0]
+
+    s = s.replace("/", "")
+    logger.info("Normalized symbol: raw=%s → normalized=%s", original, s)
+    return s
 
 
 def is_stale(timestamp: datetime | str | None) -> bool:
