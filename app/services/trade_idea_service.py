@@ -296,6 +296,15 @@ class TradeIdeaService:
         hydrated["debug_options_available"] = mt4_available
         hydrated["debug_options_source_selected"] = mt4_source
         if not bool(options_snapshot.get("available")):
+            market_context = hydrated.get("market_context") if isinstance(hydrated.get("market_context"), dict) else {}
+            hydrated["options_available"] = False
+            hydrated["options_source"] = "unavailable"
+            hydrated["options_summary_ru"] = "Опционный слой недоступен: нет свежих данных."
+            hydrated["options_analysis"] = {"available": False, "source": "unavailable"}
+            market_context["optionsAnalysis"] = {"available": False, "source": "unavailable"}
+            market_context["options_available"] = False
+            market_context["options_source"] = "unavailable"
+            hydrated["market_context"] = market_context
             return hydrated
         analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
         source = str(options_snapshot.get("source") or analysis.get("source") or "mt4_optionsfx")
@@ -304,12 +313,12 @@ class TradeIdeaService:
         summary_ru = str(analysis.get("summary_ru") or "").strip()
         market_context = hydrated.get("market_context") if isinstance(hydrated.get("market_context"), dict) else {}
         hydrated["options_analysis"] = analysis
-        hydrated["options_source"] = "mt4_optionsfx"
+        hydrated["options_source"] = source
         hydrated["options_available"] = True
         hydrated["options_summary_ru"] = summary_ru
         market_context["optionsAnalysis"] = analysis
         market_context["options_available"] = True
-        market_context["options_source"] = "mt4_optionsfx"
+        market_context["options_source"] = source
         hydrated["market_context"] = market_context
         return hydrated
 

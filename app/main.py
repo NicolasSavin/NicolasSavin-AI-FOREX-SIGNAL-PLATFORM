@@ -949,6 +949,26 @@ async def api_mt4_options_levels(request: Request):
     return {"status": "ok", "symbol": saved.get("symbol"), "levels_received": len(saved.get("levels") or [])}
 
 
+@app.post("/api/options/levels")
+async def api_options_levels_ingest(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"status": "error", "error": "invalid_json"})
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=400, content={"status": "error", "error": "invalid_payload"})
+    symbol = str(payload.get("symbol") or "").strip()
+    levels = payload.get("levels")
+    if not symbol:
+        return JSONResponse(status_code=400, content={"status": "error", "error": "symbol_required"})
+    if levels is None or not isinstance(levels, list):
+        return JSONResponse(status_code=400, content={"status": "error", "error": "levels_required"})
+    saved = save_options_levels(payload)
+    latest = get_latest_options_levels(symbol)
+    analysis = latest.get("analysis") if isinstance(latest.get("analysis"), dict) else {}
+    return {"status": "ok", "saved": saved, "analysis": analysis, "available": bool(latest.get("available"))}
+
+
 @app.get("/api/mt4/options-levels/{symbol}")
 def api_mt4_options_levels_symbol(symbol: str):
     payload = get_latest_options_levels(symbol)
@@ -958,6 +978,30 @@ def api_mt4_options_levels_symbol(symbol: str):
             response["stale"] = True
         return response
     return payload
+
+
+@app.get("/api/options/levels/{symbol}")
+def api_options_levels_symbol(symbol: str):
+    return get_latest_options_levels(symbol)
+
+
+@app.get("/api/debug/options/{symbol}")
+def api_debug_options(symbol: str):
+    normalized = normalize_symbol(symbol)
+    payload = get_latest_options_levels(symbol)
+    expected_path = "signals_data/mt4_options_levels.json"
+    return {
+        "symbol": symbol,
+        "symbol_normalized": normalized,
+        "available": bool(payload.get("available")),
+        "source": payload.get("source"),
+        "stale": bool(payload.get("stale")),
+        "reason": payload.get("reason") or ((payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}).get("reason")),
+        "last_updated": (payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}).get("last_updated") or payload.get("received_at"),
+        "analysis": payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {},
+        "storage_path_exists": Path(expected_path).exists(),
+        "expected_storage_path": expected_path,
+    }
 
 @app.get("/api/mt4/markup/{symbol}")
 def api_mt4_markup(symbol: str, tf: str = "M15"):
@@ -3624,6 +3668,7 @@ def _extract_numeric_price(row: dict[str, Any] | None) -> tuple[float | None, st
 
 def _normalize_quote_signal(signal: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(signal or {})
+    symbol = normalize_symbol(str(normalized.get("symbol") or normalized.get("instrument") or ""))
     price, source_field = _extract_numeric_price(normalized)
     status_raw = str(normalized.get("data_status") or "").lower()
     diagnostics = normalized.get("diagnostics")
@@ -3640,6 +3685,23 @@ def _normalize_quote_signal(signal: dict[str, Any]) -> dict[str, Any]:
         diagnostics["status_downgrade_reason"] = "market_status_without_numeric_price"
         normalized.setdefault("warning_ru", "Рыночная котировка недоступна или повреждена; используется fallback-статус.")
     normalized["diagnostics"] = diagnostics
+    if symbol:
+        options_snapshot = get_latest_options_levels(symbol)
+        options_available = bool(options_snapshot.get("available"))
+        analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
+        normalized["options_available"] = options_available
+        normalized["options_source"] = options_snapshot.get("source")
+        normalized["options_summary_ru"] = (
+            str(analysis.get("summary_ru") or "").strip()
+            if options_available
+            else "Опционный слой недоступен: нет свежих данных."
+        )
+        normalized["options_analysis"] = analysis if options_available else {"available": False, "source": "unavailable"}
+        market_context = normalized.get("market_context") if isinstance(normalized.get("market_context"), dict) else {}
+        market_context["optionsAnalysis"] = normalized["options_analysis"]
+        market_context["options_available"] = options_available
+        market_context["options_source"] = normalized["options_source"] if options_available else "unavailable"
+        normalized["market_context"] = market_context
     return normalized
 
 
