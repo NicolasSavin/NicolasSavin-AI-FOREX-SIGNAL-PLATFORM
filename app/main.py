@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import lzma
+import logging
 import os
 import struct
 import time
@@ -23,6 +24,8 @@ from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
 from backend.chat_service import ChatRequest, ForexChatService
+
+logger = logging.getLogger(__name__)
 
 
 BASE_DIR = Path(__file__).resolve().parent
