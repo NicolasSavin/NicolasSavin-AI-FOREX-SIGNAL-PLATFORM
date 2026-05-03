@@ -1656,6 +1656,8 @@
         <div class="ideas-modal__top">
           <div class="ideas-modal__top-actions">
             <button id="toggleSummaryBtn" class="ideas-toggle-summary-btn" type="button" aria-expanded="true">Свернуть описание</button>
+            <button type="button" class="ideas-toggle-summary-btn" id="regenerateIdeaBtn">Перегенерировать идею</button>
+            <span id="regenerateIdeaSpinner" style="display:none;align-self:center">⏳</span>
             <button type="button" class="chart-fullscreen-btn" id="chartFullscreenBtn">График на весь экран</button>
           </div>
           <div class="modal-grid">
@@ -1665,9 +1667,10 @@
             <div class="level rr">Confidence<br>${numberOrDash(idea.final_confidence ?? idea.confidence)}%</div>
           </div>
 
-          <div class="modal-section-title">Основная идея</div>
+          <div class="modal-section-title">Торговая идея</div>
           <div class="box modal-text">${escapeHtml(pickMainIdeaText(idea))}</div>
-          ${renderOptionsAnalysis(idea)}${renderExecutionModel(idea)}
+          <details><summary>Технический execution</summary>${renderExecutionModel(idea)}</details>
+          <details><summary>Технический опционный блок</summary>${renderOptionsAnalysis(idea)}</details>
           ${renderSmartMoneyContext(idea)}
           ${renderFundamentalContext(idea)}
           <div class="status-reason">${escapeHtml(statusReason)}</div>
@@ -1716,6 +1719,25 @@
       const toggleSummaryBtn = document.getElementById("toggleSummaryBtn");
       if (toggleSummaryBtn) toggleSummaryBtn.addEventListener("click", toggleSummarySection);
       document.getElementById("chartFullscreenBtn")?.addEventListener("click", openChartFullscreen);
+      document.getElementById("regenerateIdeaBtn")?.addEventListener("click", async () => {
+        const btn = document.getElementById("regenerateIdeaBtn");
+        const spinner = document.getElementById("regenerateIdeaSpinner");
+        if (spinner) spinner.style.display = "inline";
+        if (btn) btn.disabled = true;
+        try {
+          const ideaId = idea.idea_id || idea.id;
+          const response = await fetch(`/api/ideas/${encodeURIComponent(ideaId)}/regenerate-article`, { method: "POST" });
+          const data = await response.json();
+          const nextIdea = data?.idea || {};
+          if (nextIdea.idea_article_ru) {
+            idea.idea_article_ru = nextIdea.idea_article_ru;
+            openModal(idea);
+            return;
+          }
+        } catch (e) { console.error(e); }
+        if (spinner) spinner.style.display = "none";
+        if (btn) btn.disabled = false;
+      });
 
       applySummaryState();
 
@@ -2754,7 +2776,8 @@
 
     function pickText(idea) {
       return (
-        idea.unified_narrative ||
+        idea.idea_article_ru ||
+idea.unified_narrative ||
         idea.full_text ||
         idea.confluence_summary_ru ||
         idea.reason_ru ||
@@ -2765,6 +2788,8 @@
 
     function pickSubtitleText(idea) {
       const shortText = (
+        idea.idea_article_ru ||
+        idea.idea_article_ru ||
         idea.unified_narrative ||
         idea.confluence_summary_ru ||
         idea.reason_ru ||
