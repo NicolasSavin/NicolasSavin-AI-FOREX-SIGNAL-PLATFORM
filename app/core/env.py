@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import os
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_env(name: str, default: str | None = None) -> str | None:
@@ -19,6 +23,7 @@ def get_openrouter_api_key() -> str | None:
 
 def get_openrouter_model() -> str:
     model = get_env("OPENROUTER_MODEL")
+    logger.info("OPENROUTER MODEL: %s", model)
     if model:
         return model
     return "x-ai/grok-3-mini"
