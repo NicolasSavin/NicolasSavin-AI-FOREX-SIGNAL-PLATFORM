@@ -2761,7 +2761,12 @@
       const analysis = oa.analysis && typeof oa.analysis === "object"
         ? oa.analysis
         : (Object.keys(oa).length ? oa : (Object.keys(directMarketContext).length ? directMarketContext : legacyOptions));
-      const available = Boolean(idea.options_available ?? oa.available ?? analysis.available ?? mc.options_available);
+      const available = Boolean(
+        idea.options_available === true
+        || oa.available === true
+        || analysis.available === true
+        || mc.options_available === true
+      );
       const status = available ? "available" : "unavailable";
       const source = String(oa.source || analysis.source || idea.options_source || mc.options_source || "unavailable");
       const strikesRaw = analysis.keyLevels ?? analysis.keyStrikes ?? idea?.market_context?.options_key_strikes;
