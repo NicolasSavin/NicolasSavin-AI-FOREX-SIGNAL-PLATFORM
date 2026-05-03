@@ -2755,24 +2755,23 @@
 
     function renderOptionsAnalysis(idea) {
       const oa = idea && typeof idea.options_analysis === "object" ? idea.options_analysis : {};
-      const analysis = oa && typeof oa.analysis === "object" ? oa.analysis : {};
+      const analysis = oa && typeof oa.analysis === "object" ? oa.analysis : oa;
       const available = Boolean(oa.available ?? idea.options_available);
       const status = available ? "available" : "unavailable";
-      const pcr = analysis.putCallRatio ?? idea?.market_context?.options_put_call_ratio ?? "—";
-      const strikes = Array.isArray(analysis.keyStrikes) ? analysis.keyStrikes.join(", ") : (idea?.market_context?.options_key_strikes || "—");
+      const source = String(oa.source || analysis.source || idea.options_source || "unavailable");
+      const strikesRaw = analysis.keyLevels ?? analysis.keyStrikes ?? idea?.market_context?.options_key_strikes;
+      const strikes = Array.isArray(strikesRaw) ? strikesRaw.join(", ") : (strikesRaw || "—");
       const maxPain = analysis.maxPain ?? idea?.market_context?.options_max_pain ?? "—";
       const bias = analysis.bias || idea.options_bias || "—";
-      const impact = idea.options_impact || idea?.options_analysis?.impact || "—";
-      const summary = idea.options_summary_ru || oa.summary_ru || (available ? "Данные options layer получены." : "Опционный слой сейчас недоступен, поэтому идея рассчитана без подтверждения options layer.");
+      const summary = analysis.summary_ru || idea.options_summary_ru || (available ? "Данные options layer получены." : "Опционный слой сейчас недоступен, поэтому идея рассчитана без подтверждения options layer.");
       return `
       <div class="modal-section-title">Options Analysis</div>
       <div class="box modal-text">
+        <div><strong>Source:</strong> ${escapeHtml(source)}</div>
         <div><strong>Status:</strong> ${escapeHtml(status)}</div>
-        <div><strong>Put/Call ratio:</strong> ${escapeHtml(String(pcr))}</div>
-        <div><strong>Key strikes:</strong> ${escapeHtml(String(strikes))}</div>
+        <div><strong>Key levels:</strong> ${escapeHtml(String(strikes))}</div>
         <div><strong>Max pain:</strong> ${escapeHtml(String(maxPain))}</div>
         <div><strong>Options bias:</strong> ${escapeHtml(String(bias))}</div>
-        <div><strong>Options impact:</strong> ${escapeHtml(String(impact))}</div>
         <div><strong>Summary:</strong> ${escapeHtml(String(summary))}</div>
       </div>`;
     }

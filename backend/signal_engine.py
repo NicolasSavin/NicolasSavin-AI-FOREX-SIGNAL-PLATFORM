@@ -60,7 +60,11 @@ class SignalEngine:
                 required_timeframes = self._required_stack_timeframes(requested_timeframes)
                 for stack_timeframe in required_timeframes:
                     snapshots_cache[stack_timeframe] = await self._snapshot_for(symbol, stack_timeframe, snapshots_cache)
-                options_snapshot = await get_cme_market_snapshot(symbol)
+                mt4_options = get_latest_options_levels(symbol)
+                if mt4_options.get("available"):
+                    options_snapshot = mt4_options
+                else:
+                    options_snapshot = await get_cme_market_snapshot(symbol)
                 for timeframe in requested_timeframes:
                     try:
                         stack = TIMEFRAME_STACKS[timeframe]
@@ -746,7 +750,7 @@ class SignalEngine:
                 selected = cme_analysis
                 source = "cme"
 
-        logger.info("Options source selected %s", source)
+        logger.info("Options source selected: %s", source)
         if not selected:
             return {"available": False, "source": "unavailable"}
 
