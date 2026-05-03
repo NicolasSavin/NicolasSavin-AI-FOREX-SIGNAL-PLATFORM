@@ -1578,6 +1578,11 @@ class TradeIdeaService:
                 timeframe,
             )
             llm_result = self._reuse_existing_narrative(existing=existing, fallback_summary=summary_text)
+        logger.info(
+            "idea_article_generation source=%s model=%s",
+            llm_result.source,
+            llm_result.model or get_openrouter_model(),
+        )
         narrative_structured = self._resolve_structured_narrative(
             llm_data=llm_result.data,
             trigger=trigger,
@@ -1610,7 +1615,7 @@ class TradeIdeaService:
             llm_result.data.get("idea_thesis") or llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")
         )
         candidate_unified_narrative = self._sanitize_user_narrative_text(
-            llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")
+            llm_result.data.get("idea_article_ru") or llm_result.data.get("unified_narrative") or llm_result.data.get("full_text")
         ) or self._build_full_text(
             signal,
             summary=summary_text,
@@ -1870,6 +1875,7 @@ class TradeIdeaService:
             "full_text": full_text,
             "idea_thesis": idea_thesis_text,
             "unified_narrative": unified_narrative_text,
+            "idea_article_ru": unified_narrative_text,
             "execution_summary_ru": deterministic_narrative["execution_summary_ru"],
             "entry_reason_ru": deterministic_narrative["entry_reason_ru"],
             "stop_reason_ru": deterministic_narrative["stop_reason_ru"],
@@ -1882,12 +1888,10 @@ class TradeIdeaService:
             "market_structure_structured": narrative_structured.get("market_structure_structured"),
             "narrative_structured": narrative_structured,
             "update_explanation": llm_result.data.get("update_explanation") or rationale,
-            "narrative_source": self._resolve_narrative_source_label(
-                llm_result.source,
-                is_fallback=narrative_quality == "generic_fallback",
-                combined=False,
-            ),
+            "narrative_source": "fallback" if llm_result.source == "fallback" else "llm",
+            "narrative_model": llm_result.model or get_openrouter_model(),
             "narrative_error": llm_result.error,
+            "narrative_generated_at": llm_result.generated_at or now.isoformat(),
             "narrative_quality": narrative_quality,
             "narrative_uniqueness_hash": self._narrative_uniqueness_hash(
                 symbol=symbol,
@@ -3583,6 +3587,11 @@ class TradeIdeaService:
             facts=llm_facts,
             previous_summary=str(idea.get("summary") or idea.get("summary_ru") or ""),
             delta={"backfill": "structured_narrative"},
+        )
+        logger.info(
+            "idea_article_generation source=%s model=%s",
+            llm_result.source,
+            llm_result.model or get_openrouter_model(),
         )
         narrative_structured = self._resolve_structured_narrative(
             llm_data=llm_result.data,
