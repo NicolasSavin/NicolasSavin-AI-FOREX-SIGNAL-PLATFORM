@@ -224,6 +224,11 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
     @router.post("/api/ideas/regenerate-all-narratives")
     async def regenerate_all_narratives():
         logger.info("ideas_narrative_regenerate_all_started")
-        return services.trade_idea_service.regenerate_all_narratives()
+        result = services.trade_idea_service.regenerate_all_narratives()
+        updated = int(result.get("updated") or 0) if isinstance(result, dict) else 0
+        return {
+            "status": "ok",
+            "updated": updated,
+        }
 
     return router
