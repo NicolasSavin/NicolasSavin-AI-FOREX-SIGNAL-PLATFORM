@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
@@ -66,6 +67,8 @@ class NarrativeResult:
     data: dict[str, Any]
     source: str
     error: str | None = None
+    model: str | None = None
+    generated_at: str | None = None
 
 
 class IdeaNarrativeLLMService:
@@ -98,7 +101,7 @@ class IdeaNarrativeLLMService:
 
         if not self.api_key:
             logger.warning("idea_narrative_llm_missing_api_key")
-            return NarrativeResult(data=fallback, source="fallback", error="idea_narrative_llm_missing_api_key")
+            return NarrativeResult(data=fallback, source="fallback", error="idea_narrative_llm_missing_api_key", model=self.model, generated_at=datetime.now(timezone.utc).isoformat())
 
         payload = {
             "event_type": event_type,
@@ -108,16 +111,25 @@ class IdeaNarrativeLLMService:
             "uniqueness_seed": self._uniqueness_seed(facts),
         }
 
+
+        generated_at = datetime.now(timezone.utc).isoformat()
+
         first = self._request_llm(prompt=self._build_prompt(payload, strict=False))
         if first:
-            return NarrativeResult(data=first, source="llm")
+            article=self._request_llm_article(payload=payload)
+            if article:
+                first["idea_article_ru"]=article
+            return NarrativeResult(data=first, source="llm", model=self.model, generated_at=generated_at)
 
         second = self._request_llm(prompt=self._build_prompt(payload, strict=True))
         if second:
-            return NarrativeResult(data=second, source="llm")
+            article=self._request_llm_article(payload=payload)
+            if article:
+                second["idea_article_ru"]=article
+            return NarrativeResult(data=second, source="llm", model=self.model, generated_at=generated_at)
 
         logger.warning("idea_narrative_llm_fallback_used event_type=%s", event_type)
-        return NarrativeResult(data=fallback, source="fallback", error="idea_narrative_llm_invalid_json_or_quality")
+        return NarrativeResult(data=fallback, source="fallback", error="idea_narrative_llm_invalid_json_or_quality", model=self.model, generated_at=generated_at)
 
     def _request_llm(self, *, prompt: str) -> dict[str, Any] | None:
         try:
@@ -165,6 +177,47 @@ class IdeaNarrativeLLMService:
         except Exception:
             logger.exception("idea_narrative_llm_failure")
             return None
+
+    def _request_llm_article(self, *, payload: dict[str, Any]) -> str | None:
+        try:
+            response = requests.post(
+                OPENROUTER_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": "Пиши только простой русский текст статьи без JSON и markdown. Только факты из payload."},
+                        {"role": "user", "content": self._build_article_prompt(payload)},
+                    ],
+                    "temperature": 0.7,
+                    "top_p": 0.9,
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            article = self._clean_visible_text(content)
+            if not article:
+                return None
+            sentence_count = article.count(".") + article.count("!") + article.count("?")
+            if sentence_count < 5 or sentence_count > 10:
+                return None
+            return article
+        except Exception:
+            logger.exception("idea_article_generation_failed")
+            return None
+
+    @staticmethod
+    def _build_article_prompt(payload: dict[str, Any]) -> str:
+        return (
+            "Сгенерируй idea_article_ru как обычный текст на русском языке (5-10 предложений). "
+            "Пиши простым языком, логика причина → следствие, без шаблонов, без списков, без JSON. "
+            "Используй только факты из payload.\n\nPAYLOAD:\n"
+            + json.dumps(payload, ensure_ascii=False)
+        )
 
     def _parse_json(self, content: Any) -> dict[str, Any] | None:
         if not isinstance(content, str):
@@ -470,7 +523,7 @@ class IdeaNarrativeLLMService:
 
         if signal == "WAIT":
             thesis = (
-                f"{symbol} находится в режиме ожидания: структура ещё не дала подтверждённого входа, поэтому система не переводит сценарий в активную сделку. "
+                f"{symbol} находится в режиме ожидания: в сценарии WAIT структура ещё не дала подтверждённого входа, поэтому система не переводит сценарий в активную сделку. "
                 f"Цена подошла к зоне интереса, но без подтверждения по ликвидности, импульсу или реакции от OB/FVG вход остаётся преждевременным. "
                 f"{entry_text} рассчитан как ориентир, но не является командой на вход до появления подтверждения. "
                 f"Контекст: {liquidity}; структура: {structure}; объём/дельта: {volume}, {divergence}. "

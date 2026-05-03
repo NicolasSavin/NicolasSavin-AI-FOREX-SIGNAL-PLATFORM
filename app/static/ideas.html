@@ -1616,6 +1616,7 @@
         </div>
 
         <div class="box">${escapeHtml(summary)}</div>
+        ${renderNarrativeMeta(idea)}
         ${renderOptionsCardSummary(idea)}
         <div class="status-line">
           <span class="badge ${statusView.badgeClass}">${escapeHtml(statusView.icon + " " + statusView.label)}</span>
@@ -1667,6 +1668,7 @@
 
           <div class="modal-section-title">Основная идея</div>
           <div class="box modal-text">${escapeHtml(pickMainIdeaText(idea))}</div>
+          ${renderNarrativeMeta(idea)}
           ${renderOptionsAnalysis(idea)}${renderExecutionModel(idea)}
           ${renderSmartMoneyContext(idea)}
           ${renderFundamentalContext(idea)}
@@ -2754,6 +2756,7 @@
 
     function pickText(idea) {
       return (
+        idea.idea_article_ru ||
         idea.unified_narrative ||
         idea.full_text ||
         idea.confluence_summary_ru ||
@@ -2765,6 +2768,7 @@
 
     function pickSubtitleText(idea) {
       const shortText = (
+        idea.idea_article_ru ||
         idea.unified_narrative ||
         idea.confluence_summary_ru ||
         idea.reason_ru ||
@@ -2782,6 +2786,7 @@
     function pickMainIdeaText(idea) {
       const detailBrief = idea && typeof idea.detail_brief === "object" ? idea.detail_brief : null;
       return (
+        idea.idea_article_ru ||
         idea.unified_narrative ||
         idea.confluence_summary_ru ||
         idea.reason_ru ||
@@ -2831,6 +2836,18 @@
         .filter(Boolean);
       if (!lines.length) return "";
       return `<div class="box modal-text">${escapeHtml(lines.join(" "))}</div>`;
+    }
+
+
+    function renderNarrativeMeta(idea) {
+      const source = String(idea?.narrative_source || "fallback").toLowerCase();
+      const model = String(idea?.narrative_model || "").trim();
+      const error = String(idea?.narrative_error || "").trim();
+      const sourceLabel = source === "llm" ? "Grok/OpenRouter" : "fallback";
+      const fallbackBadge = source === "fallback"
+        ? `<span class="chip" style="border-color:#f59e0b;color:#fbbf24;">Fallback текст — Grok не использован</span>`
+        : "";
+      return `<div class="chip-row"><span class="chip">Источник текста: ${escapeHtml(sourceLabel)}</span>${model ? `<span class="chip">Модель: ${escapeHtml(model)}</span>` : ""}${error ? `<span class="chip">Ошибка: ${escapeHtml(error)}</span>` : ""}${fallbackBadge}</div>`;
     }
 
     function renderExecutionModel(idea) {
