@@ -603,8 +603,16 @@ class TradeIdeaService:
             )
 
             card = dict(preferred_timeframe_idea)
-            options_source_idea = m15 or h1 or h4 or narrative_source_idea
+            options_candidates = [item for item in (m15, h1, h4, narrative_source_idea) if isinstance(item, dict)]
+            options_source_idea = next((item for item in options_candidates if item.get("options_analysis")), options_candidates[0] if options_candidates else {})
             options_market_context = options_source_idea.get("market_context") if isinstance(options_source_idea.get("market_context"), dict) else {}
+
+            def _first_options_value(field: str) -> Any:
+                for candidate in options_candidates:
+                    value = candidate.get(field)
+                    if value not in (None, "", []):
+                        return value
+                return None
             card.update(
                 {
                     "id": f"{symbol.lower()}-combined",
@@ -651,10 +659,10 @@ class TradeIdeaService:
                     "updated_at": latest_update,
                     "meaningful_updated_at": latest_update,
                     "tags": [symbol, "MTF", final_signal.upper(), *sorted(timeframe_map.keys())],
-                    "options_analysis": options_source_idea.get("options_analysis"),
-                    "options_source": options_source_idea.get("options_source"),
-                    "options_available": options_source_idea.get("options_available"),
-                    "options_summary_ru": options_source_idea.get("options_summary_ru"),
+                    "options_analysis": _first_options_value("options_analysis"),
+                    "options_source": _first_options_value("options_source"),
+                    "options_available": bool(_first_options_value("options_available")),
+                    "options_summary_ru": _first_options_value("options_summary_ru"),
                     "market_context": {
                         **(card.get("market_context") if isinstance(card.get("market_context"), dict) else {}),
                         "optionsAnalysis": options_market_context.get("optionsAnalysis"),
