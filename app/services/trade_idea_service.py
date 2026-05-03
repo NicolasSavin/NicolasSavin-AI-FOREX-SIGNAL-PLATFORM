@@ -3372,6 +3372,56 @@ class TradeIdeaService:
             "missing_structured_after": missing_structured_count,
         }
 
+    def regenerate_all_narratives(self) -> dict[str, Any]:
+        payload = self.idea_store.read()
+        ideas = payload.get("ideas") if isinstance(payload.get("ideas"), list) else []
+        if not ideas:
+            self.legacy_store.write({"updated_at_utc": datetime.now(timezone.utc).isoformat(), "ideas": [], "archive": [], "statistics": {}})
+            return {"ok": True, "updated": 0, "total": 0}
+        now_iso = datetime.now(timezone.utc).isoformat()
+        updated_total = 0
+        refreshed: list[dict[str, Any]] = []
+        for idea_raw in ideas:
+            idea = dict(idea_raw) if isinstance(idea_raw, dict) else {}
+            try:
+                facts = self._build_narrative_facts(
+                    signal=idea,
+                    symbol=str(idea.get("symbol") or "").upper(),
+                    timeframe=str(idea.get("timeframe") or "H1").upper(),
+                    direction=str(idea.get("direction") or "neutral").lower(),
+                    status=str(idea.get("status") or IDEA_STATUS_ACTIVE).lower(),
+                    rationale=str(idea.get("description_ru") or idea.get("reason_ru") or ""),
+                    existing=idea,
+                    normalized_candles=[],
+                    chart_overlays={},
+                )
+                result = self.narrative_llm.generate(
+                    event_type="manual_regenerate_all_narratives",
+                    facts=facts,
+                    previous_summary=str(idea.get("summary_ru") or idea.get("summary") or ""),
+                    delta={},
+                )
+                candidate_text = self._sanitize_user_narrative_text(
+                    result.data.get("idea_article_ru") or result.data.get("unified_narrative") or result.data.get("full_text")
+                )
+                if candidate_text:
+                    idea["idea_article_ru"] = candidate_text
+                    idea["unified_narrative"] = candidate_text
+                idea["narrative_source"] = str(result.data.get("narrative_source") or result.source or "llm")
+                idea["narrative_model"] = result.model
+                idea["narrative_error"] = result.error
+                idea["updated_at"] = now_iso
+                updated_total += 1
+            except Exception as exc:
+                logger.exception("idea_manual_narrative_regeneration_failed")
+                idea["narrative_source"] = "fallback"
+                idea["narrative_model"] = get_openrouter_model()
+                idea["narrative_error"] = f"manual_regenerate_failed:{type(exc).__name__}"
+            refreshed.append(idea)
+        self.idea_store.write({"updated_at_utc": now_iso, "ideas": refreshed})
+        self.refresh_market_ideas()
+        return {"ok": True, "updated": updated_total, "total": len(refreshed)}
+
     def _recover_missing_overlay_payload(self, ideas: list[dict[str, Any]], *, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
         rebuilt: list[dict[str, Any]] = []
         changed = False
