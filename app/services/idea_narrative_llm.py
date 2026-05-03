@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-REQUIRED_TEXT_FIELDS = (
+TEXT_FIELDS = (
     "idea_thesis",
     "headline",
     "summary",
@@ -36,7 +36,7 @@ REQUIRED_TEXT_FIELDS = (
     "execution_context",
 )
 
-REQUIRED_STRUCTURED_FIELDS = {
+STRUCTURED_FIELDS = {
     "summary_structured": (
         "signal",
         "situation",
@@ -102,7 +102,13 @@ class IdeaNarrativeLLMService:
 
         if not self.api_key:
             logger.warning("idea_narrative_llm_missing_api_key")
-            return NarrativeResult(data=fallback, source="fallback", error="idea_narrative_llm_missing_api_key", model=self.model, generated_at=datetime.now(timezone.utc).isoformat())
+            return NarrativeResult(
+                data=self._attach_narrative_meta(fallback, source="fallback", model=self.model, error="idea_narrative_llm_missing_api_key"),
+                source="fallback",
+                error="idea_narrative_llm_missing_api_key",
+                model=self.model,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+            )
 
         payload = {
             "event_type": event_type,
@@ -120,17 +126,25 @@ class IdeaNarrativeLLMService:
             article=self._request_llm_article(payload=payload)
             if article:
                 first["idea_article_ru"]=article
-            return NarrativeResult(data=first, source="llm", model=self.model, generated_at=generated_at)
+            source = str(first.get("narrative_source") or "llm")
+            return NarrativeResult(data=self._attach_narrative_meta(first, source=source, model=self.model), source=source, model=self.model, generated_at=generated_at)
 
         second = self._request_llm(prompt=self._build_prompt(payload, strict=True))
         if second:
             article=self._request_llm_article(payload=payload)
             if article:
                 second["idea_article_ru"]=article
-            return NarrativeResult(data=second, source="llm", model=self.model, generated_at=generated_at)
+            source = str(second.get("narrative_source") or "llm")
+            return NarrativeResult(data=self._attach_narrative_meta(second, source=source, model=self.model), source=source, model=self.model, generated_at=generated_at)
 
         logger.warning("idea_narrative_llm_fallback_used event_type=%s", event_type)
-        return NarrativeResult(data=fallback, source="fallback", error="idea_narrative_llm_invalid_json_or_quality", model=self.model, generated_at=generated_at)
+        return NarrativeResult(
+            data=self._attach_narrative_meta(fallback, source="fallback", model=self.model, error="idea_narrative_llm_invalid_json_or_quality"),
+            source="fallback",
+            error="idea_narrative_llm_invalid_json_or_quality",
+            model=self.model,
+            generated_at=generated_at,
+        )
 
     def _request_llm(self, *, prompt: str) -> dict[str, Any] | None:
         for idx, model_used in enumerate(self._model_sequence()):
@@ -274,46 +288,59 @@ class IdeaNarrativeLLMService:
         try:
             raw = json.loads(text)
         except json.JSONDecodeError:
-            return None
+            return {"idea_article_ru": self._clean_visible_text(text), "narrative_source": "llm_text"}
 
         if not isinstance(raw, dict):
-            return None
+            return {"idea_article_ru": self._clean_visible_text(text), "narrative_source": "llm_text"}
 
         result: dict[str, Any] = {}
 
-        for field in REQUIRED_TEXT_FIELDS:
+        for field in TEXT_FIELDS:
             value = raw.get(field)
-            if not isinstance(value, str) or not value.strip():
-                return None
-            result[field] = self._clean_visible_text(value)
+            if isinstance(value, str) and value.strip():
+                result[field] = self._clean_visible_text(value)
 
-        for group_name, fields in REQUIRED_STRUCTURED_FIELDS.items():
+        for group_name, fields in STRUCTURED_FIELDS.items():
             group = raw.get(group_name)
             if not isinstance(group, dict):
-                return None
+                continue
 
             cleaned_group: dict[str, str] = {}
             for field in fields:
                 value = group.get(field)
-                if not isinstance(value, str) or not value.strip():
-                    return None
-                cleaned_group[field] = self._clean_visible_text(value)
+                if isinstance(value, str) and value.strip():
+                    cleaned_group[field] = self._clean_visible_text(value)
+            if cleaned_group:
+                result[group_name] = cleaned_group
 
-            result[group_name] = cleaned_group
+        if not result.get("unified_narrative") and result.get("full_text"):
+            result["unified_narrative"] = result["full_text"]
+        if not result.get("unified_narrative") and result.get("summary"):
+            result["unified_narrative"] = result["summary"]
+        if not result.get("unified_narrative") and result.get("idea_article_ru"):
+            result["unified_narrative"] = result["idea_article_ru"]
+        if not result.get("unified_narrative"):
+            return {"idea_article_ru": self._clean_visible_text(text), "narrative_source": "llm_text"}
 
         signal = str(raw.get("signal") or "").strip().upper()
         result["signal"] = signal if signal in {"BUY", "SELL", "WAIT"} else "WAIT"
-        result["risk_note"] = self._clean_visible_text(raw.get("risk_note") or result["risk"])
-
-        if not self._quality_ok(result):
-            return None
+        result["risk_note"] = self._clean_visible_text(raw.get("risk_note") or result.get("risk") or "Риск требует ручной проверки.")
+        result["narrative_source"] = "llm"
 
         return result
+
+    @staticmethod
+    def _attach_narrative_meta(data: dict[str, Any], *, source: str, model: str | None, error: str | None = None) -> dict[str, Any]:
+        payload = dict(data or {})
+        payload["narrative_source"] = source
+        payload["narrative_model"] = model
+        payload["narrative_error"] = error
+        return payload
 
     def _quality_ok(self, data: dict[str, Any]) -> bool:
         joined = " ".join(
             str(data.get(field) or "")
-            for field in REQUIRED_TEXT_FIELDS
+            for field in TEXT_FIELDS
         ).casefold()
 
         banned = (

@@ -47,7 +47,7 @@ def test_parse_valid_llm_json(monkeypatch) -> None:
     assert result.data["headline"] == "EURUSD H1 long"
 
 
-def test_invalid_json_retries_once(monkeypatch) -> None:
+def test_invalid_json_uses_llm_text(monkeypatch) -> None:
     service = IdeaNarrativeLLMService()
     service.api_key = "test"
     calls = {"n": 0}
@@ -60,11 +60,12 @@ def test_invalid_json_retries_once(monkeypatch) -> None:
     monkeypatch.setattr("requests.post", _post)
     result = service.generate(event_type="idea_updated", facts={"symbol": "EURUSD"})
 
-    assert calls["n"] >= 2
-    assert result.source == "llm"
+    assert calls["n"] >= 1
+    assert result.source == "llm_text"
+    assert result.data["idea_article_ru"] == "not-json"
 
 
-def test_fallback_after_invalid_retry(monkeypatch) -> None:
+def test_plain_text_response_is_not_fallback(monkeypatch) -> None:
     service = IdeaNarrativeLLMService()
     service.api_key = "test"
 
@@ -77,13 +78,11 @@ def test_fallback_after_invalid_retry(monkeypatch) -> None:
         facts={"symbol": "EURUSD", "timeframe": "H1", "direction": "bullish", "status": "active"},
     )
 
-    assert result.source == "fallback"
-    assert "EURUSD" in result.data["full_text"]
-    assert "LLM-анализ недоступен" not in result.data["full_text"]
-    assert "ликвидности" in result.data["unified_narrative"].lower()
+    assert result.source == "llm_text"
+    assert result.data["idea_article_ru"] == "still-invalid"
 
 
-def test_rejects_banned_phrase_and_retries(monkeypatch) -> None:
+def test_partial_json_is_used_without_full_reject(monkeypatch) -> None:
     service = IdeaNarrativeLLMService()
     service.api_key = "test"
     calls = {"n": 0}
@@ -106,11 +105,11 @@ def test_rejects_banned_phrase_and_retries(monkeypatch) -> None:
     monkeypatch.setattr("requests.post", _post)
     result = service.generate(event_type="idea_updated", facts={"symbol": "EURUSD"})
 
-    assert calls["n"] >= 2
+    assert calls["n"] >= 1
     assert result.source == "llm"
 
 
-def test_rejects_missing_cause_effect_chain_and_retries(monkeypatch) -> None:
+def test_json_without_strict_quality_checks_is_used(monkeypatch) -> None:
     service = IdeaNarrativeLLMService()
     service.api_key = "test"
     calls = {"n": 0}
@@ -137,7 +136,7 @@ def test_rejects_missing_cause_effect_chain_and_retries(monkeypatch) -> None:
     monkeypatch.setattr("requests.post", _post)
     result = service.generate(event_type="idea_updated", facts={"symbol": "EURUSD"})
 
-    assert calls["n"] >= 2
+    assert calls["n"] >= 1
     assert result.source == "llm"
 
 
