@@ -2755,15 +2755,17 @@
 
     function renderOptionsAnalysis(idea) {
       const oa = idea && typeof idea.options_analysis === "object" ? idea.options_analysis : {};
-      const analysis = oa && typeof oa.analysis === "object" ? oa.analysis : oa;
-      const available = Boolean(oa.available ?? idea.options_available);
+      const mc = idea && typeof idea.market_context === "object" ? idea.market_context : {};
+      const fallbackAnalysis = mc.optionsAnalysis && typeof mc.optionsAnalysis === "object" ? mc.optionsAnalysis : (idea.optionsAnalysis && typeof idea.optionsAnalysis === "object" ? idea.optionsAnalysis : {});
+      const analysis = oa && typeof oa.analysis === "object" ? oa.analysis : (Object.keys(oa).length ? oa : fallbackAnalysis);
+      const available = Boolean(oa.available ?? analysis.available ?? idea.options_available ?? mc.options_available);
       const status = available ? "available" : "unavailable";
-      const source = String(oa.source || analysis.source || idea.options_source || "unavailable");
+      const source = String(oa.source || analysis.source || idea.options_source || mc.options_source || "unavailable");
       const strikesRaw = analysis.keyLevels ?? analysis.keyStrikes ?? idea?.market_context?.options_key_strikes;
       const strikes = Array.isArray(strikesRaw) ? strikesRaw.join(", ") : (strikesRaw || "—");
       const maxPain = analysis.maxPain ?? idea?.market_context?.options_max_pain ?? "—";
       const bias = analysis.bias || idea.options_bias || "—";
-      const summary = analysis.summary_ru || idea.options_summary_ru || (available ? "Данные options layer получены." : "Опционный слой сейчас недоступен, поэтому идея рассчитана без подтверждения options layer.");
+      const summary = analysis.summary_ru || idea.options_summary_ru || (available ? "Данные options layer получены." : "Опционный слой сейчас недоступен.");
       return `
       <div class="modal-section-title">Options Analysis</div>
       <div class="box modal-text">

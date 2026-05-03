@@ -5780,8 +5780,30 @@ class TradeIdeaService:
                         "overlay_data": overlay_payload,
                         "chart_overlays": chart_overlays,
                         "chart_overlays_present": self.is_meaningful_overlay_payload(chart_overlays),
-                        "options_available": bool(((row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {}).get("available"))),
-                        "options_source": ((row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {}).get("source")),
+                        "options_available": bool(
+                            ((row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {}).get("available"))
+                            or ((row.get("market_context") if isinstance(row.get("market_context"), dict) else {}).get("options_available"))
+                        ),
+                        "options_source": (
+                            ((row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {}).get("source"))
+                            or ((row.get("market_context") if isinstance(row.get("market_context"), dict) else {}).get("options_source"))
+                            or "unavailable"
+                        ),
+                        "options_summary_ru": (
+                            (row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {}).get("summary_ru")
+                            or row.get("options_summary_ru")
+                            or ((row.get("market_context") if isinstance(row.get("market_context"), dict) else {}).get("optionsSummaryRu"))
+                        ),
+                        "debug_options_source_selected": (
+                            ((row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {}).get("source"))
+                            or ((row.get("market_context") if isinstance(row.get("market_context"), dict) else {}).get("options_source"))
+                            or "unavailable"
+                        ),
+                        "debug_options_available": bool(
+                            ((row.get("options_analysis") if isinstance(row.get("options_analysis"), dict) else {}).get("available"))
+                            or ((row.get("market_context") if isinstance(row.get("market_context"), dict) else {}).get("options_available"))
+                        ),
+                        "debug_options_symbol_checked": symbol,
                         "zones": overlay_payload.get("zones", []),
                         "levels": overlay_payload.get("levels", []),
                         "labels": overlay_payload.get("labels", []),
