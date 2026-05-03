@@ -221,4 +221,9 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
         logger.info("ideas_assets_admin_backfill_started")
         return services.trade_idea_service.rebuild_missing_idea_assets(force=True)
 
+    @router.post("/api/ideas/regenerate-all-narratives")
+    async def regenerate_all_narratives():
+        logger.info("ideas_narrative_regenerate_all_started")
+        return services.trade_idea_service.regenerate_all_narratives()
+
     return router

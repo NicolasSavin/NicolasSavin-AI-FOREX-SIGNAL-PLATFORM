@@ -1053,6 +1053,7 @@
             <option value="CLOSED">Архив</option>
           </select>
           <button id="refreshBtn">Обновить</button>
+          <button id="regenerateNarrativesBtn">Перегенерировать тексты через Grok</button>
           <label class="voice-toggle" for="ideasVoiceToggle">
             <input type="checkbox" id="ideasVoiceToggle" />
             🔊 Озвучивать изменения
@@ -1167,6 +1168,7 @@
     const pairFilter = document.getElementById("pairFilter");
     const signalFilter = document.getElementById("signalFilter");
     const refreshBtn = document.getElementById("refreshBtn");
+    const regenerateNarrativesBtn = document.getElementById("regenerateNarrativesBtn");
     const statusBox = document.getElementById("statusBox");
     const ideasGrid = document.getElementById("ideasGrid");
     const archiveList = document.getElementById("archiveList");
@@ -1367,6 +1369,26 @@
     });
 
     refreshBtn.addEventListener("click", () => loadIdeas(true));
+    regenerateNarrativesBtn?.addEventListener("click", async () => {
+      regenerateNarrativesBtn.disabled = true;
+      statusBox.style.display = "block";
+      statusBox.className = "empty";
+      statusBox.textContent = "Перегенерируем тексты через Grok/OpenRouter...";
+      try {
+        const response = await fetch("/api/ideas/regenerate-all-narratives", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        await loadIdeas(true);
+      } catch (error) {
+        statusBox.style.display = "block";
+        statusBox.className = "error";
+        statusBox.textContent = "Ошибка перегенерации текстов: " + error.message;
+      } finally {
+        regenerateNarrativesBtn.disabled = false;
+      }
+    });
     closeModalBtn.addEventListener("click", closeModal);
 
     modalBackdrop.addEventListener("click", (event) => {
