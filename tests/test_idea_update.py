@@ -98,20 +98,20 @@ def test_trade_idea_archives_on_tp_and_keeps_history(tmp_path: Path) -> None:
     payload = service.refresh_market_ideas()
 
     assert created["idea_id"] == updated["idea_id"] == archived["idea_id"]
-    assert archived["status"] == "archived"
+    assert archived["status"] == "tp_hit"
     assert archived["final_status"] == "tp_hit"
     assert archived["close_reason"] == "TP reached"
     assert archived["closed_at"] is not None
     assert len(payload["ideas"]) == 0
     assert len(payload["archive"]) == 1
-    assert archived["result"] == "win"
+    assert archived["result"] == "tp"
     assert archived["entry_price"] == 1.082
     assert archived["exit_price"] == 1.088
     assert archived["pnl_percent"] > 0
     assert archived["rr"] == 2.0
     assert archived["duration"] is not None
-    assert payload["statistics"]["total_trades"] == 1
-    assert payload["statistics"]["wins"] == 1
+    assert payload["statistics"]["total"] == 1
+    assert payload["statistics"]["tp_count"] == 1
     assert payload["statistics"]["winrate"] == 100.0
     history_types = [item["type"] for item in archived["history"]]
     assert "tp_hit" in history_types
@@ -189,7 +189,7 @@ def test_no_trade_does_not_reopen_closed_lifecycle(tmp_path: Path) -> None:
     ideas = service.idea_store.read()["ideas"]
     assert len(ideas) == 1
     assert unchanged["idea_id"] == closed["idea_id"]
-    assert unchanged["status"] == "archived"
+    assert unchanged["status"] == "tp_hit"
     assert unchanged["final_status"] == "tp_hit"
 
 
@@ -228,6 +228,30 @@ def test_active_and_triggered_do_not_return_to_waiting(tmp_path: Path) -> None:
     assert first["status"] in {"triggered", "active", "created", "waiting"}
     if first["status"] in {"triggered", "active"}:
         assert second["status"] == first["status"]
+
+
+def test_active_locked_fields_do_not_change_on_refresh(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    base = {"symbol": "EURUSD", "timeframe": "H1", "action": "BUY", "entry": 1.1, "stop_loss": 1.09, "take_profit": 1.12, "latest_close": 1.101, "reason_ru": "x"}
+    active = service.upsert_trade_idea(base)
+    active = service.upsert_trade_idea({**base, "latest_close": 1.102})
+    refreshed = service.upsert_trade_idea({**base, "entry": 1.2, "stop_loss": 1.0, "take_profit": 1.3, "action": "SELL"})
+    if active["status"] == "active":
+        assert refreshed["entry"] == active["entry"]
+        assert refreshed["stop_loss"] == active["stop_loss"]
+        assert refreshed["take_profit"] == active["take_profit"]
+
+
+def test_statistics_count_only_closed(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    open_idea = {"symbol": "EURUSD", "timeframe": "H1", "action": "BUY", "entry": 1.1, "stop_loss": 1.09, "take_profit": 1.12, "latest_close": 1.095, "reason_ru": "x"}
+    service.upsert_trade_idea(open_idea)
+    closed_base = {"symbol": "GBPUSD", "timeframe": "H1", "action": "SELL", "entry": 1.25, "stop_loss": 1.255, "take_profit": 1.24, "latest_close": 1.249, "reason_ru": "x"}
+    service.upsert_trade_idea(closed_base)
+    service.upsert_trade_idea({**closed_base, "latest_close": 1.239})
+    payload = service.refresh_market_ideas()
+    assert payload["statistics"]["total"] == 1
+    assert payload["statistics"]["tp_count"] == 1
 
 
 def test_zero_levels_do_not_override_existing(tmp_path: Path) -> None:

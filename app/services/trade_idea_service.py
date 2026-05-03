@@ -44,6 +44,19 @@ IDEA_STATUS_ARCHIVED = "archived"
 ACTIVE_STATUSES = {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING, IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE}
 CLOSED_STATUSES = {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT, IDEA_STATUS_ARCHIVED}
 TERMINAL_STATUSES = {IDEA_STATUS_TP_HIT, IDEA_STATUS_SL_HIT}
+LOCKED_ACTIVE_FIELDS = {
+    "signal",
+    "action",
+    "entry",
+    "stop_loss",
+    "stopLoss",
+    "take_profit",
+    "takeProfit",
+    "direction",
+    "idea_id",
+    "created_at",
+    "activated_at",
+}
 ALLOWED_LIFECYCLE_TRANSITIONS = {
     IDEA_STATUS_CREATED: {IDEA_STATUS_WAITING},
     IDEA_STATUS_WAITING: {IDEA_STATUS_TRIGGERED},
@@ -974,6 +987,8 @@ class TradeIdeaService:
                 return IDEA_STATUS_SL_HIT
             if entry is not None and latest_close >= entry:
                 return IDEA_STATUS_ACTIVE if existing_status in {IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE} else IDEA_STATUS_TRIGGERED
+            if existing_status == IDEA_STATUS_ACTIVE:
+                return IDEA_STATUS_ACTIVE
             return IDEA_STATUS_WAITING if existing_status in {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING} else existing_status
         if direction == "bearish":
             if take_profit is not None and latest_close <= take_profit:
@@ -982,7 +997,11 @@ class TradeIdeaService:
                 return IDEA_STATUS_SL_HIT
             if entry is not None and latest_close <= entry:
                 return IDEA_STATUS_ACTIVE if existing_status in {IDEA_STATUS_TRIGGERED, IDEA_STATUS_ACTIVE} else IDEA_STATUS_TRIGGERED
+            if existing_status == IDEA_STATUS_ACTIVE:
+                return IDEA_STATUS_ACTIVE
             return IDEA_STATUS_WAITING if existing_status in {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING} else existing_status
+        if existing_status == IDEA_STATUS_ACTIVE:
+            return IDEA_STATUS_ACTIVE
         return IDEA_STATUS_WAITING if existing_status in {IDEA_STATUS_CREATED, IDEA_STATUS_WAITING} else existing_status
 
     @staticmethod
@@ -1757,7 +1776,7 @@ class TradeIdeaService:
             signal=signal,
         )
         updates = self._history_to_updates(history)
-        persisted_status = IDEA_STATUS_ARCHIVED if is_terminal else status
+        persisted_status = status
         existing_narrative_version = int(existing.get("narrative_version") or 1) if existing else 0
         narrative_version = existing_narrative_version + 1 if should_refresh_narrative else max(existing_narrative_version, 1)
         narrative_history = self._append_narrative_history(
@@ -1833,7 +1852,9 @@ class TradeIdeaService:
             "updated_at": now.isoformat(),
             "internal_refresh_at": now.isoformat(),
             "closed_at": closed_at,
+            "activated_at": existing.get("activated_at") if existing else None,
             "close_reason": close_reason,
+            "close_reason_ru": self._close_reason_ru(status) if is_terminal else existing.get("close_reason_ru") if existing else None,
             "close_explanation": close_explanation,
             "version": version,
             "change_summary": self._change_summary(signal, existing),
@@ -1941,6 +1962,18 @@ class TradeIdeaService:
                 "fallback_used": pipeline["fallback_used"],
             },
         }
+        if status == IDEA_STATUS_ACTIVE and not payload.get("activated_at"):
+            payload["activated_at"] = now.isoformat()
+        if is_terminal:
+            payload["close_price"] = latest_close
+            payload["result"] = "tp" if status == IDEA_STATUS_TP_HIT else "sl" if status == IDEA_STATUS_SL_HIT else payload.get("result")
+        payload["lifecycle_history"] = self._append_lifecycle_history(
+            existing.get("lifecycle_history") if existing else None,
+            previous_status=str((existing or {}).get("status") or "").lower() if existing else "",
+            next_status=status,
+            at=now.isoformat(),
+        )
+        payload = self._preserve_locked_active_fields(existing=existing, payload=payload)
         payload = self._apply_meaningful_update_metadata(
             existing=existing,
             signal=signal,
@@ -3823,10 +3856,10 @@ class TradeIdeaService:
 
         if final_status == IDEA_STATUS_TP_HIT:
             exit_price = take_profit
-            result = "win"
+            result = "tp"
         elif final_status == IDEA_STATUS_SL_HIT:
             exit_price = stop_loss
-            result = "loss"
+            result = "sl"
         else:
             exit_price = latest_close
             result = "breakeven"
@@ -4133,6 +4166,36 @@ class TradeIdeaService:
             IDEA_STATUS_TP_HIT: "TP reached",
             IDEA_STATUS_SL_HIT: "SL reached",
         }.get(status)
+
+    @staticmethod
+    def _close_reason_ru(status: str) -> str | None:
+        return {
+            IDEA_STATUS_TP_HIT: "Закрыто по тейк-профиту.",
+            IDEA_STATUS_SL_HIT: "Закрыто по стоп-лоссу.",
+        }.get(status)
+
+    @staticmethod
+    def _append_lifecycle_history(
+        history: Any,
+        *,
+        previous_status: str,
+        next_status: str,
+        at: str,
+    ) -> list[dict[str, str]]:
+        items = list(history) if isinstance(history, list) else []
+        if previous_status and previous_status != next_status:
+            reason = "entry_triggered" if next_status == IDEA_STATUS_ACTIVE else "status_changed"
+            items.append({"from": previous_status, "to": next_status, "at": at, "reason": reason})
+        return items
+
+    @staticmethod
+    def _preserve_locked_active_fields(*, existing: dict[str, Any] | None, payload: dict[str, Any]) -> dict[str, Any]:
+        if not existing or str(existing.get("status") or "").lower() != IDEA_STATUS_ACTIVE:
+            return payload
+        for field in LOCKED_ACTIVE_FIELDS:
+            if field in existing:
+                payload[field] = existing.get(field)
+        return payload
 
     @staticmethod
     def _build_close_explanation(*, status: str, symbol: str, direction: str, target: str, invalidation: str) -> str:
