@@ -1915,14 +1915,15 @@
         state.series = series;
       }
 
-      const redrawOverlay = () => addIdeaOverlay(container, chart, series, candles, idea);
-      const cleanup = bindOverlayToChart(container, chart, redrawOverlay, getChartSize);
+      const redrawIdeaOverlays = () => addIdeaOverlay(container, chart, series, candles, idea);
+      redrawIdeaOverlays();
+      const cleanup = bindOverlayToChart(container, chart, redrawIdeaOverlays, getChartSize);
       if (isFullscreen) {
         state.fullscreenOverlayCleanup = cleanup;
       } else {
         state.overlaySyncCleanup = cleanup;
       }
-      requestAnimationFrame(redrawOverlay);
+      requestAnimationFrame(redrawIdeaOverlays);
     }
 
     function teardownFullscreenChart() {
@@ -1981,15 +1982,15 @@
       return [];
     }
 
-    function bindOverlayToChart(container, chart, redrawOverlay, getChartSize) {
-      if (!container || !chart || typeof redrawOverlay !== "function") return null;
+    function bindOverlayToChart(container, chart, redrawIdeaOverlays, getChartSize) {
+      if (!container || !chart || typeof redrawIdeaOverlays !== "function") return null;
 
       let rafId = null;
       const requestRedraw = () => {
         if (rafId !== null) cancelAnimationFrame(rafId);
         rafId = requestAnimationFrame(() => {
           rafId = null;
-          redrawOverlay();
+          redrawIdeaOverlays();
         });
       };
 
@@ -1997,6 +1998,16 @@
       const handleTimeRangeChange = () => requestRedraw();
       chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
       chart.timeScale().subscribeVisibleTimeRangeChange(handleTimeRangeChange);
+
+      const rightScale = chart.priceScale("right");
+      const leftScale = chart.priceScale("left");
+      const handlePriceScaleSizeChange = () => requestRedraw();
+      if (rightScale && typeof rightScale.subscribeSizeChange === "function") {
+        rightScale.subscribeSizeChange(handlePriceScaleSizeChange);
+      }
+      if (leftScale && typeof leftScale.subscribeSizeChange === "function") {
+        leftScale.subscribeSizeChange(handlePriceScaleSizeChange);
+      }
 
       const resizeChartToContainer = () => {
         const nextSize = typeof getChartSize === "function"
@@ -2006,7 +2017,7 @@
           width: nextSize.width,
           height: nextSize.height,
         });
-        requestRedraw();
+        redrawIdeaOverlays();
       };
       const handleWindowResize = () => resizeChartToContainer();
       window.addEventListener("resize", handleWindowResize);
@@ -2029,6 +2040,12 @@
         }
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
         chart.timeScale().unsubscribeVisibleTimeRangeChange(handleTimeRangeChange);
+        if (rightScale && typeof rightScale.unsubscribeSizeChange === "function") {
+          rightScale.unsubscribeSizeChange(handlePriceScaleSizeChange);
+        }
+        if (leftScale && typeof leftScale.unsubscribeSizeChange === "function") {
+          leftScale.unsubscribeSizeChange(handlePriceScaleSizeChange);
+        }
         window.removeEventListener("resize", handleWindowResize);
         document.removeEventListener("fullscreenchange", handleWindowResize);
       };
@@ -2146,11 +2163,99 @@
         drawPatternShape(svg, pattern, xByAnchor, yByPrice);
       }
 
+      drawIdeaTradeLevels(svg, chartEl, idea, candles, xByAnchor, yByPrice);
+
       const note = document.getElementById("chartNote");
       if (note) {
         note.textContent =
           `Разметка: OB/Breaker=${detected.orderBlocks.length}, FVG=${detected.fvg.length}, Pattern=${detected.patterns.length}. Фейковые свечи отключены.`;
       }
+    }
+
+    function drawIdeaTradeLevels(svg, chartEl, idea, candles, xByAnchor, yByPrice) {
+      const entry = toNumber(idea.entry || idea.entry_price || idea.entry_zone);
+      const sl = toNumber(idea.stop_loss || idea.stopLoss || idea.sl);
+      const tp = toNumber(idea.take_profit || idea.takeProfit || idea.tp);
+      const action = String(idea.signal || idea.action || "").trim().toUpperCase();
+      const rightLabelX = Math.max(10, chartEl.clientWidth - 118);
+      const startTime = candles[Math.max(0, candles.length - 40)]?.time ?? candles[0]?.time;
+      const endTime = candles[candles.length - 1]?.time;
+
+      const drawLevel = (price, color, text) => {
+        const y = yByPrice(price);
+        const x1 = xByAnchor({ time: startTime });
+        const x2 = xByAnchor({ time: endTime });
+        if (![x1, x2, y].every(Number.isFinite)) return;
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", Math.min(x1, x2));
+        line.setAttribute("x2", Math.max(x1, x2));
+        line.setAttribute("y1", y);
+        line.setAttribute("y2", y);
+        line.setAttribute("stroke", color);
+        line.setAttribute("stroke-width", "2");
+        line.setAttribute("stroke-dasharray", "7 6");
+        svg.appendChild(line);
+        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        label.setAttribute("x", rightLabelX);
+        label.setAttribute("y", y - 6);
+        label.setAttribute("fill", color);
+        label.setAttribute("font-size", "12");
+        label.setAttribute("font-weight", "900");
+        label.textContent = `${text} ${formatValue(price)}`;
+        svg.appendChild(label);
+      };
+
+      if (Number.isFinite(entry)) drawLevel(entry, "#ffd84d", "ENTRY");
+      if (Number.isFinite(tp)) drawLevel(tp, "#31f59d", "TP");
+      if (Number.isFinite(sl)) drawLevel(sl, "#ff5f7a", "SL");
+
+      if (!Number.isFinite(entry) || !Number.isFinite(tp)) return;
+      const arrowStartX = xByAnchor({ time: endTime });
+      const arrowStartY = yByPrice(entry);
+      const arrowEndY = yByPrice(tp);
+      if (![arrowStartX, arrowStartY, arrowEndY].every(Number.isFinite)) return;
+
+      if (action === "WAIT") {
+        const waitText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        waitText.setAttribute("x", Math.max(8, arrowStartX - 170));
+        waitText.setAttribute("y", arrowStartY - 16);
+        waitText.setAttribute("fill", "#9bb8d8");
+        waitText.setAttribute("font-size", "13");
+        waitText.setAttribute("font-weight", "900");
+        waitText.textContent = "WAIT / no trade";
+        svg.appendChild(waitText);
+        return;
+      }
+
+      const isBuy = action.includes("BUY");
+      const isSell = action.includes("SELL");
+      if (!isBuy && !isSell) return;
+
+      const color = isBuy ? "#31f59d" : "#ff5f7a";
+      const dir = isBuy ? -1 : 1;
+      const shaft = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      shaft.setAttribute("x1", arrowStartX - 42);
+      shaft.setAttribute("x2", arrowStartX - 42);
+      shaft.setAttribute("y1", arrowStartY);
+      shaft.setAttribute("y2", arrowEndY);
+      shaft.setAttribute("stroke", color);
+      shaft.setAttribute("stroke-width", "3");
+      svg.appendChild(shaft);
+
+      const head = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      const tipY = arrowEndY;
+      head.setAttribute("d", `M ${arrowStartX - 42} ${tipY} L ${arrowStartX - 48} ${tipY + (8 * dir)} L ${arrowStartX - 36} ${tipY + (8 * dir)} Z`);
+      head.setAttribute("fill", color);
+      svg.appendChild(head);
+
+      const tradeLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      tradeLabel.setAttribute("x", Math.max(8, arrowStartX - 164));
+      tradeLabel.setAttribute("y", (arrowStartY + arrowEndY) / 2 - 8);
+      tradeLabel.setAttribute("fill", color);
+      tradeLabel.setAttribute("font-size", "12");
+      tradeLabel.setAttribute("font-weight", "900");
+      tradeLabel.textContent = `${isBuy ? "BUY" : "SELL"} → TP`;
+      svg.appendChild(tradeLabel);
     }
 
     function drawZone(svg, x1, y1, x2, y2, stroke, fill, label) {
