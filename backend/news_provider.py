@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -35,6 +36,8 @@ class MarketNewsProvider:
     def __init__(self) -> None:
         self._session = requests.Session()
         self._cache: CachedNewsPayload | None = None
+        self._refresh_lock = threading.Lock()
+        self._refresh_running = False
         self._storage = JsonStorage("signals_data/market_news.json", self._default_payload())
         self._intelligence = NewsIntelligenceService()
 
@@ -45,33 +48,63 @@ class MarketNewsProvider:
         if self._cache and self._cache.expires_at > now:
             return self._attach_signal_relations(self._cache.payload, active_signals)
 
-        base_payload = self._refresh_news_payload(now)
-        self._cache = CachedNewsPayload(expires_at=now + timedelta(seconds=self._cache_ttl_seconds), payload=base_payload)
-        return self._attach_signal_relations(base_payload, active_signals)
+        stored = self._storage.read()
+        stored_news = stored.get("news") or []
+        if stored_news:
+            payload = {"updated_at_utc": stored.get("updated_at_utc") or now.isoformat(), "news": stored_news}
+            self._cache = CachedNewsPayload(expires_at=now + timedelta(seconds=self._cache_ttl_seconds), payload=payload)
+            self._schedule_refresh(now)
+            return self._attach_signal_relations(payload, active_signals)
+
+        # First start fallback must still be instant. Background refresh will fill real news.
+        payload = {"updated_at_utc": now.isoformat(), "news": [self._fallback_item(now)]}
+        self._cache = CachedNewsPayload(expires_at=now + timedelta(seconds=60), payload=payload)
+        self._schedule_refresh(now)
+        return self._attach_signal_relations(payload, active_signals)
+
+    def _schedule_refresh(self, now: datetime) -> None:
+        if os.getenv("NEWS_DISABLE_BACKGROUND_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            return
+        if self._refresh_running:
+            return
+        with self._refresh_lock:
+            if self._refresh_running:
+                return
+            self._refresh_running = True
+        threading.Thread(target=self._refresh_background, name="market-news-refresh", daemon=True).start()
+
+    def _refresh_background(self) -> None:
+        try:
+            now = datetime.now(timezone.utc)
+            payload = self._refresh_news_payload(now)
+            self._cache = CachedNewsPayload(expires_at=now + timedelta(seconds=self._cache_ttl_seconds), payload=payload)
+        finally:
+            with self._refresh_lock:
+                self._refresh_running = False
 
     @property
     def _cache_ttl_seconds(self) -> int:
-        value = os.getenv("NEWS_CACHE_TTL_SECONDS", "300").strip()
+        value = os.getenv("NEWS_CACHE_TTL_SECONDS", "1800").strip()
         try:
-            return min(900, max(300, int(value)))
+            return min(7200, max(600, int(value)))
         except ValueError:
-            return 300
+            return 1800
 
     @property
     def _request_timeout_seconds(self) -> int:
-        value = os.getenv("NEWS_REQUEST_TIMEOUT_SECONDS", "10").strip()
+        value = os.getenv("NEWS_REQUEST_TIMEOUT_SECONDS", "3").strip()
         try:
-            return max(3, int(value))
+            return min(5, max(1, int(value)))
         except ValueError:
-            return 10
+            return 3
 
     @property
     def _max_items(self) -> int:
-        value = os.getenv("NEWS_MAX_ITEMS", "12").strip()
+        value = os.getenv("NEWS_MAX_ITEMS", "8").strip()
         try:
-            return min(20, max(3, int(value)))
+            return min(12, max(3, int(value)))
         except ValueError:
-            return 12
+            return 8
 
     @property
     def _feed_urls(self) -> tuple[dict, ...]:
@@ -96,10 +129,7 @@ class MarketNewsProvider:
             news = stored.get("news") or [self._fallback_item(now)]
             return {"updated_at_utc": now.isoformat(), "news": news}
 
-        payload = {
-            "updated_at_utc": now.isoformat(),
-            "news": items,
-        }
+        payload = {"updated_at_utc": now.isoformat(), "news": items}
         self._storage.write(payload)
         return payload
 
@@ -107,6 +137,8 @@ class MarketNewsProvider:
         collected: list[dict] = []
         for feed in self._feed_urls:
             collected.extend(self._fetch_feed_items(feed))
+            if len(collected) >= self._max_items * 2:
+                break
 
         unique_items = self._intelligence.deduplicate(collected)
         unique_items.sort(key=lambda item: item.get("published_at") or "", reverse=True)
@@ -119,10 +151,7 @@ class MarketNewsProvider:
             response = self._session.get(
                 feed["url"],
                 timeout=self._request_timeout_seconds,
-                headers={
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
-                },
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8"},
             )
             status_code = response.status_code
             response.raise_for_status()
@@ -135,13 +164,13 @@ class MarketNewsProvider:
             root = ElementTree.fromstring(response.text)
             channel_items = root.findall("./channel/item")
             rdf_items = root.findall("{http://purl.org/rss/1.0/}item")
-            for item in [*channel_items, *rdf_items]:
+            for item in [*channel_items, *rdf_items][: self._max_items]:
                 parsed = self._parse_feed_item(item, feed_name=source_name)
                 if parsed:
                     parsed_items.append(parsed)
         except ElementTree.ParseError:
             feed_data = feedparser.parse(response.text)
-            for entry in feed_data.entries:
+            for entry in list(feed_data.entries)[: self._max_items]:
                 parsed = self._parse_feedparser_entry(entry, feed_name=source_name)
                 if parsed:
                     parsed_items.append(parsed)
@@ -155,66 +184,26 @@ class MarketNewsProvider:
         raw_description = entry.get("summary") or entry.get("description") or ""
         source = entry.get("source", {}).get("title") if isinstance(entry.get("source"), dict) else None
         source = source or (entry.get("author") or "").split("(")[0].strip() or feed_name
-        published_at = self._parse_pub_date(
-            entry.get("published")
-            or entry.get("updated")
-            or entry.get("pubDate")
-            or entry.get("date")
-        )
-
+        published_at = self._parse_pub_date(entry.get("published") or entry.get("updated") or entry.get("pubDate") or entry.get("date"))
         if not raw_title:
             return None
-
         clean_title = self._normalize_title(raw_title, source)
         clean_summary = self._clean_description(raw_description, clean_title)
         image_url = self._extract_image_url(raw_description, raw_link)
-        article_text = ""
-        if not clean_summary and raw_link:
-            fetched_summary, fetched_image, article_text = self._fetch_article_details(raw_link)
-            clean_summary = self._clean_description(fetched_summary, clean_title)
-            image_url = image_url or fetched_image
-        return {
-            "title_original": clean_title,
-            "summary_original": clean_summary,
-            "source": source,
-            "source_url": raw_link or None,
-            "published_at": published_at.isoformat() if published_at else None,
-            "image_url": image_url,
-            "article_original": article_text[:1500],
-        }
+        return {"title_original": clean_title, "summary_original": clean_summary, "source": source, "source_url": raw_link or None, "published_at": published_at.isoformat() if published_at else None, "image_url": image_url, "article_original": ""}
 
     def _parse_feed_item(self, item: ElementTree.Element, feed_name: str) -> dict | None:
         raw_title = self._find_text(item, "title").strip()
         raw_link = self._find_text(item, "link").strip()
         raw_description = self._find_text(item, "description") or self._find_text(item, "encoded")
         source = self._extract_source(item, fallback=feed_name)
-        published_at = self._parse_pub_date(
-            self._find_text(item, "pubDate")
-            or self._find_text(item, "date")
-            or self._find_text(item, "issued")
-        )
-
+        published_at = self._parse_pub_date(self._find_text(item, "pubDate") or self._find_text(item, "date") or self._find_text(item, "issued"))
         if not raw_title:
             return None
-
         clean_title = self._normalize_title(raw_title, source)
         clean_summary = self._clean_description(raw_description, clean_title)
         image_url = self._extract_image_url(raw_description, raw_link)
-        article_text = ""
-        if not clean_summary and raw_link:
-            fetched_summary, fetched_image, article_text = self._fetch_article_details(raw_link)
-            clean_summary = self._clean_description(fetched_summary, clean_title)
-            image_url = image_url or fetched_image
-        return {
-            "title_original": clean_title,
-            "summary_original": clean_summary,
-            "source": source,
-            "source_url": raw_link or None,
-            "published_at": published_at.isoformat() if published_at else None,
-            "image_url": image_url,
-            "article_original": article_text[:1500],
-        }
-
+        return {"title_original": clean_title, "summary_original": clean_summary, "source": source, "source_url": raw_link or None, "published_at": published_at.isoformat() if published_at else None, "image_url": image_url, "article_original": ""}
 
     def _extract_image_url(self, raw_description: str, link: str) -> str | None:
         if not raw_description:
@@ -228,34 +217,9 @@ class MarketNewsProvider:
             return None
         return urljoin(link, src) if link else src
 
-    def _fetch_article_details(self, link: str) -> tuple[str, str | None, str | None]:
-        if not link:
-            return "", None, None
-        try:
-            response = self._session.get(link, timeout=self._request_timeout_seconds, headers={"User-Agent": "Mozilla/5.0"})
-            response.raise_for_status()
-        except requests.RequestException:
-            return "", None, None
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        og_desc = (soup.find("meta", attrs={"property": "og:description"}) or {}).get("content", "").strip()
-        meta_desc = (soup.find("meta", attrs={"name": "description"}) or {}).get("content", "").strip()
-        article_text = ""
-        paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
-        joined = " ".join(x for x in paragraphs if x)
-        if joined:
-            article_text = joined[:1500]
-        image_tag = soup.find("meta", attrs={"property": "og:image"})
-        image_url = image_tag.get("content", "").strip() if image_tag else None
-        summary = og_desc or meta_desc or article_text
-        return summary, image_url or None, article_text
-
     def _attach_signal_relations(self, payload: dict, active_signals: list[dict]) -> dict:
         items = [self._intelligence.enrich(item, active_signals) for item in payload.get("news", [])]
-        return {
-            "updated_at_utc": payload.get("updated_at_utc") or datetime.now(timezone.utc).isoformat(),
-            "news": items,
-        }
+        return {"updated_at_utc": payload.get("updated_at_utc") or datetime.now(timezone.utc).isoformat(), "news": items}
 
     @staticmethod
     def _find_text(item: ElementTree.Element, tag_name: str) -> str:
@@ -312,10 +276,4 @@ class MarketNewsProvider:
 
     @staticmethod
     def _fallback_item(now: datetime) -> dict:
-        return {
-            "title_original": "Confirmed market news feed is temporarily unavailable",
-            "summary_original": "The service could not fetch fresh market news from open feeds. No synthetic stories are generated.",
-            "source": "Open RSS",
-            "source_url": None,
-            "published_at": now.isoformat(),
-        }
+        return {"title_original": "Confirmed market news feed is temporarily unavailable", "summary_original": "The service could not fetch fresh market news from open feeds. No synthetic stories are generated.", "source": "Open RSS", "source_url": None, "published_at": now.isoformat()}
