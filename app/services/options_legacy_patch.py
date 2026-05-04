@@ -6,6 +6,7 @@ from typing import Any
 
 _TARGET_MODULE = "app.services.trade_idea_service"
 _INSTALLED = False
+_JSON_PATCHED = False
 
 
 def _get_mt4_options(symbol: str) -> dict[str, Any]:
@@ -83,6 +84,48 @@ def _merge_options(card: dict[str, Any], idea: dict[str, Any] | None = None) -> 
     return card
 
 
+def _merge_payload(content: Any) -> Any:
+    if isinstance(content, dict):
+        if isinstance(content.get("ideas"), list):
+            content = dict(content)
+            content["ideas"] = [
+                _merge_options(dict(item), item) if isinstance(item, dict) else item
+                for item in content.get("ideas", [])
+            ]
+            return content
+        if {"symbol", "pair", "instrument", "signal", "action"}.intersection(content.keys()):
+            return _merge_options(dict(content), content)
+    if isinstance(content, list):
+        return [
+            _merge_options(dict(item), item)
+            if isinstance(item, dict) and {"symbol", "pair", "instrument", "signal", "action"}.intersection(item.keys())
+            else item
+            for item in content
+        ]
+    return content
+
+
+def _patch_json_response() -> None:
+    global _JSON_PATCHED
+    if _JSON_PATCHED:
+        return
+    _JSON_PATCHED = True
+    try:
+        from starlette.responses import JSONResponse
+    except Exception:
+        return
+    if getattr(JSONResponse, "_OPTIONS_JSON_PATCHED", False):
+        return
+
+    original_render = JSONResponse.render
+
+    def patched_render(self: Any, content: Any) -> bytes:
+        return original_render(self, _merge_payload(content))
+
+    JSONResponse.render = patched_render
+    setattr(JSONResponse, "_OPTIONS_JSON_PATCHED", True)
+
+
 def _patch_module(module: Any) -> None:
     if getattr(module, "_OPTIONS_LEGACY_PATCHED", False):
         return
@@ -153,6 +196,7 @@ class _PatchFinder(importlib.abc.MetaPathFinder):
 
 def install_trade_idea_options_patch() -> None:
     global _INSTALLED
+    _patch_json_response()
     if _INSTALLED:
         module = sys.modules.get(_TARGET_MODULE)
         if module is not None:
