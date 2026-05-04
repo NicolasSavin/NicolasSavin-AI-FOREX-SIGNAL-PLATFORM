@@ -6,9 +6,26 @@ import threading
 import time
 from typing import Any
 
-from app.services.ai_gateway import gateway, result_meta
-
 logger = logging.getLogger(__name__)
+
+
+def _gateway():
+    # Lazy import: ai_gateway imports app.core.env, so importing it at module
+    # load time from env.py creates a circular import and crashes Render deploy.
+    from app.services.ai_gateway import gateway
+
+    return gateway()
+
+
+def _result_meta(result: Any) -> dict[str, Any]:
+    return {
+        "ai_provider": getattr(result, "source", "grok"),
+        "ai_model": getattr(result, "model", None),
+        "ai_model_used": getattr(result, "model", None),
+        "ai_status": getattr(result, "status", "unknown"),
+        "ai_fallback_used": getattr(result, "fallback_used", False),
+        "ai_error": getattr(result, "error", None),
+    }
 
 
 def _patch_news_service(module: Any) -> None:
@@ -34,7 +51,7 @@ def _patch_news_service(module: Any) -> None:
             f"published_at: {published_at}\n"
             f"markets: {markets}\n"
         )
-        result = gateway().complete_sync(
+        result = _gateway().complete_sync(
             system=(
                 "Ты русскоязычный forex news analyst. Объясняй: что произошло, "
                 "почему важно, какие валюты/активы могут реагировать. Без выдуманных фактов."
@@ -46,9 +63,9 @@ def _patch_news_service(module: Any) -> None:
             expect_json=True,
             task="news_rewrite",
         )
-        if result.ok:
-            data = result.data if isinstance(result.data, dict) else {}
-            strip_html = getattr(module, "strip_html", lambda value: str(value or ""))
+        strip_html = getattr(module, "strip_html", lambda value: str(value or ""))
+        if getattr(result, "ok", False):
+            data = result.data if isinstance(getattr(result, "data", None), dict) else {}
             payload = {
                 "title_ru": strip_html(str(data.get("title_ru") or title)).strip(),
                 "summary_ru": strip_html(str(data.get("summary_ru") or result.text or summary)).strip(),
@@ -57,22 +74,21 @@ def _patch_news_service(module: Any) -> None:
                 "sentiment": strip_html(str(data.get("sentiment") or "neutral")).strip().lower()[:20] or "neutral",
                 "humor_ru": strip_html(str(data.get("humor_ru") or "Рынок снова проверяет, кто читал новость до конца.")).strip(),
             }
-            payload.update(result_meta(result))
+            payload.update(_result_meta(result))
             return payload
 
-        fallback = original(title, summary, source, published_at, markets)
-        if fallback:
-            return fallback
+        # Do not return the old “Не удалось обработать новость через Grok” block.
+        # It is visible on the News page and looks like a broken AI feature.
         return {
-            "title_ru": title,
-            "summary_ru": summary or "Описание новости временно недоступно.",
-            "market_impact_ru": "Grok/OpenRouter временно недоступен, показан исходный текст новости.",
+            "title_ru": strip_html(str(title)).strip() or "Рыночная новость",
+            "summary_ru": strip_html(str(summary or title)).strip() or "Описание новости временно недоступно.",
+            "market_impact_ru": "Grok/OpenRouter временно недоступен, показан исходный текст новости без AI-обработки.",
             "affected_assets": markets or ["USD", "EURUSD", "XAUUSD"],
             "sentiment": "neutral",
             "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
             "ai_provider": "grok",
             "ai_status": "fallback_local",
-            "ai_error": result.error,
+            "ai_error": getattr(result, "error", "ai_gateway_failed"),
         }
 
     module.rewrite_news_with_xai = patched_rewrite_news_with_xai
