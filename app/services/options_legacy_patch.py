@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.abc
+import json
 import sys
 from typing import Any
 
@@ -8,6 +9,8 @@ _TARGET_MODULE = "app.services.trade_idea_service"
 _INSTALLED = False
 _JSON_PATCHED = False
 _FASTAPI_PATCHED = False
+
+_GROK_TEXT_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def _get_mt4_options(symbol: str) -> dict[str, Any]:
@@ -28,6 +31,15 @@ def _extract_symbol(card: dict[str, Any], idea: dict[str, Any] | None = None) ->
             if value:
                 return str(value).upper().strip()
     return ""
+
+
+def _cache_key(card: dict[str, Any]) -> str:
+    symbol = _extract_symbol(card)
+    action = str(card.get("action") or card.get("signal") or "WAIT").upper()
+    entry = card.get("entry") or card.get("entry_price") or card.get("entryPrice") or ""
+    sl = card.get("sl") or card.get("stop_loss") or card.get("stopLoss") or ""
+    tp = card.get("tp") or card.get("take_profit") or card.get("takeProfit") or ""
+    return f"{symbol}:{action}:{entry}:{sl}:{tp}"
 
 
 def _professional_text(card: dict[str, Any], analysis: dict[str, Any]) -> str:
@@ -52,6 +64,37 @@ def _professional_text(card: dict[str, Any], analysis: dict[str, Any]) -> str:
     )
 
 
+def _apply_grok_text(card: dict[str, Any], text_payload: dict[str, Any]) -> None:
+    text = str(
+        text_payload.get("full_text")
+        or text_payload.get("summary")
+        or text_payload.get("short_text")
+        or ""
+    ).strip()
+    if not text:
+        return
+    card["text_source"] = card["textSource"] = "grok"
+    card["narrative_source"] = card["narrativeSource"] = "grok"
+    card["description_source"] = card["descriptionSource"] = "grok"
+    card["ai_provider"] = "grok"
+    card["grok_used"] = True
+    card["grokUsed"] = True
+    card["fallback"] = False
+    card["fallback_text"] = False
+    card["is_fallback_text"] = False
+    card["fallbackText"] = False
+    card["description"] = text
+    card["summary"] = str(text_payload.get("summary") or text)
+    card["idea"] = text
+    card["unified_narrative"] = text
+    card["unifiedNarrative"] = text
+    card["execution_summary_ru"] = str(text_payload.get("execution_summary_ru") or text)
+    card["short_scenario_ru"] = str(text_payload.get("short_text") or text)
+    card["grok_text"] = text
+    card["grokText"] = text
+    card["grok_payload"] = text_payload
+
+
 def _merge_options(card: dict[str, Any], idea: dict[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(card, dict):
         return card
@@ -66,6 +109,10 @@ def _merge_options(card: dict[str, Any], idea: dict[str, Any] | None = None) -> 
     card["debug_options_available"] = available
     card["debug_options_source_selected"] = source
 
+    cached = _GROK_TEXT_CACHE.get(_cache_key(card))
+    if cached:
+        _apply_grok_text(card, cached)
+
     if not available:
         return card
 
@@ -76,7 +123,7 @@ def _merge_options(card: dict[str, Any], idea: dict[str, Any] | None = None) -> 
         "source": "mt4_optionsfx",
     }
     summary = str(analysis.get("summary_ru") or "").strip()
-    text = _professional_text(card, analysis)
+    fallback_text = _professional_text(card, analysis)
 
     card["options_analysis"] = analysis
     card["optionsAnalysis"] = analysis
@@ -97,25 +144,15 @@ def _merge_options(card: dict[str, Any], idea: dict[str, Any] | None = None) -> 
     card["options_max_pain"] = analysis.get("maxPain")
     card["optionsMaxPain"] = analysis.get("maxPain")
 
-    # Make the frontend stop showing fallback badges when live options are present.
-    card["text_source"] = card["textSource"] = "grok"
-    card["narrative_source"] = card["narrativeSource"] = "grok"
-    card["description_source"] = card["descriptionSource"] = "grok"
-    card["ai_provider"] = "grok"
-    card["grok_used"] = True
-    card["grokUsed"] = True
-    card["fallback"] = False
-    card["fallback_text"] = False
-    card["is_fallback_text"] = False
-    card["fallbackText"] = False
-    card.setdefault("description", text)
-    card.setdefault("summary", text)
-    card.setdefault("idea", text)
-    card.setdefault("unified_narrative", text)
-    card.setdefault("unifiedNarrative", text)
-    card.setdefault("execution_summary_ru", text)
-    card.setdefault("short_scenario_ru", text)
-    card.setdefault("options_ru", summary or text)
+    if not cached:
+        card.setdefault("description", fallback_text)
+        card.setdefault("summary", fallback_text)
+        card.setdefault("idea", fallback_text)
+        card.setdefault("unified_narrative", fallback_text)
+        card.setdefault("unifiedNarrative", fallback_text)
+        card.setdefault("execution_summary_ru", fallback_text)
+        card.setdefault("short_scenario_ru", fallback_text)
+        card.setdefault("options_ru", summary or fallback_text)
 
     market_context = card.get("market_context") if isinstance(card.get("market_context"), dict) else {}
     market_context["optionsAnalysis"] = analysis
@@ -170,24 +207,143 @@ def _patch_json_response() -> None:
     setattr(JSONResponse, "_OPTIONS_JSON_PATCHED", True)
 
 
-async def _grok_regenerate_endpoint() -> dict[str, Any]:
-    """Compatibility endpoint for frontend Grok regenerate buttons.
+def _build_grok_prompt(idea: dict[str, Any]) -> str:
+    symbol = _extract_symbol(idea)
+    options = _get_mt4_options(symbol)
+    payload = {
+        "task": "write_professional_trade_idea_narrative",
+        "language": "ru",
+        "rules": [
+            "Не меняй direction/signal, entry, stop loss, take profit, status, confidence.",
+            "Не выдумывай новости, объёмы, индикаторы или факты, которых нет во входных данных.",
+            "Пиши как профессиональный FX prop-desk аналитик, но простым русским языком.",
+            "Логика обязательна: причина -> подтверждение -> следствие -> риск.",
+            "Если данных нет — явно напиши ограничение.",
+            "Верни строго JSON без markdown.",
+        ],
+        "response_shape": {
+            "headline": "короткий заголовок",
+            "summary": "2-4 предложения",
+            "cause": "причина сценария",
+            "confirmation": "подтверждение или ослабление",
+            "risk": "главный риск",
+            "invalidation": "что отменяет сценарий",
+            "target_logic": "логика цели",
+            "short_text": "короткий текст для карточки",
+            "full_text": "полный текст идеи одной статьёй",
+        },
+        "idea": idea,
+        "mt4_optionsfx": options,
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
-    Several frontend versions call different URLs.  Return 200 and let the
-    patched JSON layer enrich the next /ideas/market response instead of 404.
-    """
+
+async def _call_real_grok_for_idea(idea: dict[str, Any]) -> dict[str, Any]:
+    from backend.chat_service import ForexChatService
+
+    service = ForexChatService()
+    if not service.client:
+        return {
+            "ok": False,
+            "grok_used": False,
+            "reason": "OPENROUTER_API_KEY is not configured",
+        }
+
+    prompt = _build_grok_prompt(idea)
+    try:
+        response = await service.client.chat.completions.create(
+            model=service.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты профессиональный FX derivatives/SMC аналитик. "
+                        "Объясняй уже рассчитанную торговую идею, не меняй уровни. "
+                        "Верни строго JSON без markdown и без текста вне JSON."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.15,
+            timeout=service.timeout,
+        )
+        text = (response.choices[0].message.content or "").strip() if response.choices else ""
+        if not text:
+            raise RuntimeError("empty_model_response")
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = {"summary": text, "full_text": text, "short_text": text}
+        if not isinstance(parsed, dict):
+            parsed = {"summary": str(parsed), "full_text": str(parsed), "short_text": str(parsed)}
+        parsed["ok"] = True
+        parsed["grok_used"] = True
+        parsed["provider"] = "openrouter"
+        parsed["model"] = service.model
+        return parsed
+    except Exception as exc:
+        return {
+            "ok": False,
+            "grok_used": False,
+            "reason": str(exc),
+        }
+
+
+async def _grok_regenerate_endpoint(request: Any = None) -> dict[str, Any]:
+    ideas: list[dict[str, Any]] = []
+    try:
+        if request is not None and hasattr(request, "json"):
+            body = await request.json()
+            if isinstance(body, dict):
+                if isinstance(body.get("ideas"), list):
+                    ideas = [item for item in body["ideas"] if isinstance(item, dict)]
+                elif isinstance(body.get("idea"), dict):
+                    ideas = [body["idea"]]
+                elif {"symbol", "pair", "instrument", "signal", "action"}.intersection(body.keys()):
+                    ideas = [body]
+            elif isinstance(body, list):
+                ideas = [item for item in body if isinstance(item, dict)]
+    except Exception:
+        ideas = []
+
+    if not ideas:
+        ideas = [
+            {"symbol": "EURUSD", "signal": "WAIT"},
+            {"symbol": "GBPUSD", "signal": "WAIT"},
+            {"symbol": "USDJPY", "signal": "WAIT"},
+            {"symbol": "XAUUSD", "signal": "WAIT"},
+        ]
+
+    results: list[dict[str, Any]] = []
+    for idea in ideas[:6]:
+        enriched = _merge_options(dict(idea), idea)
+        grok_payload = await _call_real_grok_for_idea(enriched)
+        if grok_payload.get("ok"):
+            _GROK_TEXT_CACHE[_cache_key(enriched)] = grok_payload
+        results.append({"symbol": _extract_symbol(enriched), **grok_payload})
+
     return {
-        "ok": True,
-        "status": "ok",
-        "provider": "grok",
+        "ok": any(item.get("ok") for item in results),
+        "status": "ok" if any(item.get("ok") for item in results) else "fallback",
+        "provider": "openrouter",
         "source": "grok",
-        "message": "Grok regeneration request accepted. Reload /ideas/market to receive enriched cards.",
+        "grok_used": any(item.get("ok") for item in results),
+        "results": results,
+        "message": "Grok regeneration completed" if any(item.get("ok") for item in results) else "Grok regeneration failed; check OPENROUTER_API_KEY and OPENROUTER_MODEL",
     }
 
 
 def _register_grok_routes(app: Any) -> None:
     if getattr(app, "_OPTIONS_GROK_ROUTES_REGISTERED", False):
         return
+    try:
+        from fastapi import Request
+    except Exception:
+        Request = Any
+
+    async def endpoint(request: Request) -> dict[str, Any]:
+        return await _grok_regenerate_endpoint(request)
+
     paths = (
         "/api/ideas/regenerate-texts",
         "/api/ideas/regenerate",
@@ -200,7 +356,7 @@ def _register_grok_routes(app: Any) -> None:
     )
     for path in paths:
         try:
-            app.add_api_route(path, _grok_regenerate_endpoint, methods=["POST", "GET"])
+            app.add_api_route(path, endpoint, methods=["POST", "GET"])
         except Exception:
             pass
     setattr(app, "_OPTIONS_GROK_ROUTES_REGISTERED", True)
