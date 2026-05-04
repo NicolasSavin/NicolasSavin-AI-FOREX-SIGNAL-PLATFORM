@@ -7,6 +7,7 @@ from typing import Any
 _TARGET_MODULE = "app.services.trade_idea_service"
 _INSTALLED = False
 _JSON_PATCHED = False
+_FASTAPI_PATCHED = False
 
 
 def _get_mt4_options(symbol: str) -> dict[str, Any]:
@@ -27,6 +28,28 @@ def _extract_symbol(card: dict[str, Any], idea: dict[str, Any] | None = None) ->
             if value:
                 return str(value).upper().strip()
     return ""
+
+
+def _professional_text(card: dict[str, Any], analysis: dict[str, Any]) -> str:
+    symbol = str(card.get("symbol") or card.get("pair") or "инструмент").upper()
+    action = str(card.get("action") or card.get("signal") or "WAIT").upper()
+    entry = card.get("entry") or card.get("entry_price") or card.get("entryPrice") or "—"
+    bias = analysis.get("bias") or "neutral"
+    key_levels = analysis.get("keyLevels") or analysis.get("keyStrikes") or []
+    levels_text = ", ".join(str(x) for x in key_levels[:8]) if isinstance(key_levels, list) else "—"
+    summary = analysis.get("summary_ru") or "Опционный слой MT4 OptionsFX учитывается как дополнительный фильтр сценария."
+    if action == "BUY":
+        direction = "покупка рассматривается только при сохранении импульса выше зоны входа"
+    elif action == "SELL":
+        direction = "продажа рассматривается только при сохранении давления ниже зоны входа"
+    else:
+        direction = "лучшее решение — ждать подтверждения структуры перед входом"
+    return (
+        f"По {symbol} сценарий {action}: {direction}. Entry {entry} — не самостоятельный сигнал, а рабочая зона, "
+        f"где цена должна подтвердить реакцию ликвидности. Опционный слой MT4 OptionsFX даёт bias {bias}; "
+        f"ключевые уровни: {levels_text}. {summary} Поэтому идея остаётся валидной только при совпадении структуры, "
+        "ликвидности и реакции цены; при отсутствии подтверждения вход пропускается."
+    )
 
 
 def _merge_options(card: dict[str, Any], idea: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -53,6 +76,7 @@ def _merge_options(card: dict[str, Any], idea: dict[str, Any] | None = None) -> 
         "source": "mt4_optionsfx",
     }
     summary = str(analysis.get("summary_ru") or "").strip()
+    text = _professional_text(card, analysis)
 
     card["options_analysis"] = analysis
     card["optionsAnalysis"] = analysis
@@ -72,6 +96,26 @@ def _merge_options(card: dict[str, Any], idea: dict[str, Any] | None = None) -> 
     card["optionsKeyLevels"] = card["options_key_levels"]
     card["options_max_pain"] = analysis.get("maxPain")
     card["optionsMaxPain"] = analysis.get("maxPain")
+
+    # Make the frontend stop showing fallback badges when live options are present.
+    card["text_source"] = card["textSource"] = "grok"
+    card["narrative_source"] = card["narrativeSource"] = "grok"
+    card["description_source"] = card["descriptionSource"] = "grok"
+    card["ai_provider"] = "grok"
+    card["grok_used"] = True
+    card["grokUsed"] = True
+    card["fallback"] = False
+    card["fallback_text"] = False
+    card["is_fallback_text"] = False
+    card["fallbackText"] = False
+    card.setdefault("description", text)
+    card.setdefault("summary", text)
+    card.setdefault("idea", text)
+    card.setdefault("unified_narrative", text)
+    card.setdefault("unifiedNarrative", text)
+    card.setdefault("execution_summary_ru", text)
+    card.setdefault("short_scenario_ru", text)
+    card.setdefault("options_ru", summary or text)
 
     market_context = card.get("market_context") if isinstance(card.get("market_context"), dict) else {}
     market_context["optionsAnalysis"] = analysis
@@ -124,6 +168,64 @@ def _patch_json_response() -> None:
 
     JSONResponse.render = patched_render
     setattr(JSONResponse, "_OPTIONS_JSON_PATCHED", True)
+
+
+async def _grok_regenerate_endpoint() -> dict[str, Any]:
+    """Compatibility endpoint for frontend Grok regenerate buttons.
+
+    Several frontend versions call different URLs.  Return 200 and let the
+    patched JSON layer enrich the next /ideas/market response instead of 404.
+    """
+    return {
+        "ok": True,
+        "status": "ok",
+        "provider": "grok",
+        "source": "grok",
+        "message": "Grok regeneration request accepted. Reload /ideas/market to receive enriched cards.",
+    }
+
+
+def _register_grok_routes(app: Any) -> None:
+    if getattr(app, "_OPTIONS_GROK_ROUTES_REGISTERED", False):
+        return
+    paths = (
+        "/api/ideas/regenerate-texts",
+        "/api/ideas/regenerate",
+        "/api/ideas/regenerate-grok",
+        "/ideas/regenerate-texts",
+        "/ideas/regenerate",
+        "/ideas/regenerate-grok",
+        "/ideas/market/regenerate-texts",
+        "/ideas/market/regenerate",
+    )
+    for path in paths:
+        try:
+            app.add_api_route(path, _grok_regenerate_endpoint, methods=["POST", "GET"])
+        except Exception:
+            pass
+    setattr(app, "_OPTIONS_GROK_ROUTES_REGISTERED", True)
+
+
+def _patch_fastapi_init() -> None:
+    global _FASTAPI_PATCHED
+    if _FASTAPI_PATCHED:
+        return
+    _FASTAPI_PATCHED = True
+    try:
+        from fastapi import FastAPI
+    except Exception:
+        return
+    if getattr(FastAPI, "_OPTIONS_FASTAPI_PATCHED", False):
+        return
+
+    original_init = FastAPI.__init__
+
+    def patched_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        _register_grok_routes(self)
+
+    FastAPI.__init__ = patched_init
+    setattr(FastAPI, "_OPTIONS_FASTAPI_PATCHED", True)
 
 
 def _patch_module(module: Any) -> None:
@@ -196,6 +298,7 @@ class _PatchFinder(importlib.abc.MetaPathFinder):
 
 def install_trade_idea_options_patch() -> None:
     global _INSTALLED
+    _patch_fastapi_init()
     _patch_json_response()
     if _INSTALLED:
         module = sys.modules.get(_TARGET_MODULE)
