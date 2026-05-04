@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Live MT4 Positions Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      .dash-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}.dash-card{padding:18px;border-radius:22px;background:rgba(8,18,30,.86);border:1px solid rgba(104,143,191,.18)}.dash-card strong{font-size:1.45rem}.dash-table{width:100%;border-collapse:collapse}.dash-table th,.dash-table td{padding:12px;border-bottom:1px solid rgba(104,143,191,.14);text-align:left}.dash-table th{color:#90a4c3;font-size:.82rem;text-transform:uppercase;letter-spacing:.08em}.pos-buy{color:#86efac}.pos-sell{color:#fca5a5}.pnl-plus{color:#86efac}.pnl-minus{color:#fca5a5}.dash-pill{display:inline-flex;padding:7px 10px;border-radius:999px;border:1px solid rgba(76,201,240,.25);background:rgba(76,201,240,.08);font-size:.78rem}.dash-pill.ok{border-color:rgba(34,197,94,.35);color:#86efac}.dash-pill.warn{border-color:rgba(251,191,36,.35);color:#fde68a}.dash-pill.bad{border-color:rgba(239,68,68,.35);color:#fca5a5}.dash-actions{display:flex;flex-wrap:wrap;gap:10px}.dash-button{padding:11px 14px;border-radius:14px;border:1px solid rgba(76,201,240,.28);background:rgba(13,29,48,.92);color:#d6eeff;cursor:pointer}.positions-panel{overflow:auto}.mini-bars{display:grid;gap:10px}.mini-bar{display:grid;grid-template-columns:110px 1fr 70px;gap:10px;align-items:center}.mini-track{height:10px;border-radius:999px;background:rgba(76,201,240,.14);overflow:hidden}.mini-fill{display:block;height:100%;background:linear-gradient(90deg,#4cc9f0,#8b5cf6)}@media(max-width:800px){.dash-table{font-size:.82rem}.dash-table th,.dash-table td{padding:8px}.mini-bar{grid-template-columns:1fr}}
+    </style>
+  </head>
+  <body data-page="positions-dashboard">
+    <div class="page-shell">
+      <header class="site-header">
+        <div>
+          <p class="eyebrow">MT4 BRIDGE</p>
+          <h1>Live Positions Dashboard</h1>
+          <p class="lead">Баланс, equity, открытые позиции, PnL, риск и heartbeat MT4 bridge. Dashboard только отображает состояние и не открывает сделки.</p>
+        </div>
+        <nav class="top-nav">
+          <a href="/">Главная</a><a href="/ideas">Идеи</a><a href="/analytics">Аналитика</a><a href="/news">Новости</a><a href="/static/prop-terminal.html">Prop Terminal</a><a href="/static/positions-dashboard.html" class="is-active">Positions</a>
+        </nav>
+      </header>
+
+      <main class="content-stack">
+        <section class="panel">
+          <div class="panel-heading compact">
+            <div><h2>Account Monitor</h2><p class="section-text" id="meta">Загрузка...</p></div>
+            <div class="dash-actions"><button class="dash-button" id="refreshBtn">Обновить</button><button class="dash-button" id="autoBtn">Auto: ON</button></div>
+          </div>
+          <div class="dash-grid" id="accountGrid"></div>
+        </section>
+
+        <section class="panel positions-panel">
+          <div class="panel-heading compact"><div><h2>Open Positions</h2><p class="section-text">Живые позиции из MT4 bridge или fallback, если bridge ещё не подключён.</p></div><span id="bridgeStatus" class="dash-pill warn">checking</span></div>
+          <table class="dash-table"><thead><tr><th>Ticket</th><th>Symbol</th><th>Side</th><th>Lots</th><th>Open</th><th>SL</th><th>TP</th><th>PnL</th><th>Risk</th></tr></thead><tbody id="positionsBody"><tr><td colspan="9">Загрузка...</td></tr></tbody></table>
+        </section>
+
+        <section class="dash-grid">
+          <div class="panel"><h2>Exposure</h2><div id="exposureBox" class="mini-bars">—</div></div>
+          <div class="panel"><h2>Risk Summary</h2><div id="riskBox" class="dash-card">—</div></div>
+        </section>
+      </main>
+    </div>
+<script>
+const $=id=>document.getElementById(id);let auto=true,timer=null,lastState=null;
+const esc=v=>String(v??'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+const n=v=>Number.isFinite(Number(v))?Number(v):0;const money=v=>n(v).toLocaleString('ru-RU',{maximumFractionDigits:2});
+async function getJson(url){try{const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(r.status);return await r.json()}catch(e){return null}}
+function normalizeState(p){if(!p||typeof p!=='object')return null;const account=p.account||p.data?.account||{};const positions=p.positions||p.data?.positions||p.open_positions||[];return{account,positions:Array.isArray(positions)?positions:[],last_update:p.last_update||p.updated_at||p.timestamp||p.time||null,raw:p}}
+function fallbackFromMt4Signals(p){const rows=p?.signals||p?.items||[];return{account:{balance:0,equity:0,free_margin:0,currency:'USD',mode:'signals_only'},positions:[],last_update:new Date().toISOString(),raw:p,signals:rows}}
+function statusAge(ts){if(!ts)return{label:'no heartbeat',cls:'bad',age:null};const d=new Date(ts);if(Number.isNaN(d.getTime()))return{label:'unknown heartbeat',cls:'warn',age:null};const age=(Date.now()-d.getTime())/1000;if(age<10)return{label:'live',cls:'ok',age};if(age<60)return{label:'stale '+Math.round(age)+'s',cls:'warn',age};return{label:'offline '+Math.round(age)+'s',cls:'bad',age}}
+function renderAccount(s){const a=s.account||{},balance=n(a.balance),equity=n(a.equity),margin=n(a.margin),free=n(a.free_margin||a.freeMargin),pnl=equity&&balance?equity-balance:n(a.profit||a.pnl),dd=balance?((balance-equity)/balance*100):0;const cards=[['Balance',balance?money(balance):'—'],['Equity',equity?money(equity):'—'],['Floating PnL',money(pnl),pnl>=0?'pnl-plus':'pnl-minus'],['Margin',margin?money(margin):'—'],['Free Margin',free?money(free):'—'],['Drawdown',balance?Math.max(0,dd).toFixed(2)+'%':'—']];$('accountGrid').innerHTML=cards.map(c=>`<div class="dash-card"><span class="panel-meta">${c[0]}</span><br><strong class="${c[2]||''}">${c[1]}</strong></div>`).join('')}
+function positionSide(p){return String(p.type||p.side||p.action||p.order_type||'').toUpperCase().includes('SELL')?'SELL':'BUY'}
+function renderPositions(s){const rows=s.positions||[];if(!rows.length){$('positionsBody').innerHTML='<tr><td colspan="9">Открытых позиций нет или MT4 bridge ещё не передал позиции.</td></tr>';return}$('positionsBody').innerHTML=rows.map(p=>{const side=positionSide(p),profit=n(p.profit||p.pnl||p.floating_pnl),risk=n(p.risk_percent||p.risk||0);return `<tr><td class="mono">${esc(p.ticket||p.id||'—')}</td><td>${esc(p.symbol||p.instrument||'—')}</td><td class="${side==='BUY'?'pos-buy':'pos-sell'}"><strong>${side}</strong></td><td>${esc(p.lot||p.lots||p.volume||'—')}</td><td>${esc(p.open_price||p.openPrice||p.price_open||p.entry||'—')}</td><td>${esc(p.stop_loss||p.sl||'—')}</td><td>${esc(p.take_profit||p.tp||'—')}</td><td class="${profit>=0?'pnl-plus':'pnl-minus'}"><strong>${money(profit)}</strong></td><td>${risk?risk+'%':'—'}</td></tr>`}).join('')}
+function renderExposure(s){const map={};for(const p of s.positions||[]){const sym=String(p.symbol||p.instrument||'MARKET').toUpperCase();const lots=n(p.lot||p.lots||p.volume);map[sym]=(map[sym]||0)+lots}const max=Math.max(1,...Object.values(map));$('exposureBox').innerHTML=Object.keys(map).length?Object.entries(map).map(([sym,lots])=>`<div class="mini-bar"><span>${esc(sym)}</span><div class="mini-track"><span class="mini-fill" style="width:${Math.min(100,lots/max*100)}%"></span></div><strong>${lots}</strong></div>`).join(''):'Нет открытой экспозиции.'}
+function renderRisk(s){const a=s.account||{},balance=n(a.balance),equity=n(a.equity),pnl=equity&&balance?equity-balance:n(a.profit||a.pnl),positions=(s.positions||[]).length,totalLots=(s.positions||[]).reduce((acc,p)=>acc+n(p.lot||p.lots||p.volume),0);let state='normal',cls='ok';if(positions>=5||totalLots>=1)state='elevated exposure',cls='warn';if(balance&&equity&&equity<balance*0.95)state='drawdown alert',cls='bad';$('riskBox').innerHTML=`<div class="terminal-row"><span>Risk state</span><span class="dash-pill ${cls}">${esc(state)}</span></div><div class="terminal-row"><span>Positions</span><strong>${positions}</strong></div><div class="terminal-row"><span>Total lots</span><strong>${totalLots.toFixed(2)}</strong></div><div class="terminal-row"><span>Floating PnL</span><strong class="${pnl>=0?'pnl-plus':'pnl-minus'}">${money(pnl)}</strong></div><p class="section-text">Если bridge offline — dashboard не должен использоваться для решений по исполнению.</p>`}
+async function load(){let state=normalizeState(await getJson('/api/mt4/state'));if(!state){state=fallbackFromMt4Signals(await getJson('/api/mt4/signals'))}lastState=state;const st=statusAge(state.last_update);$('bridgeStatus').className='dash-pill '+st.cls;$('bridgeStatus').textContent=st.label;$('meta').textContent=`Обновлено: ${new Date().toLocaleTimeString('ru-RU')} · Bridge: ${st.label} · Positions: ${state.positions.length}`;renderAccount(state);renderPositions(state);renderExposure(state);renderRisk(state)}
+function setAuto(v){auto=v;$('autoBtn').textContent='Auto: '+(auto?'ON':'OFF');$('autoBtn').classList.toggle('is-on',auto);if(timer)clearInterval(timer);timer=auto?setInterval(load,3000):null}
+$('refreshBtn').onclick=load;$('autoBtn').onclick=()=>setAuto(!auto);setAuto(true);load();
+</script>
+<script src="/static/nav.js"></script>
+  </body>
+</html>
