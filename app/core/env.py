@@ -12,6 +12,7 @@ from typing import Any
 
 from app.core.ai_news_runtime_patch import install_ai_news_runtime_patch
 from app.core.grok_runtime_patch import install_grok_runtime_patch
+from app.core.fast_mt4_runtime_patch import install_fast_mt4_runtime_patch
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,7 @@ def get_openrouter_model() -> str:
 def get_twelvedata_api_key() -> str | None:
     return get_env("TWELVEDATA_API_KEY")
 
-# --- existing runtime patch code below remains unchanged ---
-
-# стартуем патч для новостей через AI Gateway
+# runtime patches
 install_ai_news_runtime_patch()
-
-# стартуем полный runtime patch для Grok (ideas + analytics)
 install_grok_runtime_patch()
+install_fast_mt4_runtime_patch()
