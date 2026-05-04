@@ -1,18 +1,7 @@
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import os
-import re
-import sys
-import threading
-import time
-from typing import Any
-
-from app.core.ai_news_runtime_patch import install_ai_news_runtime_patch
-from app.core.grok_runtime_patch import install_grok_runtime_patch
-from app.core.fast_mt4_runtime_patch import install_fast_mt4_runtime_patch
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +30,3 @@ def get_openrouter_model() -> str:
 
 def get_twelvedata_api_key() -> str | None:
     return get_env("TWELVEDATA_API_KEY")
-
-# runtime patches
-install_ai_news_runtime_patch()
-install_grok_runtime_patch()
-install_fast_mt4_runtime_patch()
