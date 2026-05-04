@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from app.core.ai_news_runtime_patch import install_ai_news_runtime_patch
+from app.core.grok_runtime_patch import install_grok_runtime_patch
 
 logger = logging.getLogger(__name__)
 
@@ -44,3 +45,6 @@ def get_twelvedata_api_key() -> str | None:
 
 # стартуем патч для новостей через AI Gateway
 install_ai_news_runtime_patch()
+
+# стартуем полный runtime patch для Grok (ideas + analytics)
+install_grok_runtime_patch()
