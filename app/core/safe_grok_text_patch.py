@@ -75,16 +75,16 @@ def _call_grok_news(raw: dict[str, Any], enriched: dict[str, Any]) -> dict[str, 
         f"CATEGORY: {enriched.get('category')}\n"
     )
     last_error = "unknown"
-    for model in _models():
+    for model in _models()[:1]:
         try:
             response = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                timeout=float(os.getenv("OPENROUTER_TIMEOUT", "18")),
+                timeout=float(os.getenv("NEWS_GROK_TIMEOUT", "4")),
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
                     "model": model,
                     "temperature": 0.25,
-                    "max_tokens": 700,
+                    "max_tokens": 450,
                     "messages": [
                         {"role": "system", "content": "Ты Grok, профессиональный FX news analyst. Пиши только на русском, конкретно и без воды."},
                         {"role": "user", "content": prompt},
@@ -129,6 +129,20 @@ def install_safe_grok_text_patch() -> None:
 
     def enrich_with_grok(self: Any, raw_item: dict[str, Any], active_signals: list[dict]) -> dict[str, Any]:
         enriched = original_enrich(self, raw_item, active_signals)
+        # Важно: /api/news не должен ждать Grok. По умолчанию страница отдаёт быстрый локальный текст.
+        # Чтобы включить синхронный Grok только для теста: NEWS_GROK_INLINE=1.
+        if os.getenv("NEWS_GROK_INLINE", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+            enriched.setdefault("ai_provider", "grok")
+            enriched.setdefault("ai_status", "deferred")
+            enriched.setdefault("grok_used", False)
+            enriched.setdefault("text_source", "local_fast")
+            return enriched
+        if enriched.get("importance") not in {"high", "medium"}:
+            enriched.setdefault("ai_provider", "grok")
+            enriched.setdefault("ai_status", "skipped_low_importance")
+            enriched.setdefault("grok_used", False)
+            enriched.setdefault("text_source", "local_fast")
+            return enriched
         try:
             grok_payload = _call_grok_news(raw_item, enriched)
             if grok_payload:
@@ -139,13 +153,13 @@ def install_safe_grok_text_patch() -> None:
                     enriched["source_text"] = "grok"
                     enriched["text_source"] = "grok"
                 else:
-                    enriched.setdefault("source_text", "local")
-                    enriched.setdefault("text_source", "local")
+                    enriched.setdefault("source_text", "local_fast")
+                    enriched.setdefault("text_source", "local_fast")
         except Exception:
             logger.exception("safe_grok_news_enrich_failed")
             enriched.setdefault("ai_provider", "grok")
             enriched.setdefault("ai_status", "failed")
-            enriched.setdefault("text_source", "local")
+            enriched.setdefault("text_source", "local_fast")
         return enriched
 
     NewsIntelligenceService.enrich = enrich_with_grok
