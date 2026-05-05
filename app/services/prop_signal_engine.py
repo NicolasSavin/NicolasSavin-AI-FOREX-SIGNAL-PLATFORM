@@ -112,14 +112,14 @@ def _score_text_presence(text: str, weight: int) -> int:
 
 def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     rr_score, rr_reason = _risk_reward_score(idea)
-    mapping: dict[str, tuple[str, str]] = {
-        "htf": ("htf_bias_ru", "htf.summary"),
-        "liquidity": ("liquidity_ru", "liquidity.summary", "liquidity"),
-        "structure": ("structure_ru", "market_structure_ru", "smart_money_ru", "ict_ru"),
-        "order_block": ("order_blocks_ru", "order_block_ru", "order_blocks.summary", "orderBlocks"),
-        "volume": ("volume_ru", "volume.summary", "volume"),
+    mapping: dict[str, tuple[str, ...]] = {
+        "htf": ("htf_bias_ru", "htf.summary", "timeframe", "tf"),
+        "liquidity": ("liquidity_ru", "liquidity.summary", "liquidity", "selected_zone_type", "selected_zone_low", "selected_zone_high"),
+        "structure": ("structure_ru", "market_structure_ru", "smart_money_ru", "ict_ru", "decision_reason_ru", "reason_ru"),
+        "order_block": ("order_blocks_ru", "order_block_ru", "order_blocks.summary", "orderBlocks", "entry_source"),
+        "volume": ("volume_ru", "volume.summary", "volume", "data_status"),
         "cum_delta": ("cum_delta_ru", "cumDelta", "cum_delta", "delta_ru"),
-        "options": ("options_ru", "options_analysis.summary", "options_analysis.prop_bias", "options_analysis.bias"),
+        "options": ("options_ru", "options_summary_ru", "options_analysis.summary", "options_analysis.summary_ru", "options_analysis.prop_bias", "options_analysis.bias"),
         "sentiment": ("sentiment.summary", "sentiment.bias", "sentiment_ru"),
         "news": ("fundamental_context_ru", "fundamental_ru", "news_context_ru", "news_title", "why_moves_ru"),
     }
@@ -148,11 +148,6 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
-    """Build a transparent prop-desk style confluence score from existing fields only.
-
-    The function never fabricates market data. Missing inputs are marked as missing and
-    reduce the final score. It is safe to run on partially populated idea payloads.
-    """
     safe_idea = idea if isinstance(idea, dict) else {}
     rows = _criterion_rows(safe_idea)
     total_weight = sum(row["weight"] for row in rows) or 1
@@ -165,7 +160,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         blockers.append("Слабый R/R ниже 1.5")
     if _direction(safe_idea) == "WAIT":
         blockers.append("Нет активного направления BUY/SELL")
-    if len(missing) >= 5:
+    if len(missing) >= 6:
         blockers.append("Слишком мало подтверждающих данных для prop-grade входа")
 
     if score >= 78 and not blockers:
@@ -179,7 +174,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     elif score >= 45:
         grade = "C"
         mode = "research_only"
-        decision_ru = "Только наблюдение: конfluence недостаточный для уверенного входа."
+        decision_ru = "Только наблюдение: confluence недостаточный для уверенного входа."
     else:
         grade = "D"
         mode = "no_trade"
@@ -201,10 +196,20 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
 def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(idea, dict):
         return idea
+    score = build_prop_signal_score(idea)
     enriched = dict(idea)
-    enriched["prop_signal_score"] = build_prop_signal_score(enriched)
-    return enriched
+    # Put prop metadata first so raw JSON and downstream consumers can see it immediately.
+    return {
+        "prop_signal_score": score,
+        "prop_score": score["score"],
+        "prop_grade": score["grade"],
+        "prop_mode": score["mode"],
+        "prop_decision_ru": score["decision_ru"],
+        **enriched,
+    }
 
 
 def enrich_ideas_with_prop_scores(ideas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not isinstance(ideas, list):
+        return []
     return [enrich_idea_with_prop_score(idea) for idea in ideas if isinstance(idea, dict)]
