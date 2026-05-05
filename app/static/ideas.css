@@ -102,6 +102,7 @@ h1 {
 .idea-card-meta {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .idea-instrument {
@@ -124,8 +125,9 @@ h1 {
 
 .idea-news-line {
   font-size: 14px;
-  opacity: .72;
+  opacity: .78;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .idea-warning {
@@ -163,11 +165,50 @@ h1 {
   color: #fde68a;
 }
 
-.idea-summary {
+.idea-key-levels {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
   margin-top: 18px;
-  font-size: 18px;
-  line-height: 1.8;
-  color: rgba(255,255,255,.92);
+}
+
+.idea-key-levels div {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(95,156,230,.22);
+  background: rgba(3,14,28,.62);
+}
+
+.idea-key-levels span {
+  display: block;
+  margin-bottom: 5px;
+  color: rgba(255,255,255,.58);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.idea-key-levels strong {
+  color: #f5f7fb;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.idea-summary,
+.idea-card__description {
+  display: block;
+  min-height: 120px;
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(95,156,230,.22);
+  background: rgba(3,14,28,.58);
+  color: rgba(255,255,255,.94);
+  font-size: 16px;
+  line-height: 1.65;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .idea-chart-wrap {
@@ -182,6 +223,32 @@ h1 {
   display: block;
   width: 100%;
   height: auto;
+  max-height: 720px;
+  object-fit: contain;
+}
+
+.idea-chart-svg {
+  aspect-ratio: 900 / 260;
+}
+
+.idea-chart-path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 8px rgba(34,211,238,.32));
+}
+
+.idea-chart-level {
+  stroke: rgba(255,255,255,.32);
+  stroke-dasharray: 8 6;
+}
+
+.idea-chart-level-label {
+  fill: rgba(255,255,255,.82);
+  font-size: 13px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(0,0,0,.72);
+  stroke-width: 3px;
 }
 
 .idea-sentiment-badge {
@@ -219,10 +286,58 @@ h1 {
   font-size: 14px;
   line-height: 1.8;
   opacity: .92;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .idea-section-plan {
   margin-top: 16px;
+}
+
+.idea-criteria {
+  margin-top: 16px;
+  border-color: rgba(69,202,255,.22);
+  background: linear-gradient(180deg, rgba(69,202,255,.07), rgba(255,255,255,.025));
+}
+
+.idea-criteria-note {
+  margin-bottom: 14px !important;
+  color: rgba(255,255,255,.72);
+  font-size: 13px !important;
+}
+
+.idea-criteria-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.idea-criteria-item {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(95,156,230,.2);
+  background: rgba(3,14,28,.62);
+}
+
+.idea-criteria-item span {
+  display: block;
+  margin-bottom: 6px;
+  color: #8ab4ff;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+
+.idea-criteria-item strong {
+  display: block;
+  color: rgba(255,255,255,.88);
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 600;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .trade-plan-list {
@@ -230,10 +345,13 @@ h1 {
   padding-left: 18px;
   line-height: 1.85;
   font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 860px) {
-  .idea-analysis-grid {
+  .idea-analysis-grid,
+  .idea-criteria-grid,
+  .idea-key-levels {
     grid-template-columns: 1fr;
   }
 
@@ -248,5 +366,9 @@ h1 {
 
   .idea-title {
     font-size: 22px;
+  }
+
+  .idea-card {
+    padding: 18px;
   }
 }
