@@ -39,8 +39,9 @@ async function getJson(url) {
 }
 
 function labelClass(label) {
-  if (label === "BUY IDEA" || label === "ИДЕЯ ПОКУПКИ") return "idea-label-buy";
-  if (label === "SELL IDEA" || label === "ИДЕЯ ПРОДАЖИ") return "idea-label-sell";
+  const value = String(label || "").toUpperCase();
+  if (value.includes("BUY") || value.includes("ПОКУП")) return "idea-label-buy";
+  if (value.includes("SELL") || value.includes("ПРОДА")) return "idea-label-sell";
   return "idea-label-watch";
 }
 
@@ -95,9 +96,7 @@ function voiceActionLabel(signalRaw) {
 function formatVoiceMessage(type, idea) {
   const symbol = String(idea?.instrument || idea?.symbol || "").trim();
   const signal = String(idea?.signal || idea?.label || "").trim();
-  const symbolLabel = voiceSymbolLabel(symbol);
-  const actionLabel = voiceActionLabel(signal);
-  return `${symbolLabel} ${actionLabel}`;
+  return `${voiceSymbolLabel(symbol)} ${voiceActionLabel(signal)}`;
 }
 
 function isVoiceEnabled() {
@@ -200,41 +199,206 @@ function collectVoiceNotifications(ideas) {
   return notifications;
 }
 
+function sanitizeNarrative(value) {
+  return String(value || "")
+    .replace(/\(\s*none\s*\)/gi, "")
+    .replace(/\bnone\b/gi, "")
+    .trim();
+}
+
+function firstText(...values) {
+  for (const value of values) {
+    const text = sanitizeNarrative(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function formatNumber(value) {
+  if (value === undefined || value === null || value === "") return "—";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return escapeHtml(value);
+  return String(num);
+}
+
+function getIdeaSymbol(idea) {
+  return String(idea.instrument || idea.symbol || "РЫНОК").toUpperCase();
+}
+
+function getIdeaDirection(idea) {
+  const raw = String(idea.signal || idea.label || idea.direction || "").toUpperCase();
+  if (raw.includes("BUY") || raw.includes("ПОКУП")) return "Покупка";
+  if (raw.includes("SELL") || raw.includes("ПРОДА")) return "Продажа";
+  return "Наблюдение";
+}
+
+function resolveVisibleNarrative(idea) {
+  return firstText(
+    idea?.unified_narrative,
+    idea?.idea_thesis,
+    idea?.full_text,
+    idea?.article_ru,
+    idea?.journalistic_summary_ru,
+    idea?.confluence_summary_ru,
+    idea?.reason_ru,
+    idea?.description_ru,
+    idea?.fallback_narrative,
+  ) || "Сценарий в режиме fallback: модельный нарратив временно недоступен.";
+}
+
+function resolveNewsContext(idea) {
+  return firstText(
+    idea?.news_title,
+    idea?.fundamental_context_ru,
+    idea?.fundamental_ru,
+    idea?.news_context_ru,
+    idea?.why_moves_ru,
+    idea?.market_impact_ru,
+  ) || "нет данных";
+}
+
+function criterionValue(idea, keys) {
+  for (const key of keys) {
+    const value = key.split(".").reduce((obj, part) => obj?.[part], idea);
+    const text = Array.isArray(value) ? value.filter(Boolean).join(", ") : sanitizeNarrative(value);
+    if (text) return text;
+  }
+  return "нет данных";
+}
+
+function renderCriteriaBlock(idea) {
+  const rows = [
+    ["SMC", ["smart_money_ru", "smc_ru", "smc.summary", "smart_money.summary"]],
+    ["ICT", ["ict_ru", "ict.summary", "ict"]],
+    ["Ликвидность", ["liquidity_ru", "liquidity.summary", "liquidity"]],
+    ["Order Blocks", ["order_blocks_ru", "order_blocks.summary", "orderBlocks", "order_blocks"]],
+    ["Опционы", ["options_ru", "options_analysis.prop_bias", "options_analysis.bias", "options_analysis.summary"]],
+    ["Объём", ["volume_ru", "volume.summary", "volume"]],
+    ["CumDelta", ["cum_delta_ru", "cumDelta", "cum_delta", "delta_ru"]],
+    ["Дивергенции", ["divergence_ru", "divergence.summary", "divergence"]],
+    ["Новости/фундаментал", ["fundamental_context_ru", "fundamental_ru", "news_context_ru", "news_title", "why_moves_ru"]],
+    ["Sentiment", ["sentiment.summary", "sentiment.bias", "sentiment_ru"]],
+  ];
+
+  return `
+    <section class="idea-section idea-criteria">
+      <h4>Критерии идеи</h4>
+      <p class="idea-criteria-note">Новости и фундаментал показываются как контекст/подтверждение, а не как гарантированная причина входа.</p>
+      <div class="idea-criteria-grid">
+        ${rows.map(([label, keys]) => `
+          <div class="idea-criteria-item">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(criterionValue(idea, keys))}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderChartBlock(idea, chartImageUrl) {
+  if (chartImageUrl) {
+    return `<div class="idea-chart-wrap">
+      <img class="idea-chart-image" src="${escapeHtml(chartImageUrl)}?t=${Date.now()}" alt="${escapeHtml(idea.title || "chart")}" loading="lazy" />
+    </div>`;
+  }
+
+  const fallbackCandles = idea?.chartData?.candles || idea?.chart_data?.candles || [];
+  const fallbackSvg = buildFallbackSvg(fallbackCandles, idea);
+  if (fallbackSvg) {
+    return `<div class="idea-chart-wrap">${fallbackSvg}</div>`;
+  }
+
+  return `<div class="idea-chart-missing">Снапшот графика недоступен (${escapeHtml(idea.chartSnapshotStatus || idea.chart_snapshot_status || "no_data")}).</div>`;
+}
+
+function buildFallbackSvg(candles, idea = {}) {
+  if (!Array.isArray(candles) || candles.length < 2) return "";
+  const closes = candles.map((c) => Number(c?.close)).filter((v) => Number.isFinite(v));
+  if (closes.length < 2) return "";
+
+  const levels = [
+    { label: "Entry", value: idea.entry },
+    { label: "TP", value: idea.tp ?? idea.target },
+    { label: "SL", value: idea.sl ?? idea.stop_loss },
+  ].filter((level) => Number.isFinite(Number(level.value)));
+
+  const allPrices = [...closes, ...levels.map((level) => Number(level.value))];
+  const min = Math.min(...allPrices);
+  const max = Math.max(...allPrices);
+  const width = 900;
+  const height = 260;
+  const padX = 32;
+  const padY = 24;
+  const step = (width - padX * 2) / Math.max(closes.length - 1, 1);
+  const yOf = (value) => {
+    const ratio = max === min ? 0.5 : (value - min) / (max - min);
+    return height - padY - ratio * (height - padY * 2);
+  };
+  const points = closes
+    .map((value, index) => `${(padX + index * step).toFixed(2)},${yOf(value).toFixed(2)}`)
+    .join(" ");
+  const levelMarkup = levels.map((level) => {
+    const y = yOf(Number(level.value));
+    return `<g>
+      <line class="idea-chart-level" x1="${padX}" y1="${y.toFixed(2)}" x2="${width - padX}" y2="${y.toFixed(2)}"></line>
+      <text class="idea-chart-level-label" x="${width - padX - 120}" y="${(y - 6).toFixed(2)}">${escapeHtml(level.label)} ${escapeHtml(formatNumber(level.value))}</text>
+    </g>`;
+  }).join("");
+
+  return `<svg class="idea-chart-image idea-chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="fallback candles chart">
+    <rect x="0" y="0" width="${width}" height="${height}" fill="#0b1220"></rect>
+    ${levelMarkup}
+    <polyline class="idea-chart-path" fill="none" stroke="#22d3ee" stroke-width="3" points="${points}"></polyline>
+  </svg>`;
+}
+
 function renderIdeaCard(idea) {
   const chartImageUrl = normalizeChartImageUrl(idea.chartImageUrl || idea.chart_image || "");
-  console.log("chart_image:", chartImageUrl || null);
-  console.log("snapshot_status:", idea.chartSnapshotStatus || idea.chart_snapshot_status || "");
   const tradePlan = idea.trade_plan || {};
-  const updates = Array.isArray(idea.updates) ? idea.updates.slice(-5).reverse() : [];
+  const updates = asArray(idea.updates).slice(-5).reverse();
   const reasoning = resolveVisibleNarrative(idea);
   const compactSummary = String(idea?.compact_summary || "").trim();
   const analysisMode = String(idea.analysis_mode || "").toLowerCase() === "professional" ? "профессиональный" : "упрощённый";
-  const providerLabel = String(idea.data_provider || "").toLowerCase() === "twelvedata" ? "TwelveData" : "Yahoo fallback";
+  const providerLabel = String(idea.data_provider || "").trim() || "нет данных";
   const warningText = String(idea.warning || "").trim();
   const sentiment = idea?.sentiment || {};
   const optionsAnalysis = idea?.options_analysis || {};
-  const renderLevels = (arr) => Array.isArray(arr) && arr.length ? arr.join(", ") : "—";
+  const renderLevels = (arr) => Array.isArray(arr) && arr.length ? arr.join(", ") : "нет данных";
   const straddleText = Array.isArray(optionsAnalysis.straddle) && optionsAnalysis.straddle.length
     ? optionsAnalysis.straddle.map((x) => x.price).join(", ")
-    : "—";
+    : "нет данных";
   const strangleText = Array.isArray(optionsAnalysis.strangle) && optionsAnalysis.strangle.length
     ? optionsAnalysis.strangle.map((x) => `${x.lower ?? "?"}-${x.upper ?? "?"}`).join(", ")
-    : "—";
+    : "нет данных";
   const hasSentiment = Number.isFinite(Number(sentiment.long_pct)) && Number.isFinite(Number(sentiment.short_pct));
   const sentimentLabel = hasSentiment
     ? `Sentiment: Long ${Number(sentiment.long_pct)}% / Short ${Number(sentiment.short_pct)}%`
     : "Sentiment: нет данных";
+  const symbol = getIdeaSymbol(idea);
 
   return `
     <article class="idea-card">
       <div class="idea-card-top">
         <div class="idea-card-meta">
-          <div class="idea-instrument">${escapeHtml(idea.instrument || "РЫНОК")}</div>
+          <div class="idea-instrument">${escapeHtml(symbol)}</div>
           <h3 class="idea-title">${escapeHtml(idea.title || "AI-идея")}</h3>
-          <div class="idea-news-line">Основание: ${escapeHtml(idea.news_title || "Рыночная новость")}</div>
+          <div class="idea-news-line">Новостной/фундаментальный контекст: ${escapeHtml(resolveNewsContext(idea))}</div>
           <div class="idea-news-line">Статус: <strong>${escapeHtml(idea.status || "ожидание")}</strong></div>
         </div>
-        <div class="idea-label ${labelClass(idea.label)}">${escapeHtml(idea.label || "НАБЛЮДЕНИЕ")}</div>
+        <div class="idea-label ${labelClass(idea.label || idea.signal || idea.direction)}">${escapeHtml(idea.label || getIdeaDirection(idea))}</div>
+      </div>
+
+      <div class="idea-key-levels">
+        <div><span>Направление</span><strong>${escapeHtml(getIdeaDirection(idea))}</strong></div>
+        <div><span>Entry</span><strong>${escapeHtml(formatNumber(idea.entry))}</strong></div>
+        <div><span>SL</span><strong>${escapeHtml(formatNumber(idea.sl ?? idea.stop_loss))}</strong></div>
+        <div><span>TP</span><strong>${escapeHtml(formatNumber(idea.tp ?? idea.target))}</strong></div>
+        <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
       </div>
 
       <div class="idea-summary">${escapeHtml(reasoning)}</div>
@@ -247,6 +411,8 @@ function renderIdeaCard(idea) {
       ${renderChartBlock(idea, chartImageUrl)}
       <div class="idea-sentiment-badge">${escapeHtml(sentimentLabel)}</div>
 
+      ${renderCriteriaBlock(idea)}
+
       <section class="idea-section idea-section-plan">
         <h4>Единый нарратив</h4>
         <p>${escapeHtml(reasoning)}</p>
@@ -255,29 +421,28 @@ function renderIdeaCard(idea) {
       <section class="idea-section idea-section-plan">
         <h4>Торговый сценарий</h4>
         <ul class="trade-plan-list">
-          <li><strong>Уклон:</strong> ${escapeHtml(tradePlan.уклон || tradePlan.bias || "нейтральный")}</li>
-          <li><strong>Зона работы:</strong> ${escapeHtml(tradePlan.entry_zone || "")}</li>
-          <li><strong>Инвалидация:</strong> ${escapeHtml(tradePlan.invalidation || "")}</li>
-          <li><strong>Цель 1:</strong> ${escapeHtml(tradePlan.target_1 || "")}</li>
-          <li><strong>Цель 2:</strong> ${escapeHtml(tradePlan.target_2 || "")}</li>
-          <li><strong>Альтернатива:</strong> ${escapeHtml(tradePlan.alternative_scenario_ru || "")}</li>
+          <li><strong>Уклон:</strong> ${escapeHtml(tradePlan.уклон || tradePlan.bias || "нет данных")}</li>
+          <li><strong>Зона работы:</strong> ${escapeHtml(tradePlan.entry_zone || "нет данных")}</li>
+          <li><strong>Инвалидация:</strong> ${escapeHtml(tradePlan.invalidation || "нет данных")}</li>
+          <li><strong>Цель 1:</strong> ${escapeHtml(tradePlan.target_1 || "нет данных")}</li>
+          <li><strong>Цель 2:</strong> ${escapeHtml(tradePlan.target_2 || "нет данных")}</li>
+          <li><strong>Альтернатива:</strong> ${escapeHtml(tradePlan.alternative_scenario_ru || "нет данных")}</li>
         </ul>
       </section>
-
 
       <section class="idea-section idea-section-plan">
         <h4>Prop-level options</h4>
         <ul class="trade-plan-list">
-          <li><strong>Prop bias:</strong> ${escapeHtml(optionsAnalysis.prop_bias || optionsAnalysis.bias || "neutral")}</li>
-          <li><strong>Score:</strong> ${escapeHtml(optionsAnalysis.prop_score ?? 0)}</li>
+          <li><strong>Prop bias:</strong> ${escapeHtml(optionsAnalysis.prop_bias || optionsAnalysis.bias || "нет данных")}</li>
+          <li><strong>Score:</strong> ${escapeHtml(optionsAnalysis.prop_score ?? "нет данных")}</li>
           <li><strong>Call walls:</strong> ${escapeHtml(renderLevels(optionsAnalysis.callWalls))}</li>
           <li><strong>Put walls:</strong> ${escapeHtml(renderLevels(optionsAnalysis.putWalls))}</li>
           <li><strong>Target zones:</strong> ${escapeHtml(renderLevels(optionsAnalysis.targetLevels))}</li>
           <li><strong>Hedge zones:</strong> ${escapeHtml(renderLevels(optionsAnalysis.hedgeLevels))}</li>
           <li><strong>Straddle:</strong> ${escapeHtml(straddleText)}</li>
           <li><strong>Strangle:</strong> ${escapeHtml(strangleText)}</li>
-          <li><strong>Pinning risk:</strong> ${escapeHtml(optionsAnalysis.pinningRisk || "low")}</li>
-          <li><strong>Range risk:</strong> ${escapeHtml(optionsAnalysis.rangeRisk || "low")}</li>
+          <li><strong>Pinning risk:</strong> ${escapeHtml(optionsAnalysis.pinningRisk || "нет данных")}</li>
+          <li><strong>Range risk:</strong> ${escapeHtml(optionsAnalysis.rangeRisk || "нет данных")}</li>
         </ul>
       </section>
 
@@ -300,64 +465,8 @@ function renderIdeaCard(idea) {
   `;
 }
 
-function resolveVisibleNarrative(idea) {
-  const sanitize = (value) => String(value || "").replace(/\(\s*none\s*\)/gi, "").replace(/\bnone\b/gi, "").trim();
-  const unified = sanitize(idea?.unified_narrative);
-  if (unified) return unified;
-  const thesis = sanitize(idea?.idea_thesis);
-  if (thesis) return thesis;
-  const fullText = sanitize(idea?.full_text);
-  if (fullText) return fullText;
-  const confluenceSummary = sanitize(idea?.confluence_summary_ru);
-  if (confluenceSummary) return confluenceSummary;
-  const reason = sanitize(idea?.reason_ru);
-  if (reason) return reason;
-  const description = sanitize(idea?.description_ru);
-  if (description) return description;
-  const fallbackNarrative = sanitize(idea?.fallback_narrative);
-  if (fallbackNarrative) return fallbackNarrative;
-  return "Сценарий в режиме fallback: модельный нарратив временно недоступен.";
-}
-
-function renderChartBlock(idea, chartImageUrl) {
-  if (chartImageUrl) {
-    return `<div class="idea-chart-wrap">
-      <img class="idea-chart-image" src="${escapeHtml(chartImageUrl)}?t=${Date.now()}" alt="${escapeHtml(idea.title || "chart")}" />
-    </div>`;
-  }
-  const fallbackCandles = idea?.chartData?.candles || idea?.chart_data?.candles || [];
-  const fallbackSvg = buildFallbackSvg(fallbackCandles);
-  if (fallbackSvg) {
-    return `<div class="idea-chart-wrap">${fallbackSvg}</div>`;
-  }
-  return `<div class="idea-chart-missing">Снапшот графика недоступен (${escapeHtml(idea.chartSnapshotStatus || idea.chart_snapshot_status || "no_data")}).</div>`;
-}
-
-function buildFallbackSvg(candles) {
-  if (!Array.isArray(candles) || candles.length < 2) return "";
-  const closes = candles.map((c) => Number(c?.close)).filter((v) => Number.isFinite(v));
-  if (closes.length < 2) return "";
-  const min = Math.min(...closes);
-  const max = Math.max(...closes);
-  const width = 400;
-  const height = 180;
-  const step = width / Math.max(closes.length - 1, 1);
-  const points = closes
-    .map((value, index) => {
-      const x = index * step;
-      const ratio = max === min ? 0.5 : (value - min) / (max - min);
-      const y = height - ratio * (height - 20) - 10;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-  return `<svg class="idea-chart-image" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="fallback candles chart">
-    <rect x="0" y="0" width="${width}" height="${height}" fill="#0b1220"></rect>
-    <polyline fill="none" stroke="#22d3ee" stroke-width="2" points="${points}"></polyline>
-  </svg>`;
-}
-
 function renderIdeas(payload) {
-  const ideas = payload?.ideas || [];
+  const ideas = Array.isArray(payload?.ideas) ? payload.ideas : [];
 
   if (ideasUpdatedAt) {
     ideasUpdatedAt.textContent = `Обновление: ${formatUpdatedAt(payload?.updated_at_utc)}`;
@@ -390,6 +499,7 @@ async function loadIdeas() {
 }
 
 function startIdeasPage() {
+  if (!ideasContainer) return;
   initVoiceToggle();
   loadIdeas();
   setInterval(loadIdeas, 60000);
