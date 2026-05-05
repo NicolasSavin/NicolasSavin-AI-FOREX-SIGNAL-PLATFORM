@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter
 
+from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.signal_hub import DEFAULT_PAIRS
 from app.services.trade_idea_service import TradeIdeaService
 from backend.market.services.snapshot_service import MarketSnapshotService
@@ -129,6 +130,8 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
 
             payload["ideas"] = _safe_attach_live_market_contracts(payload.get("ideas") or [], field="ideas")
             payload["archive"] = _safe_attach_live_market_contracts(payload.get("archive") or [], field="archive")
+            payload["ideas"] = enrich_ideas_with_prop_scores(payload.get("ideas") or [])
+            payload["archive"] = enrich_ideas_with_prop_scores(payload.get("archive") or [])
             for idea in payload["ideas"]:
                 if not str(
                     idea.get("description_ru")
@@ -181,6 +184,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             if not ideas:
                 fallback_reason = "no_generated_ideas_provider_or_env_issue"
                 ideas = services.trade_idea_service.fallback_ideas(reason=fallback_reason)
+            ideas = enrich_ideas_with_prop_scores(ideas)
             generated_count = sum(1 for idea in ideas if str(idea.get("source")) != "fallback")
             fallback_count = len(ideas) - generated_count
             logger.info(

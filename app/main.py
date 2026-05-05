@@ -23,6 +23,7 @@ from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
+from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -712,10 +713,11 @@ def api_signals():
             logger.exception("api_signals: failed to build signal for %s", symbol)
 
     if signals:
+        enriched_signals = enrich_ideas_with_prop_scores(signals)
         archive = load_json(ARCHIVE_FILE)
         return {
-            "signals": signals,
-            "ideas": signals,
+            "signals": enriched_signals,
+            "ideas": enriched_signals,
             "archive": archive,
             "statistics": build_stats(),
             "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
@@ -767,10 +769,11 @@ def api_ideas():
             failed_symbols.append(symbol)
 
     if signals:
+        enriched_signals = enrich_ideas_with_prop_scores(signals)
         archive = load_json(ARCHIVE_FILE)
         return {
-            "signals": signals,
-            "ideas": signals,
+            "signals": enriched_signals,
+            "ideas": enriched_signals,
             "archive": archive,
             "statistics": build_stats(),
             "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
