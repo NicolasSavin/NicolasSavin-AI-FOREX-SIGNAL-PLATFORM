@@ -1974,6 +1974,7 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
             "fallback_used": fallback_used,
             "reason_ru": "Нет доступных реальных свечей для расчёта сигнала.",
             "candles_count": 0,
+            "candles": [],
         }
 
     closes = [safe_float(c.get("close")) for c in candles]
@@ -2001,6 +2002,7 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
             "fallback_used": fallback_used,
             "reason_ru": "Недостаточно свечей для уверенного анализа.",
             "candles_count": len(candles),
+            "candles": _format_idea_candles(candles),
         }
 
     last_close = closes[-1]
@@ -2093,6 +2095,7 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         "fallback_used": fallback_used,
         "reason_ru": reason_ru,
         "candles_count": len(candles),
+        "candles": _format_idea_candles(candles),
         "data_status": data_status if current_price is not None else "unavailable",
         "updated_at": now_utc(),
         "diagnostics": {
@@ -3689,6 +3692,7 @@ def _normalize_quote_signal(signal: dict[str, Any]) -> dict[str, Any]:
         diagnostics["status_downgrade_reason"] = "market_status_without_numeric_price"
         normalized.setdefault("warning_ru", "Рыночная котировка недоступна или повреждена; используется fallback-статус.")
     normalized["diagnostics"] = diagnostics
+    normalized["candles"] = _format_idea_candles(normalized.get("candles") if isinstance(normalized.get("candles"), list) else [])
     if symbol:
         options_snapshot = get_latest_options_levels(symbol)
         options_available = bool(options_snapshot.get("available"))
@@ -3708,6 +3712,26 @@ def _normalize_quote_signal(signal: dict[str, Any]) -> dict[str, Any]:
         normalized["market_context"] = market_context
     return normalized
 
+
+
+
+def _format_idea_candles(candles: list[dict[str, Any]] | None, limit: int = 120) -> list[dict[str, float | int]]:
+    formatted: list[dict[str, float | int]] = []
+    for candle in (candles or [])[-max(1, int(limit)):]:
+        if not isinstance(candle, dict):
+            continue
+        try:
+            t = int(candle.get("time"))
+            o = float(candle.get("open"))
+            h = float(candle.get("high"))
+            l = float(candle.get("low"))
+            c = float(candle.get("close"))
+        except Exception:
+            continue
+        if t <= 0:
+            continue
+        formatted.append({"time": t, "open": o, "high": h, "low": l, "close": c})
+    return formatted
 
 def _fetch_twelvedata_previous_close(symbol: str) -> float | None:
     if not TWELVEDATA_API_KEY:
