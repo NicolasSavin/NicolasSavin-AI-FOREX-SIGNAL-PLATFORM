@@ -60,6 +60,38 @@ function firstText(...values) {
   return "";
 }
 
+function toFiniteNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function pickFirstFiniteNumber(...values) {
+  for (const value of values) {
+    const num = toFiniteNumber(value);
+    if (num !== null) return num;
+  }
+  return null;
+}
+
+function collectOverlayRanges(raw) {
+  const items = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
+  return items
+    .map((item) => ({
+      low: pickFirstFiniteNumber(item?.low, item?.bottom, item?.min, item?.price_low, item?.zone_low, item?.from, item?.start, item?.y1),
+      high: pickFirstFiniteNumber(item?.high, item?.top, item?.max, item?.price_high, item?.zone_high, item?.to, item?.end, item?.y2),
+      price: pickFirstFiniteNumber(item?.price, item?.level, item?.value, item?.strike),
+    }))
+    .map((entry) => {
+      if (entry.low === null && entry.high === null && entry.price !== null) {
+        return { low: entry.price, high: entry.price };
+      }
+      if (entry.low !== null && entry.high === null) return { low: entry.low, high: entry.low };
+      if (entry.high !== null && entry.low === null) return { low: entry.high, high: entry.high };
+      return entry.low !== null && entry.high !== null ? { low: Math.min(entry.low, entry.high), high: Math.max(entry.low, entry.high) } : null;
+    })
+    .filter(Boolean);
+}
+
 function formatNumber(value) {
   if (value === undefined || value === null || value === "") return "—";
   const num = Number(value);
@@ -433,7 +465,8 @@ function openIdeaModal(idea) {
   const modal = document.getElementById("ideasModal") || createIdeasModal();
   const body = modal.querySelector(".ideas-modal-body");
   const title = modal.querySelector(".ideas-modal-title");
-  title.textContent = `${symbol} · ${getIdeaDirection(idea)}`;
+  const zoneType = sanitizeText(idea.selected_zone_type);
+  title.textContent = zoneType ? `${symbol} · ${getIdeaDirection(idea)} · ${zoneType}` : `${symbol} · ${getIdeaDirection(idea)}`;
   body.innerHTML = `<div class="modal-grid">
       <div>
         ${renderPropDetails(idea)}
@@ -525,6 +558,43 @@ function renderModalChart(idea) {
   if (Number.isFinite(entry)) series.createPriceLine({ price: entry, color: "#ffd84d", lineWidth: 2, title: "ENTRY" });
   if (Number.isFinite(sl)) series.createPriceLine({ price: sl, color: "#ff5f7a", lineWidth: 2, title: "SL" });
   if (Number.isFinite(tp)) series.createPriceLine({ price: tp, color: "#31f59d", lineWidth: 2, title: "TP" });
+
+  const selectedZoneLow = pickFirstFiniteNumber(idea.selected_zone_low, idea.selectedZoneLow);
+  const selectedZoneHigh = pickFirstFiniteNumber(idea.selected_zone_high, idea.selectedZoneHigh);
+  if (selectedZoneLow !== null) series.createPriceLine({ price: selectedZoneLow, color: "#5cc8ff", lineWidth: 2, lineStyle: 1, title: "SELECTED ZONE LOW" });
+  if (selectedZoneHigh !== null) series.createPriceLine({ price: selectedZoneHigh, color: "#5cc8ff", lineWidth: 2, lineStyle: 1, title: "SELECTED ZONE HIGH" });
+
+  const orderBlockRanges = collectOverlayRanges(idea.order_blocks ?? idea.orderBlocks);
+  orderBlockRanges.forEach((range) => {
+    series.createPriceLine({ price: range.low, color: "#ff9f43", lineWidth: 1, lineStyle: 1, title: "OB" });
+    if (range.high !== range.low) series.createPriceLine({ price: range.high, color: "#ff9f43", lineWidth: 1, lineStyle: 1, title: "OB" });
+  });
+
+  const fvgRanges = collectOverlayRanges(idea.fvg ?? idea.fair_value_gaps);
+  fvgRanges.forEach((range) => {
+    series.createPriceLine({ price: range.low, color: "#8b7bff", lineWidth: 1, lineStyle: 1, title: "FVG" });
+    if (range.high !== range.low) series.createPriceLine({ price: range.high, color: "#8b7bff", lineWidth: 1, lineStyle: 1, title: "FVG" });
+  });
+
+  const liquidityValues = [
+    ...(Array.isArray(idea.liquidity) ? idea.liquidity : []),
+    ...(Array.isArray(idea.liquidity_levels) ? idea.liquidity_levels : []),
+    ...(Array.isArray(idea.liquidity_zones) ? idea.liquidity_zones : []),
+  ];
+  collectOverlayRanges(liquidityValues).forEach((range) => {
+    series.createPriceLine({ price: range.low, color: "#34d399", lineWidth: 1, lineStyle: 2, title: "LIQ" });
+    if (range.high !== range.low) series.createPriceLine({ price: range.high, color: "#34d399", lineWidth: 1, lineStyle: 2, title: "LIQ" });
+  });
+
+  const optionsLevels = [
+    ...(Array.isArray(idea.options_analysis?.keyLevels) ? idea.options_analysis.keyLevels : []),
+    ...(Array.isArray(idea.keyStrikes) ? idea.keyStrikes : []),
+  ];
+  collectOverlayRanges(optionsLevels).forEach((range) => {
+    series.createPriceLine({ price: range.low, color: "#f472b6", lineWidth: 1, lineStyle: 3, title: "OPT" });
+    if (range.high !== range.low) series.createPriceLine({ price: range.high, color: "#f472b6", lineWidth: 1, lineStyle: 3, title: "OPT" });
+  });
+
   modalChart.timeScale().fitContent();
 }
 
