@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from app.services.openai_idea_narrative import enrich_idea_with_openai_narrative
+
 
 @dataclass(frozen=True)
 class PropCriterion:
@@ -339,4 +341,10 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
 def enrich_ideas_with_prop_scores(ideas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not isinstance(ideas, list):
         return []
-    return [enrich_idea_with_prop_score(idea) for idea in ideas if isinstance(idea, dict)]
+    enriched_ideas: list[dict[str, Any]] = []
+    for idea in ideas:
+        if not isinstance(idea, dict):
+            continue
+        scored = enrich_idea_with_prop_score(idea)
+        enriched_ideas.append(enrich_idea_with_openai_narrative(scored))
+    return enriched_ideas
