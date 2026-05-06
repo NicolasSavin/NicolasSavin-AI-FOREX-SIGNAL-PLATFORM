@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter
 
+from app.services.market_structure_overlay import attach_market_structure_overlays
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.signal_hub import DEFAULT_PAIRS
 from app.services.trade_idea_service import TradeIdeaService
@@ -132,6 +133,8 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             payload["archive"] = _safe_attach_live_market_contracts(payload.get("archive") or [], field="archive")
             payload["ideas"] = enrich_ideas_with_prop_scores(payload.get("ideas") or [])
             payload["archive"] = enrich_ideas_with_prop_scores(payload.get("archive") or [])
+            payload["ideas"] = attach_market_structure_overlays(payload.get("ideas") or [])
+            payload["archive"] = attach_market_structure_overlays(payload.get("archive") or [])
             for idea in payload["ideas"]:
                 if not str(
                     idea.get("description_ru")
@@ -146,7 +149,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             logger.exception("ideas_market_failed reason=%s", exc)
             fallback_reason = f"route_exception:{type(exc).__name__}"
             return _localize_output_layer({
-                "ideas": _safe_fallback_ideas(reason=fallback_reason),
+                "ideas": attach_market_structure_overlays(_safe_fallback_ideas(reason=fallback_reason)),
                 "archive": [],
                 "market": _safe_market_contracts(list(DEFAULT_PAIRS)),
                 "ok": False,
@@ -185,6 +188,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
                 fallback_reason = "no_generated_ideas_provider_or_env_issue"
                 ideas = services.trade_idea_service.fallback_ideas(reason=fallback_reason)
             ideas = enrich_ideas_with_prop_scores(ideas)
+            ideas = attach_market_structure_overlays(ideas)
             generated_count = sum(1 for idea in ideas if str(idea.get("source")) != "fallback")
             fallback_count = len(ideas) - generated_count
             logger.info(
@@ -205,7 +209,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             logger.exception("ideas_api_failed reason=%s", exc)
             fallback_reason = f"route_exception:{type(exc).__name__}"
             return _localize_output_layer({
-                "ideas": services.trade_idea_service.fallback_ideas(reason=fallback_reason),
+                "ideas": attach_market_structure_overlays(services.trade_idea_service.fallback_ideas(reason=fallback_reason)),
                 "market": market,
                 "diagnostics": {"error": str(exc), "reason": fallback_reason},
             })
