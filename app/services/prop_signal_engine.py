@@ -34,10 +34,26 @@ def _text(value: Any) -> str:
         return str(value).strip()
     if isinstance(value, dict):
         parts: list[str] = []
-        for key in ("summary", "summary_ru", "bias", "prop_bias", "signal", "value", "description", "description_ru"):
+        for key in (
+            "summary",
+            "summary_ru",
+            "bias",
+            "prop_bias",
+            "signal",
+            "value",
+            "description",
+            "description_ru",
+            "type",
+            "side",
+            "delta",
+            "cum_delta",
+            "cumulative_delta",
+            "zone_type",
+            "sweep_type",
+        ):
             raw = value.get(key)
             if raw is not None and str(raw).strip():
-                parts.append(str(raw).strip())
+                parts.append(f"{key}: {str(raw).strip()}")
         return " | ".join(parts)
     if isinstance(value, Iterable):
         return ", ".join(str(item).strip() for item in value if str(item).strip())
@@ -79,7 +95,7 @@ def _direction(idea: dict[str, Any]) -> str:
 def _risk_reward_score(idea: dict[str, Any]) -> tuple[int, str]:
     rr = _to_float(idea.get("rr") or idea.get("risk_reward"))
     if rr is None:
-        entry = _to_float(idea.get("entry"))
+        entry = _to_float(idea.get("entry") or idea.get("entry_price"))
         stop = _to_float(idea.get("sl") or idea.get("stop_loss"))
         target = _to_float(idea.get("tp") or idea.get("target") or idea.get("take_profit"))
         if entry is not None and stop is not None and target is not None:
@@ -101,10 +117,27 @@ def _score_text_presence(text: str, weight: int) -> int:
     if not text:
         return 0
     lowered = text.lower()
-    negative_markers = ("нет данных", "недоступ", "не подтверж", "отсутств", "no data", "unavailable")
+    negative_markers = ("нет данных", "недоступ", "не подтверж", "отсутств", "no data", "unavailable", "null")
     if any(marker in lowered for marker in negative_markers):
         return max(1, round(weight * 0.2))
-    strong_markers = ("подтверж", "confirmed", "confluence", "сильн", "явн", "bullish", "bearish", "prop")
+    strong_markers = (
+        "подтверж",
+        "confirmed",
+        "confluence",
+        "сильн",
+        "явн",
+        "bullish",
+        "bearish",
+        "prop",
+        "sweep",
+        "liquidity",
+        "delta",
+        "cluster",
+        "order_block",
+        "order block",
+        "real",
+        "mt4",
+    )
     if any(marker in lowered for marker in strong_markers):
         return weight
     return max(2, round(weight * 0.65))
@@ -113,15 +146,84 @@ def _score_text_presence(text: str, weight: int) -> int:
 def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     rr_score, rr_reason = _risk_reward_score(idea)
     mapping: dict[str, tuple[str, ...]] = {
-        "htf": ("htf_bias_ru", "htf.summary", "timeframe", "tf"),
-        "liquidity": ("liquidity_ru", "liquidity.summary", "liquidity", "selected_zone_type", "selected_zone_low", "selected_zone_high"),
-        "structure": ("structure_ru", "market_structure_ru", "smart_money_ru", "ict_ru", "decision_reason_ru", "reason_ru"),
-        "order_block": ("order_blocks_ru", "order_block_ru", "order_blocks.summary", "orderBlocks", "entry_source"),
-        "volume": ("volume_ru", "volume.summary", "volume", "data_status"),
-        "cum_delta": ("cum_delta_ru", "cumDelta", "cum_delta", "delta_ru"),
-        "options": ("options_ru", "options_summary_ru", "options_analysis.summary", "options_analysis.summary_ru", "options_analysis.prop_bias", "options_analysis.bias"),
-        "sentiment": ("sentiment.summary", "sentiment.bias", "sentiment_ru"),
-        "news": ("fundamental_context_ru", "fundamental_ru", "news_context_ru", "news_title", "why_moves_ru"),
+        "htf": ("htf_bias_ru", "htf.summary", "timeframe", "tf", "mtf_summary", "compact_summary"),
+        "liquidity": (
+            "liquidity_ru",
+            "liquidity.summary",
+            "liquidity",
+            "liquidity_zones",
+            "liquidity_levels",
+            "liquidity_sweep",
+            "sweep",
+            "selected_zone_type",
+            "selected_zone_low",
+            "selected_zone_high",
+            "market_context.liquidity",
+            "market_context.liquidity_zones",
+        ),
+        "structure": (
+            "structure_ru",
+            "market_structure_ru",
+            "smart_money_ru",
+            "ict_ru",
+            "decision_reason_ru",
+            "reason_ru",
+            "bias",
+            "market_context.structure",
+            "market_context.bias",
+        ),
+        "order_block": (
+            "order_blocks_ru",
+            "order_block_ru",
+            "order_blocks.summary",
+            "orderBlocks",
+            "order_blocks",
+            "entry_source",
+            "market_context.order_blocks",
+            "market_context.orderBlocks",
+        ),
+        "volume": (
+            "volume_ru",
+            "volume.summary",
+            "volume",
+            "volume_cluster",
+            "volume_clusters",
+            "cluster_volume",
+            "tick_volume",
+            "data_status",
+            "market_context.volumeCluster",
+            "market_context.volume_cluster",
+        ),
+        "cum_delta": (
+            "cum_delta_ru",
+            "cumDelta",
+            "cum_delta",
+            "cumulative_delta",
+            "delta",
+            "delta_ru",
+            "delta_bias",
+            "cluster_delta",
+            "volume_delta",
+            "volume_cluster.delta",
+            "volume_cluster.cum_delta",
+            "volume_cluster.cumulative_delta",
+            "market_context.delta",
+            "market_context.cum_delta",
+            "market_context.volumeDelta",
+        ),
+        "options": (
+            "options_ru",
+            "options_summary_ru",
+            "options_analysis.summary",
+            "options_analysis.summary_ru",
+            "options_analysis.prop_bias",
+            "options_analysis.bias",
+            "options_available",
+            "market_context.optionsAnalysis.summary_ru",
+            "market_context.optionsAnalysis.prop_bias",
+        ),
+        "sentiment": ("sentiment.summary", "sentiment.bias", "sentiment_ru", "market_context.sentiment"),
+        "news": ("fundamental_context_ru", "fundamental_ru", "news_context_ru", "news_title", "why_moves_ru", "fundamental_context.summary_ru"),
     }
 
     rows: list[dict[str, Any]] = []
@@ -193,18 +295,43 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(idea.get("symbol") or idea.get("pair") or idea.get("instrument") or "").upper().strip()
+    action = _direction(idea)
+    entry = idea.get("entry") if idea.get("entry") is not None else idea.get("entry_price")
+    sl = idea.get("sl") if idea.get("sl") is not None else idea.get("stop_loss")
+    tp = idea.get("tp") if idea.get("tp") is not None else idea.get("take_profit") or idea.get("target")
+    has_levels = all(_to_float(x) is not None for x in (entry, sl, tp))
+    allowed = score.get("grade") == "A" and score.get("mode") == "prop_entry" and action in {"BUY", "SELL"} and has_levels
+    reason = "allowed: grade A + prop_entry + complete levels" if allowed else "blocked: requires grade A, prop_entry, BUY/SELL and complete entry/sl/tp"
+    return {
+        "allowed": allowed,
+        "reason": reason,
+        "symbol": symbol,
+        "action": action,
+        "entry": entry,
+        "sl": sl,
+        "tp": tp,
+        "score": score.get("score"),
+        "grade": score.get("grade"),
+        "mode": score.get("mode"),
+    }
+
+
 def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(idea, dict):
         return idea
     score = build_prop_signal_score(idea)
+    advisor_signal = _advisor_signal_from_idea(idea, score)
     enriched = dict(idea)
-    # Put prop metadata first so raw JSON and downstream consumers can see it immediately.
     return {
         "prop_signal_score": score,
         "prop_score": score["score"],
         "prop_grade": score["grade"],
         "prop_mode": score["mode"],
         "prop_decision_ru": score["decision_ru"],
+        "advisor_allowed": advisor_signal["allowed"],
+        "advisor_signal": advisor_signal,
         **enriched,
     }
 
