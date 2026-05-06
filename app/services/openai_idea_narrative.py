@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import time
 from copy import deepcopy
 from typing import Any
 
@@ -35,8 +37,14 @@ ALLOWED_CRITERIA = {
     "risk_reward",
 }
 
+_NARRATIVE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_NARRATIVE_LAST_REQUEST_AT: dict[str, float] = {}
+_OPENAI_COOLDOWN_UNTIL = 0.0
+
 
 def enrich_idea_with_openai_narrative(payload: dict[str, Any]) -> dict[str, Any]:
+    global _OPENAI_COOLDOWN_UNTIL
+
     result = deepcopy(payload if isinstance(payload, dict) else {})
     fallback = _fallback_fields(result)
     result.update(fallback)
@@ -45,17 +53,57 @@ def enrich_idea_with_openai_narrative(payload: dict[str, Any]) -> dict[str, Any]
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not enabled or not api_key:
         result["narrative_source"] = "fallback"
+        result["narrative_skip_reason"] = "disabled_or_missing_key"
+        return result
+
+    if _should_skip_openai_for_payload(result):
+        result["narrative_source"] = "fallback"
+        result["narrative_skip_reason"] = "weak_or_blocked_signal"
+        return result
+
+    now = time.time()
+    if now < _OPENAI_COOLDOWN_UNTIL:
+        result["narrative_source"] = "fallback"
+        result["narrative_skip_reason"] = "openai_cooldown"
         return result
 
     model = (os.getenv("OPENAI_MODEL") or "gpt-4.1").strip()
     timeout = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "20"))
     facts = _build_facts_payload(result)
+    cache_key = _cache_key(model, facts)
+    ttl_seconds = int(os.getenv("OPENAI_IDEA_NARRATIVE_CACHE_SECONDS", "300"))
+    min_interval = float(os.getenv("OPENAI_IDEA_NARRATIVE_MIN_INTERVAL_SECONDS", "120"))
+    cooldown_seconds = float(os.getenv("OPENAI_IDEA_NARRATIVE_429_COOLDOWN_SECONDS", "300"))
 
-    generated = _request_json(api_key=api_key, model=model, timeout=timeout, facts=facts)
-    if generated is None:
-        generated = _request_json(api_key=api_key, model=model, timeout=timeout, facts=facts, retry=True)
+    cached = _NARRATIVE_CACHE.get(cache_key)
+    if cached and now - cached[0] <= ttl_seconds:
+        result.update(deepcopy(cached[1]))
+        result["narrative_source"] = "openai_cache"
+        result["narrative_model"] = model
+        return result
+
+    throttle_key = _throttle_key(facts)
+    last_request_at = _NARRATIVE_LAST_REQUEST_AT.get(throttle_key, 0.0)
+    if now - last_request_at < min_interval:
+        result["narrative_source"] = "fallback"
+        result["narrative_skip_reason"] = "per_symbol_throttle"
+        return result
+
+    _NARRATIVE_LAST_REQUEST_AT[throttle_key] = now
+    generated, status_code = _request_json(api_key=api_key, model=model, timeout=timeout, facts=facts)
+    if generated is None and status_code not in {429, 401, 403}:
+        generated, status_code = _request_json(api_key=api_key, model=model, timeout=timeout, facts=facts, retry=True)
+
+    if status_code == 429:
+        _OPENAI_COOLDOWN_UNTIL = time.time() + cooldown_seconds
+        result["narrative_source"] = "fallback"
+        result["narrative_skip_reason"] = "openai_429_cooldown"
+        logger.warning("openai_narrative_429_cooldown seconds=%s", cooldown_seconds)
+        return result
+
     if generated is None:
         result["narrative_source"] = "fallback"
+        result["narrative_skip_reason"] = f"openai_failed_status_{status_code or 'unknown'}"
         return result
 
     if _is_caution_required(result):
@@ -63,16 +111,68 @@ def enrich_idea_with_openai_narrative(payload: dict[str, Any]) -> dict[str, Any]
             value = str(generated.get(field) or "")
             if "ПОКУП" in value.upper() or "ПРОДАЖ" in value.upper() or "BUY" in value.upper() or "SELL" in value.upper():
                 result["narrative_source"] = "fallback"
+                result["narrative_skip_reason"] = "caution_guard"
                 return result
 
-    result.update({k: str(generated.get(k) or fallback.get(k) or "").strip() for k in TEXT_FIELDS})
-    result["criteria_used"] = _clean_criteria(generated.get("criteria_used"), fallback["criteria_used"])
+    generated_fields = {k: str(generated.get(k) or fallback.get(k) or "").strip() for k in TEXT_FIELDS}
+    generated_fields["criteria_used"] = _clean_criteria(generated.get("criteria_used"), fallback["criteria_used"])
+    generated_fields["narrative_model"] = model
+
+    result.update(generated_fields)
     result["narrative_source"] = "openai"
     result["narrative_model"] = model
+    _NARRATIVE_CACHE[cache_key] = (time.time(), deepcopy(generated_fields))
+    _trim_cache()
     return result
 
 
-def _request_json(*, api_key: str, model: str, timeout: float, facts: dict[str, Any], retry: bool = False) -> dict[str, Any] | None:
+def _should_skip_openai_for_payload(payload: dict[str, Any]) -> bool:
+    signal = str(payload.get("signal") or payload.get("final_signal") or payload.get("action") or "").upper()
+    prop_mode = str(payload.get("prop_mode") or "").lower()
+    prop_grade = str(payload.get("prop_grade") or "").upper()
+    prop_score = _to_int(payload.get("prop_score"))
+    advisor_allowed = bool(payload.get("advisor_allowed"))
+
+    if signal == "WAIT":
+        return True
+    if prop_mode in {"no_trade", "research_only"}:
+        return True
+    if prop_score < int(os.getenv("OPENAI_IDEA_NARRATIVE_MIN_PROP_SCORE", "62")):
+        return True
+    if prop_grade not in {"A", "B"} and not advisor_allowed:
+        return True
+    return False
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cache_key(model: str, facts: dict[str, Any]) -> str:
+    raw = json.dumps(facts, ensure_ascii=False, sort_keys=True, default=str)
+    return f"{model}:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"
+
+
+def _throttle_key(facts: dict[str, Any]) -> str:
+    symbol = str(facts.get("symbol") or "UNKNOWN").upper()
+    timeframe = str(facts.get("timeframe") or "M15").upper()
+    signal = str(facts.get("signal") or "WAIT").upper()
+    prop_mode = str(facts.get("prop_mode") or "").lower()
+    return f"{symbol}:{timeframe}:{signal}:{prop_mode}"
+
+
+def _trim_cache() -> None:
+    max_items = int(os.getenv("OPENAI_IDEA_NARRATIVE_CACHE_MAX_ITEMS", "256"))
+    if len(_NARRATIVE_CACHE) <= max_items:
+        return
+    for key, _ in sorted(_NARRATIVE_CACHE.items(), key=lambda item: item[1][0])[: len(_NARRATIVE_CACHE) - max_items]:
+        _NARRATIVE_CACHE.pop(key, None)
+
+
+def _request_json(*, api_key: str, model: str, timeout: float, facts: dict[str, Any], retry: bool = False) -> tuple[dict[str, Any] | None, int | None]:
     prompt = _build_prompt(facts, retry=retry)
     try:
         response = requests.post(
@@ -106,6 +206,9 @@ def _request_json(*, api_key: str, model: str, timeout: float, facts: dict[str, 
             },
             timeout=timeout,
         )
+        status_code = response.status_code
+        if status_code == 429:
+            return None, status_code
         response.raise_for_status()
         data = response.json()
         text = ""
@@ -114,10 +217,14 @@ def _request_json(*, api_key: str, model: str, timeout: float, facts: dict[str, 
         if not text:
             text = _extract_text_from_output(data)
         parsed = _parse_json(text)
-        return parsed if isinstance(parsed, dict) else None
+        return (parsed if isinstance(parsed, dict) else None), status_code
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        logger.warning("openai_narrative_request_http_failed status=%s", status_code)
+        return None, status_code
     except Exception:
         logger.exception("openai_narrative_request_failed")
-        return None
+        return None, None
 
 
 def _build_prompt(facts: dict[str, Any], *, retry: bool = False) -> str:
