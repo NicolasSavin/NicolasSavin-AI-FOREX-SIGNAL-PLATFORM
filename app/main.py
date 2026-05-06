@@ -1637,7 +1637,7 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
             "provider_tolerance_ru": "Идея рассчитана с допуском на различие данных между сайтом, поставщиком и брокером.",
         }
 
-        return {
+        payload = {
             "id": trade.get("id"),
             "idea_id": trade.get("id"),
             "symbol": symbol,
@@ -1718,6 +1718,7 @@ def build_signal(symbol: str, detail: bool = False) -> dict[str, Any]:
                 "htf_filter": decision.context,
             },
         }
+        return enrich_idea_with_openai_narrative(payload)
     except Exception:
         return empty_signal(symbol, {}, {})
 
