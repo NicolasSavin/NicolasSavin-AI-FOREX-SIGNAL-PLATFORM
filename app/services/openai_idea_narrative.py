@@ -151,6 +151,22 @@ def _to_int(value: Any) -> int:
         return 0
 
 
+def _to_float(value: Any) -> float | None:
+    try:
+        if value in (None, "", "—"):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _price(value: Any) -> str:
+    number = _to_float(value)
+    if number is None:
+        return "нет данных"
+    return f"{number:.5f}".rstrip("0").rstrip(".")
+
+
 def _cache_key(model: str, facts: dict[str, Any]) -> str:
     raw = json.dumps(facts, ensure_ascii=False, sort_keys=True, default=str)
     return f"{model}:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"
@@ -188,13 +204,10 @@ def _request_json(*, api_key: str, model: str, timeout: float, facts: dict[str, 
                                 "type": "input_text",
                                 "text": (
                                     "You are an institutional FX prop-desk narrative writer. "
-                                    "The backend is the analyst and risk engine; it has already calculated direction, levels, liquidity, SMC/order-block context, options context, RR, and prop score. "
-                                    "You are NOT allowed to recalculate, improve, contradict, or override any trading facts. "
-                                    "You only convert backend facts into a concise Russian desk memo. "
-                                    "Never invent news, candles, indicators, levels, volume, options flow, probabilities, or certainty. "
-                                    "Never change direction, entry, stop loss, take profit, RR, prop score, data status, or trade permission. "
-                                    "If signal is WAIT, mode is research_only/no_trade, or confluence is weak, write observation-only language: no entry recommendation, no aggressive buy/sell wording. "
-                                    "Return STRICT JSON only."
+                                    "The backend has already calculated direction, levels, liquidity, SMC/order-block context, options context, RR, and prop score. "
+                                    "Do not recalculate or override facts. Convert facts into concise Russian desk memo. "
+                                    "Do not invent news, candles, indicators, levels, volume, options flow, probabilities, or certainty. "
+                                    "If signal is WAIT or mode is research_only/no_trade, write observation-only language. Return STRICT JSON only."
                                 ),
                             }
                         ],
@@ -211,9 +224,7 @@ def _request_json(*, api_key: str, model: str, timeout: float, facts: dict[str, 
             return None, status_code
         response.raise_for_status()
         data = response.json()
-        text = ""
-        if isinstance(data.get("output_text"), str):
-            text = data.get("output_text") or ""
+        text = data.get("output_text") if isinstance(data.get("output_text"), str) else ""
         if not text:
             text = _extract_text_from_output(data)
         parsed = _parse_json(text)
@@ -230,25 +241,18 @@ def _request_json(*, api_key: str, model: str, timeout: float, facts: dict[str, 
 def _build_prompt(facts: dict[str, Any], *, retry: bool = False) -> str:
     retry_note = "\nПОВТОРНАЯ ПОПЫТКА: прошлый ответ был невалидным. Верни только JSON, без markdown." if retry else ""
     return (
-        "Сделай сильный prop-desk narrative на русском языке для /ideas.\n"
-        "Это ТОЛЬКО генерация текста. Анализ уже сделал backend.\n\n"
-        "ЖЁСТКИЕ ПРАВИЛА:\n"
-        "1) Не меняй direction/signal/entry/sl/tp/rr/prop_score/prop_mode/trade_permission.\n"
-        "2) Не придумывай отсутствующие данные. Если liquidity/news/volume/options частично отсутствуют — прямо скажи это.\n"
-        "3) Пиши только по короткому BACKEND_FACTS ниже. Не требуй дополнительные свечи или массивы уровней.\n"
-        "4) Запрещены пустые шаблоны: 'сценарий сформирован', 'при сохранении структуры', 'следовать рассчитанным уровням' без конкретики.\n"
-        "5) Если signal=WAIT или prop_mode=research_only/no_trade — это только наблюдение. Нельзя писать 'покупать', 'продавать', 'входить', BUY/SELL recommendation.\n"
-        "6) Если BUY/SELL разрешён backend, описывай вход только как conditional trigger: что цена должна подтвердить около entry/zone.\n"
-        "7) Стиль: коротко, жёстко, как internal desk memo: факт → причина → риск → действие.\n\n"
-        "ВЕРНИ СТРОГО JSON, БЕЗ MARKDOWN:\n"
+        "Сделай prop-desk narrative на русском языке для торговой идеи.\n"
+        "Анализ уже сделан системой. Не меняй direction/signal/entry/sl/tp/rr/prop_score/prop_mode/trade_permission.\n"
+        "Не придумывай отсутствующие данные. Для WAIT/no_trade/research_only — только наблюдение без рекомендации входа.\n\n"
+        "Верни строго JSON:\n"
         "{\n"
-        "  \"summary_ru\": \"1-2 предложения: инструмент, режим, главный вывод\",\n"
-        "  \"unified_narrative\": \"5-8 предложений: что видит backend, почему сигнал такой, как участвуют ликвидность/структура/OB/options/RR, почему вход разрешён или запрещён\",\n"
-        "  \"desk_narrative\": \"короткий prop-desk memo: где цена, какая зона, что подтверждено, чего не хватает\",\n"
-        "  \"trading_plan\": \"практический план только по backend уровням: ждать/условный вход/инвалидация/цель. Для WAIT — только наблюдение\",\n"
-        "  \"main_scenario_1_7_days\": \"сценарий на 1-7 дней без выдуманных целей, только по переданным уровням и контексту\",\n"
-        "  \"midterm_scenario_1_4_weeks\": \"сценарий на 1-4 недели: HTF/структура/опционы, с ограничениями данных\",\n"
-        "  \"invalidation\": \"точно где ломается идея: sl/zone/структура/данные, если sl нет — так и написать\",\n"
+        "  \"summary_ru\": \"1-2 предложения\",\n"
+        "  \"unified_narrative\": \"5-8 предложений\",\n"
+        "  \"desk_narrative\": \"короткий desk memo\",\n"
+        "  \"trading_plan\": \"план: ждать/условный вход/инвалидация/цель\",\n"
+        "  \"main_scenario_1_7_days\": \"сценарий 1-7 дней\",\n"
+        "  \"midterm_scenario_1_4_weeks\": \"сценарий 1-4 недели\",\n"
+        "  \"invalidation\": \"где ломается идея\",\n"
         "  \"criteria_used\": [\"trend\", \"market_structure\", \"liquidity\", \"order_blocks\", \"support_resistance\", \"volatility_ATR\", \"news_risk\", \"futures_context\", \"options_context\", \"risk_reward\"]\n"
         "}\n\n"
         "BACKEND_FACTS:\n"
@@ -303,30 +307,78 @@ def _extract_text_from_output(data: dict[str, Any]) -> str:
 def _fallback_fields(payload: dict[str, Any]) -> dict[str, Any]:
     symbol = str(payload.get("symbol") or payload.get("pair") or "Инструмент").upper()
     timeframe = str(payload.get("timeframe") or payload.get("tf") or "M15")
-    signal = str(payload.get("signal") or payload.get("final_signal") or payload.get("direction") or "WAIT").upper()
+    signal = str(payload.get("signal") or payload.get("final_signal") or payload.get("direction") or payload.get("action") or "WAIT").upper()
     prop_score = payload.get("prop_score")
-    prop_grade = payload.get("prop_grade")
-    prop_mode = payload.get("prop_mode")
-    decision = str(payload.get("prop_decision_ru") or payload.get("decision_reason_ru") or payload.get("reason_ru") or "Решение основано на текущих backend-фактах.")
-    entry = payload.get("entry")
+    prop_grade = str(payload.get("prop_grade") or "—").upper()
+    prop_mode = str(payload.get("prop_mode") or "watchlist")
+    decision = str(payload.get("prop_decision_ru") or payload.get("decision_reason_ru") or payload.get("reason_ru") or "Идея требует дополнительного подтверждения.")
+    entry = payload.get("entry") or payload.get("entry_price")
     sl = payload.get("sl") or payload.get("stop_loss")
-    tp = payload.get("tp") or payload.get("take_profit")
+    tp = payload.get("tp") or payload.get("take_profit") or payload.get("target")
     rr = payload.get("rr") or payload.get("risk_reward")
-    options = str(payload.get("options_summary_ru") or "Опционный слой не дал отдельного подтверждения или ограничен доступными данными.")
+    zone_low = payload.get("selected_zone_low")
+    zone_high = payload.get("selected_zone_high")
+    zone_type = str(payload.get("selected_zone_type") or payload.get("entry_source") or "рабочая зона")
+    options = str(payload.get("options_summary_ru") or "Опционный слой не дал отдельного подтверждения или доступен частично.")
 
-    base = (
-        f"{symbol} {timeframe}: backend даёт режим {signal}, prop-score {prop_score}, grade {prop_grade}, mode {prop_mode}. "
-        f"Решение: {decision} Уровни: entry={entry}, SL={sl}, TP={tp}, RR={rr}. "
-        f"Опционный контекст: {options}"
-    )
+    score_payload = payload.get("prop_signal_score") if isinstance(payload.get("prop_signal_score"), dict) else {}
+    criteria = score_payload.get("criteria") if isinstance(score_payload.get("criteria"), list) else []
+    confirmed = [str(row.get("label_ru") or row.get("key")) for row in criteria if isinstance(row, dict) and row.get("status") == "confirmed"]
+    partial = [str(row.get("label_ru") or row.get("key")) for row in criteria if isinstance(row, dict) and row.get("status") == "partial"]
+    missing = [str(row.get("label_ru") or row.get("key")) for row in criteria if isinstance(row, dict) and row.get("status") == "missing"]
+
+    direction_ru = "покупки" if signal == "BUY" else "продажи" if signal == "SELL" else "наблюдения"
+    entry_text = _price(entry)
+    sl_text = _price(sl)
+    tp_text = _price(tp)
+    rr_text = str(rr) if rr not in (None, "", "—") else "не рассчитан"
+    zone_text = ""
+    if _to_float(zone_low) is not None and _to_float(zone_high) is not None:
+        zone_text = f" Рабочая зона: {_price(zone_low)}–{_price(zone_high)} ({zone_type})."
+    elif entry_text != "нет данных":
+        zone_text = f" Ориентир входа: {entry_text}."
+
+    confirmed_text = ", ".join(confirmed[:4]) if confirmed else "часть условий подтверждена ограниченно"
+    missing_text = ", ".join(missing[:4]) if missing else "критичных пробелов по доступным данным нет"
+    partial_text = ", ".join(partial[:3]) if partial else "частичных подтверждений немного"
+
+    if prop_mode == "prop_entry" and prop_grade == "A":
+        summary = f"{symbol} {timeframe}: идея {direction_ru} прошла prop-фильтр, score {prop_score}, grade {prop_grade}."
+        narrative = (
+            f"{symbol} торгуется в сценарии {direction_ru} на {timeframe}.{zone_text} "
+            f"Подтверждены: {confirmed_text}. Частично подтверждены: {partial_text}. "
+            f"План строится от уровней entry={entry_text}, SL={sl_text}, TP={tp_text}, RR={rr_text}. "
+            f"{options} Вход допустим только при реакции цены от рабочей зоны и сохранении структуры."
+        )
+        plan = f"Искать вход только около entry={entry_text} после реакции цены; SL={sl_text}, TP={tp_text}."
+    elif prop_mode == "watchlist" or prop_grade == "B":
+        summary = f"{symbol} {timeframe}: идея {direction_ru} остаётся в watchlist, score {prop_score}, grade {prop_grade}."
+        narrative = (
+            f"{symbol} показывает рабочий сценарий {direction_ru}, но подтверждений пока недостаточно для автоматического входа.{zone_text} "
+            f"Сильные стороны: {confirmed_text}. Слабые места: {missing_text}. "
+            f"Частичные условия: {partial_text}. Уровни: entry={entry_text}, SL={sl_text}, TP={tp_text}, RR={rr_text}. "
+            f"{options} Решение: ждать дополнительный триггер от зоны, без преждевременного входа."
+        )
+        plan = f"Наблюдать реакцию в зоне entry={entry_text}; вход не ускорять до подтверждения, SL={sl_text}, TP={tp_text}."
+    else:
+        summary = f"{symbol} {timeframe}: торговый вход не подтверждён, score {prop_score}, grade {prop_grade}."
+        narrative = (
+            f"{symbol} сейчас не даёт полноценного prop-entry на {timeframe}.{zone_text} "
+            f"Подтверждённые элементы: {confirmed_text}. Основные пробелы: {missing_text}. "
+            f"Текущий режим — {prop_mode}; уровни entry={entry_text}, SL={sl_text}, TP={tp_text}, RR={rr_text} используются только как ориентиры. "
+            f"{options} Решение: сделку не открывать до появления нового подтверждения."
+        )
+        plan = f"No trade: ждать обновления структуры/ликвидности. Уровни entry={entry_text}, SL={sl_text}, TP={tp_text} не являются разрешением на вход."
+
+    invalidation = f"Идея ломается при пробое/закреплении за SL={sl_text} либо при исчезновении реакции от рабочей зоны. Если SL отсутствует, вход запрещён."
     return {
-        "summary_ru": base,
-        "unified_narrative": base,
-        "desk_narrative": base,
-        "trading_plan": f"План: использовать только backend-уровни entry={entry}, SL={sl}, TP={tp}; при WAIT/research_only — наблюдение без входа.",
-        "main_scenario_1_7_days": f"На 1-7 дней базовый сценарий остаётся {signal} только в рамках backend-контекста и prop-mode {prop_mode}.",
-        "midterm_scenario_1_4_weeks": "На 1-4 недели сценарий зависит от подтверждения HTF-структуры и обновления опционного/ликвидностного слоя.",
-        "invalidation": f"Идея ломается при нарушении backend-инвалидации/SL={sl}; если SL отсутствует, вход не подтверждён.",
+        "summary_ru": summary,
+        "unified_narrative": narrative,
+        "desk_narrative": narrative,
+        "trading_plan": plan,
+        "main_scenario_1_7_days": f"На 1–7 дней базовый сценарий: {direction_ru} только при сохранении структуры и подтверждении зоны. Без подтверждения идея остаётся в режиме {prop_mode}.",
+        "midterm_scenario_1_4_weeks": "На 1–4 недели сценарий зависит от обновления HTF-структуры, ликвидности, CumDelta и опционного слоя. Без этих подтверждений приоритет — наблюдение.",
+        "invalidation": invalidation,
         "criteria_used": [
             "trend", "market_structure", "liquidity", "order_blocks", "support_resistance", "volatility_ATR",
             "news_risk", "futures_context", "options_context", "risk_reward",
@@ -341,16 +393,8 @@ def _build_facts_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     prop_criteria = []
     for row in prop_signal_score.get("criteria") or []:
-        if not isinstance(row, dict):
-            continue
-        prop_criteria.append(
-            {
-                "key": row.get("key"),
-                "status": row.get("status"),
-                "score": row.get("score"),
-                "text_ru": row.get("text_ru"),
-            }
-        )
+        if isinstance(row, dict):
+            prop_criteria.append({"key": row.get("key"), "status": row.get("status"), "score": row.get("score"), "text_ru": row.get("text_ru")})
 
     return {
         "symbol": payload.get("symbol") or payload.get("pair"),
@@ -363,7 +407,6 @@ def _build_facts_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "rr": payload.get("rr") or payload.get("risk_reward"),
         "current_price": payload.get("current_price") or payload.get("price"),
         "data_status": payload.get("data_status"),
-        "source": payload.get("source"),
         "provider": payload.get("provider"),
         "entry_source": payload.get("entry_source"),
         "selected_zone_type": payload.get("selected_zone_type"),
@@ -379,11 +422,7 @@ def _build_facts_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "missing_inputs": prop_signal_score.get("missing_inputs"),
         "prop_criteria": prop_criteria,
         "advisor_allowed": payload.get("advisor_allowed"),
-        "advisor_signal": {
-            "allowed": advisor_signal.get("allowed"),
-            "reason": advisor_signal.get("reason"),
-            "action": advisor_signal.get("action"),
-        },
+        "advisor_signal": {"allowed": advisor_signal.get("allowed"), "reason": advisor_signal.get("reason"), "action": advisor_signal.get("action")},
         "options_available": payload.get("options_available"),
         "options_source": payload.get("options_source"),
         "options_summary_ru": payload.get("options_summary_ru"),
@@ -403,9 +442,7 @@ def _build_facts_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _limit_list(value: Any, limit: int) -> Any:
-    if isinstance(value, list):
-        return value[:limit]
-    return value
+    return value[:limit] if isinstance(value, list) else value
 
 
 def _compact_warnings(payload: dict[str, Any]) -> list[str]:
