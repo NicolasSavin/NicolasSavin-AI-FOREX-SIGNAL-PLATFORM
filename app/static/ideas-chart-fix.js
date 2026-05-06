@@ -55,7 +55,7 @@
 
   function addLine(series, price, title, color, style, width) {
     const p = number(price);
-    if (p === null || !series || !series.createPriceLine) return;
+    if (p === null || !series || !series.createPriceLine) return false;
     try {
       series.createPriceLine({
         price: p,
@@ -65,23 +65,26 @@
         axisLabelVisible: true,
         title: title,
       });
+      return true;
     } catch (e) {
       console.warn("chart_line_failed", title, e);
+      return false;
     }
   }
 
   function addRange(series, low, high, label, color) {
     const lo = number(low);
     const hi = number(high);
-    if (lo === null && hi === null) return;
+    if (lo === null && hi === null) return 0;
     if (lo !== null && hi !== null && Math.abs(lo - hi) > 0) {
       const a = Math.min(lo, hi);
       const b = Math.max(lo, hi);
-      addLine(series, b, label + " HIGH", color, "dashed", 1);
-      addLine(series, a, label + " LOW", color, "dashed", 1);
-      return;
+      let count = 0;
+      if (addLine(series, b, label + " HIGH", color, "dashed", 1)) count++;
+      if (addLine(series, a, label + " LOW", color, "dashed", 1)) count++;
+      return count;
     }
-    addLine(series, lo !== null ? lo : hi, label, color, "dashed", 1);
+    return addLine(series, lo !== null ? lo : hi, label, color, "dashed", 1) ? 1 : 0;
   }
 
   function collectRanges(value) {
@@ -128,26 +131,96 @@
     return out;
   }
 
-  function addIdeaOverlays(series, idea) {
+  function avgRange(data) {
+    const recent = data.slice(-40);
+    if (!recent.length) return 0;
+    return recent.reduce((sum, c) => sum + Math.max(0, c.high - c.low), 0) / recent.length;
+  }
+
+  function detectFallbackLiquidity(data) {
+    const recent = data.slice(-80);
+    if (recent.length < 12) return [];
+    const levels = [];
+    for (let i = 2; i < recent.length - 2; i++) {
+      const c = recent[i];
+      const isHigh = c.high >= recent[i - 1].high && c.high >= recent[i - 2].high && c.high >= recent[i + 1].high && c.high >= recent[i + 2].high;
+      const isLow = c.low <= recent[i - 1].low && c.low <= recent[i - 2].low && c.low <= recent[i + 1].low && c.low <= recent[i + 2].low;
+      if (isHigh) levels.push(c.high);
+      if (isLow) levels.push(c.low);
+    }
+    const current = recent[recent.length - 1].close;
+    return limitUnique(levels.sort((a, b) => Math.abs(a - current) - Math.abs(b - current)), 6);
+  }
+
+  function detectFallbackFvg(data) {
+    const recent = data.slice(-70);
+    if (recent.length < 6) return [];
+    const gapMin = avgRange(recent) * 0.22;
+    const zones = [];
+    for (let i = 2; i < recent.length; i++) {
+      const a = recent[i - 2];
+      const c = recent[i];
+      if (c.low > a.high && c.low - a.high >= gapMin) zones.push({ low: a.high, high: c.low });
+      if (c.high < a.low && a.low - c.high >= gapMin) zones.push({ low: c.high, high: a.low });
+    }
+    return zones.slice(-5);
+  }
+
+  function detectFallbackOb(data, direction) {
+    const recent = data.slice(-70);
+    if (recent.length < 8) return [];
+    const ar = avgRange(recent);
+    const zones = [];
+    for (let i = 1; i < recent.length - 2; i++) {
+      const c = recent[i];
+      const next = recent[i + 1];
+      const body = Math.abs(next.close - next.open);
+      const impulse = body > ar * 1.15;
+      if (!impulse) continue;
+      const bullishImpulse = next.close > next.open;
+      const bearishImpulse = next.close < next.open;
+      if ((direction === "BUY" || direction === "WAIT") && c.close < c.open && bullishImpulse) zones.push({ low: c.low, high: c.high });
+      if ((direction === "SELL" || direction === "WAIT") && c.close > c.open && bearishImpulse) zones.push({ low: c.low, high: c.high });
+    }
+    return zones.slice(-4);
+  }
+
+  function addFallbackSmcOverlays(series, idea, data, explicitCounts) {
+    const direction = getDirection(idea);
+    if (!explicitCounts.liquidity) {
+      detectFallbackLiquidity(data).forEach((p, i) => addLine(series, p, i === 0 ? "LIQ*" : "LIQ* " + (i + 1), "#f97316", "dotted", 1));
+    }
+    if (!explicitCounts.fvg) {
+      detectFallbackFvg(data).forEach((r, i) => addRange(series, r.low, r.high, i === 0 ? "FVG*" : "FVG* " + (i + 1), "#22d3ee"));
+    }
+    if (!explicitCounts.ob) {
+      detectFallbackOb(data, direction).forEach((r, i) => addRange(series, r.low, r.high, i === 0 ? "OB*" : "OB* " + (i + 1), "#a78bfa"));
+    }
+  }
+
+  function addIdeaOverlays(series, idea, data) {
     addLine(series, idea.entry ?? idea.entry_price, "ENTRY", "#ffd84d", "dashed", 2);
     addLine(series, idea.sl ?? idea.stop_loss, "SL", "#ff5f7a", "dashed", 2);
     addLine(series, idea.tp ?? idea.take_profit ?? idea.target, "TP", "#31f59d", "dashed", 2);
 
     addRange(series, idea.selected_zone_low, idea.selected_zone_high, "ZONE", "#38bdf8");
 
+    const explicitCounts = { ob: 0, fvg: 0, liquidity: 0 };
     const market = idea.market_context || {};
     const orderBlocks = [idea.order_blocks, idea.orderBlocks, market.order_blocks, market.orderBlocks, idea.ob_zones, idea.poi_zones];
-    orderBlocks.flatMap(collectRanges).slice(0, 6).forEach((r, i) => addRange(series, r.low, r.high, i === 0 ? "OB" : "OB " + (i + 1), "#a78bfa"));
+    orderBlocks.flatMap(collectRanges).slice(0, 6).forEach((r, i) => { explicitCounts.ob += addRange(series, r.low, r.high, i === 0 ? "OB" : "OB " + (i + 1), "#a78bfa"); });
 
-    const fvgs = [idea.fvg, idea.fvgs, idea.fair_value_gaps, idea.fairValueGaps, market.fvg, market.fvgs, market.fair_value_gaps];
-    fvgs.flatMap(collectRanges).slice(0, 6).forEach((r, i) => addRange(series, r.low, r.high, i === 0 ? "FVG" : "FVG " + (i + 1), "#22d3ee"));
+    const fvgs = [idea.fvg, idea.fvgs, idea.fair_value_gaps, idea.fairValueGaps, market.fvg, market.fvgs, market.fair_value_gaps, market.imbalances, idea.imbalances];
+    fvgs.flatMap(collectRanges).slice(0, 6).forEach((r, i) => { explicitCounts.fvg += addRange(series, r.low, r.high, i === 0 ? "FVG" : "FVG " + (i + 1), "#22d3ee"); });
 
-    const liquidity = [idea.liquidity, idea.liquidity_levels, idea.liquidity_zones, idea.liquidity_sweep, market.liquidity, market.liquidity_levels, market.liquidity_zones];
-    limitUnique(liquidity.flatMap(collectFlatNumbers), 10).forEach((p, i) => addLine(series, p, i === 0 ? "LIQ" : "LIQ " + (i + 1), "#f97316", "dotted", 1));
+    const liquidity = [idea.liquidity, idea.liquidity_levels, idea.liquidity_zones, idea.liquidity_sweep, market.liquidity, market.liquidity_levels, market.liquidity_zones, market.equal_highs, market.equal_lows];
+    limitUnique(liquidity.flatMap(collectFlatNumbers), 10).forEach((p, i) => { if (addLine(series, p, i === 0 ? "LIQ" : "LIQ " + (i + 1), "#f97316", "dotted", 1)) explicitCounts.liquidity++; });
 
     const opt = idea.options_analysis || {};
     const optionLevels = [opt.keyLevels, opt.keyStrikes, opt.callWalls, opt.putWalls, opt.maxPain, idea.options_key_levels, idea.options_levels];
     limitUnique(optionLevels.flatMap(collectFlatNumbers), 12).forEach((p, i) => addLine(series, p, i === 0 ? "OPT" : "OPT " + (i + 1), "#facc15", "dotted", 1));
+
+    addFallbackSmcOverlays(series, idea, data || [], explicitCounts);
   }
 
   function ensureChartUiStyles() {
@@ -275,7 +348,7 @@
     });
 
     series.setData(data);
-    addIdeaOverlays(series, idea || {});
+    addIdeaOverlays(series, idea || {}, data);
     chart.timeScale().fitContent();
     addChartControls(chart, idea || {});
     syncChartSizeLater(chart, container);
