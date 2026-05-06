@@ -101,8 +101,8 @@ def _request_json(*, api_key: str, model: str, timeout: float, facts: dict[str, 
                     },
                     {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
                 ],
-                "temperature": 0.35,
-                "max_output_tokens": 1200,
+                "temperature": 0.25,
+                "max_output_tokens": 1000,
             },
             timeout=timeout,
         )
@@ -128,7 +128,7 @@ def _build_prompt(facts: dict[str, Any], *, retry: bool = False) -> str:
         "ЖЁСТКИЕ ПРАВИЛА:\n"
         "1) Не меняй direction/signal/entry/sl/tp/rr/prop_score/prop_mode/trade_permission.\n"
         "2) Не придумывай отсутствующие данные. Если liquidity/news/volume/options частично отсутствуют — прямо скажи это.\n"
-        "3) Пиши конкретно: используй symbol, timeframe, signal, prop_score, prop_grade, prop_mode, entry/sl/tp/rr, selected zone, options summary, blockers.\n"
+        "3) Пиши только по короткому BACKEND_FACTS ниже. Не требуй дополнительные свечи или массивы уровней.\n"
         "4) Запрещены пустые шаблоны: 'сценарий сформирован', 'при сохранении структуры', 'следовать рассчитанным уровням' без конкретики.\n"
         "5) Если signal=WAIT или prop_mode=research_only/no_trade — это только наблюдение. Нельзя писать 'покупать', 'продавать', 'входить', BUY/SELL recommendation.\n"
         "6) Если BUY/SELL разрешён backend, описывай вход только как conditional trigger: что цена должна подтвердить около entry/zone.\n"
@@ -228,32 +228,33 @@ def _fallback_fields(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_facts_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    timeframe_ideas = payload.get("timeframe_ideas") if isinstance(payload.get("timeframe_ideas"), dict) else {}
-    compact_timeframes: dict[str, Any] = {}
-    for tf, tf_payload in timeframe_ideas.items():
-        if not isinstance(tf_payload, dict):
-            continue
-        compact_timeframes[tf] = {
-            "signal": tf_payload.get("signal"),
-            "direction": tf_payload.get("direction"),
-            "summary": tf_payload.get("summary_ru") or tf_payload.get("summary"),
-            "market_structure": tf_payload.get("market_structure"),
-            "candles_tail": (tf_payload.get("candles") or [])[-10:],
-        }
     prop_signal_score = payload.get("prop_signal_score") if isinstance(payload.get("prop_signal_score"), dict) else {}
     options_analysis = payload.get("options_analysis") if isinstance(payload.get("options_analysis"), dict) else {}
+    advisor_signal = payload.get("advisor_signal") if isinstance(payload.get("advisor_signal"), dict) else {}
+
+    prop_criteria = []
+    for row in prop_signal_score.get("criteria") or []:
+        if not isinstance(row, dict):
+            continue
+        prop_criteria.append(
+            {
+                "key": row.get("key"),
+                "status": row.get("status"),
+                "score": row.get("score"),
+                "text_ru": row.get("text_ru"),
+            }
+        )
+
     return {
         "symbol": payload.get("symbol") or payload.get("pair"),
-        "pair": payload.get("pair") or payload.get("symbol"),
         "timeframe": payload.get("timeframe") or payload.get("tf"),
         "signal": payload.get("signal"),
-        "final_signal": payload.get("final_signal"),
         "direction": payload.get("direction"),
         "entry": payload.get("entry"),
         "sl": payload.get("sl") or payload.get("stop_loss"),
         "tp": payload.get("tp") or payload.get("take_profit"),
         "rr": payload.get("rr") or payload.get("risk_reward"),
-        "current_price": payload.get("current_price"),
+        "current_price": payload.get("current_price") or payload.get("price"),
         "data_status": payload.get("data_status"),
         "source": payload.get("source"),
         "provider": payload.get("provider"),
@@ -267,17 +268,15 @@ def _build_facts_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "prop_grade": payload.get("prop_grade"),
         "prop_mode": payload.get("prop_mode"),
         "prop_decision_ru": payload.get("prop_decision_ru"),
-        "prop_criteria": prop_signal_score.get("criteria"),
         "prop_blockers": prop_signal_score.get("blockers"),
         "missing_inputs": prop_signal_score.get("missing_inputs"),
+        "prop_criteria": prop_criteria,
         "advisor_allowed": payload.get("advisor_allowed"),
-        "advisor_signal": payload.get("advisor_signal"),
-        "htf_context": payload.get("htf_context"),
-        "htf_bias": payload.get("htf_bias"),
-        "htf_reason": payload.get("htf_reason"),
-        "risk_note": payload.get("risk_note"),
-        "sentiment": payload.get("sentiment"),
-        "execution_safety": payload.get("execution_safety"),
+        "advisor_signal": {
+            "allowed": advisor_signal.get("allowed"),
+            "reason": advisor_signal.get("reason"),
+            "action": advisor_signal.get("action"),
+        },
         "options_available": payload.get("options_available"),
         "options_source": payload.get("options_source"),
         "options_summary_ru": payload.get("options_summary_ru"),
@@ -287,15 +286,24 @@ def _build_facts_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "prop_score": options_analysis.get("prop_score"),
             "pinningRisk": options_analysis.get("pinningRisk"),
             "rangeRisk": options_analysis.get("rangeRisk"),
-            "keyLevels": options_analysis.get("keyLevels"),
-            "keyStrikes": options_analysis.get("keyStrikes"),
+            "keyLevels": _limit_list(options_analysis.get("keyLevels"), 8),
+            "keyStrikes": _limit_list(options_analysis.get("keyStrikes"), 8),
             "maxPain": options_analysis.get("maxPain"),
-            "barrierZones": options_analysis.get("barrierZones"),
             "summary_ru": options_analysis.get("summary_ru"),
         },
-        "timeframe_ideas": compact_timeframes,
-        "warnings": [payload.get("warning_ru"), payload.get("tp_warning_ru"), payload.get("auto_close_skipped_ru")],
+        "warnings": _compact_warnings(payload),
     }
+
+
+def _limit_list(value: Any, limit: int) -> Any:
+    if isinstance(value, list):
+        return value[:limit]
+    return value
+
+
+def _compact_warnings(payload: dict[str, Any]) -> list[str]:
+    warnings = [payload.get("warning_ru"), payload.get("tp_warning_ru"), payload.get("auto_close_skipped_ru")]
+    return [str(item).strip() for item in warnings if str(item or "").strip()]
 
 
 def _is_caution_required(payload: dict[str, Any]) -> bool:
