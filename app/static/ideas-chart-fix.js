@@ -46,6 +46,13 @@
     };
   }
 
+  function getDirection(idea) {
+    const raw = String((idea && (idea.signal || idea.action || idea.label || idea.direction)) || "WAIT").toUpperCase();
+    if (raw.includes("BUY") || raw.includes("ПОКУП")) return "BUY";
+    if (raw.includes("SELL") || raw.includes("ПРОДА")) return "SELL";
+    return "WAIT";
+  }
+
   function addLine(series, price, title, color, style, width) {
     const p = number(price);
     if (p === null || !series || !series.createPriceLine) return;
@@ -143,6 +150,81 @@
     limitUnique(optionLevels.flatMap(collectFlatNumbers), 12).forEach((p, i) => addLine(series, p, i === 0 ? "OPT" : "OPT " + (i + 1), "#facc15", "dotted", 1));
   }
 
+  function ensureChartUiStyles() {
+    if (document.getElementById("ideas-chart-hotfix-ui")) return;
+    const style = document.createElement("style");
+    style.id = "ideas-chart-hotfix-ui";
+    style.textContent = `
+      .chart-area { position: relative; }
+      .chart-area.chart-fullscreen { position: fixed !important; inset: 10px !important; z-index: 2147483000 !important; width: auto !important; height: auto !important; min-height: 0 !important; border-radius: 18px !important; background: #06111f !important; box-shadow: 0 30px 120px rgba(0,0,0,.86) !important; }
+      .chart-area.chart-fullscreen #ideaModalChart { height: calc(100vh - 20px) !important; min-height: calc(100vh - 20px) !important; }
+      .chart-fs-btn { position:absolute; top:12px; right:12px; z-index:30; border:1px solid rgba(255,255,255,.18); background:rgba(3,14,28,.82); color:#e8f3ff; border-radius:10px; padding:8px 11px; font-size:12px; font-weight:900; cursor:pointer; backdrop-filter: blur(8px); }
+      .chart-fs-btn:hover { border-color:rgba(56,189,248,.8); color:#fff; }
+      .trade-arrow-overlay { position:absolute; left:18px; top:18px; z-index:25; display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:14px; font-weight:950; letter-spacing:.02em; box-shadow:0 10px 28px rgba(0,0,0,.35); pointer-events:none; }
+      .trade-arrow-overlay.buy { color:#00150c; background:linear-gradient(180deg,#7dffc4,#31f59d); }
+      .trade-arrow-overlay.sell { color:#fff; background:linear-gradient(180deg,#ff7f99,#be123c); }
+      .trade-arrow-overlay.wait { color:#e8f3ff; background:rgba(71,85,105,.85); }
+      .trade-arrow-icon { font-size:30px; line-height:1; }
+      .trade-arrow-text { display:flex; flex-direction:column; font-size:12px; line-height:1.15; }
+      .trade-arrow-text strong { font-size:16px; }
+      .chart-fullscreen .trade-arrow-overlay { left:24px; top:24px; transform:scale(1.05); transform-origin:left top; }
+      .chart-fullscreen .chart-fs-btn { top:18px; right:18px; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function syncChartSizeLater(chart, container) {
+    const resize = () => {
+      if (!chart || !container) return;
+      const rect = container.getBoundingClientRect();
+      try {
+        chart.applyOptions({ width: Math.max(320, Math.floor(rect.width)), height: Math.max(320, Math.floor(rect.height)) });
+        chart.timeScale().fitContent();
+      } catch (e) {}
+    };
+    setTimeout(resize, 30);
+    setTimeout(resize, 180);
+    window.addEventListener("resize", resize, { passive: true });
+    return resize;
+  }
+
+  function addChartControls(chart, idea) {
+    ensureChartUiStyles();
+    const container = document.getElementById("ideaModalChart");
+    const area = container && container.closest(".chart-area");
+    if (!container || !area) return;
+
+    area.querySelectorAll(".chart-fs-btn,.trade-arrow-overlay").forEach((el) => el.remove());
+
+    const direction = getDirection(idea);
+    const arrow = document.createElement("div");
+    arrow.className = "trade-arrow-overlay " + (direction === "BUY" ? "buy" : direction === "SELL" ? "sell" : "wait");
+    const icon = direction === "BUY" ? "↗" : direction === "SELL" ? "↘" : "→";
+    const text = direction === "BUY" ? "BUY / Покупка" : direction === "SELL" ? "SELL / Продажа" : "WAIT / Наблюдение";
+    arrow.innerHTML = `<span class="trade-arrow-icon">${icon}</span><span class="trade-arrow-text"><span>Направление</span><strong>${text}</strong></span>`;
+    area.appendChild(arrow);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chart-fs-btn";
+    btn.textContent = "⛶ Полный экран";
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      area.classList.toggle("chart-fullscreen");
+      btn.textContent = area.classList.contains("chart-fullscreen") ? "× Закрыть экран" : "⛶ Полный экран";
+      syncChartSizeLater(chart, container);
+    });
+    area.appendChild(btn);
+
+    document.addEventListener("keydown", function onEsc(event) {
+      if (event.key !== "Escape") return;
+      if (!area.classList.contains("chart-fullscreen")) return;
+      area.classList.remove("chart-fullscreen");
+      btn.textContent = "⛶ Полный экран";
+      syncChartSizeLater(chart, container);
+    });
+  }
+
   function escapeHtmlLocal(value) {
     return String(value ?? "")
       .replaceAll("&", "&amp;")
@@ -170,7 +252,10 @@
       window.modalChart = null;
     }
 
+    const area = container.closest(".chart-area");
+    if (area) area.querySelectorAll(".chart-fs-btn,.trade-arrow-overlay").forEach((el) => el.remove());
     container.innerHTML = "";
+
     const chart = LightweightCharts.createChart(container, {
       layout: { background: { color: "#06111f" }, textColor: "#dbeeff" },
       grid: { vertLines: { color: "rgba(255,255,255,.055)" }, horzLines: { color: "rgba(255,255,255,.055)" } },
@@ -192,6 +277,8 @@
     series.setData(data);
     addIdeaOverlays(series, idea || {});
     chart.timeScale().fitContent();
+    addChartControls(chart, idea || {});
+    syncChartSizeLater(chart, container);
   };
 
   if (typeof window.renderIdeaCard === "function") {
