@@ -185,6 +185,72 @@
     return zones.slice(-4);
   }
 
+  function dedupeRanges(ranges, minDistance) {
+    const out = [];
+    for (const range of ranges) {
+      if (!range) continue;
+      const lo = number(range.low);
+      const hi = number(range.high);
+      if (lo === null && hi === null) continue;
+      const low = Math.min(lo ?? hi, hi ?? lo);
+      const high = Math.max(lo ?? hi, hi ?? lo);
+      const mid = (low + high) / 2;
+      if (out.some((r) => Math.abs(((r.low + r.high) / 2) - mid) <= minDistance)) continue;
+      out.push({ low, high });
+    }
+    return out;
+  }
+
+  function resolveTimeRange(item, data) {
+    const fallbackStart = data[0] && data[0].time;
+    const fallbackEnd = data[data.length - 1] && data[data.length - 1].time;
+    const parse = (v) => (typeof v === "number" ? v : v ? Math.floor(new Date(v).getTime() / 1000) : null);
+    const from = parse(item && (item.from_time ?? item.start_time ?? item.time_from ?? item.t1 ?? item.start ?? item.from)) ?? fallbackStart;
+    const to = parse(item && (item.to_time ?? item.end_time ?? item.time_to ?? item.t2 ?? item.end ?? item.to)) ?? fallbackEnd;
+    return { from: Math.min(from, to), to: Math.max(from, to) };
+  }
+
+  function buildZoneRects(rawList, data, color, labelPrefix, minDistance) {
+    const zones = [];
+    arr(rawList).forEach((item) => {
+      collectRanges(item).forEach((r) => zones.push({ ...r, ...resolveTimeRange(item, data) }));
+    });
+    return dedupeRanges(zones, minDistance).map((zone, i) => ({ ...zone, color, label: i === 0 ? labelPrefix : `${labelPrefix} ${i + 1}` }));
+  }
+
+  function renderHtmlZones(chart, host, zones, cls) {
+    if (!chart || !host || !zones.length) return null;
+    let layer = host.querySelector(".smc-zones-layer");
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.className = "smc-zones-layer";
+      host.appendChild(layer);
+    }
+    const repaint = () => {
+      layer.innerHTML = "";
+      zones.forEach((zone) => {
+        const x1 = chart.timeScale().timeToCoordinate(zone.from);
+        const x2 = chart.timeScale().timeToCoordinate(zone.to);
+        const y1 = chart.priceScale("right").priceToCoordinate(zone.high);
+        const y2 = chart.priceScale("right").priceToCoordinate(zone.low);
+        if (![x1, x2, y1, y2].every((v) => Number.isFinite(v))) return;
+        const rect = document.createElement("div");
+        rect.className = `smc-zone ${cls}`;
+        rect.style.left = `${Math.min(x1, x2)}px`;
+        rect.style.top = `${Math.min(y1, y2)}px`;
+        rect.style.width = `${Math.max(2, Math.abs(x2 - x1))}px`;
+        rect.style.height = `${Math.max(2, Math.abs(y2 - y1))}px`;
+        rect.style.borderColor = zone.color;
+        rect.style.background = zone.color;
+        rect.innerHTML = `<span>${zone.label}</span>`;
+        layer.appendChild(rect);
+      });
+    };
+    repaint();
+    chart.timeScale().subscribeVisibleTimeRangeChange(repaint);
+    return repaint;
+  }
+
   function addFallbackSmcOverlays(series, idea, data, explicitCounts) {
     const direction = getDirection(idea);
     if (!explicitCounts.liquidity) {
@@ -229,6 +295,13 @@
     style.id = "ideas-chart-hotfix-ui";
     style.textContent = `
       .chart-area { position: relative; }
+      .smc-zones-layer { position:absolute; inset:0; pointer-events:none; z-index:12; }
+      .smc-zone { position:absolute; border:1px solid; border-radius:6px; box-shadow:inset 0 0 0 1px rgba(255,255,255,.1); }
+      .smc-zone span { position:absolute; left:6px; top:2px; font-size:10px; font-weight:850; color:#e6f3ff; text-shadow:0 1px 2px rgba(0,0,0,.85); }
+      .smc-zone.ob-bull { opacity:.34; }
+      .smc-zone.ob-bear { opacity:.34; }
+      .smc-zone.fvg { opacity:.28; }
+      .smc-zone.liq { opacity:.22; }
       .chart-area.chart-fullscreen { position: fixed !important; inset: 10px !important; z-index: 2147483000 !important; width: auto !important; height: auto !important; min-height: 0 !important; border-radius: 18px !important; background: #06111f !important; box-shadow: 0 30px 120px rgba(0,0,0,.86) !important; }
       .chart-area.chart-fullscreen #ideaModalChart { height: calc(100vh - 20px) !important; min-height: calc(100vh - 20px) !important; }
       .chart-fs-btn { position:absolute; top:12px; right:12px; z-index:30; border:1px solid rgba(255,255,255,.18); background:rgba(3,14,28,.82); color:#e8f3ff; border-radius:10px; padding:8px 11px; font-size:12px; font-weight:900; cursor:pointer; backdrop-filter: blur(8px); }
@@ -349,9 +422,42 @@
 
     series.setData(data);
     addIdeaOverlays(series, idea || {}, data);
+    const market = (idea && idea.market_context) || {};
+    const minDistance = Math.max(avgRange(data) * 0.2, 0.00001);
+    const zoneHost = container.closest(".chart-area") || container;
+    zoneHost.querySelectorAll(".smc-zones-layer").forEach((el) => el.remove());
+
+    const bullishOb = buildZoneRects([idea.order_blocks_bullish, market.order_blocks_bullish, idea.order_blocks], data, "rgba(20,184,166,.55)", "BULLISH OB", minDistance);
+    const bearishOb = buildZoneRects([idea.order_blocks_bearish, market.order_blocks_bearish], data, "rgba(239,68,68,.55)", "BEARISH OB", minDistance);
+    const fvgZones = buildZoneRects([idea.fvg, idea.fvgs, idea.fair_value_gaps, idea.imbalances, market.fvg, market.imbalances], data, "rgba(34,211,238,.52)", "FVG", minDistance);
+    const buyLiq = buildZoneRects([idea.liquidity_zones, market.liquidity_zones], data, "rgba(245,158,11,.45)", "BUY SIDE LIQUIDITY", minDistance);
+    const sellLiq = buildZoneRects([idea.sell_side_liquidity, market.sell_side_liquidity], data, "rgba(251,146,60,.45)", "SELL SIDE LIQUIDITY", minDistance);
+    const repaintFns = [
+      renderHtmlZones(chart, zoneHost, bullishOb, "ob-bull"),
+      renderHtmlZones(chart, zoneHost, bearishOb, "ob-bear"),
+      renderHtmlZones(chart, zoneHost, fvgZones, "fvg"),
+      renderHtmlZones(chart, zoneHost, [...buyLiq, ...sellLiq], "liq"),
+    ].filter(Boolean);
+
+    const sweepMarkers = arr(idea.liquidity_sweeps || idea.liquidity_sweep || market.liquidity_sweeps).map((event) => {
+      const time = resolveTimeRange(event, data).to;
+      const side = String(event.side || event.direction || "").toLowerCase();
+      const down = side.includes("sell") || side.includes("bear") || side.includes("high");
+      return { time, position: down ? "aboveBar" : "belowBar", color: "#f97316", shape: down ? "arrowDown" : "arrowUp", text: "SWEEP" };
+    });
+    const structureMarkers = arr(idea.structure || idea.bos_choch || market.structure).map((node) => {
+      const time = resolveTimeRange(node, data).to;
+      const type = String(node.type || node.label || "").toUpperCase();
+      const isBos = type.includes("BOS");
+      const down = type.includes("DOWN") || type.includes("BEAR") || type.includes("↓");
+      return { time, position: down ? "aboveBar" : "belowBar", color: isBos ? "#60a5fa" : "#f472b6", shape: down ? "arrowDown" : "arrowUp", text: isBos ? `BOS ${down ? "↓" : "↑"}` : `CHOCH ${down ? "↓" : "↑"}` };
+    });
+    if (typeof series.setMarkers === "function") series.setMarkers([...sweepMarkers, ...structureMarkers].sort((a, b) => a.time - b.time));
+
     chart.timeScale().fitContent();
     addChartControls(chart, idea || {});
     syncChartSizeLater(chart, container);
+    window.addEventListener("resize", () => repaintFns.forEach((fn) => fn()), { passive: true });
   };
 
   if (typeof window.renderIdeaCard === "function") {
