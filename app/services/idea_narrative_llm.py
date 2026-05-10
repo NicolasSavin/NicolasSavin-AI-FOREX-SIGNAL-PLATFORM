@@ -89,6 +89,8 @@ class IdeaNarrativeLLMService:
         self.model = get_openrouter_model()
         self.fallback_model = (os.getenv("OPENROUTER_FALLBACK_MODEL", "") or "").strip()
         self.timeout = float(os.getenv("OPENROUTER_TIMEOUT", "30"))
+        self._last_llm_rejection_reason: str | None = None
+        self._last_article_rejection_reason: str | None = None
 
     def generate(
         self,
@@ -121,32 +123,38 @@ class IdeaNarrativeLLMService:
 
         generated_at = datetime.now(timezone.utc).isoformat()
 
-        first = self._request_llm(prompt=self._build_prompt(payload, strict=False))
+        self._last_llm_rejection_reason = None
+        self._last_article_rejection_reason = None
+
+        first = self._request_llm(prompt=self._build_prompt(payload, strict=False), event_type=event_type)
         if first:
-            article=self._request_llm_article(payload=payload)
+            article=self._request_llm_article(payload=payload, event_type=event_type)
             if article:
                 first["idea_article_ru"]=article
             source = str(first.get("narrative_source") or "llm")
-            return NarrativeResult(data=self._attach_narrative_meta(first, source=source, model=self.model), source=source, model=self.model, generated_at=generated_at)
+            warnings = [self._last_article_rejection_reason] if self._last_article_rejection_reason else None
+            return NarrativeResult(data=self._attach_narrative_meta(first, source=source, model=self.model, warnings=warnings), source=source, model=self.model, generated_at=generated_at)
 
-        second = self._request_llm(prompt=self._build_prompt(payload, strict=True))
+        second = self._request_llm(prompt=self._build_prompt(payload, strict=True), event_type=event_type)
         if second:
-            article=self._request_llm_article(payload=payload)
+            article=self._request_llm_article(payload=payload, event_type=event_type)
             if article:
                 second["idea_article_ru"]=article
             source = str(second.get("narrative_source") or "llm")
-            return NarrativeResult(data=self._attach_narrative_meta(second, source=source, model=self.model), source=source, model=self.model, generated_at=generated_at)
+            warnings = [self._last_article_rejection_reason] if self._last_article_rejection_reason else None
+            return NarrativeResult(data=self._attach_narrative_meta(second, source=source, model=self.model, warnings=warnings), source=source, model=self.model, generated_at=generated_at)
 
         logger.warning("idea_narrative_llm_fallback_used event_type=%s", event_type)
+        fallback_error = self._last_llm_rejection_reason or "idea_narrative_llm_invalid_json_or_quality"
         return NarrativeResult(
-            data=self._attach_narrative_meta(fallback, source="fallback", model=self.model, error="idea_narrative_llm_invalid_json_or_quality"),
+            data=self._attach_narrative_meta(fallback, source="fallback", model=self.model, error=fallback_error, rejection_reason=fallback_error),
             source="fallback",
-            error="idea_narrative_llm_invalid_json_or_quality",
+            error=fallback_error,
             model=self.model,
             generated_at=generated_at,
         )
 
-    def _request_llm(self, *, prompt: str) -> dict[str, Any] | None:
+    def _request_llm(self, *, prompt: str, event_type: str) -> dict[str, Any] | None:
         for idx, model_used in enumerate(self._model_sequence()):
             logger.info("LLM model used: %s", model_used)
             try:
@@ -185,7 +193,8 @@ class IdeaNarrativeLLMService:
                 parsed = self._parse_json(content)
 
                 if not parsed:
-                    logger.warning("idea_narrative_llm_invalid_json_or_quality")
+                    self._last_llm_rejection_reason = "invalid_ai_json"
+                    logger.warning("idea_narrative_llm_invalid_json_or_quality event_type=%s reason=%s", event_type, self._last_llm_rejection_reason)
                     return None
 
                 self.model = model_used
@@ -195,21 +204,24 @@ class IdeaNarrativeLLMService:
                 if idx < len(self._model_sequence()) - 1:
                     logger.warning("idea_narrative_llm_timeout_try_fallback model=%s", model_used)
                     continue
-                logger.exception("idea_narrative_llm_failure")
+                self._last_llm_rejection_reason = "timeout"
+                logger.exception("idea_narrative_llm_failure event_type=%s model=%s reason=%s", event_type, model_used, self._last_llm_rejection_reason)
                 return None
             except requests.exceptions.HTTPError as exc:
                 status_code = exc.response.status_code if exc.response is not None else None
                 if status_code in {429, 500} and idx < len(self._model_sequence()) - 1:
                     logger.warning("idea_narrative_llm_http_try_fallback model=%s status=%s", model_used, status_code)
                     continue
-                logger.exception("idea_narrative_llm_failure")
+                self._last_llm_rejection_reason = f"http_error:{status_code}"
+                logger.exception("idea_narrative_llm_failure event_type=%s model=%s reason=%s", event_type, model_used, self._last_llm_rejection_reason)
                 return None
-            except Exception:
-                logger.exception("idea_narrative_llm_failure")
+            except Exception as exc:
+                self._last_llm_rejection_reason = f"exception:{type(exc).__name__}"
+                logger.exception("idea_narrative_llm_failure event_type=%s model=%s reason=%s", event_type, model_used, self._last_llm_rejection_reason)
                 return None
         return None
 
-    def _request_llm_article(self, *, payload: dict[str, Any]) -> str | None:
+    def _request_llm_article(self, *, payload: dict[str, Any], event_type: str) -> str | None:
         for idx, model_used in enumerate(self._model_sequence()):
             logger.info("LLM model used: %s", model_used)
             try:
@@ -234,9 +246,11 @@ class IdeaNarrativeLLMService:
                 content = response.json()["choices"][0]["message"]["content"]
                 article = self._clean_visible_text(content)
                 if not article:
+                    self._last_article_rejection_reason = "invalid_ai_json"
                     return None
                 sentence_count = article.count(".") + article.count("!") + article.count("?")
                 if sentence_count < 5 or sentence_count > 10:
+                    self._last_article_rejection_reason = "article_quality_check_failed"
                     return None
                 self.model = model_used
                 return article
@@ -244,17 +258,20 @@ class IdeaNarrativeLLMService:
                 if idx < len(self._model_sequence()) - 1:
                     logger.warning("idea_article_generation_timeout_try_fallback model=%s", model_used)
                     continue
-                logger.exception("idea_article_generation_failed")
+                self._last_article_rejection_reason = "timeout"
+                logger.exception("idea_article_generation_failed event_type=%s model=%s reason=%s", event_type, model_used, self._last_article_rejection_reason)
                 return None
             except requests.exceptions.HTTPError as exc:
                 status_code = exc.response.status_code if exc.response is not None else None
                 if status_code in {429, 500} and idx < len(self._model_sequence()) - 1:
                     logger.warning("idea_article_generation_http_try_fallback model=%s status=%s", model_used, status_code)
                     continue
-                logger.exception("idea_article_generation_failed")
+                self._last_article_rejection_reason = f"http_error:{status_code}"
+                logger.exception("idea_article_generation_failed event_type=%s model=%s reason=%s", event_type, model_used, self._last_article_rejection_reason)
                 return None
-            except Exception:
-                logger.exception("idea_article_generation_failed")
+            except Exception as exc:
+                self._last_article_rejection_reason = f"exception:{type(exc).__name__}"
+                logger.exception("idea_article_generation_failed event_type=%s model=%s reason=%s", event_type, model_used, self._last_article_rejection_reason)
                 return None
         return None
 
@@ -330,11 +347,15 @@ class IdeaNarrativeLLMService:
         return result
 
     @staticmethod
-    def _attach_narrative_meta(data: dict[str, Any], *, source: str, model: str | None, error: str | None = None) -> dict[str, Any]:
+    def _attach_narrative_meta(data: dict[str, Any], *, source: str, model: str | None, error: str | None = None, rejection_reason: str | None = None, warnings: list[str] | None = None) -> dict[str, Any]:
         payload = dict(data or {})
         payload["narrative_source"] = source
         payload["narrative_model"] = model
         payload["narrative_error"] = error
+        if rejection_reason:
+            payload["rejection_reason"] = rejection_reason
+        if warnings:
+            payload["warnings"] = warnings
         return payload
 
     def _quality_ok(self, data: dict[str, Any]) -> bool:
