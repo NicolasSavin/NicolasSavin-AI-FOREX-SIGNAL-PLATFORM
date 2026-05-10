@@ -8,7 +8,33 @@
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="/static/ideas.js?v=prop-score-ui-5" defer></script>
   <script src="/static/ideas-status-fix.js?v=status-fix-1" defer></script>
-  <script src="/static/ideas-chart-fix.js?v=chart-hotfix-3" defer></script>
+  <script src="/static/ideas-chart-fix.js?v=chart-hotfix-4" defer></script>
+  <script>
+    window.addEventListener('DOMContentLoaded', function () {
+      if (typeof window.collectCandles !== 'function') return;
+      const originalNormalizeChartImageUrl = window.normalizeChartImageUrl;
+      const originalEscapeHtml = window.escapeHtml;
+      const originalGetIdeaSymbol = window.getIdeaSymbol;
+      const patchedRenderChartContainer = function (idea) {
+        const candles = window.collectCandles(idea);
+        if (Array.isArray(candles) && candles.length >= 2) {
+          console.debug('ideas_chart_mode', 'interactive_with_overlays');
+          return '<div id="ideaModalChart"></div>';
+        }
+        const rawUrl = idea && (idea.chartImageUrl || idea.chart_image || idea.chart_url || '');
+        const url = typeof originalNormalizeChartImageUrl === 'function' ? originalNormalizeChartImageUrl(rawUrl) : String(rawUrl || '');
+        const esc = typeof originalEscapeHtml === 'function' ? originalEscapeHtml : function (v) { return String(v || ''); };
+        const symbol = typeof originalGetIdeaSymbol === 'function' ? originalGetIdeaSymbol(idea) : 'chart';
+        if (url) {
+          console.debug('ideas_chart_mode', 'image_fallback');
+          return '<img class="chart-image" src="' + esc(url) + '?t=' + Date.now() + '" alt="График ' + esc(symbol) + '">';
+        }
+        return '<div id="ideaModalChart"></div>';
+      };
+      window.renderChartContainer = patchedRenderChartContainer;
+      try { renderChartContainer = patchedRenderChartContainer; } catch (error) { console.debug('ideas_chart_patch_failed', error); }
+    });
+  </script>
   <script src="/static/ideas-archive-fix.js?v=archive-ui-2" defer></script>
 </head>
 <body>
