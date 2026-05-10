@@ -4,6 +4,7 @@ import logging
 from statistics import mean
 
 from backend.pattern_detector import PatternDetector
+from backend.analysis.candle_validation import CandleValidationService
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,12 @@ class FeatureBuilder:
         return "unknown"
     def __init__(self) -> None:
         self.pattern_detector = PatternDetector()
+        self.candle_validator = CandleValidationService()
 
     def build(self, snapshot: dict) -> dict:
         candles = snapshot.get("candles", [])
+        validation = self.candle_validator.validate(candles, symbol=snapshot.get("symbol"), timeframe=snapshot.get("timeframe"))
+        candles = validation.valid_candles
         pattern_analysis = self.pattern_detector.detect(candles)
         candle_count = len(candles)
         data_status = str(snapshot.get("data_status", "unavailable")).lower()
@@ -67,6 +71,8 @@ class FeatureBuilder:
                 "dominant_pattern_type": None,
                 "conflicting_pattern_detected": False,
                 "feature_completeness": "none",
+                "data_quality": validation.data_quality,
+                "data_warnings": validation.warnings,
             }
 
         if candle_count < 3:
@@ -100,6 +106,8 @@ class FeatureBuilder:
                     "dominant_pattern_type": None,
                     "conflicting_pattern_detected": False,
                     "feature_completeness": "partial",
+                    "data_quality": validation.data_quality,
+                    "data_warnings": validation.warnings,
                 }
             direction = "up" if last_close >= prev_close else "down"
             summary = pattern_analysis["summary"]
@@ -126,6 +134,8 @@ class FeatureBuilder:
                 "dominant_pattern_type": None,
                 "conflicting_pattern_detected": False,
                 "feature_completeness": "minimal",
+                "data_quality": validation.data_quality,
+                "data_warnings": validation.warnings,
             }
 
         try:
@@ -157,6 +167,8 @@ class FeatureBuilder:
                 "dominant_pattern_type": None,
                 "conflicting_pattern_detected": False,
                 "feature_completeness": "partial",
+                "data_quality": validation.data_quality,
+                "data_warnings": validation.warnings,
             }
 
         delta = closes[-1] - closes[-2]
@@ -289,4 +301,6 @@ class FeatureBuilder:
             "dominant_pattern_type": dominant_pattern,
             "conflicting_pattern_detected": bullish_patterns > 0 and bearish_patterns > 0,
             "feature_completeness": feature_completeness,
+            "data_quality": validation.data_quality,
+            "data_warnings": validation.warnings,
         }
