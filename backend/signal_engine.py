@@ -12,6 +12,7 @@ from backend.analysis.confluence_engine import ConfluenceEngine
 from backend.pattern_detector import PatternDetector
 from backend.risk_engine import RiskEngine
 from backend.sentiment_provider import build_sentiment_provider
+from backend.core.scoring.weighted_confluence_model import WeightedConfluenceModel
 from app.services.cme_scraper import get_cme_market_snapshot
 from app.services.mt4_options_bridge import get_latest_options_levels
 from backend.signals import build_trade_levels, default_invalidation_text, has_minimum_confluence, infer_action
@@ -46,6 +47,7 @@ class SignalEngine:
         self.pattern_detector = PatternDetector()
         self.risk_engine = RiskEngine()
         self.sentiment_provider = build_sentiment_provider()
+        self.weighted_confluence = WeightedConfluenceModel()
         self.sentiment_weight = float(os.getenv("SENTIMENT_WEIGHT", "0.12"))
         self.smc_wait_threshold = int(os.getenv("SMC_WAIT_THRESHOLD", "40"))
 
@@ -337,7 +339,7 @@ class SignalEngine:
         mtf_features: dict,
         ltf_features: dict,
         sentiment: dict,
-        options_snapshot: dict | None,
+        options_snapshot: dict | None = None,
     ) -> dict:
         analysis_contract = self._resolve_analysis_contract(htf=htf, mtf=mtf, ltf=ltf)
         options_snapshot = options_snapshot if isinstance(options_snapshot, dict) else {}
@@ -394,42 +396,19 @@ class SignalEngine:
         }
         htf_zone = self._resolve_htf_zone(htf_features)
         ltf_confirmation = self._ltf_confirmation(ltf_features)
-        if not htf_zone["exists"]:
-            return self._no_trade(
-                symbol=symbol,
-                timeframe=timeframe,
-                snapshot=mtf,
-                reason="WAIT: на HTF не найдена валидная SMC/ICT зона (OB/FVG).",
-                chart_patterns=mtf_patterns,
-                pattern_summary=mtf_pattern_summary,
-            )
-        if mtf_features.get("atr_percent", 0.0) < 0.12:
-            return self._no_trade(
-                symbol=symbol,
-                timeframe=timeframe,
-                snapshot=mtf,
-                reason="WAIT: низкая волатильность, импульс недостаточный для входа.",
-                chart_patterns=mtf_patterns,
-                pattern_summary=mtf_pattern_summary,
-            )
+        atr_ok = mtf_features.get("atr_percent", 0.0) >= 0.12
         price = float(mtf.get("close") or 0.0)
         if price <= 0:
             return self._no_trade(symbol=symbol, timeframe=timeframe, snapshot=mtf, reason="WAIT: нет валидной цены.")
-        if not (htf_zone["bottom"] <= price <= htf_zone["top"]):
+        in_htf_zone = bool(htf_zone["exists"] and (htf_zone["bottom"] <= price <= htf_zone["top"]))
+        base_setup_valid = bool(htf_zone["exists"] and atr_ok and in_htf_zone and ltf_confirmation["has_structure"])
+        valid_data_exists = mtf.get("data_status") in {"real", "delayed"}
+        if valid_data_exists and analysis_mode == "professional" and not base_setup_valid:
             return self._no_trade(
                 symbol=symbol,
                 timeframe=timeframe,
                 snapshot=mtf,
-                reason="WAIT: цена ещё не вернулась в HTF зону интереса.",
-                chart_patterns=mtf_patterns,
-                pattern_summary=mtf_pattern_summary,
-            )
-        if not ltf_confirmation["has_structure"]:
-            return self._no_trade(
-                symbol=symbol,
-                timeframe=timeframe,
-                snapshot=mtf,
-                reason="WAIT: на LTF нет BOS/CHoCH или локального импульса.",
+                reason="WAIT: базовый сетап не подтверждён (HTF зона/волатильность/LTF структура).",
                 chart_patterns=mtf_patterns,
                 pattern_summary=mtf_pattern_summary,
             )
@@ -508,6 +487,26 @@ class SignalEngine:
         if data_quality != "high":
             weak_reasons.append("Данные получены через fallback (Yahoo): подтверждение слабее профессионального режима")
 
+        high_impact_news = bool(sentiment.get("high_impact_news") or sentiment.get("news_event") or sentiment.get("event_risk_high"))
+        ai_adjustment = 0
+        if mtf_pattern_summary.get("patternBias") == "bullish" and action == "BUY":
+            ai_adjustment = 2
+        elif mtf_pattern_summary.get("patternBias") == "bearish" and action == "SELL":
+            ai_adjustment = 2
+        elif mtf_pattern_summary.get("patternBias") in {"bullish", "bearish"}:
+            ai_adjustment = -2
+        weighted_result = self.weighted_confluence.calculate(
+            base_setup_valid=base_setup_valid,
+            smc_alignment=bool(strict_confluence or directional_structure),
+            options_support=bool(options_available),
+            futures_confirmation=bool(options_snapshot.get("futures")),
+            volume_confirmation=bool(mtf_features.get("displacement")),
+            htf_aligned=bool(confluence_flags["htf_alignment"]),
+            high_impact_news=high_impact_news,
+            countertrend=bool(trend_conflict),
+            ai_adjustment=max(-3, min(3, ai_adjustment)),
+        )
+
         confluence_analysis = self.confluence_engine.evaluate({
             "symbol": symbol,
             "timeframe": timeframe,
@@ -543,6 +542,8 @@ class SignalEngine:
         options_direction_delta = self._options_direction_delta(action, resolved_options)
         confidence += options_direction_delta
         confidence = max(20, min(confidence, 92))
+        confidence = int(round(confidence * 0.7 + weighted_result.score * 0.3))
+        confidence = max(20, min(confidence, 95))
         signal_threshold = PROFESSIONAL_MIN_CONFIDENCE if analysis_mode == "professional" else FALLBACK_MIN_CONFIDENCE
 
         scenario_type = self._resolve_scenario_type(mtf_features)
@@ -564,46 +565,35 @@ class SignalEngine:
             risk_allowed=bool(risk.get("allowed")),
             data_quality=data_quality,
         )
-        if analysis_mode == "professional":
-            if confidence < PROFESSIONAL_MIN_CONFIDENCE or not risk.get("allowed"):
-                return self._no_trade(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    snapshot=mtf,
-                    reason=(
-                        "Профессиональный режим TwelveData: подтверждение или риск-фильтр не достигли рабочего порога, "
-                        "идея оставлена в WAIT."
-                    ),
-                    chart_patterns=mtf_patterns,
-                    pattern_summary=mtf_pattern_summary,
-                    pattern_impact=pattern_impact,
-                )
-        if smc_package["score"] < self.smc_wait_threshold:
-            wait_signal = self._no_trade(
-                symbol=symbol,
-                timeframe=timeframe,
-                snapshot=mtf,
-                reason=f"WAIT: SMC-оценка слабая ({smc_package['score']}/100), вход отложен до подтверждения.",
-                chart_patterns=mtf_patterns,
-                pattern_summary=mtf_pattern_summary,
-                pattern_impact=pattern_impact,
-                smc_package=smc_package,
-            )
-            wait_signal["action"] = "WAIT"
-            return wait_signal
-        elif (not directional_structure and not strict_confluence) or confidence < FALLBACK_MIN_CONFIDENCE:
+        if analysis_mode == "professional" and weighted_result.grade == "REJECT" and valid_data_exists:
             return self._no_trade(
                 symbol=symbol,
                 timeframe=timeframe,
                 snapshot=mtf,
                 reason=(
-                    "Упрощённый fallback-режим Yahoo: даже направленный bias пока не читается, "
-                    "поэтому сохраняется WAIT до появления структуры."
+                    "Профессиональный режим TwelveData: базовый сетап/взвешенный скоринг не достигли рабочего порога, "
+                    "идея оставлена в WAIT."
                 ),
                 chart_patterns=mtf_patterns,
                 pattern_summary=mtf_pattern_summary,
                 pattern_impact=pattern_impact,
             )
+        if smc_package["score"] < self.smc_wait_threshold:
+            weak_reasons.append(f"SMC-оценка слабая ({smc_package['score']}/100), confidence снижен")
+            confidence = max(20, confidence - 8)
+        elif (not directional_structure and not strict_confluence) or confidence < FALLBACK_MIN_CONFIDENCE:
+            if not risk.get("allowed") and not directional_structure and not strict_confluence:
+                return self._no_trade(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    snapshot=mtf,
+                    reason="WAIT: confluence и риск-фильтр одновременно слабые, вход отложен.",
+                    chart_patterns=mtf_patterns,
+                    pattern_summary=mtf_pattern_summary,
+                    pattern_impact=pattern_impact,
+                )
+            weak_reasons.append("Fallback-режим: структура частичная, идея остаётся пониженной уверенности")
+            confidence = max(20, confidence - 6)
         structure_state = "analyzable" if mtf_features.get("status") == "ready" else "insufficient"
         logger.debug(
             "ideas_pipeline_scenario symbol=%s timeframe=%s scenario_type=%s validation_state=%s confidence=%s missing=%s",
@@ -691,6 +681,12 @@ class SignalEngine:
             "validation_state": validation_state,
             "structure_state": structure_state,
             "confluence_flags": confluence_flags,
+            "score_breakdown": {
+                "weighted_score": weighted_result.score,
+                "weighted_grade": weighted_result.grade,
+                "weighted_reasons": weighted_result.reasons,
+                "base_setup_valid": base_setup_valid,
+            },
             "missing_confirmations": missing_confirmations,
             "invalidation_reasoning": invalidation_reasoning,
             "market_context": {
@@ -729,6 +725,12 @@ class SignalEngine:
                 "validation_state": validation_state,
                 "structure_state": structure_state,
                 "confluence_flags": confluence_flags,
+            "score_breakdown": {
+                "weighted_score": weighted_result.score,
+                "weighted_grade": weighted_result.grade,
+                "weighted_reasons": weighted_result.reasons,
+                "base_setup_valid": base_setup_valid,
+            },
                 "missing_confirmations": missing_confirmations,
                 "invalidation_reasoning": invalidation_reasoning,
                 "fallback_used": is_fallback_mode,
