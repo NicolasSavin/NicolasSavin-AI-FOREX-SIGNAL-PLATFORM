@@ -33,6 +33,16 @@ const detailMetrics = document.getElementById("detail-metrics");
 const scenarioPrimary = document.getElementById("scenario-primary");
 const scenarioSwing = document.getElementById("scenario-swing");
 const scenarioInvalidation = document.getElementById("scenario-invalidation");
+const OVERLAY_TOGGLE_DEFAULTS = {
+  fvg: true,
+  ob: true,
+  liquidity: true,
+  structure: true,
+  signals: true,
+  patterns: true,
+};
+let overlayToggleState = { ...OVERLAY_TOGGLE_DEFAULTS };
+let overlayToggleRoot = null;
 
 let allIdeas = [];
 let activeIdea = null;
@@ -1605,6 +1615,7 @@ function clearPatternSeries() {
 function drawPatternLines(patterns) {
   if (!chart || !Array.isArray(patterns)) return;
   clearPatternSeries();
+  if (!isOverlayEnabled("patterns")) return;
   patterns.forEach((pattern) => {
     const color = getPatternColor(pattern?.type);
     (pattern?.lines || []).forEach((line) => {
@@ -1619,6 +1630,7 @@ function drawPatternLines(patterns) {
 
 function buildChartMarkers(idea, payload) {
   const markers = [];
+  if (!isOverlayEnabled("signals")) return markers;
   const overlays = payload?.overlays || {};
   const existing = Array.isArray(overlays?.markers) ? overlays.markers : [];
   existing.forEach((m) => {
@@ -1733,6 +1745,68 @@ function drawLabel(ctx, x, y, text, color = "#fff", bg = "rgba(8,17,31,0.92)") {
   ctx.fill();
   ctx.fillStyle = color;
   ctx.fillText(text, x + 6, y - 7);
+}
+
+function isOverlayEnabled(key) {
+  return overlayToggleState?.[key] !== false;
+}
+
+function getNextVisibleCandleIndex(candles, fromIndex) {
+  if (!Array.isArray(candles) || !candles.length) return 0;
+  const maxIndex = candles.length - 1;
+  for (let i = Math.max(0, fromIndex); i <= maxIndex; i += 1) {
+    if (candles[i]?.time != null) return i;
+  }
+  return maxIndex;
+}
+
+function inferZoneSpan(candles, item, fallbackSpan = 20) {
+  const maxIndex = Math.max(0, candles.length - 1);
+  const explicitFrom = toFiniteIndex(item?.from_index ?? item?.start_index ?? item?.startIndex ?? item?.start);
+  const explicitTo = toFiniteIndex(item?.to_index ?? item?.end_index ?? item?.endIndex ?? item?.end);
+  if (explicitFrom != null && explicitTo != null) {
+    return { from_index: clampIndex(explicitFrom, maxIndex), to_index: clampIndex(Math.max(explicitFrom, explicitTo), maxIndex) };
+  }
+  // API debug: for zones without timestamps, fallback to recent candles using only provided price bounds.
+  const anchor = clampIndex(explicitFrom ?? explicitTo ?? maxIndex, maxIndex);
+  const from_index = clampIndex(anchor - fallbackSpan, maxIndex);
+  const to_index = clampIndex(anchor, maxIndex);
+  return { from_index, to_index };
+}
+
+function ensureOverlayToggleUI() {
+  if (!chartHost || overlayToggleRoot) return;
+  overlayToggleRoot = document.createElement("div");
+  overlayToggleRoot.className = "chart-overlay-toggles";
+  Object.assign(overlayToggleRoot.style, {
+    position: "absolute",
+    top: "10px",
+    left: "10px",
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+    zIndex: "5",
+  });
+  const toggles = [
+    ["ob", "OB"], ["fvg", "FVG"], ["liquidity", "Ликвидность"], ["structure", "Структура"], ["signals", "Сигналы"], ["patterns", "Паттерны"],
+  ];
+  toggles.forEach(([key, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.dataset.overlayKey = key;
+    btn.className = "idea-filter";
+    btn.style.padding = "4px 10px";
+    btn.style.fontSize = "12px";
+    btn.style.opacity = "1";
+    btn.addEventListener("click", () => {
+      overlayToggleState[key] = !overlayToggleState[key];
+      btn.style.opacity = overlayToggleState[key] ? "1" : "0.45";
+      drawOverlay();
+    });
+    overlayToggleRoot.appendChild(btn);
+  });
+  chartHost.appendChild(overlayToggleRoot);
 }
 
 function priceFromMeta(candles, meta, zones, levels) {
@@ -1850,15 +1924,15 @@ function normalizeSmcOverlays(payload) {
     const top = toFiniteNumber(item?.top ?? item?.high ?? item?.to ?? item?.price_to ?? item?.priceTo);
     const bottom = toFiniteNumber(item?.bottom ?? item?.low ?? item?.from ?? item?.price_from ?? item?.priceFrom);
     if (top == null || bottom == null) return null;
-    const startIndex = toFiniteIndex(item?.from_index ?? item?.start_index ?? item?.startIndex ?? item?.start);
-    const endIndex = toFiniteIndex(item?.to_index ?? item?.end_index ?? item?.endIndex ?? item?.end);
+    // API debug: order_blocks/fvg may contain from_index/to_index, otherwise infer span near latest candles.
+    const span = inferZoneSpan(payload?.candles || [], item);
     return {
       from: Math.min(top, bottom),
       to: Math.max(top, bottom),
       type: String(item?.type || "").toLowerCase(),
       label: normalizeWhitespace(item?.label || fallbackLabel),
-      from_index: startIndex,
-      to_index: endIndex,
+      from_index: span.from_index,
+      to_index: span.to_index,
     };
   };
 
@@ -1892,8 +1966,11 @@ function normalizeSmcOverlays(payload) {
       if (level == null) return null;
       const type = String(item?.type || "").toLowerCase();
       const fallbackLabel = type.includes("buy") || type.includes("bsl") ? "BSL" : type.includes("sell") || type.includes("ssl") ? "SSL" : "Liquidity";
+      const span = inferZoneSpan(payload?.candles || [], item, 30);
       return {
         level,
+        from_index: span.from_index,
+        to_index: span.to_index,
         label: normalizeWhitespace(item?.label || fallbackLabel),
       };
     })
@@ -1913,9 +1990,12 @@ function normalizeSmcOverlays(payload) {
             : type.includes("resistance")
               ? "resistance"
               : "Structure";
+      const span = inferZoneSpan(payload?.candles || [], item, 12);
       return {
         level,
         type,
+        from_index: span.from_index,
+        to_index: span.to_index,
         label: normalizeWhitespace(item?.label || fallbackLabel),
       };
     })
@@ -1964,7 +2044,7 @@ const overlayPlugin = {
 
     const maxIndex = candles.length - 1;
 
-    smcOverlays.order_blocks.forEach((zone) => {
+    if (isOverlayEnabled("ob")) smcOverlays.order_blocks.forEach((zone) => {
       const yTop = candleSeries.priceToCoordinate(zone.to);
       const yBottom = candleSeries.priceToCoordinate(zone.from);
       if (yTop == null || yBottom == null) return;
@@ -1988,7 +2068,7 @@ const overlayPlugin = {
       drawLabel(ctx, zoneLeft + 6, top + 18, label, isBearish ? "#fca5a5" : "#86efac");
     });
 
-    smcOverlays.fvg.forEach((gap) => {
+    if (isOverlayEnabled("fvg")) smcOverlays.fvg.forEach((gap) => {
       const yTop = candleSeries.priceToCoordinate(gap.to);
       const yBottom = candleSeries.priceToCoordinate(gap.from);
       if (yTop == null || yBottom == null) return;
@@ -2011,7 +2091,7 @@ const overlayPlugin = {
       drawLabel(ctx, zoneLeft + 6, top + 16, normalizeWhitespace(gap.label || "FVG"), "#c4b5fd", "rgba(30, 12, 54, 0.88)");
     });
 
-    smcOverlays.liquidity.forEach((item) => {
+    if (isOverlayEnabled("liquidity")) smcOverlays.liquidity.forEach((item) => {
       const y = candleSeries.priceToCoordinate(item.level);
       if (y == null) return;
       ctx.save();
@@ -2023,10 +2103,11 @@ const overlayPlugin = {
       ctx.lineTo(rightX, y);
       ctx.stroke();
       ctx.restore();
-      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, item.label || "SSL/BSL", "#38bdf8");
+      const labelX = Math.max(8, rightX - 180 + ((item.level * 10000) % 24));
+      drawLabel(ctx, labelX, y - 4, item.label || "SSL/BSL", "#38bdf8");
     });
 
-    smcOverlays.structure.forEach((item) => {
+    if (isOverlayEnabled("structure")) smcOverlays.structure.forEach((item) => {
       const y = candleSeries.priceToCoordinate(item.level);
       if (y == null) return;
       ctx.save();
@@ -2037,10 +2118,11 @@ const overlayPlugin = {
       ctx.lineTo(rightX, y);
       ctx.stroke();
       ctx.restore();
-      drawLabel(ctx, Math.max(8, rightX - 180), y - 4, item.label || "BOS/CHoCH", "#fbbf24");
+      const labelX = Math.max(8, rightX - 176 + ((item.level * 10000) % 20));
+      drawLabel(ctx, labelX, y - 4, item.label || "BOS/CHoCH", "#fbbf24");
     });
 
-    smcOverlays.patterns.forEach((item) => {
+    if (isOverlayEnabled("patterns")) smcOverlays.patterns.forEach((item) => {
       const y = candleSeries.priceToCoordinate(item.anchor_price);
       if (y == null) return;
       const anchorIdx = clampIndex(item.anchor_index ?? item.to_index ?? item.from_index ?? maxIndex, maxIndex);
@@ -2055,6 +2137,7 @@ registerChartPlugin(overlayPlugin);
 
 function drawOverlay() {
   if (!chart || !currentChartPayload) return;
+  ensureOverlayToggleUI();
 
   const ctx = fitOverlayCanvas();
   const width = overlayCanvas.clientWidth;
@@ -2108,7 +2191,7 @@ function drawOverlay() {
     drawLabel(ctx, Math.max(8, x2 - 130), y - 6, level.label, "#ffffff");
   });
 
-  arrows.forEach(arrow => {
+  if (isOverlayEnabled("signals")) arrows.forEach(arrow => {
     const x1 = timeScale.timeToCoordinate(candles[arrow.from_index]?.time);
     const x2 = timeScale.timeToCoordinate(candles[arrow.to_index]?.time);
     const y1 = candleSeries.priceToCoordinate(arrow._fromPrice);
@@ -2138,8 +2221,9 @@ function drawOverlay() {
     drawLabel(ctx, x2 + 8, y2 - 8, arrow.label, "#facc15");
   });
 
-  labels.forEach(label => {
-    const x = timeScale.timeToCoordinate(candles[label.index]?.time);
+  if (isOverlayEnabled("signals") || isOverlayEnabled("structure") || isOverlayEnabled("liquidity")) labels.forEach((label, idx) => {
+    const candleIndex = getNextVisibleCandleIndex(candles, label.index ?? (candles.length - 1));
+    const x = timeScale.timeToCoordinate(candles[candleIndex]?.time);
     const y = candleSeries.priceToCoordinate(label._price);
 
     if (x == null || y == null) return;
@@ -2148,7 +2232,7 @@ function drawOverlay() {
       ? "#38bdf8"
       : "#f59e0b";
 
-    drawLabel(ctx, x + 6, y - 6, label.text, color);
+    drawLabel(ctx, x + 6 + (idx % 3) * 8, y - 6 - (idx % 2) * 14, label.text, color);
   });
 
   const chartContext = { chart, ctx, width, height, candles, smcOverlays, timeScale, candleSeries };
