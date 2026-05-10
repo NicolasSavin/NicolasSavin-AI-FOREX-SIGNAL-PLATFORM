@@ -9,6 +9,7 @@ from copy import deepcopy
 from typing import Any
 
 import requests
+from app.services.signal_audit_logger import log_signal_audit
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +55,31 @@ def enrich_idea_with_openai_narrative(payload: dict[str, Any]) -> dict[str, Any]
     if not enabled or not api_key:
         result["narrative_source"] = "fallback"
         result["narrative_skip_reason"] = "disabled_or_missing_key"
+        log_signal_audit(
+            {
+                "stage": "openai_narrative",
+                "symbol": result.get("symbol"),
+                "timeframe": result.get("timeframe") or result.get("tf"),
+                "decision": str(result.get("signal") or result.get("action") or "WAIT").upper(),
+                "rejection_reason": "disabled_or_missing_key",
+                "ai_status": "fallback",
+            }
+        )
         return result
 
     if _should_skip_openai_for_payload(result):
         result["narrative_source"] = "fallback"
         result["narrative_skip_reason"] = "weak_or_blocked_signal"
+        log_signal_audit(
+            {
+                "stage": "openai_narrative",
+                "symbol": result.get("symbol"),
+                "timeframe": result.get("timeframe") or result.get("tf"),
+                "decision": str(result.get("signal") or result.get("action") or "WAIT").upper(),
+                "rejection_reason": "weak_or_blocked_signal",
+                "ai_status": "fallback",
+            }
+        )
         return result
 
     now = time.time()
@@ -104,6 +125,16 @@ def enrich_idea_with_openai_narrative(payload: dict[str, Any]) -> dict[str, Any]
     if generated is None:
         result["narrative_source"] = "fallback"
         result["narrative_skip_reason"] = f"openai_failed_status_{status_code or 'unknown'}"
+        log_signal_audit(
+            {
+                "stage": "openai_narrative",
+                "symbol": result.get("symbol"),
+                "timeframe": result.get("timeframe") or result.get("tf"),
+                "decision": str(result.get("signal") or result.get("action") or "WAIT").upper(),
+                "rejection_reason": result["narrative_skip_reason"],
+                "ai_status": "fallback",
+            }
+        )
         return result
 
     if _is_caution_required(result):
@@ -121,6 +152,17 @@ def enrich_idea_with_openai_narrative(payload: dict[str, Any]) -> dict[str, Any]
     result.update(generated_fields)
     result["narrative_source"] = "openai"
     result["narrative_model"] = model
+    # Diagnostic-only logging; does not change narrative/trading behavior.
+    log_signal_audit(
+        {
+            "stage": "openai_narrative",
+            "symbol": result.get("symbol"),
+            "timeframe": result.get("timeframe") or result.get("tf"),
+            "decision": str(result.get("signal") or result.get("action") or "WAIT").upper(),
+            "rejection_reason": None,
+            "ai_status": "openai",
+        }
+    )
     _NARRATIVE_CACHE[cache_key] = (time.time(), deepcopy(generated_fields))
     _trim_cache()
     return result
