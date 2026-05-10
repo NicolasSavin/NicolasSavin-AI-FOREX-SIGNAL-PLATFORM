@@ -24,6 +24,7 @@ from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
+from app.services.signal_audit_logger import log_signal_audit
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -761,12 +762,47 @@ def api_ideas():
         except Exception:
             failed_symbols.append(symbol)
             logger.exception("api_ideas: failed to build signal for %s", symbol)
+            # Diagnostic-only logging; must not affect trading or API behavior.
+            log_signal_audit(
+                {
+                    "stage": "api_ideas",
+                    "symbol": symbol,
+                    "timeframe": tf,
+                    "decision": "rejected",
+                    "rejection_reason": "exception_in_build_signal_from_candles",
+                    "data_status": "unknown",
+                }
+            )
             continue
 
         if isinstance(signal, dict) and signal:
             signals.append(_normalize_quote_signal(signal))
+            log_signal_audit(
+                {
+                    "stage": "api_ideas",
+                    "symbol": symbol,
+                    "timeframe": tf,
+                    "setup_type": signal.get("setup_type") or "sma_momentum",
+                    "confidence": signal.get("confidence"),
+                    "score": signal.get("prop_score"),
+                    "decision": str(signal.get("signal") or signal.get("action") or "UNKNOWN").upper(),
+                    "rejection_reason": None,
+                    "data_status": signal.get("data_status"),
+                    "ai_status": signal.get("narrative_source"),
+                }
+            )
         else:
             failed_symbols.append(symbol)
+            log_signal_audit(
+                {
+                    "stage": "api_ideas",
+                    "symbol": symbol,
+                    "timeframe": tf,
+                    "decision": "rejected",
+                    "rejection_reason": "empty_signal_payload",
+                    "data_status": "unknown",
+                }
+            )
 
     if signals:
         enriched_signals = enrich_ideas_with_prop_scores(signals)
@@ -1956,6 +1992,20 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
     fallback_used = bool(candles_payload.get("fallback_used"))
 
     if not candles:
+        # Diagnostic-only logging; must never change signal generation logic.
+        log_signal_audit(
+            {
+                "stage": "build_signal_from_candles",
+                "symbol": symbol_norm,
+                "timeframe": tf_norm,
+                "setup_type": "sma_momentum",
+                "confidence": 0,
+                "decision": "WAIT",
+                "rejection_reason": "no_candles",
+                "data_status": candles_payload.get("data_status") or "unavailable",
+                "ai_status": "not_involved",
+            }
+        )
         return {
             "id": f"{symbol_norm}-WAIT",
             "symbol": symbol_norm,
@@ -1984,6 +2034,19 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
     highs = [x for x in highs if x is not None]
     lows = [x for x in lows if x is not None]
     if len(closes) < 30 or len(highs) < 30 or len(lows) < 30:
+        log_signal_audit(
+            {
+                "stage": "build_signal_from_candles",
+                "symbol": symbol_norm,
+                "timeframe": tf_norm,
+                "setup_type": "sma_momentum",
+                "confidence": 20,
+                "decision": "WAIT",
+                "rejection_reason": "insufficient_candles",
+                "data_status": candles_payload.get("data_status") or "unknown",
+                "ai_status": "not_involved",
+            }
+        )
         return {
             "id": f"{symbol_norm}-WAIT",
             "symbol": symbol_norm,
@@ -2064,7 +2127,7 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         confidence = 20
         trade_permission = False
 
-    return {
+    result = {
         "id": f"{symbol_norm}-{action}",
         "symbol": symbol_norm,
         "pair": symbol_norm,
@@ -2105,6 +2168,21 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
             "has_numeric_market_price": current_price is not None,
         },
     }
+    log_signal_audit(
+        {
+            "stage": "build_signal_from_candles",
+            "symbol": symbol_norm,
+            "timeframe": tf_norm,
+            "setup_type": "sma_momentum",
+            "confidence": result.get("confidence"),
+            "score": result.get("prop_score"),
+            "decision": action,
+            "rejection_reason": None if action in {"BUY", "SELL"} else "neutral_or_price_guard_wait",
+            "data_status": result.get("data_status"),
+            "ai_status": "not_involved",
+        }
+    )
+    return result
 
 
 def get_candles_with_markup(symbol: str, tf: str = "M15", limit: int = 160) -> dict[str, Any]:
