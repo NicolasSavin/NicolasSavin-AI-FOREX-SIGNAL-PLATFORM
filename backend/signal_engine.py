@@ -50,6 +50,7 @@ class SignalEngine:
         self.weighted_confluence = WeightedConfluenceModel()
         self.sentiment_weight = float(os.getenv("SENTIMENT_WEIGHT", "0.12"))
         self.smc_wait_threshold = int(os.getenv("SMC_WAIT_THRESHOLD", "40"))
+        self.relaxed_b_grade_mode = os.getenv("RELAXED_B_GRADE_MODE", "1").strip().lower() not in {"0", "false", "no"}
 
     async def generate_live_signals(self, pairs: list[str], timeframes: list[str] | None = None) -> list[dict]:
         output: list[dict] = []
@@ -413,18 +414,24 @@ class SignalEngine:
                 pattern_summary=mtf_pattern_summary,
             )
 
+        relaxed_mode_used = False
+        relaxed_mode_reason = ""
         if analysis_mode == "professional" and not has_confluence:
-            return self._no_trade(
-                symbol=symbol,
-                timeframe=timeframe,
-                snapshot=mtf,
-                reason=(
-                    "Профессиональный режим TwelveData: confluence недостаточный, "
-                    "идея переведена в WAIT до подтверждения структуры."
-                ),
-                chart_patterns=mtf_patterns,
-                pattern_summary=mtf_pattern_summary,
-            )
+            if self.relaxed_b_grade_mode and directional_structure and valid_data_exists:
+                relaxed_mode_used = True
+                relaxed_mode_reason = "Недостаточный strict confluence, но есть направленная структура — разрешён B-grade режим."
+            else:
+                return self._no_trade(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    snapshot=mtf,
+                    reason=(
+                        "Профессиональный режим TwelveData: confluence недостаточный, "
+                        "идея переведена в WAIT до подтверждения структуры."
+                    ),
+                    chart_patterns=mtf_patterns,
+                    pattern_summary=mtf_pattern_summary,
+                )
 
         action = infer_action(mtf_features["trend"])
         pattern_impact = self.pattern_detector.signal_impact(action=action, summary=mtf_pattern_summary)
@@ -450,18 +457,26 @@ class SignalEngine:
             trend_conflict=trend_conflict,
         )
 
+        penalties: list[dict[str, Any]] = []
+        bonuses: list[dict[str, Any]] = []
         confidence = 62
         confidence = 78 if htf_zone["exists"] and ltf_confirmation["has_structure"] else 45
         if confluence_flags["htf_alignment"]:
             confidence += 7
+            bonuses.append({"key": "htf_alignment", "delta": 7, "reason_ru": "HTF и MTF в одном направлении"})
+        else:
+            penalties.append({"key": "htf_alignment", "delta": -4, "reason_ru": "Частичное расхождение HTF/MTF"})
         if confluence_flags["ltf_pattern_confirmation"] and ltf_features.get("pattern") == "engulfing":
             confidence += 4
+            bonuses.append({"key": "ltf_engulfing", "delta": 4, "reason_ru": "LTF engulfing подтверждает вход"})
         if not has_confluence:
             confidence -= 12 if data_quality == "high" else 5
         if not htf_ready:
             confidence -= 5
+            penalties.append({"key": "htf_missing", "delta": -5, "reason_ru": "HTF подтверждение недоступно"})
         if not ltf_ready:
             confidence -= 5
+            penalties.append({"key": "ltf_missing", "delta": -5, "reason_ru": "LTF подтверждение недоступно"})
         confidence += int(pattern_impact.get("confidenceDelta", 0) or 0)
         confidence = max(25, min(confidence, 92))
 
@@ -566,18 +581,24 @@ class SignalEngine:
             data_quality=data_quality,
         )
         if analysis_mode == "professional" and weighted_result.grade == "REJECT" and valid_data_exists:
-            return self._no_trade(
-                symbol=symbol,
-                timeframe=timeframe,
-                snapshot=mtf,
-                reason=(
-                    "Профессиональный режим TwelveData: базовый сетап/взвешенный скоринг не достигли рабочего порога, "
-                    "идея оставлена в WAIT."
-                ),
-                chart_patterns=mtf_patterns,
-                pattern_summary=mtf_pattern_summary,
-                pattern_impact=pattern_impact,
-            )
+            if self.relaxed_b_grade_mode and base_setup_valid and directional_structure:
+                relaxed_mode_used = True
+                relaxed_mode_reason = (relaxed_mode_reason + " " if relaxed_mode_reason else "") + "Взвешенный скоринг REJECT смягчён до B-grade в relaxed mode."
+                penalties.append({"key": "weighted_reject_softened", "delta": -7, "reason_ru": "Слабое подтверждение объёма/options/HTF снижает итоговый score"})
+                confidence = max(20, confidence - 7)
+            else:
+                return self._no_trade(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    snapshot=mtf,
+                    reason=(
+                        "Профессиональный режим TwelveData: базовый сетап/взвешенный скоринг не достигли рабочего порога, "
+                        "идея оставлена в WAIT."
+                    ),
+                    chart_patterns=mtf_patterns,
+                    pattern_summary=mtf_pattern_summary,
+                    pattern_impact=pattern_impact,
+                )
         if smc_package["score"] < self.smc_wait_threshold:
             weak_reasons.append(f"SMC-оценка слабая ({smc_package['score']}/100), confidence снижен")
             confidence = max(20, confidence - 8)
@@ -617,6 +638,10 @@ class SignalEngine:
         invalidation_reasoning = (
             "Сценарий теряет актуальность при сломе ключевой зоны и отмене рыночной структуры текущего таймфрейма."
         )
+        signal_grade = "A" if confidence >= signal_threshold and not weak_reasons else "B" if confidence >= max(40, signal_threshold - 12) else "C"
+        if relaxed_mode_used and signal_grade == "A":
+            signal_grade = "B"
+        trade_permission = signal_grade == "A" and bool(risk.get("allowed"))
         signal_payload = {
             "signal_id": f"sig-{uuid4().hex[:10]}",
             "symbol": symbol,
@@ -633,7 +658,7 @@ class SignalEngine:
             "smc_score": smc_package["score"],
             "smc_grade": smc_package["grade"],
             "smc_factors": smc_package["factors"],
-            "trade_permission": True,
+            "trade_permission": trade_permission,
             "status": status,
             "lifecycle_state": lifecycle_state,
             "description_ru": (
@@ -686,7 +711,16 @@ class SignalEngine:
                 "weighted_grade": weighted_result.grade,
                 "weighted_reasons": weighted_result.reasons,
                 "base_setup_valid": base_setup_valid,
+                "penalties": penalties,
+                "bonuses": bonuses,
+                "signal_grade": signal_grade,
+                "relaxed_mode_used": relaxed_mode_used,
             },
+            "penalties": penalties,
+            "bonuses": bonuses,
+            "signal_grade": signal_grade,
+            "relaxed_mode_used": relaxed_mode_used,
+            "relaxed_mode_reason": relaxed_mode_reason or None,
             "missing_confirmations": missing_confirmations,
             "invalidation_reasoning": invalidation_reasoning,
             "market_context": {
@@ -730,7 +764,16 @@ class SignalEngine:
                 "weighted_grade": weighted_result.grade,
                 "weighted_reasons": weighted_result.reasons,
                 "base_setup_valid": base_setup_valid,
+                "penalties": penalties,
+                "bonuses": bonuses,
+                "signal_grade": signal_grade,
+                "relaxed_mode_used": relaxed_mode_used,
             },
+            "penalties": penalties,
+            "bonuses": bonuses,
+            "signal_grade": signal_grade,
+            "relaxed_mode_used": relaxed_mode_used,
+            "relaxed_mode_reason": relaxed_mode_reason or None,
                 "missing_confirmations": missing_confirmations,
                 "invalidation_reasoning": invalidation_reasoning,
                 "fallback_used": is_fallback_mode,
@@ -751,6 +794,9 @@ class SignalEngine:
                 "features_built": mtf_features.get("status") == "ready",
                 "signal_created": True,
                 "reason_if_skipped": None,
+                "relaxed_mode_used": relaxed_mode_used,
+                "relaxed_mode_reason": relaxed_mode_reason or None,
+                "signal_grade": signal_grade,
             },
         }
         return self._ensure_idea_text_fields(signal_payload)
