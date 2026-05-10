@@ -14,6 +14,10 @@ let recentVoiceMessages = new Map();
 let lastPayload = null;
 let currentPropFilter = "all";
 let modalChart = null;
+let modalOverlayCanvas = null;
+let modalOverlayContext = null;
+let modalOverlayState = null;
+let modalOverlayVisibility = { fvg: true, ob: true, liquidity: true, structure: true, signals: true, patterns: true };
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -77,17 +81,20 @@ function collectOverlayRanges(raw) {
   const items = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
   return items
     .map((item) => ({
+      from_index: pickFirstFiniteNumber(item?.from_index, item?.start_index, item?.fromIndex, item?.startIndex),
+      to_index: pickFirstFiniteNumber(item?.to_index, item?.end_index, item?.toIndex, item?.endIndex),
       low: pickFirstFiniteNumber(item?.low, item?.bottom, item?.min, item?.price_low, item?.zone_low, item?.from, item?.start, item?.y1),
       high: pickFirstFiniteNumber(item?.high, item?.top, item?.max, item?.price_high, item?.zone_high, item?.to, item?.end, item?.y2),
       price: pickFirstFiniteNumber(item?.price, item?.level, item?.value, item?.strike),
+      label: String(item?.label || item?.name || item?.type || "").trim(),
     }))
     .map((entry) => {
       if (entry.low === null && entry.high === null && entry.price !== null) {
-        return { low: entry.price, high: entry.price };
+        return { ...entry, low: entry.price, high: entry.price };
       }
-      if (entry.low !== null && entry.high === null) return { low: entry.low, high: entry.low };
-      if (entry.high !== null && entry.low === null) return { low: entry.high, high: entry.high };
-      return entry.low !== null && entry.high !== null ? { low: Math.min(entry.low, entry.high), high: Math.max(entry.low, entry.high) } : null;
+      if (entry.low !== null && entry.high === null) return { ...entry, low: entry.low, high: entry.low };
+      if (entry.high !== null && entry.low === null) return { ...entry, low: entry.high, high: entry.high };
+      return entry.low !== null && entry.high !== null ? { ...entry, low: Math.min(entry.low, entry.high), high: Math.max(entry.low, entry.high) } : null;
     })
     .filter(Boolean);
 }
@@ -524,11 +531,18 @@ function closeIdeaModal() {
     try { modalChart.remove(); } catch {}
     modalChart = null;
   }
+  if (modalOverlayCanvas) {
+    try { modalOverlayCanvas.remove(); } catch {}
+    modalOverlayCanvas = null;
+    modalOverlayContext = null;
+    modalOverlayState = null;
+  }
 }
 
 function renderModalChart(idea) {
   const container = document.getElementById("ideaModalChart");
   if (!container || !("LightweightCharts" in window)) return;
+  container.style.position = "relative";
   const candles = collectCandles(idea).map(normalizeCandle).filter((c) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close));
   if (candles.length < 2) {
     container.innerHTML = `<div class="ideas-loading">График недоступен: API не передал свечи или chartImageUrl. Уровни идеи всё равно показаны выше.</div>`;
@@ -552,6 +566,8 @@ function renderModalChart(idea) {
     wickDownColor: "#ff5f7a",
   });
   series.setData(candles);
+  mountOverlayControls(container);
+  ensureModalOverlayCanvas(container);
   const entry = Number(idea.entry ?? idea.entry_price);
   const sl = Number(idea.sl ?? idea.stop_loss);
   const tp = Number(idea.tp ?? idea.take_profit ?? idea.target);
@@ -596,6 +612,194 @@ function renderModalChart(idea) {
   });
 
   modalChart.timeScale().fitContent();
+  renderInstitutionalOverlay({ idea, candles, series });
+  const redraw = () => renderInstitutionalOverlay({ idea, candles, series });
+  modalChart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
+  modalChart.timeScale().subscribeVisibleTimeRangeChange(redraw);
+  window.addEventListener("resize", redraw, { passive: true });
+}
+
+function mountOverlayControls(container) {
+  const old = container.querySelector(".smc-overlay-toggles");
+  if (old) old.remove();
+  const controls = document.createElement("div");
+  controls.className = "smc-overlay-toggles";
+  controls.style.cssText = "position:absolute;top:8px;left:8px;z-index:40;display:flex;gap:6px;flex-wrap:wrap;";
+  const items = [
+    { key: "fvg", label: "FVG" },
+    { key: "ob", label: "OB" },
+    { key: "liquidity", label: "Ликвидность" },
+    { key: "structure", label: "Структура" },
+    { key: "signals", label: "Сигналы" },
+    { key: "patterns", label: "Паттерны" },
+  ];
+  items.forEach(({ key, label }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.style.cssText = "border:1px solid rgba(150,190,255,.35);background:rgba(4,17,31,.72);color:#e7f0ff;border-radius:10px;padding:4px 8px;font-size:11px;cursor:pointer;";
+    if (!modalOverlayVisibility[key]) btn.style.opacity = "0.4";
+    btn.addEventListener("click", () => {
+      modalOverlayVisibility[key] = !modalOverlayVisibility[key];
+      btn.style.opacity = modalOverlayVisibility[key] ? "1" : "0.4";
+      modalOverlayState?.redraw?.();
+    });
+    controls.appendChild(btn);
+  });
+  container.appendChild(controls);
+}
+
+function ensureModalOverlayCanvas(container) {
+  if (modalOverlayCanvas) modalOverlayCanvas.remove();
+  modalOverlayCanvas = document.createElement("canvas");
+  modalOverlayCanvas.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:30;";
+  container.appendChild(modalOverlayCanvas);
+  modalOverlayContext = modalOverlayCanvas.getContext("2d");
+}
+
+function fitModalOverlayCanvas() {
+  if (!modalOverlayCanvas || !modalOverlayContext) return;
+  const rect = modalOverlayCanvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  modalOverlayCanvas.width = Math.max(1, Math.floor(rect.width * dpr));
+  modalOverlayCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  modalOverlayContext.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function renderInstitutionalOverlay({ idea, candles, series }) {
+  if (!modalChart || !modalOverlayCanvas || !modalOverlayContext || !candles.length) return;
+  fitModalOverlayCanvas();
+  const ctx = modalOverlayContext;
+  const width = modalOverlayCanvas.clientWidth;
+  const height = modalOverlayCanvas.clientHeight;
+  ctx.clearRect(0, 0, width, height);
+  const maxIndex = candles.length - 1;
+  const timeScale = modalChart.timeScale();
+  const xAt = (idx) => timeScale.timeToCoordinate(candles[Math.max(0, Math.min(maxIndex, idx))]?.time);
+  const yAt = (price) => series.priceToCoordinate(Number(price));
+  const occupiedLabelY = [];
+  const placeLabelY = (desired) => {
+    let y = desired;
+    while (occupiedLabelY.some((used) => Math.abs(used - y) < 14)) y += 14;
+    occupiedLabelY.push(y);
+    return y;
+  };
+  const inferRangeX = (range) => {
+    const fallbackStart = Math.max(0, maxIndex - 48);
+    const from = Number.isFinite(range.from_index) ? range.from_index : fallbackStart;
+    const to = Number.isFinite(range.to_index) ? range.to_index : maxIndex;
+    return { x1: xAt(from), x2: xAt(to) };
+  };
+  const drawZone = (range, style, label) => {
+    const y1 = yAt(range.high);
+    const y2 = yAt(range.low);
+    const { x1, x2 } = inferRangeX(range);
+    if (y1 == null || y2 == null || x1 == null || x2 == null) return;
+    const left = Math.min(x1, x2);
+    const top = Math.min(y1, y2);
+    ctx.fillStyle = style.fill;
+    ctx.strokeStyle = style.stroke;
+    ctx.fillRect(left, top, Math.max(6, Math.abs(x2 - x1)), Math.max(4, Math.abs(y2 - y1)));
+    ctx.strokeRect(left, top, Math.max(6, Math.abs(x2 - x1)), Math.max(4, Math.abs(y2 - y1)));
+    ctx.fillStyle = style.stroke;
+    ctx.font = "11px Inter, sans-serif";
+    ctx.fillText(label, left + 4, placeLabelY(Math.max(11, top - 3)));
+  };
+  // API fields: chart_overlays.order_blocks / order_blocks / orderBlocks
+  const orderBlocks = collectOverlayRanges(idea.order_blocks ?? idea.orderBlocks ?? idea.chart_overlays?.order_blocks).slice(-8);
+  // API fields: chart_overlays.fvg / fvg / fair_value_gaps
+  const fvgs = collectOverlayRanges(idea.fvg ?? idea.fair_value_gaps ?? idea.chart_overlays?.fvg).slice(-10);
+  // API fields: chart_overlays.liquidity / liquidity / liquidity_levels
+  const liquidity = collectOverlayRanges([...(idea.liquidity || []), ...(idea.liquidity_levels || []), ...(idea.chart_overlays?.liquidity || [])]).slice(-10);
+  // API fields: chart_overlays.structure_levels / structure_levels
+  const structure = collectOverlayRanges(idea.structure_levels ?? idea.chart_overlays?.structure_levels ?? []).slice(-8);
+  // API fields: chart_overlays.entry_zones / entry_zones, chart_overlays.premium_discount_zones
+  const entries = collectOverlayRanges(idea.entry_zones ?? idea.chart_overlays?.entry_zones ?? []).slice(-4);
+  const premiumDiscount = collectOverlayRanges(idea.premium_discount_zones ?? idea.chart_overlays?.premium_discount_zones ?? []).slice(-4);
+  // API fields: chartPatterns / chart_patterns / chart_overlays.patterns
+  const patterns = Array.isArray(idea.chartPatterns) ? idea.chartPatterns : Array.isArray(idea.chart_patterns) ? idea.chart_patterns : Array.isArray(idea.chart_overlays?.patterns) ? idea.chart_overlays.patterns : [];
+  // API fields: liquidity_sweeps / chart_overlays.liquidity_sweeps
+  const sweeps = Array.isArray(idea.liquidity_sweeps) ? idea.liquidity_sweeps : Array.isArray(idea.chart_overlays?.liquidity_sweeps) ? idea.chart_overlays.liquidity_sweeps : [];
+  if (modalOverlayVisibility.ob) orderBlocks.forEach((z) => drawZone(z, { fill: "rgba(251,146,60,.15)", stroke: "rgba(251,146,60,.75)" }, "OB"));
+  if (modalOverlayVisibility.fvg) fvgs.forEach((z) => drawZone(z, { fill: "rgba(167,139,250,.12)", stroke: "rgba(196,181,253,.85)" }, "FVG"));
+  if (modalOverlayVisibility.structure) entries.forEach((z) => drawZone(z, { fill: "rgba(45,212,191,.08)", stroke: "rgba(45,212,191,.75)" }, "ENTRY"));
+  if (modalOverlayVisibility.structure) premiumDiscount.forEach((z) => drawZone(z, { fill: "rgba(56,189,248,.06)", stroke: "rgba(56,189,248,.58)" }, "P/D"));
+  const drawLevel = (range, color, label) => {
+    const y = yAt(range.low);
+    if (y == null) return;
+    ctx.strokeStyle = color;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(8, y);
+    ctx.lineTo(width - 8, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = color;
+    ctx.font = "11px Inter, sans-serif";
+    ctx.fillText(label, width - 72, placeLabelY(y - 3));
+  };
+  if (modalOverlayVisibility.liquidity) liquidity.slice(0, 5).forEach((r) => drawLevel(r, "rgba(52,211,153,.95)", "LIQ"));
+  if (modalOverlayVisibility.structure) structure.slice(0, 5).forEach((r) => drawLevel(r, "rgba(250,204,21,.95)", "BOS/MSS"));
+  if (modalOverlayVisibility.liquidity) {
+    sweeps.slice(-6).forEach((sweep) => {
+      const sx = xAt(Number(sweep?.from_index ?? Math.max(0, maxIndex - 10)));
+      const tx = xAt(Number(sweep?.to_index ?? maxIndex));
+      const sy = yAt(pickFirstFiniteNumber(sweep?.from_price, sweep?.from_level, sweep?.level, sweep?.price));
+      const ty = yAt(pickFirstFiniteNumber(sweep?.to_price, sweep?.to_level, sweep?.target, sweep?.price));
+      if (sx == null || tx == null || sy == null || ty == null) return;
+      ctx.strokeStyle = "rgba(56,189,248,.95)";
+      ctx.fillStyle = "rgba(56,189,248,.95)";
+      ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(tx, ty); ctx.stroke();
+      const a = Math.atan2(ty - sy, tx - sx);
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(tx - 8 * Math.cos(a - Math.PI / 6), ty - 8 * Math.sin(a - Math.PI / 6));
+      ctx.lineTo(tx - 8 * Math.cos(a + Math.PI / 6), ty - 8 * Math.sin(a + Math.PI / 6));
+      ctx.closePath();
+      ctx.fill();
+    });
+  }
+  if (modalOverlayVisibility.signals) {
+    const entry = Number(idea.entry ?? idea.entry_price);
+    const y = yAt(entry);
+    const x = xAt(maxIndex) ?? (width - 14);
+    if (Number.isFinite(entry) && y != null) {
+      const c = String(idea.direction || "").toLowerCase().includes("sell") ? "#fb7185" : "#34d399";
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 10, y - 9);
+      ctx.lineTo(x - 10, y + 9);
+      ctx.closePath();
+      ctx.fill();
+      const sl = Number(idea.sl ?? idea.stop_loss);
+      const tp = Number(idea.tp ?? idea.take_profit ?? idea.target);
+      const slY = yAt(sl);
+      const tpY = yAt(tp);
+      if (slY != null && tpY != null) {
+        ctx.fillStyle = "rgba(244,63,94,.10)";
+        ctx.fillRect(Math.max(6, x - 100), Math.min(y, slY), 90, Math.max(3, Math.abs(slY - y)));
+        ctx.fillStyle = "rgba(16,185,129,.10)";
+        ctx.fillRect(Math.max(6, x - 100), Math.min(y, tpY), 90, Math.max(3, Math.abs(tpY - y)));
+      }
+    }
+  }
+  if (modalOverlayVisibility.patterns) {
+    patterns.slice(-8).forEach((pattern) => {
+      const px = xAt(Number(pattern?.index ?? pattern?.to_index ?? pattern?.end_index ?? maxIndex));
+      const py = yAt(pickFirstFiniteNumber(pattern?.price, pattern?.level, pattern?.y, candles[maxIndex]?.close));
+      if (px == null || py == null) return;
+      ctx.fillStyle = "rgba(244,114,182,.95)";
+      ctx.beginPath();
+      ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      const text = String(pattern?.label || pattern?.name || pattern?.type || "Pattern");
+      ctx.font = "11px Inter, sans-serif";
+      ctx.fillText(text, px + 6, placeLabelY(py - 5));
+    });
+  }
+  modalOverlayState = { redraw: () => renderInstitutionalOverlay({ idea, candles, series }) };
 }
 
 function filterIdeasByProp(ideas) {
