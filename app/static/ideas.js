@@ -14,6 +14,10 @@ let recentVoiceMessages = new Map();
 let lastPayload = null;
 let currentPropFilter = "all";
 let modalChart = null;
+let modalOverlayCanvas = null;
+let modalOverlayContext = null;
+let modalOverlayState = null;
+let modalOverlayVisibility = { fvg: true, ob: true, liquidity: true, structure: true, signals: true };
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -524,11 +528,18 @@ function closeIdeaModal() {
     try { modalChart.remove(); } catch {}
     modalChart = null;
   }
+  if (modalOverlayCanvas) {
+    try { modalOverlayCanvas.remove(); } catch {}
+    modalOverlayCanvas = null;
+    modalOverlayContext = null;
+    modalOverlayState = null;
+  }
 }
 
 function renderModalChart(idea) {
   const container = document.getElementById("ideaModalChart");
   if (!container || !("LightweightCharts" in window)) return;
+  container.style.position = "relative";
   const candles = collectCandles(idea).map(normalizeCandle).filter((c) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close));
   if (candles.length < 2) {
     container.innerHTML = `<div class="ideas-loading">График недоступен: API не передал свечи или chartImageUrl. Уровни идеи всё равно показаны выше.</div>`;
@@ -552,6 +563,8 @@ function renderModalChart(idea) {
     wickDownColor: "#ff5f7a",
   });
   series.setData(candles);
+  mountOverlayControls(container);
+  ensureModalOverlayCanvas(container);
   const entry = Number(idea.entry ?? idea.entry_price);
   const sl = Number(idea.sl ?? idea.stop_loss);
   const tp = Number(idea.tp ?? idea.take_profit ?? idea.target);
@@ -596,6 +609,128 @@ function renderModalChart(idea) {
   });
 
   modalChart.timeScale().fitContent();
+  renderInstitutionalOverlay({ idea, candles, series });
+  const redraw = () => renderInstitutionalOverlay({ idea, candles, series });
+  modalChart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
+  modalChart.timeScale().subscribeVisibleTimeRangeChange(redraw);
+  window.addEventListener("resize", redraw, { passive: true });
+}
+
+function mountOverlayControls(container) {
+  const old = container.querySelector(".smc-overlay-toggles");
+  if (old) old.remove();
+  const controls = document.createElement("div");
+  controls.className = "smc-overlay-toggles";
+  controls.style.cssText = "position:absolute;top:8px;left:8px;z-index:40;display:flex;gap:6px;flex-wrap:wrap;";
+  const items = [
+    { key: "fvg", label: "FVG" },
+    { key: "ob", label: "OB" },
+    { key: "liquidity", label: "Ликвидность" },
+    { key: "structure", label: "Структура" },
+    { key: "signals", label: "Сигналы" },
+  ];
+  items.forEach(({ key, label }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.style.cssText = "border:1px solid rgba(150,190,255,.35);background:rgba(4,17,31,.72);color:#e7f0ff;border-radius:10px;padding:4px 8px;font-size:11px;cursor:pointer;";
+    if (!modalOverlayVisibility[key]) btn.style.opacity = "0.4";
+    btn.addEventListener("click", () => {
+      modalOverlayVisibility[key] = !modalOverlayVisibility[key];
+      btn.style.opacity = modalOverlayVisibility[key] ? "1" : "0.4";
+      modalOverlayState?.redraw?.();
+    });
+    controls.appendChild(btn);
+  });
+  container.appendChild(controls);
+}
+
+function ensureModalOverlayCanvas(container) {
+  if (modalOverlayCanvas) modalOverlayCanvas.remove();
+  modalOverlayCanvas = document.createElement("canvas");
+  modalOverlayCanvas.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:30;";
+  container.appendChild(modalOverlayCanvas);
+  modalOverlayContext = modalOverlayCanvas.getContext("2d");
+}
+
+function fitModalOverlayCanvas() {
+  if (!modalOverlayCanvas || !modalOverlayContext) return;
+  const rect = modalOverlayCanvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  modalOverlayCanvas.width = Math.max(1, Math.floor(rect.width * dpr));
+  modalOverlayCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  modalOverlayContext.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function renderInstitutionalOverlay({ idea, candles, series }) {
+  if (!modalChart || !modalOverlayCanvas || !modalOverlayContext || !candles.length) return;
+  fitModalOverlayCanvas();
+  const ctx = modalOverlayContext;
+  const width = modalOverlayCanvas.clientWidth;
+  const height = modalOverlayCanvas.clientHeight;
+  ctx.clearRect(0, 0, width, height);
+  const maxIndex = candles.length - 1;
+  const timeScale = modalChart.timeScale();
+  const xAt = (idx) => timeScale.timeToCoordinate(candles[Math.max(0, Math.min(maxIndex, idx))]?.time);
+  const yAt = (price) => series.priceToCoordinate(Number(price));
+  const drawZone = (range, style, label) => {
+    const y1 = yAt(range.high);
+    const y2 = yAt(range.low);
+    const x1 = xAt(range.from_index ?? (maxIndex - 60));
+    const x2 = xAt(range.to_index ?? maxIndex);
+    if (y1 == null || y2 == null || x1 == null || x2 == null) return;
+    const left = Math.min(x1, x2);
+    const top = Math.min(y1, y2);
+    ctx.fillStyle = style.fill;
+    ctx.strokeStyle = style.stroke;
+    ctx.fillRect(left, top, Math.max(6, Math.abs(x2 - x1)), Math.max(4, Math.abs(y2 - y1)));
+    ctx.strokeRect(left, top, Math.max(6, Math.abs(x2 - x1)), Math.max(4, Math.abs(y2 - y1)));
+    ctx.fillStyle = style.stroke;
+    ctx.font = "11px Inter, sans-serif";
+    ctx.fillText(label, left + 4, Math.max(11, top - 3));
+  };
+  const orderBlocks = collectOverlayRanges(idea.order_blocks ?? idea.orderBlocks ?? idea.chart_overlays?.order_blocks).slice(-8);
+  const fvgs = collectOverlayRanges(idea.fvg ?? idea.fair_value_gaps ?? idea.chart_overlays?.fvg).slice(-10);
+  const liquidity = collectOverlayRanges([...(idea.liquidity || []), ...(idea.liquidity_levels || []), ...(idea.chart_overlays?.liquidity || [])]).slice(-10);
+  const structure = collectOverlayRanges(idea.structure_levels ?? idea.chart_overlays?.structure_levels ?? []).slice(-8);
+  const entries = collectOverlayRanges(idea.entry_zones ?? idea.chart_overlays?.entry_zones ?? []).slice(-4);
+  const premiumDiscount = collectOverlayRanges(idea.premium_discount_zones ?? idea.chart_overlays?.premium_discount_zones ?? []).slice(-4);
+  if (modalOverlayVisibility.ob) orderBlocks.forEach((z) => drawZone(z, { fill: "rgba(251,146,60,.15)", stroke: "rgba(251,146,60,.75)" }, "OB"));
+  if (modalOverlayVisibility.fvg) fvgs.forEach((z) => drawZone(z, { fill: "rgba(167,139,250,.12)", stroke: "rgba(196,181,253,.85)" }, "FVG"));
+  if (modalOverlayVisibility.structure) entries.forEach((z) => drawZone(z, { fill: "rgba(45,212,191,.08)", stroke: "rgba(45,212,191,.75)" }, "ENTRY"));
+  if (modalOverlayVisibility.structure) premiumDiscount.forEach((z) => drawZone(z, { fill: "rgba(56,189,248,.06)", stroke: "rgba(56,189,248,.58)" }, "P/D"));
+  const drawLevel = (range, color, label) => {
+    const y = yAt(range.low);
+    if (y == null) return;
+    ctx.strokeStyle = color;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(8, y);
+    ctx.lineTo(width - 8, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = color;
+    ctx.font = "11px Inter, sans-serif";
+    ctx.fillText(label, width - 72, y - 3);
+  };
+  if (modalOverlayVisibility.liquidity) liquidity.slice(0, 5).forEach((r) => drawLevel(r, "rgba(52,211,153,.95)", "LIQ"));
+  if (modalOverlayVisibility.structure) structure.slice(0, 5).forEach((r) => drawLevel(r, "rgba(250,204,21,.95)", "BOS/MSS"));
+  if (modalOverlayVisibility.signals) {
+    const entry = Number(idea.entry ?? idea.entry_price);
+    const y = yAt(entry);
+    const x = xAt(maxIndex) ?? (width - 14);
+    if (Number.isFinite(entry) && y != null) {
+      const c = String(idea.direction || "").toLowerCase().includes("sell") ? "#fb7185" : "#34d399";
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 10, y - 9);
+      ctx.lineTo(x - 10, y + 9);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  modalOverlayState = { redraw: () => renderInstitutionalOverlay({ idea, candles, series }) };
 }
 
 function filterIdeasByProp(ideas) {
