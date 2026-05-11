@@ -42,6 +42,67 @@ def is_stale(timestamp: datetime | str | None) -> bool:
     return (datetime.now(timezone.utc) - timestamp) > ttl
 
 
+def _float_or_none(value: Any) -> float | None:
+    try:
+        if value in (None, "", "—"):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_volume_delta_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    cluster_volume = _float_or_none(payload.get("cluster_volume"))
+    cum_delta = _float_or_none(payload.get("cum_delta") or payload.get("cumulative_delta"))
+    delta_change = _float_or_none(payload.get("delta_change") or payload.get("cluster_delta") or payload.get("delta"))
+    poc_price = _float_or_none(payload.get("poc_price") or payload.get("poc"))
+    hft_spike = bool(payload.get("hft_spike"))
+    absorption_zone = payload.get("absorption_zone") if isinstance(payload.get("absorption_zone"), dict) else {}
+    available = bool(payload.get("volume_delta_available")) or any(
+        value not in (None, 0.0) for value in (cluster_volume, cum_delta, delta_change, poc_price)
+    ) or hft_spike
+
+    if delta_change is not None and delta_change > 0:
+        delta_bias = "bullish"
+    elif delta_change is not None and delta_change < 0:
+        delta_bias = "bearish"
+    elif cum_delta is not None and cum_delta > 0:
+        delta_bias = "bullish"
+    elif cum_delta is not None and cum_delta < 0:
+        delta_bias = "bearish"
+    else:
+        delta_bias = "neutral"
+
+    parts: list[str] = []
+    if available:
+        parts.append("Future Volume / CumDelta получены")
+    if cum_delta is not None:
+        parts.append(f"cum_delta={cum_delta:.2f}")
+    if delta_change is not None:
+        parts.append(f"delta_change={delta_change:.2f}")
+    if cluster_volume is not None:
+        parts.append(f"cluster_volume={cluster_volume:.2f}")
+    if poc_price is not None:
+        parts.append(f"POC={poc_price:.5f}")
+    if hft_spike:
+        parts.append("HFT spike=true")
+
+    return {
+        "available": available,
+        "source": payload.get("volume_source") or "future_volume",
+        "timeframe": payload.get("timeframe"),
+        "cluster_volume": cluster_volume,
+        "cum_delta": cum_delta,
+        "cumulative_delta": cum_delta,
+        "delta_change": delta_change,
+        "poc_price": poc_price,
+        "hft_spike": hft_spike,
+        "absorption_zone": absorption_zone,
+        "delta_bias": delta_bias,
+        "summary_ru": ", ".join(parts) if parts else "Данные CumDelta / delta не получены.",
+    }
+
+
 def save_options_levels(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {"available": False, "reason": "Invalid payload"}
@@ -60,6 +121,7 @@ def save_options_levels(payload: dict[str, Any]) -> dict[str, Any]:
         source_timestamp = source_timestamp.replace(tzinfo=timezone.utc)
 
     now = datetime.now(timezone.utc)
+    volume_delta = _build_volume_delta_snapshot(payload)
     entry = {
         "symbol": symbol,
         "timestamp": (source_timestamp or now).isoformat(),
@@ -69,11 +131,24 @@ def save_options_levels(payload: dict[str, Any]) -> dict[str, Any]:
         "summary": payload.get("summary"),
         "metadata": payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
         "source": payload.get("source") or "mt4_optionsfx",
+        "volume_delta": volume_delta,
+        "volume_delta_available": bool(volume_delta.get("available")),
+        "cum_delta": volume_delta.get("cum_delta"),
+        "cumulative_delta": volume_delta.get("cumulative_delta"),
+        "delta_change": volume_delta.get("delta_change"),
+        "cluster_volume": volume_delta.get("cluster_volume"),
+        "poc_price": volume_delta.get("poc_price"),
+        "hft_spike": volume_delta.get("hft_spike"),
     }
     if symbol:
         _OPTIONS_STORE[symbol] = entry
         _persist_options_store()
-    logger.info("MT4 options levels received symbol=%s count=%s", symbol, len(levels))
+    logger.info(
+        "MT4 options levels received symbol=%s count=%s volume_delta_available=%s",
+        symbol,
+        len(levels),
+        volume_delta.get("available"),
+    )
     return entry
 
 
@@ -148,6 +223,7 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
     target_levels = options_flow.get("targetLevels") or targets
     hedge_levels = options_flow.get("hedgeLevels") or hedges
     derived_levels = options_flow.get("derivedLevels") or []
+    volume_delta = entry.get("volume_delta") if isinstance(entry.get("volume_delta"), dict) else {"available": False}
 
     return {
         "available": bool(levels),
@@ -174,6 +250,16 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
         "targets_below": options_flow.get("targets_below") or [],
         "hedge_above": options_flow.get("hedge_above") or [],
         "hedge_below": options_flow.get("hedge_below") or [],
+        "volume_delta": volume_delta,
+        "volume_delta_available": bool(volume_delta.get("available")),
+        "cum_delta": volume_delta.get("cum_delta"),
+        "cumulative_delta": volume_delta.get("cumulative_delta"),
+        "delta_change": volume_delta.get("delta_change"),
+        "cluster_volume": volume_delta.get("cluster_volume"),
+        "poc_price": volume_delta.get("poc_price"),
+        "hft_spike": volume_delta.get("hft_spike"),
+        "delta_bias": volume_delta.get("delta_bias"),
+        "delta_summary_ru": volume_delta.get("summary_ru"),
         "stale": False,
         "last_updated": entry.get("received_at"),
     }
