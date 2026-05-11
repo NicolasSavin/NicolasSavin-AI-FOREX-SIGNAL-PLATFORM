@@ -19,7 +19,7 @@ class WeightedConfluenceModel:
     Everything else modifies confidence.
     """
 
-    MIN_TRADE_SCORE = 65
+    MIN_TRADE_SCORE = 70
 
     def calculate(
         self,
@@ -43,35 +43,35 @@ class WeightedConfluenceModel:
                 risk_percent=0.0,
             )
 
-        score = 50
+        score = 36
         reasons: List[str] = ["base_setup_valid"]
 
         if smc_alignment:
-            score += 10
+            score += 14
             reasons.append("smc_alignment")
 
         if options_support:
             score += 8
-            reasons.append("options_support")
+            reasons.append("options_cme_support")
 
         if futures_confirmation:
-            score += 6
+            score += 8
             reasons.append("futures_confirmation")
 
         if volume_confirmation:
-            score += 5
+            score += 8
             reasons.append("volume_confirmation")
 
         if htf_aligned:
-            score += 7
+            score += 14
             reasons.append("htf_alignment")
 
         if high_impact_news:
-            score -= 12
+            score -= 8
             reasons.append("high_impact_news_penalty")
 
         if countertrend:
-            score -= 10
+            score -= 12
             reasons.append("countertrend_penalty")
 
         score += ai_adjustment

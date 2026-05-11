@@ -448,7 +448,9 @@ class SignalEngine:
             stop = max(1e-6, abs(price) * 0.95)
         if take <= 0:
             take = max(1e-6, abs(price) * 1.05)
-        rr = abs((take - price) / max(abs(price - stop), 1e-9))
+        risk_value = abs(price - stop) if action == "BUY" else abs(stop - price)
+        reward_value = abs(take - price) if action == "BUY" else abs(price - take)
+        rr = reward_value / max(risk_value, 1e-9)
         smc_package = self._smc_score_package(
             htf_features=htf_features,
             mtf_features=mtf_features,
@@ -480,13 +482,19 @@ class SignalEngine:
         confidence += int(pattern_impact.get("confidenceDelta", 0) or 0)
         confidence = max(25, min(confidence, 92))
 
-        risk = self.risk_engine.validate(
-            rr=rr,
-            confidence_percent=confidence,
-            htf_conflict=trend_conflict,
-            volatility_percent=mtf_features.get("atr_percent", 0.0),
-            min_confidence_percent=PROFESSIONAL_MIN_CONFIDENCE if analysis_mode == "professional" else FALLBACK_MIN_CONFIDENCE,
-        )
+
+        rr_score = self._rr_score(rr)
+        low_rr_blocked = rr < 1.3
+        if low_rr_blocked:
+            risk = {"allowed": False, "reason_ru": "RR ниже 1.3", "status": "blocked_low_rr", "advisor_allowed": False}
+        else:
+            risk = self.risk_engine.validate(
+                rr=rr,
+                confidence_percent=confidence,
+                htf_conflict=trend_conflict,
+                volatility_percent=mtf_features.get("atr_percent", 0.0),
+                min_confidence_percent=PROFESSIONAL_MIN_CONFIDENCE if analysis_mode == "professional" else FALLBACK_MIN_CONFIDENCE,
+            )
         confluence_flags["risk_filter_passed"] = bool(risk.get("allowed"))
         weak_reasons: list[str] = []
         if not has_confluence:
@@ -652,6 +660,8 @@ class SignalEngine:
             "take_profit": round(take, 6),
             "signal_time_utc": signal_time,
             "risk_reward": round(rr, 2),
+            "rr_score": rr_score,
+            "advisor_allowed": bool(risk.get("advisor_allowed", risk.get("allowed"))),
             "distance_to_target_percent": round(abs((take - price) / price) * 100, 3),
             "probability_percent": confidence,
             "confidence_percent": confidence,
@@ -659,7 +669,7 @@ class SignalEngine:
             "smc_grade": smc_package["grade"],
             "smc_factors": smc_package["factors"],
             "trade_permission": trade_permission,
-            "status": status,
+            "status": "blocked_low_rr" if low_rr_blocked else status,
             "lifecycle_state": lifecycle_state,
             "description_ru": (
                 f"{symbol}: {action} по структуре HTF {htf['timeframe']} → MTF {mtf['timeframe']} → LTF {ltf['timeframe']}, "
@@ -800,6 +810,20 @@ class SignalEngine:
             },
         }
         return self._ensure_idea_text_fields(signal_payload)
+
+    @staticmethod
+    def _rr_score(rr: float) -> int:
+        if rr >= 4:
+            return 10
+        if rr >= 3:
+            return 8
+        if rr >= 2:
+            return 6
+        if rr >= 1.5:
+            return 4
+        if rr >= 1:
+            return 2
+        return 0
 
     @staticmethod
     def _options_direction_delta(action: str, options_analysis: dict) -> int:
