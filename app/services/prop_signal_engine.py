@@ -14,16 +14,17 @@ class PropCriterion:
 
 
 PROP_CRITERIA: tuple[PropCriterion, ...] = (
-    PropCriterion("htf", "HTF-направление", 14),
-    PropCriterion("liquidity", "Ликвидность", 14),
-    PropCriterion("structure", "Структура / BOS / ChOCH", 12),
-    PropCriterion("order_block", "Order Block / POI", 12),
+    PropCriterion("htf", "HTF-направление", 13),
+    PropCriterion("liquidity", "Ликвидность", 13),
+    PropCriterion("structure", "Структура / BOS / ChOCH", 11),
+    PropCriterion("order_block", "Order Block / POI", 11),
     PropCriterion("risk_reward", "Risk/Reward", 10),
     PropCriterion("volume", "Объём / tick volume", 8),
     PropCriterion("cum_delta", "CumDelta / delta", 8),
     PropCriterion("options", "Опционы / CME слой", 8),
-    PropCriterion("sentiment", "Sentiment", 6),
-    PropCriterion("news", "Новости / фундаментал", 8),
+    PropCriterion("margin_zones", "Маржинальные / dealer zones", 8),
+    PropCriterion("sentiment", "Sentiment", 5),
+    PropCriterion("news", "Новости / фундаментал", 5),
 )
 
 
@@ -56,6 +57,16 @@ def _text(value: Any) -> str:
             "pseudo_delta_divergence",
             "zone_type",
             "sweep_type",
+            "margin_zone",
+            "margin_zone_type",
+            "dealer_zone",
+            "dealer_bias",
+            "gamma_wall",
+            "max_pain",
+            "breakeven",
+            "premium_zone",
+            "distance_to_margin_zone",
+            "overlap",
         ):
             raw = value.get(key)
             if raw is not None and str(raw).strip():
@@ -269,6 +280,13 @@ def _score_text_presence(text: str, weight: int) -> int:
         "order block",
         "real",
         "mt4",
+        "margin",
+        "dealer",
+        "gamma",
+        "breakeven",
+        "premium",
+        "max pain",
+        "max_pain",
     )
     if any(marker in lowered for marker in strong_markers):
         return weight
@@ -423,6 +441,96 @@ def _cum_delta_score(idea: dict[str, Any], weight: int) -> tuple[int, str]:
     return max(4, round(weight * 0.5)), f"delta получена, но bias нейтральный: {suffix}"
 
 
+def _margin_zone_score(idea: dict[str, Any], weight: int) -> tuple[int, str]:
+    raw = _path_value(
+        idea,
+        "margin_zones",
+        "margin_zone",
+        "dealer_zones",
+        "dealer_zone",
+        "gamma_zones",
+        "premium_discount_zones",
+        "market_context.margin_zones",
+        "market_context.dealer_zones",
+        "market_context.optionsAnalysis.margin_zones",
+        "market_context.optionsAnalysis.dealer_zones",
+        "options_analysis.margin_zones",
+        "options_analysis.dealer_zones",
+        "options_analysis.gamma_zones",
+        "options_analysis.breakeven_zones",
+        "options_analysis.premium_zones",
+        "options_analysis.levels",
+    )
+    text = _text(raw)
+    if not text:
+        text = _first_text(
+            idea,
+            "margin_zones_ru",
+            "dealer_zones_ru",
+            "gamma_zones_ru",
+            "options_analysis.margin_summary_ru",
+            "options_analysis.dealer_summary_ru",
+            "market_context.margin_summary_ru",
+        )
+    if not text:
+        return 0, "нет данных"
+
+    lowered = text.lower()
+    direction = _direction(idea)
+    bullish_markers = (
+        "support",
+        "dealer support",
+        "margin support",
+        "gamma support",
+        "нижн",
+        "поддерж",
+        "buy zone",
+        "demand",
+        "discount",
+    )
+    bearish_markers = (
+        "resistance",
+        "dealer resistance",
+        "margin resistance",
+        "gamma wall",
+        "верхн",
+        "сопротив",
+        "sell zone",
+        "supply",
+        "premium",
+    )
+    overlap_markers = (
+        "overlap",
+        "confluence",
+        "совпад",
+        "слиян",
+        "рядом",
+        "inside",
+        "near",
+        "1/2",
+        "1/4",
+        "3/4",
+        "breakeven",
+        "max pain",
+        "max_pain",
+    )
+    bullish = any(marker in lowered for marker in bullish_markers)
+    bearish = any(marker in lowered for marker in bearish_markers)
+    overlap = any(marker in lowered for marker in overlap_markers)
+
+    if direction == "BUY" and bullish:
+        score = weight if overlap else max(6, round(weight * 0.75))
+        return score, f"margin/dealer зона поддерживает BUY: {text}"
+    if direction == "SELL" and bearish:
+        score = weight if overlap else max(6, round(weight * 0.75))
+        return score, f"margin/dealer зона поддерживает SELL: {text}"
+    if direction == "BUY" and bearish:
+        return max(1, round(weight * 0.25)), f"margin/dealer сопротивление против BUY: {text}"
+    if direction == "SELL" and bullish:
+        return max(1, round(weight * 0.25)), f"margin/dealer поддержка против SELL: {text}"
+    return max(3, round(weight * 0.5)), f"margin/dealer зона найдена, bias нейтральный: {text}"
+
+
 def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     rr_score, rr_reason = _risk_reward_score(idea)
     mapping: dict[str, tuple[str, ...]] = {
@@ -498,6 +606,8 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
             text = rr_reason
         elif criterion.key == "cum_delta":
             score, text = _cum_delta_score(idea, criterion.weight)
+        elif criterion.key == "margin_zones":
+            score, text = _margin_zone_score(idea, criterion.weight)
         else:
             text = _first_text(idea, *mapping.get(criterion.key, ()))
             score = _score_text_presence(text, criterion.weight)
@@ -559,6 +669,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "blockers": blockers,
         "missing_inputs": missing,
         "delta_divergence": next((row["text_ru"] for row in rows if row["key"] == "cum_delta" and "divergence" in str(row["text_ru"]).lower()), None),
+        "margin_zone_confluence": next((row["text_ru"] for row in rows if row["key"] == "margin_zones" and row["status"] != "missing"), None),
         "disclaimer_ru": "Оценка построена только по доступным полям payload; если реальной биржевой delta нет, используется proxy из tick volume.",
     }
 
