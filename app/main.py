@@ -21,7 +21,7 @@ from app.services.htf_context_filter import HtfContextFilter
 from app.services.cme_scraper import get_cme_market_snapshot
 from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
-from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
+from app.services.mt4_volume_cluster_bridge import get_latest_volume_delta, save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.signal_audit_logger import log_signal_audit
@@ -969,6 +969,47 @@ async def api_mt4_volume_clusters(request: Request):
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
+
+
+
+@app.post("/api/mt4/push-volume-delta")
+async def api_mt4_push_volume_delta(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_json"})
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_payload"})
+
+    required = [
+        "symbol",
+        "timeframe",
+        "timestamp",
+        "cum_delta",
+        "delta_change",
+        "cluster_volume",
+        "poc_price",
+        "absorption_zone",
+        "hft_spike",
+        "source",
+    ]
+    missing = [field for field in required if field not in payload]
+    if missing:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "missing_fields", "fields": missing})
+
+    token = str(payload.get("token") or "").strip()
+    if MT4_BRIDGE_TOKEN and token != MT4_BRIDGE_TOKEN:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
+
+    saved = save_volume_cluster_payload(payload)
+    log_signal_audit({
+        "stage": "volume_delta_received",
+        "symbol": saved.get("symbol"),
+        "timeframe": saved.get("timeframe"),
+        "source": saved.get("source"),
+        "timestamp": saved.get("timestamp"),
+    })
+    return {"ok": True, "symbol": saved.get("symbol"), "timeframe": saved.get("timeframe"), "updated_at_utc": now_utc()}
 
 @app.post("/api/mt4/options-levels")
 async def api_mt4_options_levels(request: Request):
@@ -3772,6 +3813,16 @@ def _normalize_quote_signal(signal: dict[str, Any]) -> dict[str, Any]:
     normalized["diagnostics"] = diagnostics
     normalized["candles"] = _format_idea_candles(normalized.get("candles") if isinstance(normalized.get("candles"), list) else [])
     if symbol:
+        volume_delta_snapshot = get_latest_volume_delta(symbol, str(normalized.get("timeframe") or normalized.get("tf") or "M15"))
+        if isinstance(volume_delta_snapshot, dict):
+            normalized["volume_delta"] = volume_delta_snapshot
+            market_context = normalized.get("market_context") if isinstance(normalized.get("market_context"), dict) else {}
+            market_context["volume_delta"] = volume_delta_snapshot
+            normalized["market_context"] = market_context
+            log_signal_audit({"stage": "volume_delta_used", "symbol": symbol, "timeframe": str(normalized.get("timeframe") or normalized.get("tf") or "M15")})
+        else:
+            log_signal_audit({"stage": "volume_delta_missing", "symbol": symbol, "timeframe": str(normalized.get("timeframe") or normalized.get("tf") or "M15")})
+
         options_snapshot = get_latest_options_levels(symbol)
         options_available = bool(options_snapshot.get("available"))
         analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}

@@ -35,6 +35,36 @@ def save_volume_cluster_payload(payload: dict[str, Any]) -> dict[str, Any]:
     symbol = normalize_broker_symbol(payload.get("symbol") or payload.get("broker_symbol"))
     timeframe = str(payload.get("timeframe") or "H1").upper().strip()
     record = dict(payload)
+    if "cum_delta" in record or "delta_change" in record:
+        record.setdefault("delta", {})
+        if isinstance(record["delta"], dict):
+            if "cum_delta" in record and record["cum_delta"] is not None:
+                record["delta"]["cumulative_delta"] = record["cum_delta"]
+            if "delta_change" in record and record["delta_change"] is not None:
+                record["delta"]["delta_change"] = record["delta_change"]
+                if "delta_trend" not in record["delta"]:
+                    try:
+                        change = float(record["delta_change"])
+                        record["delta"]["delta_trend"] = "rising" if change > 0 else "falling" if change < 0 else "flat"
+                    except (TypeError, ValueError):
+                        pass
+    if "poc_price" in record and record.get("poc_price") is not None:
+        record.setdefault("volume_profile", {})
+        if isinstance(record["volume_profile"], dict):
+            record["volume_profile"]["poc"] = record.get("poc_price")
+    if "cluster_volume" in record and record.get("cluster_volume") is not None:
+        record.setdefault("volume_profile", {})
+        if isinstance(record["volume_profile"], dict):
+            record["volume_profile"]["cluster_volume"] = record.get("cluster_volume")
+    if "absorption_zone" in record and record.get("absorption_zone"):
+        record.setdefault("summary", {})
+        if isinstance(record["summary"], dict):
+            record["summary"]["absorption_detected"] = True
+            record["summary"]["absorption_zone"] = record.get("absorption_zone")
+    if "hft_spike" in record:
+        record.setdefault("summary", {})
+        if isinstance(record["summary"], dict):
+            record["summary"]["hft_spike"] = bool(record.get("hft_spike"))
     record["symbol"] = symbol
     record["timeframe"] = timeframe
     record["received_at"] = datetime.now(timezone.utc).isoformat()
@@ -54,3 +84,8 @@ def get_latest_volume_cluster(symbol: str, timeframe: str | None = None) -> dict
     if is_stale(payload.get("timestamp") or payload.get("received_at")):
         return None
     return payload
+
+
+def get_latest_volume_delta(symbol: str, timeframe: str | None = None) -> dict[str, Any] | None:
+    """Backward-compatible alias for external CVD/delta feed readers."""
+    return get_latest_volume_cluster(symbol, timeframe)
