@@ -565,7 +565,11 @@ function buildSignalCard(signal) {
     </div>
 
     <div class="signal-card__footer">
-      <span class="signal-card__meta">R/R: ${signal.risk_reward ?? '—'}</span>
+      <span class="signal-card__meta">R/R: ${signal.risk_reward ?? '—'} (score: ${signal.rr_score ?? '—'})</span>
+      <span class="signal-card__meta">TP distance: ${signal.entry && signal.take_profit ? Math.abs(signal.take_profit - signal.entry).toFixed(5) : '—'}</span>
+      <span class="signal-card__meta">SL distance: ${signal.entry && signal.stop_loss ? Math.abs(signal.entry - signal.stop_loss).toFixed(5) : '—'}</span>
+      <span class="signal-card__meta">Sentiment: Retail ${signal.sentiment?.long_pct ?? '—'}% long • ${signal.sentiment?.contrarian_bias || 'neutral'}</span>
+      <span class="signal-card__meta">News: ${signal.market_context?.news_headline || signal.sentiment?.headline || 'нет данных'}</span>
       <span class="signal-card__meta">ID: ${escapeHtml(signal.signal_id)}</span>
       <span class="signal-card__meta">Обновлено: ${formatUpdatedAt(signal.updated_at_utc)}</span>
     </div>

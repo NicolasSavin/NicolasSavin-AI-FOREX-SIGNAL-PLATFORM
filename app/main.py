@@ -1155,6 +1155,40 @@ def api_news(limit: int = 12):
         }
 
 
+
+@app.get("/api/news-sentiment")
+def api_news_sentiment(limit: int = 12):
+    safe_limit = min(max(limit, 1), 30)
+    news_payload = fetch_public_news(limit=safe_limit)
+    items = news_payload.get("items") or []
+    top = items[0] if items else {}
+    instrument = str(top.get("instrument") or "USD").upper()
+    title = str(top.get("title_ru") or top.get("title_original") or "Market update")
+    impact = str(top.get("importance") or top.get("impact") or "medium").lower()
+    summary_text = f"{title} {top.get('summary_ru') or ''}".lower()
+    bullish_words = ("strong", "рост", "bull", "hawk", "inflation", "cpi")
+    bearish_words = ("weak", "пад", "bear", "dovish", "recession")
+    score = 0.0
+    if any(word in summary_text for word in bullish_words):
+        score += 0.7
+    if any(word in summary_text for word in bearish_words):
+        score -= 0.7
+    score = max(-1.0, min(1.0, score))
+    bias = "neutral"
+    if instrument.startswith("USD") or instrument == "USD":
+        bias = "bullish_usd" if score >= 0.2 else "bearish_usd" if score <= -0.2 else "neutral_usd"
+    risk_mode = "risk_off" if score < -0.2 or impact == "high" else "risk_on" if score > 0.2 else "neutral"
+    return {
+        "impact": impact,
+        "currency": "USD" if "USD" in instrument or instrument == "MARKET" else instrument[:3],
+        "bias": bias,
+        "risk_mode": risk_mode,
+        "sentiment_score": round(score, 2),
+        "headline": title,
+        "sources": ["ForexFactory", "Investing", "FRED", "NewsAPI/OpenAI summary"],
+        "updated_at_utc": now_utc(),
+    }
+
 @app.get("/api/live-price/{symbol}")
 def api_live_price(symbol: str):
     return get_price(symbol)
