@@ -16,7 +16,7 @@ class PropCriterion:
 PROP_CRITERIA: tuple[PropCriterion, ...] = (
     PropCriterion("htf", "HTF-направление", 14),
     PropCriterion("liquidity", "Ликвидность", 14),
-    PropCriterion("structure", "Структура / BOS / CHoCH", 12),
+    PropCriterion("structure", "Структура / BOS / ChOCH", 12),
     PropCriterion("order_block", "Order Block / POI", 12),
     PropCriterion("risk_reward", "Risk/Reward", 10),
     PropCriterion("volume", "Объём / tick volume", 8),
@@ -52,6 +52,8 @@ def _text(value: Any) -> str:
             "cumulative_delta",
             "delta_change",
             "delta_bias",
+            "delta_divergence",
+            "pseudo_delta_divergence",
             "zone_type",
             "sweep_type",
         ):
@@ -98,6 +100,119 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _extract_candles(idea: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = _path_value(
+        idea,
+        "candles",
+        "ohlc",
+        "market_data.candles",
+        "market_context.candles",
+        "market_context.ohlc",
+        "features.candles",
+        "data.candles",
+        "chart.candles",
+    )
+    if not isinstance(raw, list):
+        return []
+    candles: list[dict[str, Any]] = []
+    for item in raw[-120:]:
+        if not isinstance(item, dict):
+            continue
+        open_price = _to_float(item.get("open") or item.get("o"))
+        high = _to_float(item.get("high") or item.get("h"))
+        low = _to_float(item.get("low") or item.get("l"))
+        close = _to_float(item.get("close") or item.get("c"))
+        volume = _to_float(item.get("volume") or item.get("tick_volume") or item.get("v"))
+        if None in (open_price, high, low, close):
+            continue
+        candles.append(
+            {
+                "open": open_price,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": float(volume if volume is not None else 1.0),
+            }
+        )
+    return candles
+
+
+def _find_swings(candles: list[dict[str, Any]], field: str) -> list[tuple[int, float]]:
+    swings: list[tuple[int, float]] = []
+    if len(candles) < 7:
+        return swings
+    for index in range(2, len(candles) - 2):
+        value = candles[index][field]
+        prev_values = (candles[index - 1][field], candles[index - 2][field])
+        next_values = (candles[index + 1][field], candles[index + 2][field])
+        if field == "high" and value >= max(prev_values) and value >= max(next_values):
+            swings.append((index, value))
+        elif field == "low" and value <= min(prev_values) and value <= min(next_values):
+            swings.append((index, value))
+    return swings[-6:]
+
+
+def _pseudo_delta_from_candles(idea: dict[str, Any]) -> dict[str, Any]:
+    candles = _extract_candles(idea)
+    if len(candles) < 12:
+        return {"available": False, "reason": "not_enough_candles"}
+
+    cumulative: list[float] = []
+    running = 0.0
+    for candle in candles:
+        body = candle["close"] - candle["open"]
+        spread = max(abs(candle["high"] - candle["low"]), 1e-12)
+        body_ratio = max(min(body / spread, 1.0), -1.0)
+        signed_delta = body_ratio * max(candle["volume"], 1.0)
+        running += signed_delta
+        cumulative.append(running)
+
+    high_swings = _find_swings(candles, "high")
+    low_swings = _find_swings(candles, "low")
+    divergence = "none"
+    bias = "neutral"
+    reason = "pseudo delta рассчитана из направления свечей и tick volume"
+
+    if len(high_swings) >= 2:
+        prev_idx, prev_high = high_swings[-2]
+        last_idx, last_high = high_swings[-1]
+        prev_cum = cumulative[prev_idx]
+        last_cum = cumulative[last_idx]
+        if last_high > prev_high and last_cum < prev_cum:
+            divergence = "bearish"
+            bias = "bearish"
+            reason = f"bearish divergence: price HH {prev_high:.5f}->{last_high:.5f}, pseudo CumDelta LH {prev_cum:.2f}->{last_cum:.2f}"
+
+    if divergence == "none" and len(low_swings) >= 2:
+        prev_idx, prev_low = low_swings[-2]
+        last_idx, last_low = low_swings[-1]
+        prev_cum = cumulative[prev_idx]
+        last_cum = cumulative[last_idx]
+        if last_low < prev_low and last_cum > prev_cum:
+            divergence = "bullish"
+            bias = "bullish"
+            reason = f"bullish divergence: price LL {prev_low:.5f}->{last_low:.5f}, pseudo CumDelta HL {prev_cum:.2f}->{last_cum:.2f}"
+
+    if bias == "neutral":
+        delta_tail = cumulative[-1] - cumulative[max(0, len(cumulative) - 6)]
+        if delta_tail > 0:
+            bias = "bullish"
+        elif delta_tail < 0:
+            bias = "bearish"
+
+    return {
+        "available": True,
+        "source": "pseudo_delta_from_tick_volume",
+        "cum_delta": cumulative[-1],
+        "cumulative_delta": cumulative[-1],
+        "delta_change": cumulative[-1] - cumulative[-2] if len(cumulative) > 1 else 0.0,
+        "delta_bias": bias,
+        "divergence": divergence,
+        "pseudo_delta_divergence": divergence,
+        "summary_ru": reason,
+    }
 
 
 def _direction(idea: dict[str, Any]) -> str:
@@ -199,6 +314,12 @@ def _delta_snapshot(idea: dict[str, Any]) -> dict[str, Any]:
             "market_context.delta_bias",
             "market_context.optionsAnalysis.delta_bias",
         ),
+        "divergence": (
+            "delta_divergence",
+            "pseudo_delta_divergence",
+            "options_analysis.delta_divergence",
+            "market_context.delta_divergence",
+        ),
         "hft_spike": (
             "hft_spike",
             "options_analysis.hft_spike",
@@ -215,9 +336,23 @@ def _delta_snapshot(idea: dict[str, Any]) -> dict[str, Any]:
             value = _path_value(idea, *paths)
             if value not in (None, "", "—"):
                 snapshot[key] = value
+
     cum_delta = _to_float(snapshot.get("cum_delta") or snapshot.get("cumulative_delta"))
     delta_change = _to_float(snapshot.get("delta_change") or snapshot.get("delta") or snapshot.get("cluster_delta"))
     raw_bias = str(snapshot.get("delta_bias") or "").strip().lower()
+    divergence = str(snapshot.get("divergence") or snapshot.get("pseudo_delta_divergence") or "none").strip().lower()
+    available = bool(snapshot.get("available")) or any(value not in (None, 0.0) for value in (cum_delta, delta_change))
+
+    if not available:
+        pseudo = _pseudo_delta_from_candles(idea)
+        if pseudo.get("available"):
+            snapshot.update(pseudo)
+            cum_delta = _to_float(pseudo.get("cum_delta"))
+            delta_change = _to_float(pseudo.get("delta_change"))
+            raw_bias = str(pseudo.get("delta_bias") or "neutral").lower()
+            divergence = str(pseudo.get("divergence") or "none").lower()
+            available = True
+
     if raw_bias not in {"bullish", "bearish", "neutral"}:
         if delta_change is not None and delta_change > 0:
             raw_bias = "bullish"
@@ -229,7 +364,7 @@ def _delta_snapshot(idea: dict[str, Any]) -> dict[str, Any]:
             raw_bias = "bearish"
         else:
             raw_bias = "neutral"
-    available = bool(snapshot.get("available")) or any(value not in (None, 0.0) for value in (cum_delta, delta_change))
+
     return {
         **snapshot,
         "available": available,
@@ -237,6 +372,8 @@ def _delta_snapshot(idea: dict[str, Any]) -> dict[str, Any]:
         "cumulative_delta": cum_delta,
         "delta_change": delta_change,
         "delta_bias": raw_bias,
+        "divergence": divergence,
+        "pseudo_delta_divergence": divergence if snapshot.get("source") == "pseudo_delta_from_tick_volume" else snapshot.get("pseudo_delta_divergence"),
         "hft_spike": bool(snapshot.get("hft_spike")),
     }
 
@@ -247,26 +384,40 @@ def _cum_delta_score(idea: dict[str, Any], weight: int) -> tuple[int, str]:
         return 0, "нет данных"
     direction = _direction(idea)
     bias = str(snap.get("delta_bias") or "neutral").lower()
+    divergence = str(snap.get("divergence") or "none").lower()
     cum_delta = snap.get("cum_delta")
     delta_change = snap.get("delta_change")
     hft = bool(snap.get("hft_spike"))
+    source = str(snap.get("source") or "delta")
     details = []
     if cum_delta is not None:
         details.append(f"CumDelta {cum_delta:.2f}")
     if delta_change is not None:
         details.append(f"Delta change {delta_change:.2f}")
+    if divergence in {"bullish", "bearish"}:
+        details.append(f"{divergence} divergence")
     if hft:
         details.append("HFT spike")
+    if source == "pseudo_delta_from_tick_volume":
+        details.append("proxy=tick volume")
     suffix = "; ".join(details) if details else str(snap.get("summary_ru") or "delta data received")
 
+    if direction == "BUY" and divergence == "bullish":
+        return weight, f"bullish pseudo/CumDelta divergence подтверждает BUY: {suffix}"
+    if direction == "SELL" and divergence == "bearish":
+        return weight, f"bearish pseudo/CumDelta divergence подтверждает SELL: {suffix}"
+    if direction == "BUY" and divergence == "bearish":
+        return max(1, round(weight * 0.2)), f"bearish delta divergence против BUY: {suffix}"
+    if direction == "SELL" and divergence == "bullish":
+        return max(1, round(weight * 0.2)), f"bullish delta divergence против SELL: {suffix}"
     if direction == "BUY" and bias == "bullish":
         return weight, f"delta подтверждает BUY: {suffix}"
     if direction == "SELL" and bias == "bearish":
         return weight, f"delta подтверждает SELL: {suffix}"
     if direction == "BUY" and bias == "bearish":
-        return max(2, round(weight * 0.25)), f"bearish delta divergence против BUY: {suffix}"
+        return max(2, round(weight * 0.25)), f"bearish delta против BUY: {suffix}"
     if direction == "SELL" and bias == "bullish":
-        return max(2, round(weight * 0.25)), f"bullish delta divergence против SELL: {suffix}"
+        return max(2, round(weight * 0.25)), f"bullish delta против SELL: {suffix}"
     if hft:
         return max(5, round(weight * 0.65)), f"HFT/volume event без явного bias: {suffix}"
     return max(4, round(weight * 0.5)), f"delta получена, но bias нейтральный: {suffix}"
@@ -408,7 +559,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "blockers": blockers,
         "missing_inputs": missing,
         "delta_divergence": next((row["text_ru"] for row in rows if row["key"] == "cum_delta" and "divergence" in str(row["text_ru"]).lower()), None),
-        "disclaimer_ru": "Оценка построена только по доступным полям payload; отсутствующие данные не подменяются синтетикой.",
+        "disclaimer_ru": "Оценка построена только по доступным полям payload; если реальной биржевой delta нет, используется proxy из tick volume.",
     }
 
 
