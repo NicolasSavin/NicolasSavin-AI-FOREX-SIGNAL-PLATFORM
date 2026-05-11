@@ -50,6 +50,8 @@ def _text(value: Any) -> str:
             "delta",
             "cum_delta",
             "cumulative_delta",
+            "delta_change",
+            "delta_bias",
             "zone_type",
             "sweep_type",
         ):
@@ -74,6 +76,19 @@ def _first_text(idea: dict[str, Any], *paths: str) -> str:
         if text and text.lower() not in {"none", "null", "нет", "нет данных", "—"}:
             return text
     return ""
+
+
+def _path_value(idea: dict[str, Any], *paths: str) -> Any:
+    for path in paths:
+        current: Any = idea
+        for part in path.split("."):
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(part)
+        if current not in (None, "", "—"):
+            return current
+    return None
 
 
 def _to_float(value: Any) -> float | None:
@@ -145,6 +160,118 @@ def _score_text_presence(text: str, weight: int) -> int:
     return max(2, round(weight * 0.65))
 
 
+def _delta_snapshot(idea: dict[str, Any]) -> dict[str, Any]:
+    raw = _path_value(
+        idea,
+        "volume_delta",
+        "options_analysis.volume_delta",
+        "market_context.volumeDelta",
+        "market_context.volume_delta",
+        "market_context.optionsAnalysis.volume_delta",
+        "volume_cluster.volume_delta",
+    )
+    snapshot = dict(raw) if isinstance(raw, dict) else {}
+    for key, paths in {
+        "available": (
+            "volume_delta_available",
+            "options_analysis.volume_delta_available",
+            "market_context.optionsAnalysis.volume_delta_available",
+        ),
+        "cum_delta": (
+            "cum_delta",
+            "cumulative_delta",
+            "options_analysis.cum_delta",
+            "options_analysis.cumulative_delta",
+            "market_context.cum_delta",
+            "market_context.optionsAnalysis.cum_delta",
+        ),
+        "delta_change": (
+            "delta_change",
+            "delta",
+            "cluster_delta",
+            "options_analysis.delta_change",
+            "market_context.delta_change",
+            "market_context.optionsAnalysis.delta_change",
+        ),
+        "delta_bias": (
+            "delta_bias",
+            "options_analysis.delta_bias",
+            "market_context.delta_bias",
+            "market_context.optionsAnalysis.delta_bias",
+        ),
+        "hft_spike": (
+            "hft_spike",
+            "options_analysis.hft_spike",
+            "market_context.optionsAnalysis.hft_spike",
+        ),
+        "summary_ru": (
+            "delta_summary_ru",
+            "cum_delta_ru",
+            "options_analysis.delta_summary_ru",
+            "market_context.optionsAnalysis.delta_summary_ru",
+        ),
+    }.items():
+        if key not in snapshot or snapshot.get(key) in (None, "", "—"):
+            value = _path_value(idea, *paths)
+            if value not in (None, "", "—"):
+                snapshot[key] = value
+    cum_delta = _to_float(snapshot.get("cum_delta") or snapshot.get("cumulative_delta"))
+    delta_change = _to_float(snapshot.get("delta_change") or snapshot.get("delta") or snapshot.get("cluster_delta"))
+    raw_bias = str(snapshot.get("delta_bias") or "").strip().lower()
+    if raw_bias not in {"bullish", "bearish", "neutral"}:
+        if delta_change is not None and delta_change > 0:
+            raw_bias = "bullish"
+        elif delta_change is not None and delta_change < 0:
+            raw_bias = "bearish"
+        elif cum_delta is not None and cum_delta > 0:
+            raw_bias = "bullish"
+        elif cum_delta is not None and cum_delta < 0:
+            raw_bias = "bearish"
+        else:
+            raw_bias = "neutral"
+    available = bool(snapshot.get("available")) or any(value not in (None, 0.0) for value in (cum_delta, delta_change))
+    return {
+        **snapshot,
+        "available": available,
+        "cum_delta": cum_delta,
+        "cumulative_delta": cum_delta,
+        "delta_change": delta_change,
+        "delta_bias": raw_bias,
+        "hft_spike": bool(snapshot.get("hft_spike")),
+    }
+
+
+def _cum_delta_score(idea: dict[str, Any], weight: int) -> tuple[int, str]:
+    snap = _delta_snapshot(idea)
+    if not snap.get("available"):
+        return 0, "нет данных"
+    direction = _direction(idea)
+    bias = str(snap.get("delta_bias") or "neutral").lower()
+    cum_delta = snap.get("cum_delta")
+    delta_change = snap.get("delta_change")
+    hft = bool(snap.get("hft_spike"))
+    details = []
+    if cum_delta is not None:
+        details.append(f"CumDelta {cum_delta:.2f}")
+    if delta_change is not None:
+        details.append(f"Delta change {delta_change:.2f}")
+    if hft:
+        details.append("HFT spike")
+    suffix = "; ".join(details) if details else str(snap.get("summary_ru") or "delta data received")
+
+    if direction == "BUY" and bias == "bullish":
+        return weight, f"delta подтверждает BUY: {suffix}"
+    if direction == "SELL" and bias == "bearish":
+        return weight, f"delta подтверждает SELL: {suffix}"
+    if direction == "BUY" and bias == "bearish":
+        return max(2, round(weight * 0.25)), f"bearish delta divergence против BUY: {suffix}"
+    if direction == "SELL" and bias == "bullish":
+        return max(2, round(weight * 0.25)), f"bullish delta divergence против SELL: {suffix}"
+    if hft:
+        return max(5, round(weight * 0.65)), f"HFT/volume event без явного bias: {suffix}"
+    return max(4, round(weight * 0.5)), f"delta получена, но bias нейтральный: {suffix}"
+
+
 def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     rr_score, rr_reason = _risk_reward_score(idea)
     mapping: dict[str, tuple[str, ...]] = {
@@ -192,26 +319,11 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
             "volume_clusters",
             "cluster_volume",
             "tick_volume",
+            "options_analysis.cluster_volume",
+            "options_analysis.volume_delta.cluster_volume",
             "data_status",
             "market_context.volumeCluster",
             "market_context.volume_cluster",
-        ),
-        "cum_delta": (
-            "cum_delta_ru",
-            "cumDelta",
-            "cum_delta",
-            "cumulative_delta",
-            "delta",
-            "delta_ru",
-            "delta_bias",
-            "cluster_delta",
-            "volume_delta",
-            "volume_cluster.delta",
-            "volume_cluster.cum_delta",
-            "volume_cluster.cumulative_delta",
-            "market_context.delta",
-            "market_context.cum_delta",
-            "market_context.volumeDelta",
         ),
         "options": (
             "options_ru",
@@ -233,6 +345,8 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
         if criterion.key == "risk_reward":
             score = rr_score
             text = rr_reason
+        elif criterion.key == "cum_delta":
+            score, text = _cum_delta_score(idea, criterion.weight)
         else:
             text = _first_text(idea, *mapping.get(criterion.key, ()))
             score = _score_text_presence(text, criterion.weight)
@@ -293,6 +407,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "criteria": rows,
         "blockers": blockers,
         "missing_inputs": missing,
+        "delta_divergence": next((row["text_ru"] for row in rows if row["key"] == "cum_delta" and "divergence" in str(row["text_ru"]).lower()), None),
         "disclaimer_ru": "Оценка построена только по доступным полям payload; отсутствующие данные не подменяются синтетикой.",
     }
 
