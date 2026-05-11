@@ -18,6 +18,8 @@ let modalOverlayCanvas = null;
 let modalOverlayContext = null;
 let modalOverlayState = null;
 let modalOverlayVisibility = { fvg: true, ob: true, liquidity: true, structure: true, signals: true };
+let modalResizeHandler = null;
+let modalFullscreenHandler = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -497,7 +499,10 @@ function openIdeaModal(idea) {
     </section>`;
   modal.classList.add("open");
   document.body.style.overflow = "hidden";
-  requestAnimationFrame(() => renderModalChart(idea));
+  requestAnimationFrame(() => {
+    ensureModalToolbar(idea);
+    renderModalChart(idea);
+  });
 }
 
 function createIdeasModal() {
@@ -534,11 +539,20 @@ function closeIdeaModal() {
     modalOverlayContext = null;
     modalOverlayState = null;
   }
+  if (modalResizeHandler) {
+    window.removeEventListener("resize", modalResizeHandler);
+    modalResizeHandler = null;
+  }
+  if (modalFullscreenHandler) {
+    document.removeEventListener("fullscreenchange", modalFullscreenHandler);
+    modalFullscreenHandler = null;
+  }
 }
 
 function renderModalChart(idea) {
   const container = document.getElementById("ideaModalChart");
   if (!container || !("LightweightCharts" in window)) return;
+  ensureModalToolbar(idea);
   container.style.position = "relative";
   const candles = collectCandles(idea).map(normalizeCandle).filter((c) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close));
   if (candles.length < 2) {
@@ -610,18 +624,23 @@ function renderModalChart(idea) {
 
   modalChart.timeScale().fitContent();
   renderInstitutionalOverlay({ idea, candles, series });
-  const redraw = () => renderInstitutionalOverlay({ idea, candles, series });
+  const redraw = () => {
+    renderInstitutionalOverlay({ idea, candles, series });
+    modalChart?.resize(container.clientWidth, container.clientHeight);
+  };
   modalChart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
   modalChart.timeScale().subscribeVisibleTimeRangeChange(redraw);
-  window.addEventListener("resize", redraw, { passive: true });
+  if (modalResizeHandler) window.removeEventListener("resize", modalResizeHandler);
+  modalResizeHandler = redraw;
+  window.addEventListener("resize", modalResizeHandler, { passive: true });
 }
 
 function mountOverlayControls(container) {
   const old = container.querySelector(".smc-overlay-toggles");
-  if (old) old.remove();
+  if (old) return old;
   const controls = document.createElement("div");
   controls.className = "smc-overlay-toggles";
-  controls.style.cssText = "position:absolute;top:8px;left:8px;z-index:40;display:flex;gap:6px;flex-wrap:wrap;";
+  controls.style.cssText = "position:absolute;top:10px;left:10px;z-index:90;display:flex;gap:6px;flex-wrap:wrap;";
   const items = [
     { key: "fvg", label: "FVG" },
     { key: "ob", label: "OB" },
@@ -643,6 +662,67 @@ function mountOverlayControls(container) {
     controls.appendChild(btn);
   });
   container.appendChild(controls);
+  return controls;
+}
+
+function ensureModalToolbar(idea) {
+  const modal = document.getElementById("ideasModal");
+  const chartArea = modal?.querySelector(".chart-area");
+  if (!chartArea) return;
+  chartArea.style.position = "relative";
+  let toolbar = chartArea.querySelector(".modal-chart-toolbar");
+  if (!toolbar) {
+    toolbar = document.createElement("div");
+    toolbar.className = "modal-chart-toolbar";
+    toolbar.style.cssText = "position:absolute;top:10px;right:10px;z-index:95;display:flex;gap:6px;flex-wrap:wrap;";
+    chartArea.appendChild(toolbar);
+  }
+  const ensureBtn = (key, label, onClick) => {
+    let btn = toolbar.querySelector(`[data-toolbar-btn=\"${key}\"]`);
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.toolbarBtn = key;
+      btn.style.cssText = "border:1px solid rgba(150,190,255,.35);background:rgba(4,17,31,.78);color:#e7f0ff;border-radius:10px;padding:4px 8px;font-size:11px;cursor:pointer;";
+      toolbar.appendChild(btn);
+    }
+    btn.textContent = label;
+    btn.onclick = onClick;
+    return btn;
+  };
+  ensureBtn("fullscreen", "⛶ Fullscreen", () => toggleModalFullscreen(chartArea));
+  [["ob", "OB"], ["fvg", "FVG"], ["liquidity", "Liquidity"], ["signals", "Signals"]].forEach(([key, label]) => {
+    const btn = ensureBtn(`toggle-${key}`, label, () => {
+      modalOverlayVisibility[key] = !modalOverlayVisibility[key];
+      btn.style.opacity = modalOverlayVisibility[key] ? "1" : "0.45";
+      modalOverlayState?.redraw?.();
+    });
+    btn.style.opacity = modalOverlayVisibility[key] ? "1" : "0.45";
+  });
+  if (!modalFullscreenHandler) {
+    modalFullscreenHandler = () => {
+      const target = document.fullscreenElement === chartArea ? chartArea : null;
+      if (!target) return;
+      const chartContainer = chartArea.querySelector("#ideaModalChart");
+      if (chartContainer) {
+        chartContainer.style.height = "100vh";
+        modalChart?.resize(chartContainer.clientWidth, chartContainer.clientHeight);
+      }
+    };
+    document.addEventListener("fullscreenchange", modalFullscreenHandler);
+  }
+}
+
+async function toggleModalFullscreen(element) {
+  try {
+    if (document.fullscreenElement === element) {
+      await document.exitFullscreen();
+    } else if (!document.fullscreenElement) {
+      await element.requestFullscreen();
+    }
+    const chartContainer = element.querySelector("#ideaModalChart");
+    if (chartContainer) modalChart?.resize(chartContainer.clientWidth, chartContainer.clientHeight);
+  } catch {}
 }
 
 function ensureModalOverlayCanvas(container) {
@@ -673,6 +753,13 @@ function renderInstitutionalOverlay({ idea, candles, series }) {
   const timeScale = modalChart.timeScale();
   const xAt = (idx) => timeScale.timeToCoordinate(candles[Math.max(0, Math.min(maxIndex, idx))]?.time);
   const yAt = (price) => series.priceToCoordinate(Number(price));
+  const usedLabelY = [];
+  const allocateLabelY = (preferred) => {
+    let y = preferred;
+    while (usedLabelY.some((v) => Math.abs(v - y) < 14)) y += 14;
+    usedLabelY.push(y);
+    return y;
+  };
   const drawZone = (range, style, label) => {
     const y1 = yAt(range.high);
     const y2 = yAt(range.low);
@@ -687,12 +774,18 @@ function renderInstitutionalOverlay({ idea, candles, series }) {
     ctx.strokeRect(left, top, Math.max(6, Math.abs(x2 - x1)), Math.max(4, Math.abs(y2 - y1)));
     ctx.fillStyle = style.stroke;
     ctx.font = "11px Inter, sans-serif";
-    ctx.fillText(label, left + 4, Math.max(11, top - 3));
+    const labelY = allocateLabelY(Math.max(11, top - 3));
+    ctx.fillText(label, left + 4, labelY);
   };
-  const orderBlocks = collectOverlayRanges(idea.order_blocks ?? idea.orderBlocks ?? idea.chart_overlays?.order_blocks).slice(-8);
-  const fvgs = collectOverlayRanges(idea.fvg ?? idea.fair_value_gaps ?? idea.chart_overlays?.fvg).slice(-10);
-  const liquidity = collectOverlayRanges([...(idea.liquidity || []), ...(idea.liquidity_levels || []), ...(idea.chart_overlays?.liquidity || [])]).slice(-10);
-  const structure = collectOverlayRanges(idea.structure_levels ?? idea.chart_overlays?.structure_levels ?? []).slice(-8);
+  const priceNow = Number(idea.entry ?? idea.entry_price ?? candles[candles.length - 1]?.close ?? 0);
+  const byPriority = (ranges, limit) => ranges
+    .map((r) => ({ ...r, _dist: Math.abs(((r.low + r.high) / 2) - priceNow) }))
+    .sort((a, b) => a._dist - b._dist)
+    .slice(0, limit);
+  const orderBlocks = byPriority(collectOverlayRanges(idea.order_blocks ?? idea.orderBlocks ?? idea.chart_overlays?.order_blocks), 6);
+  const fvgs = byPriority(collectOverlayRanges(idea.fvg ?? idea.fair_value_gaps ?? idea.chart_overlays?.fvg), 7);
+  const liquidity = byPriority(collectOverlayRanges([...(idea.liquidity || []), ...(idea.liquidity_levels || []), ...(idea.chart_overlays?.liquidity || [])]), 6);
+  const structure = byPriority(collectOverlayRanges(idea.structure_levels ?? idea.chart_overlays?.structure_levels ?? []), 5);
   const entries = collectOverlayRanges(idea.entry_zones ?? idea.chart_overlays?.entry_zones ?? []).slice(-4);
   const premiumDiscount = collectOverlayRanges(idea.premium_discount_zones ?? idea.chart_overlays?.premium_discount_zones ?? []).slice(-4);
   if (modalOverlayVisibility.ob) orderBlocks.forEach((z) => drawZone(z, { fill: "rgba(251,146,60,.15)", stroke: "rgba(251,146,60,.75)" }, "OB"));
