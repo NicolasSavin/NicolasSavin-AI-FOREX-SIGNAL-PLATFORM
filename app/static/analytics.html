@@ -6,296 +6,33 @@
 <title>AI Аналитика</title>
 <link rel="stylesheet" href="/static/styles.css" />
 <style>
-:root{
-  --bg:#040915;
-  --bg-soft:#0a1427;
-  --text:#e8f1ff;
-  --muted:#90a4c3;
-  --line:rgba(92, 170, 255, .36);
-  --line-strong:rgba(79, 197, 255, .9);
-  --glass:linear-gradient(155deg,rgba(9,19,36,.95),rgba(10,30,53,.86));
-  --card:linear-gradient(140deg,rgba(22,42,79,.68),rgba(11,23,47,.88));
-  --neon:0 0 0 1px rgba(72,180,255,.42),0 18px 42px rgba(2,8,25,.52),0 0 25px rgba(72,180,255,.16);
-}
-*{box-sizing:border-box}
-body{background:radial-gradient(circle at 15% 0%, #11254a 0%, #071123 35%, #030711 100%);color:var(--text)}
-.analytics-shell{width:min(1320px,calc(100% - 32px));margin:0 auto;padding:28px 0 44px;display:grid;gap:18px}
-.analytics-header,.analytics-panel{backdrop-filter:blur(18px);background:var(--glass);border:1px solid var(--line);border-radius:28px;box-shadow:var(--neon)}
-.analytics-header{padding:28px;display:grid;gap:16px}
-.analytics-headline h1{margin:0;font-size:clamp(1.8rem,3.5vw,2.8rem)}
-.analytics-headline p{margin:8px 0 0;color:var(--muted);max-width:820px;line-height:1.6}
-.eyebrow{margin:0;text-transform:uppercase;letter-spacing:.22em;font-size:.72rem;color:#56d8ff}
-.analytics-grid{display:grid;grid-template-columns:1fr;gap:18px}
-.analytics-panel{padding:22px}
-.panel-title{margin:0 0 8px;font-size:1.35rem}
-.panel-subtitle{margin:0 0 20px;color:var(--muted)}
-.cards-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-.fundamental-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px;padding:10px 14px;border:1px solid rgba(77,177,255,.36);border-radius:14px;background:rgba(7,18,36,.68)}
-.toggle-label{font-size:.92rem;color:#c8ddff}
-.toggle-switch{position:relative;display:inline-flex;align-items:center;width:52px;height:30px;border-radius:999px;border:1px solid rgba(95,182,255,.45);background:rgba(20,35,58,.9);box-shadow:0 0 12px rgba(72,180,255,.2);cursor:pointer;transition:all .2s}
-.toggle-switch .knob{position:absolute;left:4px;width:20px;height:20px;border-radius:999px;background:#9ccfff;box-shadow:0 0 10px rgba(156,207,255,.55);transition:all .2s}
-.toggle-switch.active{background:rgba(18,70,108,.9);border-color:#6eddff;box-shadow:0 0 18px rgba(91,220,255,.4)}
-.toggle-switch.active .knob{left:26px;background:#76f2ff;box-shadow:0 0 14px rgba(118,242,255,.8)}
-.toggle-state{font-size:.78rem;color:#99b5de;min-width:34px;text-align:right}
-.fundamental-badge{display:inline-flex;align-items:center;gap:6px;margin-left:10px;padding:4px 10px;border-radius:999px;border:1px solid rgba(95,224,255,.45);background:rgba(9,48,66,.45);color:#bff7ff;font-size:.78rem;box-shadow:0 0 15px rgba(95,224,255,.24)}
-.pair-card{border:none;border-radius:16px;padding:12px;cursor:pointer;text-align:left;background:var(--card);border:1px solid rgba(75,183,255,.42);box-shadow:var(--neon);color:var(--text);transition:transform .2s, border-color .2s, box-shadow .2s;min-height:108px;display:grid;gap:6px}
-.pair-card:hover{transform:translateY(-2px);border-color:var(--line-strong);box-shadow:0 0 0 1px rgba(90,205,255,.7),0 24px 46px rgba(1,7,22,.6),0 0 35px rgba(90,205,255,.24)}
-.pair-card.active{border-color:#7addff;box-shadow:0 0 0 1px #5edbff,0 28px 54px rgba(1,7,22,.7),0 0 38px rgba(94,219,255,.3)}
-.pair-card.loading{opacity:.8;pointer-events:none;position:relative}
-.pair-card.loading .pair-action{color:#7addff}
-.pair-card.loading .pair-action::after{content:"..."}
-.pair-name{margin:0;font-size:1.15rem;letter-spacing:.03em}
-.pair-status{display:inline-flex;align-items:center;gap:8px;font-size:.8rem;color:#b5c9e8}
-.pair-status::before{content:"";width:7px;height:7px;border-radius:999px;background:#57e8ff;box-shadow:0 0 10px #57e8ff}
-.pair-text{margin:0;color:#98acd0;line-height:1.35;font-size:.85rem}
-.pair-action{margin-top:auto;font-weight:700;color:#bfefff;display:inline-flex;align-items:center;gap:8px}
-.pair-action::after{content:"→"}
-.status{font-size:.95rem;color:var(--muted)}
-.response{margin-top:12px;border-radius:18px;background:rgba(6,15,30,.82);border:1px solid rgba(103,157,219,.28);padding:22px;min-height:500px;max-height:none;overflow:auto}
-.result-article{margin:0;color:#d7e6ff;white-space:pre-wrap;line-height:1.72;font-size:1rem}
-.notice{color:#9fb5d6}
-.followup-box{margin-top:16px;padding:14px;border:1px solid rgba(77,177,255,.3);border-radius:14px;background:rgba(8,18,36,.65)}
-.followup-title{margin:0 0 8px;font-size:1rem}
-.followup-row{display:grid;grid-template-columns:1fr auto;gap:10px}
-.followup-input{width:100%;border:1px solid rgba(112,168,233,.35);background:rgba(7,15,30,.9);color:#dff0ff;padding:10px 12px;border-radius:10px}
-.followup-btn{border:1px solid rgba(101,206,255,.5);background:linear-gradient(120deg,rgba(26,95,136,.95),rgba(31,140,169,.95));color:#eaffff;font-weight:700;padding:0 14px;border-radius:10px;cursor:pointer}
-.followup-btn:disabled{opacity:.55;cursor:not-allowed}
-.followup-answer{margin-top:10px;color:#b9d7ff;line-height:1.5;white-space:pre-wrap;font-size:.92rem}
-@media (max-width:1024px){.cards-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.response{min-height:420px}}
-@media (max-width:680px){.cards-grid{grid-template-columns:1fr}.analytics-shell{width:min(1320px,calc(100% - 20px));padding-top:16px}}
+:root{--bg:#040915;--bg-soft:#0a1427;--text:#e8f1ff;--muted:#90a4c3;--line:rgba(92,170,255,.36);--line-strong:rgba(79,197,255,.9);--glass:linear-gradient(155deg,rgba(9,19,36,.95),rgba(10,30,53,.86));--card:linear-gradient(140deg,rgba(22,42,79,.68),rgba(11,23,47,.88));--neon:0 0 0 1px rgba(72,180,255,.42),0 18px 42px rgba(2,8,25,.52),0 0 25px rgba(72,180,255,.16)}
+*{box-sizing:border-box}body{background:radial-gradient(circle at 15% 0%,#11254a 0%,#071123 35%,#030711 100%);color:var(--text)}
+.analytics-shell{width:min(1320px,calc(100% - 32px));margin:0 auto;padding:28px 0 44px;display:grid;gap:18px}.analytics-header,.analytics-panel{backdrop-filter:blur(18px);background:var(--glass);border:1px solid var(--line);border-radius:28px;box-shadow:var(--neon)}.analytics-header{padding:28px;display:grid;gap:16px}.analytics-headline h1{margin:0;font-size:clamp(1.8rem,3.5vw,2.8rem)}.analytics-headline p{margin:8px 0 0;color:var(--muted);max-width:820px;line-height:1.6}.eyebrow{margin:0;text-transform:uppercase;letter-spacing:.22em;font-size:.72rem;color:#56d8ff}.analytics-grid{display:grid;grid-template-columns:1fr;gap:18px}.analytics-panel{padding:22px}.panel-title{margin:0 0 8px;font-size:1.35rem}.panel-subtitle{margin:0 0 20px;color:var(--muted)}.cards-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.top-nav{display:flex;flex-wrap:wrap;gap:10px}.top-nav a{color:#bfefff}.fundamental-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px;padding:10px 14px;border:1px solid rgba(77,177,255,.36);border-radius:14px;background:rgba(7,18,36,.68)}.toggle-label{font-size:.92rem;color:#c8ddff}.toggle-switch{position:relative;display:inline-flex;align-items:center;width:52px;height:30px;border-radius:999px;border:1px solid rgba(95,182,255,.45);background:rgba(20,35,58,.9);box-shadow:0 0 12px rgba(72,180,255,.2);cursor:pointer;transition:all .2s}.toggle-switch .knob{position:absolute;left:4px;width:20px;height:20px;border-radius:999px;background:#9ccfff;box-shadow:0 0 10px rgba(156,207,255,.55);transition:all .2s}.toggle-switch.active{background:rgba(18,70,108,.9);border-color:#6eddff;box-shadow:0 0 18px rgba(91,220,255,.4)}.toggle-switch.active .knob{left:26px;background:#76f2ff;box-shadow:0 0 14px rgba(118,242,255,.8)}.toggle-state{font-size:.78rem;color:#99b5de;min-width:34px;text-align:right}.fundamental-badge{display:inline-flex;align-items:center;gap:6px;margin-left:10px;padding:4px 10px;border-radius:999px;border:1px solid rgba(95,224,255,.45);background:rgba(9,48,66,.45);color:#bff7ff;font-size:.78rem;box-shadow:0 0 15px rgba(95,224,255,.24)}.pair-card{border:none;border-radius:16px;padding:12px;cursor:pointer;text-align:left;background:var(--card);border:1px solid rgba(75,183,255,.42);box-shadow:var(--neon);color:var(--text);transition:transform .2s,border-color .2s,box-shadow .2s;min-height:108px;display:grid;gap:6px}.pair-card:hover{transform:translateY(-2px);border-color:var(--line-strong);box-shadow:0 0 0 1px rgba(90,205,255,.7),0 24px 46px rgba(1,7,22,.6),0 0 35px rgba(90,205,255,.24)}.pair-card.active{border-color:#7addff;box-shadow:0 0 0 1px #5edbff,0 28px 54px rgba(1,7,22,.7),0 0 38px rgba(94,219,255,.3)}.pair-card.loading{opacity:.8;pointer-events:none;position:relative}.pair-card.loading .pair-action{color:#7addff}.pair-card.loading .pair-action::after{content:"..."}.pair-name{margin:0;font-size:1.15rem;letter-spacing:.03em}.pair-status{display:inline-flex;align-items:center;gap:8px;font-size:.8rem;color:#b5c9e8}.pair-status::before{content:"";width:7px;height:7px;border-radius:999px;background:#57e8ff;box-shadow:0 0 10px #57e8ff}.pair-text{margin:0;color:#98acd0;line-height:1.35;font-size:.85rem}.pair-action{margin-top:auto;font-weight:700;color:#bfefff;display:inline-flex;align-items:center;gap:8px}.pair-action::after{content:"→"}.status{font-size:.95rem;color:var(--muted)}.response{margin-top:12px;border-radius:18px;background:rgba(6,15,30,.82);border:1px solid rgba(103,157,219,.28);padding:22px;min-height:500px;max-height:none;overflow:auto}.result-article{margin:0;color:#d7e6ff;white-space:pre-wrap;line-height:1.72;font-size:1rem}.notice{color:#9fb5d6}.followup-box{margin-top:16px;padding:14px;border:1px solid rgba(77,177,255,.3);border-radius:14px;background:rgba(8,18,36,.65)}.followup-title{margin:0 0 8px;font-size:1rem}.followup-row{display:grid;grid-template-columns:1fr auto;gap:10px}.followup-input{width:100%;border:1px solid rgba(112,168,233,.35);background:rgba(7,15,30,.9);color:#dff0ff;padding:10px 12px;border-radius:10px}.followup-btn{border:1px solid rgba(101,206,255,.5);background:linear-gradient(120deg,rgba(26,95,136,.95),rgba(31,140,169,.95));color:#eaffff;font-weight:700;padding:0 14px;border-radius:10px;cursor:pointer}.followup-btn:disabled{opacity:.55;cursor:not-allowed}.followup-answer{margin-top:10px;color:#b9d7ff;line-height:1.5;white-space:pre-wrap;font-size:.92rem}
+@media (max-width:1024px){.cards-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.response{min-height:420px}}@media (max-width:680px){.cards-grid{grid-template-columns:1fr}.analytics-shell{width:min(1320px,calc(100% - 20px));padding-top:16px}.analytics-header,.analytics-panel{border-radius:22px;padding:18px}.top-nav{font-size:14px}.followup-row{grid-template-columns:1fr}.followup-btn{min-height:42px}.response{min-height:340px;padding:16px}}
 </style>
 </head>
 <body>
 <div class="analytics-shell">
-  <header class="analytics-header">
-    <div class="analytics-headline">
-      <p class="eyebrow">Аналитический терминал</p>
-      <h1>📊 Премиальная AI-панель аналитики</h1>
-      <p>Выберите инструмент и получите структурированный разбор через текущий API-маршрут платформы без изменения backend-логики.</p>
-    </div>
-    <nav class="top-nav">
-      <a href="/">Главная</a>
-      <a href="/ideas">Идеи</a>
-      <a href="/analytics">Аналитика</a>
-      <a href="/news">Новости</a>
-      <a href="/calendar">Календарь</a>
-      <a href="/heatmap/page">Тепловая карта</a>
-    </nav>
-  </header>
-
-  <div class="analytics-grid">
-    <section class="analytics-panel">
-      <h2 class="panel-title">Выбор инструмента</h2>
-      <p class="panel-subtitle">Кликните карточку, чтобы отправить запрос в <code>/api/chat</code> и открыть разбор.</p>
-      <div class="fundamental-toggle">
-        <span class="toggle-label">Фундаментальный режим</span>
-        <button id="fundamentalToggle" class="toggle-switch" type="button" aria-pressed="false" onclick="toggleFundamentalMode()">
-          <span class="knob"></span>
-        </button>
-        <span id="fundamentalState" class="toggle-state">OFF</span>
-      </div>
-      <div class="cards-grid" id="pairCards"></div>
-    </section>
-
-    <section class="analytics-panel">
-      <h2 class="panel-title">Результат анализа</h2>
-      <p class="panel-subtitle" id="resultSubtitle">Ожидание выбора инструмента.</p>
-      <div id="status" class="status">Готово к запросу</div>
-      <div class="response" id="response">
-        <p class="notice">Выберите одну из карточек: EURUSD, GBPUSD, USDJPY, XAUUSD.</p>
-      </div>
-      <div class="followup-box" id="followupBox" hidden>
-        <h3 class="followup-title">Уточнить по анализу</h3>
-        <div class="followup-row">
-          <input id="followupInput" class="followup-input" type="text" placeholder="Например: где лучше ждать вход? что отменит сценарий?" />
-          <button id="followupBtn" class="followup-btn" type="button" onclick="submitFollowup()">Спросить</button>
-        </div>
-        <div id="followupAnswer" class="followup-answer"></div>
-      </div>
-    </section>
-  </div>
-</div>
-
+<header class="analytics-header"><div class="analytics-headline"><p class="eyebrow">Аналитический терминал</p><h1>📊 Премиальная AI-панель аналитики</h1><p>Выберите инструмент и получите структурированный разбор через текущий API-маршрут платформы без изменения backend-логики.</p></div><nav class="top-nav"><a href="/">Главная</a><a href="/ideas">Идеи</a><a href="/analytics">Аналитика</a><a href="/news">Новости</a><a href="/calendar">Календарь</a><a href="/heatmap/page">Тепловая карта</a></nav></header>
+<div class="analytics-grid"><section class="analytics-panel"><h2 class="panel-title">Выбор инструмента</h2><p class="panel-subtitle">Кликните карточку, чтобы отправить запрос в <code>/api/chat</code> и открыть разбор.</p><div class="fundamental-toggle"><span class="toggle-label">Фундаментальный режим</span><button id="fundamentalToggle" class="toggle-switch" type="button" aria-pressed="false" onclick="toggleFundamentalMode()"><span class="knob"></span></button><span id="fundamentalState" class="toggle-state">OFF</span></div><div class="cards-grid" id="pairCards"></div></section>
+<section class="analytics-panel"><h2 class="panel-title">Результат анализа</h2><p class="panel-subtitle" id="resultSubtitle">Ожидание выбора инструмента.</p><div id="status" class="status">Готово к запросу</div><div class="response" id="response"><p class="notice">Выберите одну из карточек: EURUSD, GBPUSD, USDJPY, XAUUSD.</p></div><div class="followup-box" id="followupBox" hidden><h3 class="followup-title">Уточнить по анализу</h3><div class="followup-row"><input id="followupInput" class="followup-input" type="text" placeholder="Например: где лучше ждать вход? что отменит сценарий?" /><button id="followupBtn" class="followup-btn" type="button" onclick="submitFollowup()">Спросить</button></div><div id="followupAnswer" class="followup-answer"></div></div></section></div></div>
 <script src="/static/nav.js"></script>
 <script>
-const pairs = [
-  { name: 'EURUSD', status: 'MT4 data / waiting', text: 'Европейская сессия, оценка зон ликвидности и сценариев intraday.' },
-  { name: 'GBPUSD', status: 'MT4 data / waiting', text: 'Волатильный мажор: контроль импульса, коррекции и риск-профиля.' },
-  { name: 'USDJPY', status: 'MT4 data / waiting', text: 'Баланс доходностей и сила доллара, акцент на трендовую структуру.' },
-  { name: 'XAUUSD', status: 'MT4 data / waiting', text: 'Золото: защита капитала, ключевые уровни и чувствительность к риску.' }
-];
-let useFundamentalMode = false;
-let selectedPair = null;
-
-function escapeHtml(value){
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderReply(data){
-  if (!data || typeof data !== 'object') {
-    return `<p class="result-article">${escapeHtml(data || 'Пустой ответ')}</p>`;
-  }
-
-  if (typeof data.article_ru === 'string' && data.article_ru.trim()) {
-    let cmeBlock = '';
-    if (data.cme && data.cme.available) {
-      const futures = data.cme.futures || {};
-      const analysis = data.cme.analysis || {};
-      cmeBlock = `<div class="notice" style="margin-bottom:12px">
-        <strong>CME объёмы и опционы</strong><br>
-        Futures volume: ${escapeHtml(String(futures.volume ?? 'n/a'))}<br>
-        Open interest: ${escapeHtml(String(futures.openInterest ?? 'n/a'))}<br>
-        Key strikes: ${escapeHtml(JSON.stringify(analysis.keyStrikes || []))}<br>
-        Put/Call bias: ${escapeHtml(String(analysis.putCallRatio ?? 'n/a'))}<br>
-        Max pain: ${escapeHtml(String(analysis.maxPain ?? 'n/a'))}<br>
-        <small>${escapeHtml(data.cme.disclaimer || "Data sourced from publicly available CME pages. Not real-time and may be delayed.")}</small>
-      </div>`;
-    }
-    return `${cmeBlock}<p class="result-article">${escapeHtml(data.article_ru.trim())}</p>`;
-  }
-
-  const fallbackFields = [
-    data.summary_ru, data.journalistic_summary_ru, data.why_moves_ru, data.smart_money_ru,
-    data.patterns_ru, data.harmonic_ru, data.wave_ru, data.divergence_ru,
-    data.volume_ru, data.options_ru, data.forecast_ru, data.invalidation_ru, data.risk_ru
-  ].filter((value) => typeof value === 'string' && value.trim());
-
-  if (fallbackFields.length) {
-    return `<p class="result-article">${escapeHtml(fallbackFields.join('\n\n'))}</p>`;
-  }
-
-  if (data.reply && typeof data.reply === 'string') {
-    return `<p class="result-article">${escapeHtml(data.reply)}</p>`;
-  }
-  return `<p class="result-article">${escapeHtml('Ответ получен, но статья недоступна.')}</p>`;
-}
-
-function setActiveCard(pairName){
-  document.querySelectorAll('.pair-card').forEach(card => {
-    card.classList.toggle('active', card.dataset.pair === pairName);
-  });
-}
-
-function setLoadingCard(pairName){
-  document.querySelectorAll('.pair-card').forEach(card => {
-    const loading = card.dataset.pair === pairName;
-    card.classList.toggle('loading', loading);
-    const action = card.querySelector('.pair-action');
-    if (action) action.textContent = loading ? 'Загрузка аналитики' : 'Открыть аналитику';
-  });
-}
-
-function clearLoadingCards(){
-  document.querySelectorAll('.pair-card').forEach(card => {
-    card.classList.remove('loading');
-    const action = card.querySelector('.pair-action');
-    if (action) action.textContent = 'Открыть аналитику';
-  });
-}
-
-async function requestPairAnalysis(pairName){
-  const status = document.getElementById('status');
-  const responseBox = document.getElementById('response');
-  const subtitle = document.getElementById('resultSubtitle');
-
-  selectedPair = pairName;
-  setActiveCard(pairName);
-  const followupBox = document.getElementById('followupBox');
-  const followupAnswer = document.getElementById('followupAnswer');
-  if (followupBox) followupBox.hidden = false;
-  if (followupAnswer) followupAnswer.textContent = "";
-  subtitle.innerHTML = `Инструмент: ${escapeHtml(pairName)}`;
-  status.textContent = `Запрос по ${pairName} выполняется...`;
-  setLoadingCard(pairName);
-  responseBox.innerHTML = '<p class="notice">Загрузка аналитики...</p>';
-
-  const message = pairName;
-
-  try {
-    const r = await fetch('/api/chat', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ message, context: { use_fundamental: useFundamentalMode } })
-    });
-
-    const data = await r.json();
-    const fundamentalBadge = data && data.fundamental_used ? '<span class="fundamental-badge">🌐 С учетом новостей</span>' : '';
-    subtitle.innerHTML = `Инструмент: ${escapeHtml(pairName)}${fundamentalBadge}`;
-    responseBox.innerHTML = renderReply(data);
-    status.textContent = `Ответ по ${pairName} получен`;
-    clearLoadingCards();
-  } catch (e) {
-    clearLoadingCards();
-    status.textContent = `Ошибка запроса по ${pairName}`;
-    responseBox.innerHTML = `<p class="result-article">${escapeHtml(`Ошибка: ${e}`)}</p>`;
-  }
-}
-
-function toggleFundamentalMode(){
-  useFundamentalMode = !useFundamentalMode;
-  const toggle = document.getElementById('fundamentalToggle');
-  const state = document.getElementById('fundamentalState');
-  toggle.classList.toggle('active', useFundamentalMode);
-  toggle.setAttribute('aria-pressed', useFundamentalMode ? 'true' : 'false');
-  state.textContent = useFundamentalMode ? 'ON' : 'OFF';
-}
-
-
-async function submitFollowup(){
-  const input = document.getElementById('followupInput');
-  const button = document.getElementById('followupBtn');
-  const answer = document.getElementById('followupAnswer');
-  if (!selectedPair) {
-    answer.textContent = 'Сначала откройте анализ по инструменту.';
-    return;
-  }
-  const question = (input.value || '').trim();
-  if (!question) {
-    answer.textContent = 'Введите уточняющий вопрос.';
-    return;
-  }
-  button.disabled = true;
-  answer.textContent = 'Отправка вопроса...';
-  try {
-    const r = await fetch('/api/chat', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        message: `${selectedPair} Уточнение: ${question}`,
-        context: {
-          mode: 'followup',
-          question,
-          pair: selectedPair,
-          use_fundamental: useFundamentalMode,
-        }
-      })
-    });
-    const data = await r.json();
-    answer.textContent = data.article_ru || data.reply || data.summary_ru || 'Ответ получен.';
-  } catch (e) {
-    answer.textContent = `Ошибка: ${e}`;
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function initCards(){
-  const box = document.getElementById('pairCards');
-  box.innerHTML = pairs.map(pair => `
-    <button class="pair-card" data-pair="${pair.name}" onclick="requestPairAnalysis('${pair.name}')">
-      <h3 class="pair-name">${pair.name}</h3>
-      <span class="pair-status">${pair.status}</span>
-      <p class="pair-text">${pair.text}</p>
-      <span class="pair-action">Открыть аналитику</span>
-    </button>
-  `).join('');
-}
-
+const pairs=[{name:'EURUSD',status:'MT4 data / waiting',text:'Европейская сессия, оценка зон ликвидности и сценариев intraday.'},{name:'GBPUSD',status:'MT4 data / waiting',text:'Волатильный мажор: контроль импульса, коррекции и риск-профиля.'},{name:'USDJPY',status:'MT4 data / waiting',text:'Баланс доходностей и сила доллара, акцент на трендовую структуру.'},{name:'XAUUSD',status:'MT4 data / waiting',text:'Золото: защита капитала, ключевые уровни и чувствительность к риску.'}];
+let useFundamentalMode=false;let selectedPair=null;
+function escapeHtml(value){return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function isNoMt4Candles(data){const text=[data?.article_ru,data?.summary,data?.summary_ru,data?.reply].filter(Boolean).join(' ').toLowerCase();return text.includes('нет доступных mt4-свечей')||text.includes('no_mt4_data')||Number(data?.candles_count)===0}
+async function fetchDirectMt4Analysis(pairName){const urls=[`/api/candles/${pairName}?tf=M15&limit=160`,`/api/debug/mt4-bridge/${pairName}/M15?limit=160`];for(const url of urls){try{const r=await fetch(url,{cache:'no-store'});if(!r.ok)continue;const data=await r.json();const candles=Array.isArray(data.candles)?data.candles:[];if(candles.length){const first=Number(candles[0].close);const last=Number(candles[candles.length-1].close);const highs=candles.map(c=>Number(c.high)).filter(Number.isFinite);const lows=candles.map(c=>Number(c.low)).filter(Number.isFinite);const high=Math.max(...highs);const low=Math.min(...lows);const bias=last>first?'bullish / рост':last<first?'bearish / снижение':'neutral / баланс';return {article_ru:`M15 MT4: получено ${candles.length} свечей по ${pairName}.\n\nТекущее смещение: ${bias}. Последняя цена: ${last}. Диапазон последних свечей: ${low} – ${high}.\n\nBackend не смог сформировать Grok-статью через /api/chat, поэтому показан прямой MT4 fallback по свечам. Данные реальные, источник: ${data.provider||'mt4_bridge'}.\n\nБазовый вывод: работаем только от подтверждения структуры и реакции цены на ключевые уровни. Если цена теряет локальную структуру M15, сценарий нужно пересмотреть.`,fallback_used:true,fundamental_used:false,provider:data.provider||'mt4_bridge',candles_count:candles.length}}}catch(e){}}
+return null}
+function renderReply(data){if(!data||typeof data!=='object')return `<p class="result-article">${escapeHtml(data||'Пустой ответ')}</p>`;if(typeof data.article_ru==='string'&&data.article_ru.trim()){let cmeBlock='';if(data.cme&&data.cme.available){const futures=data.cme.futures||{};const analysis=data.cme.analysis||{};cmeBlock=`<div class="notice" style="margin-bottom:12px"><strong>CME объёмы и опционы</strong><br>Futures volume: ${escapeHtml(String(futures.volume??'n/a'))}<br>Open interest: ${escapeHtml(String(futures.openInterest??'n/a'))}<br>Key strikes: ${escapeHtml(JSON.stringify(analysis.keyStrikes||[]))}<br>Put/Call bias: ${escapeHtml(String(analysis.putCallRatio??'n/a'))}<br>Max pain: ${escapeHtml(String(analysis.maxPain??'n/a'))}<br><small>${escapeHtml(data.cme.disclaimer||'Data sourced from publicly available CME pages. Not real-time and may be delayed.')}</small></div>`}return `${cmeBlock}<p class="result-article">${escapeHtml(data.article_ru.trim())}</p>`}const fields=[data.summary_ru,data.journalistic_summary_ru,data.why_moves_ru,data.smart_money_ru,data.patterns_ru,data.harmonic_ru,data.wave_ru,data.divergence_ru,data.volume_ru,data.options_ru,data.forecast_ru,data.invalidation_ru,data.risk_ru].filter(v=>typeof v==='string'&&v.trim());if(fields.length)return `<p class="result-article">${escapeHtml(fields.join('\n\n'))}</p>`;if(data.reply&&typeof data.reply==='string')return `<p class="result-article">${escapeHtml(data.reply)}</p>`;return `<p class="result-article">${escapeHtml('Ответ получен, но статья недоступна.')}</p>`}
+function setActiveCard(pairName){document.querySelectorAll('.pair-card').forEach(card=>card.classList.toggle('active',card.dataset.pair===pairName))}
+function setLoadingCard(pairName){document.querySelectorAll('.pair-card').forEach(card=>{const loading=card.dataset.pair===pairName;card.classList.toggle('loading',loading);const action=card.querySelector('.pair-action');if(action)action.textContent=loading?'Загрузка аналитики':'Открыть аналитику'})}
+function clearLoadingCards(){document.querySelectorAll('.pair-card').forEach(card=>{card.classList.remove('loading');const action=card.querySelector('.pair-action');if(action)action.textContent='Открыть аналитику'})}
+async function requestPairAnalysis(pairName){const status=document.getElementById('status');const responseBox=document.getElementById('response');const subtitle=document.getElementById('resultSubtitle');selectedPair=pairName;setActiveCard(pairName);const followupBox=document.getElementById('followupBox');const followupAnswer=document.getElementById('followupAnswer');if(followupBox)followupBox.hidden=false;if(followupAnswer)followupAnswer.textContent='';subtitle.innerHTML=`Инструмент: ${escapeHtml(pairName)}`;status.textContent=`Запрос по ${pairName} выполняется...`;setLoadingCard(pairName);responseBox.innerHTML='<p class="notice">Загрузка аналитики...</p>';try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:pairName,context:{use_fundamental:useFundamentalMode}})});let data=await r.json();if(isNoMt4Candles(data)){status.textContent=`/api/chat не нашёл свечи, пробую прямой MT4 fallback...`;const direct=await fetchDirectMt4Analysis(pairName);if(direct)data=direct}const fundamentalBadge=data&&data.fundamental_used?'<span class="fundamental-badge">🌐 С учетом новостей</span>':'';subtitle.innerHTML=`Инструмент: ${escapeHtml(pairName)}${fundamentalBadge}`;responseBox.innerHTML=renderReply(data);status.textContent=`Ответ по ${pairName} получен${data?.fallback_used?' · fallback MT4':''}`;clearLoadingCards()}catch(e){clearLoadingCards();status.textContent=`Ошибка запроса по ${pairName}`;responseBox.innerHTML=`<p class="result-article">${escapeHtml(`Ошибка: ${e}`)}</p>`}}
+function toggleFundamentalMode(){useFundamentalMode=!useFundamentalMode;const toggle=document.getElementById('fundamentalToggle');const state=document.getElementById('fundamentalState');toggle.classList.toggle('active',useFundamentalMode);toggle.setAttribute('aria-pressed',useFundamentalMode?'true':'false');state.textContent=useFundamentalMode?'ON':'OFF'}
+async function submitFollowup(){const input=document.getElementById('followupInput');const button=document.getElementById('followupBtn');const answer=document.getElementById('followupAnswer');if(!selectedPair){answer.textContent='Сначала откройте анализ по инструменту.';return}const question=(input.value||'').trim();if(!question){answer.textContent='Введите уточняющий вопрос.';return}button.disabled=true;answer.textContent='Отправка вопроса...';try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:`${selectedPair} Уточнение: ${question}`,context:{mode:'followup',question,pair:selectedPair,use_fundamental:useFundamentalMode}})});const data=await r.json();answer.textContent=data.article_ru||data.reply||data.summary_ru||'Ответ получен.'}catch(e){answer.textContent=`Ошибка: ${e}`}finally{button.disabled=false}}
+function initCards(){const box=document.getElementById('pairCards');box.innerHTML=pairs.map(pair=>`<button class="pair-card" data-pair="${pair.name}" onclick="requestPairAnalysis('${pair.name}')"><h3 class="pair-name">${pair.name}</h3><span class="pair-status">${pair.status}</span><p class="pair-text">${pair.text}</p><span class="pair-action">Открыть аналитику</span></button>`).join('')}
 initCards();
 </script>
 </body>
