@@ -530,11 +530,11 @@ function closeIdeaModal() {
   modal.classList.remove("open");
   document.body.style.overflow = "";
   if (modalChart) {
-    try { modalChart.remove(); } catch {}
+    modalChart.remove();
     modalChart = null;
   }
   if (modalOverlayCanvas) {
-    try { modalOverlayCanvas.remove(); } catch {}
+    modalOverlayCanvas.remove();
     modalOverlayCanvas = null;
     modalOverlayContext = null;
     modalOverlayState = null;
