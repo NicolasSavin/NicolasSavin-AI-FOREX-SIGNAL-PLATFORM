@@ -2016,206 +2016,210 @@ def resolve_confidence(decision) -> int:
     return 28
 
 
+def _compute_atr(candles: list[dict[str, Any]], period: int = 14) -> float:
+    if len(candles) < period + 1:
+        return 0.0
+    trs: list[float] = []
+    rows = candles[-(period + 1) :]
+    for idx in range(1, len(rows)):
+        cur = rows[idx]
+        prev = rows[idx - 1]
+        high = safe_float(cur.get("high")) or 0.0
+        low = safe_float(cur.get("low")) or 0.0
+        prev_close = safe_float(prev.get("close")) or 0.0
+        trs.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    return sum(trs) / len(trs) if trs else 0.0
+
+
+def _swing_points(candles: list[dict[str, Any]], span: int = 2) -> dict[str, list[dict[str, float]]]:
+    highs: list[dict[str, float]] = []
+    lows: list[dict[str, float]] = []
+    if len(candles) < span * 2 + 1:
+        return {"highs": highs, "lows": lows}
+    for i in range(span, len(candles) - span):
+        h = safe_float(candles[i].get("high"))
+        l = safe_float(candles[i].get("low"))
+        if h is None or l is None:
+            continue
+        if all(h >= (safe_float(candles[j].get("high")) or h) for j in range(i - span, i + span + 1) if j != i):
+            highs.append({"index": float(i), "price": h})
+        if all(l <= (safe_float(candles[j].get("low")) or l) for j in range(i - span, i + span + 1) if j != i):
+            lows.append({"index": float(i), "price": l})
+    return {"highs": highs, "lows": lows}
+
+
+def _build_institutional_signal(symbol_norm: str, tf_norm: str, m15: list[dict[str, Any]], h1: list[dict[str, Any]], h4: list[dict[str, Any]]) -> dict[str, Any]:
+    last = m15[-1]
+    prev = m15[-2]
+    last_close = safe_float(last.get("close")) or 0.0
+    last_high = safe_float(last.get("high")) or last_close
+    last_low = safe_float(last.get("low")) or last_close
+    atr = max(_compute_atr(m15, 14), 1e-8)
+
+    swings_m15 = _swing_points(m15)
+    swings_h1 = _swing_points(h1)
+    swings_h4 = _swing_points(h4)
+    recent_highs = swings_m15["highs"][-6:]
+    recent_lows = swings_m15["lows"][-6:]
+
+    h4_closes = [safe_float(c.get("close")) for c in h4 if safe_float(c.get("close")) is not None]
+    h1_closes = [safe_float(c.get("close")) for c in h1 if safe_float(c.get("close")) is not None]
+    h4_fast = sum(h4_closes[-12:]) / 12 if len(h4_closes) >= 12 else (h4_closes[-1] if h4_closes else last_close)
+    h4_slow = sum(h4_closes[-28:]) / 28 if len(h4_closes) >= 28 else h4_fast
+    h1_fast = sum(h1_closes[-12:]) / 12 if len(h1_closes) >= 12 else (h1_closes[-1] if h1_closes else last_close)
+    h1_slow = sum(h1_closes[-28:]) / 28 if len(h1_closes) >= 28 else h1_fast
+
+    h4_bias = "bullish" if h4_fast > h4_slow else "bearish" if h4_fast < h4_slow else "neutral"
+    h1_bias = "bullish" if h1_fast > h1_slow else "bearish" if h1_fast < h1_slow else "neutral"
+
+    last_swing_high = recent_highs[-1]["price"] if recent_highs else last_high
+    last_swing_low = recent_lows[-1]["price"] if recent_lows else last_low
+    prev_close = safe_float(prev.get("close")) or last_close
+    bos_up = last_close > last_swing_high or prev_close > last_swing_high
+    bos_down = last_close < last_swing_low or prev_close < last_swing_low
+    choch_up = bos_up and h1_bias == "bullish" and h4_bias != "bearish"
+    choch_down = bos_down and h1_bias == "bearish" and h4_bias != "bullish"
+
+    sweep_low = last_low < last_swing_low and last_close > last_swing_low
+    sweep_high = last_high > last_swing_high and last_close < last_swing_high
+
+    equal_highs = len(recent_highs) >= 2 and abs(recent_highs[-1]["price"] - recent_highs[-2]["price"]) <= atr * 0.15
+    equal_lows = len(recent_lows) >= 2 and abs(recent_lows[-1]["price"] - recent_lows[-2]["price"]) <= atr * 0.15
+
+    action = "WAIT"
+    setup_type = "no_clear_setup"
+    if (sweep_low and h4_bias != "bearish") or choch_up or (bos_up and h4_bias == "bullish"):
+        action = "BUY"
+        setup_type = "liquidity_sweep_reversal" if sweep_low else "bos_choch_continuation"
+    elif (sweep_high and h4_bias != "bullish") or choch_down or (bos_down and h4_bias == "bearish"):
+        action = "SELL"
+        setup_type = "liquidity_sweep_reversal" if sweep_high else "bos_choch_continuation"
+    elif h4_bias in {"bullish", "bearish"}:
+        action = "BUY" if h4_bias == "bullish" else "SELL"
+        setup_type = "trend_watchlist"
+
+    fvg = None
+    for i in range(max(2, len(m15) - 40), len(m15)):
+        a = m15[i - 2]
+        b = m15[i - 1]
+        c = m15[i]
+        body = abs((safe_float(b.get("close")) or 0.0) - (safe_float(b.get("open")) or 0.0))
+        rng = max((safe_float(b.get("high")) or 0.0) - (safe_float(b.get("low")) or 0.0), 1e-8)
+        if body / rng < 0.55:
+            continue
+        a_high = safe_float(a.get("high")) or 0.0
+        a_low = safe_float(a.get("low")) or 0.0
+        c_high = safe_float(c.get("high")) or 0.0
+        c_low = safe_float(c.get("low")) or 0.0
+        if action == "BUY" and c_low > a_high:
+            fvg = {"type": "bullish_fvg", "low": a_high, "high": c_low, "displacement": True, "retested": last_low <= c_low}
+        elif action == "SELL" and c_high < a_low:
+            fvg = {"type": "bearish_fvg", "low": c_high, "high": a_low, "displacement": True, "retested": last_high >= c_high}
+
+    if fvg:
+        entry = (fvg["low"] + fvg["high"]) / 2
+    else:
+        entry = last_close
+
+    stop_pad = atr * 0.35
+    if action == "BUY":
+        structural_stop = min(last_swing_low, last_low)
+        sl = structural_stop - stop_pad
+        liquidity_target = max([x["price"] for x in recent_highs] or [last_high])
+        tp = max(entry + (entry - sl) * 1.35, liquidity_target)
+        invalidation = structural_stop - atr * 0.15
+    elif action == "SELL":
+        structural_stop = max(last_swing_high, last_high)
+        sl = structural_stop + stop_pad
+        liquidity_target = min([x["price"] for x in recent_lows] or [last_low])
+        tp = min(entry - (sl - entry) * 1.35, liquidity_target)
+        invalidation = structural_stop + atr * 0.15
+    else:
+        sl = tp = invalidation = None
+
+    rr = 0.0
+    if action in {"BUY", "SELL"} and sl is not None and tp is not None:
+        risk = abs(entry - sl)
+        reward = abs(tp - entry)
+        rr = reward / risk if risk > 0 else 0.0
+
+    mode = "no_trade"
+    confidence = 40
+    if action in {"BUY", "SELL"} and rr >= 1.3:
+        confidence = 66 + (8 if "sweep" in setup_type else 0) + (6 if fvg else 0) + (6 if rr >= 1.6 else 0)
+        confidence = min(89, confidence)
+        mode = "prop_entry" if confidence >= 74 else "watchlist"
+    elif action in {"BUY", "SELL"}:
+        mode = "watchlist"
+        confidence = 58
+
+    return {
+        "action": action,
+        "signal": action,
+        "setup_type": setup_type,
+        "h4_bias": h4_bias,
+        "h1_bias": h1_bias,
+        "entry": round(entry, 6) if action in {"BUY", "SELL"} else None,
+        "sl": round(sl, 6) if action in {"BUY", "SELL"} and sl is not None else None,
+        "tp": round(tp, 6) if action in {"BUY", "SELL"} and tp is not None else None,
+        "invalidation_level": round(invalidation, 6) if invalidation is not None else None,
+        "rr": round(rr, 2),
+        "confidence": int(confidence),
+        "mode": mode,
+        "market_structure": {
+            "trend_regime": h4_bias,
+            "internal_structure": h1_bias,
+            "bos": "up" if bos_up else "down" if bos_down else "none",
+            "choch": "up" if choch_up else "down" if choch_down else "none",
+            "swing_high": last_swing_high,
+            "swing_low": last_swing_low,
+            "displacement": bool(fvg),
+        },
+        "liquidity": {
+            "buy_side_liquidity": last_swing_high,
+            "sell_side_liquidity": last_swing_low,
+            "equal_highs": equal_highs,
+            "equal_lows": equal_lows,
+            "sweep": "sell_side" if sweep_low else "buy_side" if sweep_high else "none",
+            "stop_hunt": bool(sweep_low or sweep_high),
+            "inducement": bool(equal_highs or equal_lows),
+        },
+        "order_blocks": {
+            "bullish_order_block": recent_lows[-1]["price"] if recent_lows else None,
+            "bearish_order_block": recent_highs[-1]["price"] if recent_highs else None,
+            "mitigation_block": (recent_lows[-2]["price"] if len(recent_lows) > 1 else None) if action == "BUY" else (recent_highs[-2]["price"] if len(recent_highs) > 1 else None),
+            "breaker_block": (recent_highs[-1]["price"] if action == "BUY" else recent_lows[-1]["price"]) if recent_highs and recent_lows else None,
+            "invalidated": action == "WAIT",
+        },
+        "fvg": fvg,
+        "reason_ru": f"{symbol_norm} {tf_norm}: {setup_type}. BOS={ 'up' if bos_up else 'down' if bos_down else 'none' }, sweep={ 'sell-side' if sweep_low else 'buy-side' if sweep_high else 'none' }, HTF={h4_bias}.",
+    }
+
+
 def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
     symbol_norm = normalize_symbol(symbol)
     tf_norm = str(tf or "M15").upper()
-    candles_payload = fetch_candles(symbol_norm, tf_norm, 200)
-    candles = candles_payload.get("candles") or []
-    provider = candles_payload.get("provider")
-    provider_priority = candles_payload.get("provider_priority")
-    fallback_used = bool(candles_payload.get("fallback_used"))
+    m15 = (fetch_candles(symbol_norm, "M15", 220).get("candles") or [])
+    h1 = (fetch_candles(symbol_norm, "H1", 220).get("candles") or [])
+    h4 = (fetch_candles(symbol_norm, "H4", 220).get("candles") or [])
+    candles = m15 if tf_norm == "M15" else (fetch_candles(symbol_norm, tf_norm, 220).get("candles") or m15)
 
-    if not candles:
-        # Diagnostic-only logging; must never change signal generation logic.
-        log_signal_audit(
-            {
-                "stage": "build_signal_from_candles",
-                "symbol": symbol_norm,
-                "timeframe": tf_norm,
-                "setup_type": "sma_momentum",
-                "confidence": 0,
-                "decision": "WAIT",
-                "rejection_reason": "no_candles",
-                "data_status": candles_payload.get("data_status") or "unavailable",
-                "ai_status": "not_involved",
-            }
-        )
-        return {
-            "id": f"{symbol_norm}-WAIT",
-            "symbol": symbol_norm,
-            "pair": symbol_norm,
-            "timeframe": tf_norm,
-            "tf": tf_norm,
-            "action": "WAIT",
-            "signal": "WAIT",
-            "entry": None,
-            "sl": None,
-            "tp": None,
-            "confidence": 0,
-            "trade_permission": False,
-            "provider": provider,
-            "provider_priority": provider_priority,
-            "fallback_used": fallback_used,
-            "reason_ru": "Нет доступных реальных свечей для расчёта сигнала.",
-            "candles_count": 0,
-            "candles": [],
-        }
+    if len(candles) < 40 or len(m15) < 40:
+        return {"id": f"{symbol_norm}-WAIT", "symbol": symbol_norm, "pair": symbol_norm, "timeframe": tf_norm, "tf": tf_norm, "action": "WAIT", "signal": "WAIT", "entry": None, "sl": None, "tp": None, "confidence": 22, "trade_permission": False, "reason_ru": "Недостаточно свечей для SMC-анализа.", "candles": _format_idea_candles(candles), "candles_count": len(candles)}
 
-    closes = [safe_float(c.get("close")) for c in candles]
-    highs = [safe_float(c.get("high")) for c in candles]
-    lows = [safe_float(c.get("low")) for c in candles]
-    closes = [x for x in closes if x is not None]
-    highs = [x for x in highs if x is not None]
-    lows = [x for x in lows if x is not None]
-    if len(closes) < 30 or len(highs) < 30 or len(lows) < 30:
-        log_signal_audit(
-            {
-                "stage": "build_signal_from_candles",
-                "symbol": symbol_norm,
-                "timeframe": tf_norm,
-                "setup_type": "sma_momentum",
-                "confidence": 20,
-                "decision": "WAIT",
-                "rejection_reason": "insufficient_candles",
-                "data_status": candles_payload.get("data_status") or "unknown",
-                "ai_status": "not_involved",
-            }
-        )
-        return {
-            "id": f"{symbol_norm}-WAIT",
-            "symbol": symbol_norm,
-            "pair": symbol_norm,
-            "timeframe": tf_norm,
-            "tf": tf_norm,
-            "action": "WAIT",
-            "signal": "WAIT",
-            "entry": None,
-            "sl": None,
-            "tp": None,
-            "confidence": 20,
-            "trade_permission": False,
-            "provider": provider,
-            "provider_priority": provider_priority,
-            "fallback_used": fallback_used,
-            "reason_ru": "Недостаточно свечей для уверенного анализа.",
-            "candles_count": len(candles),
-            "candles": _format_idea_candles(candles),
-        }
-
-    last_close = closes[-1]
-    sma_fast = sum(closes[-10:]) / 10
-    sma_slow = sum(closes[-30:]) / 30
-    avg_range = sum(h - l for h, l in zip(highs[-20:], lows[-20:])) / 20
-    momentum = (last_close - closes[-6]) if len(closes) > 6 else 0.0
-
-    action = "WAIT"
-    reason_ru = "Структура рынка нейтральна, лучше ждать подтверждения."
-    if sma_fast > sma_slow and momentum > avg_range * 0.15:
-        action = "BUY"
-        reason_ru = "Быстрая средняя выше медленной и есть восходящий импульс."
-    elif sma_fast < sma_slow and momentum < -avg_range * 0.15:
-        action = "SELL"
-        reason_ru = "Быстрая средняя ниже медленной и есть нисходящий импульс."
-
-    market_price_payload = get_price(symbol_norm)
-    current_price, current_price_source = _extract_numeric_price(market_price_payload)
-    if current_price is None:
-        current_price = last_close
-        current_price_source = "candles.close"
-    data_status = str(market_price_payload.get("data_status") or "").lower()
-    if current_price is None and data_status in {"real", "delayed"}:
-        data_status = "unavailable"
-
-    entry = round(current_price, 6) if current_price is not None else None
-    sl = tp = None
-    trade_permission = action in {"BUY", "SELL"} and entry is not None
-    confidence = 35 if action == "WAIT" else 72
-    if action == "BUY" and entry is not None:
-        sl = round(entry - avg_range * 1.2, 6)
-        tp = round(entry + avg_range * 1.8, 6)
-    elif action == "SELL" and entry is not None:
-        sl = round(entry + avg_range * 1.2, 6)
-        tp = round(entry - avg_range * 1.8, 6)
-
-    structure_levels = {"entry_source": "fallback"}
-    if action in {"BUY", "SELL"} and current_price is not None:
-        annotations_for_levels = build_chart_annotations(candles, symbol_norm, action, current_price)
-        structure_levels = resolve_structure_based_trade_levels(
-            symbol=symbol_norm,
-            signal=action,
-            candles=candles,
-            annotations=annotations_for_levels,
-            current_price=current_price,
-        )
-        if safe_float(structure_levels.get("entry")) is not None:
-            entry = round(float(structure_levels["entry"]), 6)
-        if safe_float(structure_levels.get("sl")) is not None:
-            sl = round(float(structure_levels["sl"]), 6)
-        if safe_float(structure_levels.get("tp")) is not None:
-            tp = round(float(structure_levels["tp"]), 6)
-        else:
-            logger.info("build_signal_from_candles fallback TP %s %s: %s", symbol_norm, action, structure_levels.get("fallback_reason"))
-    elif action in {"BUY", "SELL"}:
-        action = "WAIT"
-        reason_ru = "Нет валидной рыночной цены для расчёта уровней; сигнал переведён в WAIT."
-        confidence = 20
-        trade_permission = False
-
+    inst = _build_institutional_signal(symbol_norm, tf_norm, m15, h1 or m15, h4 or h1 or m15)
+    action = inst.get("action", "WAIT")
     result = {
-        "id": f"{symbol_norm}-{action}",
-        "symbol": symbol_norm,
-        "pair": symbol_norm,
-        "timeframe": tf_norm,
-        "tf": tf_norm,
-        "action": action,
-        "signal": action,
-        "entry": entry if action in {"BUY", "SELL"} else None,
-        "entry_price": entry,
-        "sl": sl if action in {"BUY", "SELL"} else None,
-        "stop_loss": sl if action in {"BUY", "SELL"} else None,
-        "tp": tp if action in {"BUY", "SELL"} else None,
-        "take_profit": tp if action in {"BUY", "SELL"} else None,
-        "price": current_price,
-        "current_price": current_price,
-        "last": market_price_payload.get("last"),
-        "close": last_close,
-        "bid": market_price_payload.get("bid"),
-        "ask": market_price_payload.get("ask"),
-        "entry_source": structure_levels.get("entry_source", "fallback"),
-        "selected_zone_type": structure_levels.get("selected_zone_type"),
-        "selected_zone_low": structure_levels.get("selected_zone_low"),
-        "selected_zone_high": structure_levels.get("selected_zone_high"),
-        "confidence": int(confidence),
-        "trade_permission": bool(trade_permission),
-        "provider": provider,
-        "provider_priority": provider_priority,
-        "fallback_used": fallback_used,
-        "reason_ru": reason_ru,
-        "candles_count": len(candles),
-        "candles": _format_idea_candles(candles),
-        "data_status": data_status if current_price is not None else "unavailable",
-        "updated_at": now_utc(),
-        "diagnostics": {
-            "market_price_source_field": current_price_source,
-            "market_price_provider": market_price_payload.get("source"),
-            "market_price_status": market_price_payload.get("data_status"),
-            "has_numeric_market_price": current_price is not None,
-        },
+        "id": f"{symbol_norm}-{action}", "symbol": symbol_norm, "pair": symbol_norm, "timeframe": tf_norm, "tf": tf_norm,
+        "action": action, "signal": action, "entry": inst.get("entry"), "entry_price": inst.get("entry"), "sl": inst.get("sl"), "stop_loss": inst.get("sl"),
+        "tp": inst.get("tp"), "take_profit": inst.get("tp"), "invalidation_level": inst.get("invalidation_level"), "risk_reward": inst.get("rr"), "rr": inst.get("rr"),
+        "setup_type": inst.get("setup_type"), "confidence": inst.get("confidence", 30), "trade_permission": action in {"BUY", "SELL"} and (inst.get("rr") or 0) >= 1.3,
+        "reason_ru": inst.get("reason_ru"), "htf_bias": inst.get("h4_bias"), "market_structure": inst.get("market_structure"), "liquidity": inst.get("liquidity"),
+        "order_blocks": inst.get("order_blocks"), "fvg": inst.get("fvg"), "entry_source": "smc_engine", "selected_zone_type": (inst.get("fvg") or {}).get("type"),
+        "selected_zone_low": (inst.get("fvg") or {}).get("low"), "selected_zone_high": (inst.get("fvg") or {}).get("high"), "candles_count": len(candles),
+        "candles": _format_idea_candles(candles), "updated_at": now_utc(),
+        "prop_signal_score": {"score": inst.get("confidence", 0), "grade": "A" if inst.get("confidence", 0) >= 74 else "B" if inst.get("confidence", 0) >= 62 else "C", "mode": inst.get("mode", "watchlist")},
     }
-    log_signal_audit(
-        {
-            "stage": "build_signal_from_candles",
-            "symbol": symbol_norm,
-            "timeframe": tf_norm,
-            "setup_type": "sma_momentum",
-            "confidence": result.get("confidence"),
-            "score": result.get("prop_score"),
-            "decision": action,
-            "rejection_reason": None if action in {"BUY", "SELL"} else "neutral_or_price_guard_wait",
-            "data_status": result.get("data_status"),
-            "ai_status": "not_involved",
-        }
-    )
     return result
 
 

@@ -12,6 +12,8 @@ let voiceDebounceTimer = null;
 let voicePendingQueue = [];
 let recentVoiceMessages = new Map();
 let lastPayload = null;
+let ideasPollTimer = null;
+let isIdeasLoading = false;
 let currentPropFilter = "all";
 let modalChart = null;
 let modalOverlayCanvas = null;
@@ -421,12 +423,14 @@ function renderIdeaCard(idea, index) {
       <div class="badge ${getActionBadgeClass(idea)}">${escapeHtml(action)}</div>
     </div>
     <div class="compact-levels">
+      <div><span>Setup</span><strong>${escapeHtml(idea.setup_type || "—")}</strong></div>
       <div><span>Entry</span><strong>${escapeHtml(formatNumber(idea.entry ?? idea.entry_price))}</strong></div>
       <div><span>SL</span><strong>${escapeHtml(formatNumber(idea.sl ?? idea.stop_loss))}</strong></div>
       <div><span>TP</span><strong>${escapeHtml(formatNumber(idea.tp ?? idea.take_profit ?? idea.target))}</strong></div>
       <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
     </div>
     ${renderPropCompact(idea)}
+    <div class="idea-news-line">BOS: ${escapeHtml(idea.market_structure?.bos || "—")} · Sweep: ${escapeHtml(idea.liquidity?.sweep || "—")} · FVG: ${escapeHtml(idea.fvg?.type || idea.selected_zone_type || "—")} · HTF: ${escapeHtml(idea.htf_bias || idea.market_structure?.trend_regime || "—")}</div>
     <div class="idea-summary-compact">${escapeHtml(resolveNarrative(idea))}</div>
   </article>`;
 }
@@ -494,6 +498,7 @@ function openIdeaModal(idea) {
       </div>
       <p class="modal-text"><strong>Новости/фундаментал:</strong> ${escapeHtml(resolveNewsContext(idea))}</p>
       <p class="modal-text"><strong>Источник:</strong> ${escapeHtml(idea.data_provider || idea.provider || "нет данных")}</p>
+      <p class="modal-text"><strong>Setup:</strong> ${escapeHtml(idea.setup_type || "—")}; <strong>BOS:</strong> ${escapeHtml(idea.market_structure?.bos || "—")}; <strong>Sweep:</strong> ${escapeHtml(idea.liquidity?.sweep || "—")}; <strong>FVG:</strong> ${escapeHtml(idea.fvg?.type || idea.selected_zone_type || "—")}; <strong>HTF bias:</strong> ${escapeHtml(idea.htf_bias || idea.market_structure?.trend_regime || "—")}</p>
     </section>`;
   modal.classList.add("open");
   document.body.style.overflow = "hidden";
@@ -533,6 +538,8 @@ function closeIdeaModal() {
     modalOverlayCanvas = null;
     modalOverlayContext = null;
     modalOverlayState = null;
+  } finally {
+    isIdeasLoading = false;
   }
 }
 
@@ -775,6 +782,8 @@ function renderIdeas(payload) {
 }
 
 async function loadIdeas() {
+  if (isIdeasLoading) return;
+  isIdeasLoading = true;
   try {
     const payload = await getJson("/ideas/market");
     const ideas = Array.isArray(payload?.ideas) ? payload.ideas : Array.isArray(payload?.signals) ? payload.signals : [];
@@ -786,6 +795,8 @@ async function loadIdeas() {
     console.error("ideas_load_failed", error);
     ideasContainer.innerHTML = `<div class="ideas-loading">Не удалось загрузить идеи.</div>`;
     if (ideasUpdatedAt) ideasUpdatedAt.textContent = "Обновление: ошибка загрузки";
+  } finally {
+    isIdeasLoading = false;
   }
 }
 
@@ -795,7 +806,8 @@ function startIdeasPage() {
   initVoiceToggle();
   createIdeasModal();
   loadIdeas();
-  setInterval(loadIdeas, 60000);
+  if (ideasPollTimer) clearInterval(ideasPollTimer);
+  ideasPollTimer = setInterval(loadIdeas, 60000);
 }
 
 window.addEventListener("keydown", (event) => {
