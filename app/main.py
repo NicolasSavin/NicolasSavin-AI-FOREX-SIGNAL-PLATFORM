@@ -7,6 +7,7 @@ import os
 import struct
 import time
 import asyncio
+import re
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -114,6 +115,31 @@ def _ai_model_sequence(primary_model: str) -> list[str]:
         models.append(fallback_model)
     return [model for model in models if model]
 
+
+
+
+def _extract_ai_json_payload(ai_text: str) -> dict[str, Any]:
+    text = str(ai_text or '').strip()
+    if not text:
+        return {}
+
+    sanitized = text.replace("```json", "").replace("```", "").strip()
+    candidates = [sanitized]
+
+    brace_match = re.search(r"\{[\s\S]*\}", sanitized)
+    if brace_match:
+        candidates.insert(0, brace_match.group(0))
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            continue
+
+    logger.error("market_idea_ai_json_parse_failed response_preview=%s", sanitized[:500])
+    return {}
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -274,7 +300,13 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
         base_response["cme"] = cme_data
 
     if not chat_service.client:
-        return base_response | {"ai_status": "fallback", "warning": "Grok временно недоступен"}
+        return base_response | {
+            "ai_provider": "grok",
+            "ai_model_used": "",
+            "ai_status": "fallback",
+            "ai_error": "chat_client_unavailable",
+            "warning": "Grok временно недоступен",
+        }
 
     cme_context_for_ai = {
         "available": cme_available,
@@ -346,7 +378,7 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
             ai_text = (response.choices[0].message.content or "").strip() if response.choices else ""
             if not ai_text:
                 continue
-            ai_json = json.loads(ai_text) if ai_text else {}
+            ai_json = _extract_ai_json_payload(ai_text)
             if not ai_json:
                 continue
             ai_model_used = model_name
@@ -388,12 +420,16 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
                 or base_response["summary"]
             ),
             "ai_status": ai_status,
+            "ai_error": None,
             "volume_source": volume_source,
             "cme": cme_data,
             "cme_disclaimer": cme_disclaimer if cme_available else None,
         }
-    except Exception:
+    except Exception as exc:
+        logger.exception("market_idea_ai_failed: %s", exc)
         return base_response | {
+            "ai_provider": "grok",
+            "ai_error": str(exc),
             "ai_status": "fallback",
             "warning": (
                 "Online-фундаментал временно недоступен, показан технический MT4-анализ"
@@ -723,6 +759,10 @@ def api_signals():
             "statistics": build_stats(),
             "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
             "updated_at_utc": now_utc(),
+            "ai_provider": "signal_engine",
+            "ai_model_used": "",
+            "ai_status": "not_used",
+            "ai_error": None,
         }
 
     return {
@@ -739,6 +779,10 @@ def api_signals():
         },
         "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
         "updated_at_utc": now_utc(),
+        "ai_provider": "signal_engine",
+        "ai_model_used": "",
+        "ai_status": "not_used",
+        "ai_error": None,
         "ok": False,
         "diagnostics": {
             "error": "Не удалось сформировать сигналы ни по одному символу.",
