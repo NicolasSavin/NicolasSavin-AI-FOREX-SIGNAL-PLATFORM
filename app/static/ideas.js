@@ -538,9 +538,8 @@ function closeIdeaModal() {
     modalOverlayCanvas = null;
     modalOverlayContext = null;
     modalOverlayState = null;
-  } finally {
-    isIdeasLoading = false;
   }
+  isIdeasLoading = false;
 }
 
 function renderModalChart(idea) {
