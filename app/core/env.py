@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 
+from app.core.safe_ai_json_patch import install_safe_ai_json_patch
 from app.core.safe_grok_text_patch import install_safe_grok_text_patch
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,9 @@ def get_openrouter_model() -> str:
 
 def get_twelvedata_api_key() -> str | None:
     return get_env("TWELVEDATA_API_KEY")
+
+
+install_safe_ai_json_patch()
 
 # SAFE grok patch (не ломает FastAPI)
 install_safe_grok_text_patch()
