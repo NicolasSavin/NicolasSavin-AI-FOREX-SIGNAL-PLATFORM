@@ -887,6 +887,57 @@ def ideas_market():
     return api_signals()
 
 
+@app.post("/ideas/market")
+async def ideas_market_legacy_post(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    symbol = normalize_mt4_symbol(str(payload.get("symbol") or ""))
+    timeframe = str(payload.get("timeframe") or "M15").upper()
+
+    if isinstance(payload.get("candles"), list):
+        result = _handle_mt4_push_candles_payload(payload)
+        if isinstance(result, JSONResponse):
+            return result
+        return {
+            "ok": True,
+            "route_used": "/api/mt4/push-candles",
+            "symbol": result.get("symbol") or symbol,
+            "timeframe": result.get("timeframe") or timeframe,
+            "stored": result.get("stored", 0),
+            "levels_received": 0,
+        }
+
+    if payload.get("levels") is not None or payload.get("options") is not None:
+        result = _handle_mt4_options_levels_payload(payload)
+        if isinstance(result, JSONResponse):
+            return result
+        return {
+            "ok": True,
+            "route_used": "/api/mt4/options-levels",
+            "symbol": result.get("symbol") or symbol,
+            "timeframe": timeframe,
+            "stored": 0,
+            "levels_received": result.get("levels_received", 0),
+        }
+
+    signals = api_signals()
+    return {
+        "ok": True,
+        "route_used": "/ideas/market:get-signals",
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "stored": 0,
+        "levels_received": 0,
+        "signals": signals.get("signals") if isinstance(signals, dict) else signals,
+        "updated_at_utc": signals.get("updated_at_utc") if isinstance(signals, dict) else now_utc(),
+    }
+
+
 
 
 @app.get("/api/mt4/signals")
@@ -944,6 +995,13 @@ def api_mt4_signals():
 async def api_mt4_push_candles(request: Request):
     try:
         payload = await request.json()
+        return _handle_mt4_push_candles_payload(payload)
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+
+
+def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
+    try:
         token = str(payload.get("token") or "").strip()
         if MT4_BRIDGE_TOKEN and token != MT4_BRIDGE_TOKEN:
             return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
@@ -1020,10 +1078,18 @@ async def api_mt4_options_levels(request: Request):
         payload = await request.json()
     except Exception:
         return JSONResponse(status_code=400, content={"status": "error", "error": "invalid_json"})
+    return _handle_mt4_options_levels_payload(payload)
+
+
+def _handle_mt4_options_levels_payload(payload: dict[str, Any]):
     if not isinstance(payload, dict):
         return JSONResponse(status_code=400, content={"status": "error", "error": "invalid_payload"})
-    symbol = str(payload.get("symbol") or "").strip()
+    symbol = normalize_mt4_symbol(str(payload.get("symbol") or ""))
+    payload["symbol"] = symbol
     levels = payload.get("levels")
+    if levels is None and isinstance(payload.get("options"), list):
+        levels = payload.get("options")
+        payload["levels"] = levels
     if not symbol:
         return JSONResponse(status_code=400, content={"status": "error", "error": "symbol_required"})
     if levels is None or not isinstance(levels, list):
