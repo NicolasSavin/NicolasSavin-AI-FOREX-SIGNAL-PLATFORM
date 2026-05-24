@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AI-идеи по рынку</title>
+  <title>AI-сигналы по рынку</title>
   <link rel="stylesheet" href="/static/ideas.css?v=prop-score-ui-5" />
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="/static/ideas.js?v=prop-score-ui-5" defer></script>
@@ -12,26 +12,114 @@
   <script src="/static/ideas-archive-fix.js?v=archive-ui-2" defer></script>
   <script src="/static/ideas-modal-narrative.js?v=ai-modal-narrative-1" defer></script>
   <script src="/static/ideas-market-closed-fix.js?v=market-closed-fix-1" defer></script>
+  <script src="/static/ideas-institutional-engine.js?v=institutional-engine-1" defer></script>
+  <style>
+    .signals-top-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 22px;
+      padding: 12px;
+      border: 1px solid rgba(95, 156, 230, 0.24);
+      border-radius: 20px;
+      background: rgba(3, 14, 28, 0.62);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
+    }
+    .signals-brand {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 8px;
+      min-width: 190px;
+    }
+    .signals-brand strong {
+      color: #f4f8ff;
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .signals-brand span {
+      color: #9bb8d8;
+      font-size: 12px;
+    }
+    .signals-nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .signals-nav-links a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 9px 13px;
+      border-radius: 999px;
+      border: 1px solid rgba(95, 156, 230, 0.34);
+      background: rgba(8, 25, 48, 0.72);
+      color: #dbeeff;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 800;
+      transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+    }
+    .signals-nav-links a:hover {
+      transform: translateY(-1px);
+      border-color: rgba(69, 202, 255, 0.72);
+      background: rgba(69, 202, 255, 0.14);
+    }
+    .signals-nav-links a.is-active,
+    .signals-nav-links a[aria-current="page"] {
+      color: #06111f;
+      border-color: rgba(84, 255, 181, 0.84);
+      background: linear-gradient(180deg, #54ffb5, #31f59d);
+    }
+    @media (max-width: 760px) {
+      .signals-top-nav {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .signals-brand {
+        min-width: 0;
+      }
+      .signals-nav-links {
+        justify-content: flex-start;
+      }
+      .signals-nav-links a {
+        flex: 1 1 calc(50% - 8px);
+      }
+    }
+  </style>
 </head>
 <body>
   <main class="page">
     <header class="hero">
-      <nav aria-label="Навигация">
-        <a class="home-link" href="/">Главная</a>
-        <a class="home-link" href="/analytics">Аналитика</a>
-        <a class="home-link" href="/news">Новости</a>
-        <a class="home-link" href="/calendar">Календарь</a>
-        <a class="home-link" href="/ideas/market">API идей</a>
+      <nav class="signals-top-nav" aria-label="Основная навигация">
+        <div class="signals-brand">
+          <strong>AI Forex Platform</strong>
+          <span>Навигация по разделам</span>
+        </div>
+        <div class="signals-nav-links">
+          <a href="/">Главная</a>
+          <a href="/ideas" class="is-active" aria-current="page">Сигналы</a>
+          <a href="/analytics">Аналитика</a>
+          <a href="/news">Новости</a>
+          <a href="/calendar">Календарь</a>
+          <a href="/heatmap/page">Тепловая карта</a>
+          <a href="/ideas/market">API сигналов</a>
+        </div>
       </nav>
       <div class="ideas-page-header">
         <div>
-          <h1>AI-идеи по рынку</h1>
-          <p class="subtitle">Сигналы, фильтры, архив и статистика Prop Decision Engine.</p>
+          <h1>AI-сигналы по рынку</h1>
+          <p class="subtitle">Торговые сигналы, фильтры, архив и статистика Prop Decision Engine.</p>
         </div>
       </div>
     </header>
 
-    <section class="controls" aria-label="Фильтры идей"></section>
+    <section class="controls" aria-label="Фильтры сигналов"></section>
 
     <p id="ideasUpdatedAt" class="subtitle" aria-live="polite"></p>
 
