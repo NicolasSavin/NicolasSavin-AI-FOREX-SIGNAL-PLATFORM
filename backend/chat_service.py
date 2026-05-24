@@ -7,12 +7,16 @@ import re
 from typing import Any
 
 from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 
 from app.core.env import get_openrouter_api_key, get_openrouter_model
-from pydantic import BaseModel, Field
 
 
 logger = logging.getLogger(__name__)
+
+OPENROUTER_BASE_URL = (os.getenv("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1").strip().rstrip("/")
+OPENROUTER_SITE_URL = (os.getenv("OPENROUTER_SITE_URL") or os.getenv("APP_URL") or "http://localhost").strip()
+OPENROUTER_APP_TITLE = (os.getenv("OPENROUTER_APP_TITLE") or "NicolasSavin AI FOREX SIGNAL PLATFORM").strip()
 
 
 CHAT_SYSTEM_PROMPT = """
@@ -144,23 +148,40 @@ class ChatResponse(BaseModel):
 
 class ForexChatService:
     def __init__(self) -> None:
-        self.api_key = get_openrouter_api_key() or ""
+        self.api_key = (get_openrouter_api_key() or "").strip()
         self.model = get_openrouter_model()
         self.timeout = float(os.getenv("OPENROUTER_TIMEOUT", os.getenv("OPENAI_TIMEOUT", "30")))
         self.enabled = os.getenv("CHAT_ENABLED", "true").strip().lower() == "true"
+        self.use_openrouter = os.getenv("USE_OPENROUTER", "true").strip().lower() == "true"
         self.client = (
-            AsyncOpenAI(api_key=self.api_key, base_url="https://openrouter.ai/api/v1", timeout=self.timeout)
-            if self.api_key
+            AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=OPENROUTER_BASE_URL,
+                timeout=self.timeout,
+                default_headers={
+                    "HTTP-Referer": OPENROUTER_SITE_URL,
+                    "X-Title": OPENROUTER_APP_TITLE,
+                },
+            )
+            if self.api_key and self.use_openrouter
             else None
+        )
+        logger.info(
+            "chat_openrouter_init enabled=%s use_openrouter=%s configured=%s model=%s base_url=%s timeout=%s referer=%s title=%s",
+            self.enabled,
+            self.use_openrouter,
+            bool(self.client),
+            self.model,
+            OPENROUTER_BASE_URL,
+            self.timeout,
+            OPENROUTER_SITE_URL,
+            OPENROUTER_APP_TITLE,
         )
 
     async def chat(self, payload: ChatRequest) -> ChatResponse:
         message = payload.message.strip()
         if not self.enabled:
-            return self._fallback(
-                "Чат-ассистент сейчас отключён в конфигурации сервера.",
-                warnings=["chat_disabled"],
-            )
+            return self._fallback("Чат-ассистент сейчас отключён в конфигурации сервера.", warnings=["chat_disabled"])
 
         if not self._is_forex_scope(message):
             return self._fallback(
@@ -168,7 +189,15 @@ class ForexChatService:
                 warnings=["out_of_scope"],
             )
 
+        if not self.use_openrouter:
+            logger.warning("chat_openrouter_disabled_by_env use_openrouter=%s", self.use_openrouter)
+            return self._fallback(
+                "OpenRouter отключён переменной USE_OPENROUTER=false. Доступен только fallback режим.",
+                warnings=["openrouter_disabled"],
+            )
+
         if not self.client:
+            logger.warning("chat_openrouter_not_configured model=%s has_api_key=%s", self.model, bool(self.api_key))
             return self._fallback(
                 "OpenRouter не настроен на backend. Могу отвечать только в режиме безопасного fallback без внешней модели.",
                 warnings=["openrouter_not_configured"],
@@ -192,50 +221,41 @@ class ForexChatService:
                 if smc_analysis_mode
                 else CHAT_SYSTEM_PROMPT
             )
+            temperature = 0.2 if smc_analysis_mode or explanation_mode else 0.1
+            logger.info(
+                "chat_openrouter_request model=%s temperature=%s explanation_mode=%s smc_mode=%s msg_len=%s ctx_keys=%s",
+                self.model,
+                temperature,
+                explanation_mode,
+                smc_analysis_mode,
+                len(message),
+                sorted(list(payload.context.keys())) if isinstance(payload.context, dict) else [],
+            )
+
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.1 if explanation_mode else 0.2,
+                temperature=temperature,
             )
             text = (response.choices[0].message.content or "").strip() if response.choices else ""
             if not text:
-                return self._fallback(
-                    self._build_mock_analysis(message),
-                    warnings=["empty_model_response"],
-                )
+                logger.warning("chat_openrouter_empty_response model=%s", self.model)
+                return self._fallback(self._build_mock_analysis(message), warnings=["empty_model_response"])
+            logger.info("chat_openrouter_success model=%s response_len=%s", self.model, len(text))
             return ChatResponse(reply=text, source="openrouter", dataStatus="live", warnings=[])
-        except Exception:
-            logger.exception("Ошибка запроса к AI-модели в /api/chat")
-            return self._fallback(
-                self._build_mock_analysis(message),
-                warnings=["openrouter_request_failed"],
-            )
+        except Exception as exc:
+            logger.exception("chat_openrouter_request_failed model=%s error=%s", self.model, type(exc).__name__)
+            return self._fallback(self._build_mock_analysis(message), warnings=["openrouter_request_failed"])
 
     @staticmethod
     def _is_forex_scope(message: str) -> bool:
         text = message.lower()
         keywords = [
-            "forex",
-            "fx",
-            "eurusd",
-            "gbpusd",
-            "usdjpy",
-            "usdchf",
-            "audusd",
-            "nzdusd",
-            "usdcad",
-            "eur/jpy",
-            "risk",
-            "риск",
-            "сигнал",
-            "трейд",
-            "сделк",
-            "аналит",
-            "таймфрейм",
-            "платформ",
+            "forex", "fx", "eurusd", "gbpusd", "usdjpy", "usdchf", "audusd", "nzdusd", "usdcad", "eur/jpy",
+            "risk", "риск", "сигнал", "трейд", "сделк", "аналит", "таймфрейм", "платформ",
         ]
         return any(token in text for token in keywords)
 
@@ -263,27 +283,13 @@ class ForexChatService:
     def _is_smc_overlay_request(*, message: str, context: dict[str, Any]) -> bool:
         lowered = message.lower()
         has_keywords = any(
-            token in lowered
-            for token in (
-                "smc",
-                "ict",
-                "свеч",
-                "candles",
-                "order block",
-                "ликвид",
-                "fvg",
-                "имбаланс",
-                "structure_levels",
-                "patterns",
-                "json",
-            )
+            token in lowered for token in ("smc", "ict", "свеч", "candles", "order block", "ликвид", "fvg", "имбаланс", "structure_levels", "patterns", "json")
         )
         if has_keywords:
             return True
         if not isinstance(context, dict):
             return False
-        candles = context.get("candles")
-        return isinstance(candles, list)
+        return isinstance(context.get("candles"), list)
 
     @staticmethod
     def _build_trade_idea_explanation_prompt(*, message: str, context: dict[str, Any]) -> str:
@@ -326,10 +332,5 @@ class ForexChatService:
     @staticmethod
     def _build_mock_analysis(message: str) -> str:
         pair_match = re.search(r"\b(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|NZDUSD|USDCAD|XAUUSD)\b", message.upper())
-        payload = {
-            "pair": pair_match.group(1) if pair_match else "EURUSD",
-            "bias": "neutral",
-            "summary": "Недостаточно данных для анализа",
-            "confidence": 0,
-        }
+        payload = {"pair": pair_match.group(1) if pair_match else "EURUSD", "bias": "neutral", "summary": "Недостаточно данных для анализа", "confidence": 0}
         return json.dumps(payload, ensure_ascii=False)

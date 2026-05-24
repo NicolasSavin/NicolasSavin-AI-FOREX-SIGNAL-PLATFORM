@@ -27,7 +27,7 @@ def get_openrouter_model() -> str:
     logger.info("OPENROUTER MODEL: %s", model)
     if model:
         return model
-    return "x-ai/grok-3-mini"
+    return "x-ai/grok-4.3"
 
 
 def get_twelvedata_api_key() -> str | None:
