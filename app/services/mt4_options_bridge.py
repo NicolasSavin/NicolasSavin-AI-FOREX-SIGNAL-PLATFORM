@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import gc
 from pathlib import Path
 import json
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from app.services.options_analysis import analyze_options
 logger = logging.getLogger(__name__)
 
 MT4_OPTIONS_LEVELS_TTL_SECONDS = int(os.getenv("MT4_OPTIONS_LEVELS_TTL_SECONDS", "21600"))
+OPTIONS_STORE_STALE_SECONDS = int(os.getenv("OPTIONS_STORE_STALE_SECONDS", "1800"))
 _OPTIONS_STORE: dict[str, dict[str, Any]] = {}
 _OPTIONS_STORAGE_PATH = Path("signals_data/mt4_options_levels.json")
 
@@ -121,6 +123,7 @@ def save_options_levels(payload: dict[str, Any]) -> dict[str, Any]:
         source_timestamp = source_timestamp.replace(tzinfo=timezone.utc)
 
     now = datetime.now(timezone.utc)
+    _prune_options_store(now)
     volume_delta = _build_volume_delta_snapshot(payload)
     entry = {
         "symbol": symbol,
@@ -143,6 +146,7 @@ def save_options_levels(payload: dict[str, Any]) -> dict[str, Any]:
     if symbol:
         _OPTIONS_STORE[symbol] = entry
         _persist_options_store()
+        gc.collect()
     logger.info(
         "MT4 options levels received symbol=%s count=%s volume_delta_available=%s",
         symbol,
@@ -183,6 +187,31 @@ def _load_options_store_from_disk() -> None:
         symbol = normalize_symbol(entry.get("symbol") or key)
         if symbol:
             _OPTIONS_STORE[symbol] = entry
+    _prune_options_store(datetime.now(timezone.utc))
+
+
+def _prune_options_store(now: datetime) -> None:
+    cutoff = now - timedelta(seconds=OPTIONS_STORE_STALE_SECONDS)
+    stale_symbols: list[str] = []
+    for symbol, entry in _OPTIONS_STORE.items():
+        if not isinstance(entry, dict):
+            stale_symbols.append(symbol)
+            continue
+        received_at = entry.get("received_at")
+        ts: datetime | None = None
+        if isinstance(received_at, str):
+            try:
+                ts = datetime.fromisoformat(received_at.replace("Z", "+00:00"))
+            except ValueError:
+                ts = None
+        elif isinstance(received_at, datetime):
+            ts = received_at
+        if isinstance(ts, datetime) and ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts is None or ts < cutoff:
+            stale_symbols.append(symbol)
+    for symbol in stale_symbols:
+        _OPTIONS_STORE.pop(symbol, None)
 
 
 def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
@@ -266,6 +295,7 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_latest_options_levels(symbol: str) -> dict[str, Any]:
+    _prune_options_store(datetime.now(timezone.utc))
     normalized = normalize_symbol(symbol)
     entry = _OPTIONS_STORE.get(normalized)
     if not entry:
@@ -282,3 +312,8 @@ def get_latest_options_levels(symbol: str) -> dict[str, Any]:
         analysis["reason"] = "No MT4 option levels received"
     source = str(entry.get("source") or "mt4_optionsfx") if analysis["available"] else "unavailable"
     return {**entry, "analysis": analysis, "available": analysis["available"], "stale": stale, "source": source}
+
+
+def get_options_store_size() -> int:
+    _prune_options_store(datetime.now(timezone.utc))
+    return len(_OPTIONS_STORE)
