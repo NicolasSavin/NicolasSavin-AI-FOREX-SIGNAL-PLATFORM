@@ -1026,13 +1026,29 @@ def api_mt4_ingest_get(
         return JSONResponse(status_code=400, content={"ok": False, "error": "symbol_required"})
 
     store_key = f"{normalized_symbol}:{timeframe}"
-    MT4_CANDLE_STORE[store_key] = {
-        "time": int(time or 0),
+    candle_time = int(time or 0)
+    candle_row = {
+        "time": candle_time,
+        "datetime": datetime.fromtimestamp(candle_time, timezone.utc).isoformat() if candle_time > 0 else None,
         "open": float(open or 0.0),
         "high": float(high or 0.0),
         "low": float(low or 0.0),
         "close": float(close or 0.0),
         "volume": float(volume or 0.0),
+    }
+    existing = (MT4_CANDLE_STORE.get(store_key) or {}).get("candles") or []
+    merged = {int(c.get("time") or 0): c for c in existing if isinstance(c, dict) and int(c.get("time") or 0) > 0}
+    if candle_time > 0:
+        merged[candle_time] = candle_row
+    merged_candles = [merged[k] for k in sorted(merged.keys()) if k > 0][-MT4_CANDLE_STORE_MAX_BARS:]
+
+    MT4_CANDLE_STORE[store_key] = {
+        "updated_at": datetime.now(timezone.utc),
+        "symbol": normalized_symbol,
+        "timeframe": timeframe,
+        "broker": broker,
+        "account": account,
+        "candles": merged_candles,
     }
 
     save_volume_cluster_payload({
@@ -2380,12 +2396,24 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
     m15 = (fetch_candles(symbol_norm, "M15", 220).get("candles") or [])
     h1 = (fetch_candles(symbol_norm, "H1", 220).get("candles") or [])
     h4 = (fetch_candles(symbol_norm, "H4", 220).get("candles") or [])
-    candles = m15 if tf_norm == "M15" else (fetch_candles(symbol_norm, tf_norm, 220).get("candles") or m15)
+    candles = m15 if tf_norm == "M15" else (fetch_candles(symbol_norm, tf_norm, 220).get("candles") or m15 or h1)
 
-    if len(candles) < 40 or len(m15) < 40:
-        return {"id": f"{symbol_norm}-WAIT", "symbol": symbol_norm, "pair": symbol_norm, "timeframe": tf_norm, "tf": tf_norm, "action": "WAIT", "signal": "WAIT", "entry": None, "sl": None, "tp": None, "confidence": 22, "trade_permission": False, "reason_ru": "Недостаточно свечей для SMC-анализа.", "candles": _format_idea_candles(candles), "candles_count": len(candles)}
+    available_timeframes = []
+    last_candle_time = None
+    for mtf in ("M15", "H1", "H4"):
+        _, mt4_item = resolve_mt4_candle_item(symbol_norm, mtf)
+        mt4_candles = (mt4_item or {}).get("candles") or []
+        if mt4_candles:
+            available_timeframes.append(mtf)
+            last_time = int((mt4_candles[-1] or {}).get("time") or 0)
+            if last_time > 0 and (last_candle_time is None or last_time > last_candle_time):
+                last_candle_time = last_time
 
-    inst = _build_institutional_signal(symbol_norm, tf_norm, m15, h1 or m15, h4 or h1 or m15)
+    primary_candles = m15 if len(m15) >= 40 else h1
+    if len(primary_candles) < 40:
+        return {"id": f"{symbol_norm}-WAIT", "symbol": symbol_norm, "pair": symbol_norm, "timeframe": tf_norm, "tf": tf_norm, "action": "WAIT", "signal": "WAIT", "entry": None, "sl": None, "tp": None, "confidence": 22, "trade_permission": False, "reason_ru": "Недостаточно свечей для SMC-анализа.", "candles": _format_idea_candles(candles), "candles_count": len(candles), "last_candle_time": last_candle_time, "available_timeframes": available_timeframes, "source": "mt4_ingest" if available_timeframes else "unavailable"}
+
+    inst = _build_institutional_signal(symbol_norm, tf_norm, primary_candles, h1 or primary_candles, h4 or h1 or primary_candles)
     action = inst.get("action", "WAIT")
     result = {
         "id": f"{symbol_norm}-{action}", "symbol": symbol_norm, "pair": symbol_norm, "timeframe": tf_norm, "tf": tf_norm,
@@ -2396,6 +2424,7 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         "order_blocks": inst.get("order_blocks"), "fvg": inst.get("fvg"), "entry_source": "smc_engine", "selected_zone_type": (inst.get("fvg") or {}).get("type"),
         "selected_zone_low": (inst.get("fvg") or {}).get("low"), "selected_zone_high": (inst.get("fvg") or {}).get("high"), "candles_count": len(candles),
         "candles": _format_idea_candles(candles), "updated_at": now_utc(),
+        "last_candle_time": last_candle_time, "available_timeframes": available_timeframes, "source": "mt4_ingest" if available_timeframes else "market_provider",
         "prop_signal_score": {"score": inst.get("confidence", 0), "grade": "A" if inst.get("confidence", 0) >= 74 else "B" if inst.get("confidence", 0) >= 62 else "C", "mode": inst.get("mode", "watchlist")},
     }
     return result
@@ -2567,7 +2596,12 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
     if not item:
         return {"candles": [], "provider": "mt4_bridge", "warning_ru": "Нет свечей от MT4 bridge.", "raw_error": "no_mt4_data"}
 
-    age_seconds = (datetime.now(timezone.utc) - item["updated_at"]).total_seconds()
+    updated_at = item.get("updated_at") if isinstance(item, dict) else None
+    if not isinstance(updated_at, datetime):
+        legacy_time = int((item or {}).get("time") or 0)
+        updated_at = datetime.fromtimestamp(legacy_time, timezone.utc) if legacy_time > 0 else datetime.now(timezone.utc)
+
+    age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
     if age_seconds > MT4_BRIDGE_FRESH_SECONDS:
         stale_candles = (item.get("candles") or [])[-int(limit):]
         if stale_candles and age_seconds <= MT4_CANDLE_STALE_MAX_SECONDS:
