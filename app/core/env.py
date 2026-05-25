@@ -6,6 +6,7 @@ import os
 from app.core.analytics_candles_bridge_patch import install_analytics_candles_bridge_patch
 from app.core.legacy_ideas_market_post_patch import install_legacy_ideas_market_post_patch
 from app.core.analytics_rich_article_patch import install_analytics_rich_article_patch
+from app.core.prop_score_recovery_patch import install_prop_score_recovery_patch
 from app.core.safe_ai_json_patch import install_safe_ai_json_patch
 from app.core.safe_grok_text_patch import install_safe_grok_text_patch
 
@@ -42,6 +43,7 @@ install_safe_ai_json_patch()
 install_analytics_candles_bridge_patch()
 install_analytics_rich_article_patch()
 install_legacy_ideas_market_post_patch()
+install_prop_score_recovery_patch()
 
 # SAFE grok patch (не ломает FastAPI)
 install_safe_grok_text_patch()
