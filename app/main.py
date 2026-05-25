@@ -991,6 +991,74 @@ def api_mt4_signals():
     return payload
 
 
+
+
+@app.get("/api/mt4/ingest-get")
+def api_mt4_ingest_get(
+    symbol: str = "",
+    broker_symbol: str = "",
+    tf: str = "M15",
+    time: int = 0,
+    open: float = 0.0,
+    high: float = 0.0,
+    low: float = 0.0,
+    close: float = 0.0,
+    volume: float = 0.0,
+    tick_volume: float = 0.0,
+    future_volume: float = 0.0,
+    buy_volume: float = 0.0,
+    sell_volume: float = 0.0,
+    delta: float = 0.0,
+    cumulative_delta: float = 0.0,
+    future_delta: float = 0.0,
+    hft_signal: str = "",
+    bars: str = "",
+    broker: str = "",
+    account: str = "",
+    token: str = "",
+):
+    if MT4_BRIDGE_TOKEN and token.strip() != MT4_BRIDGE_TOKEN:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
+
+    normalized_symbol = normalize_mt4_symbol(symbol or broker_symbol)
+    timeframe = str(tf or "M15").upper()
+    if not normalized_symbol:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "symbol_required"})
+
+    store_key = f"{normalized_symbol}:{timeframe}"
+    MT4_CANDLE_STORE[store_key] = {
+        "time": int(time or 0),
+        "open": float(open or 0.0),
+        "high": float(high or 0.0),
+        "low": float(low or 0.0),
+        "close": float(close or 0.0),
+        "volume": float(volume or 0.0),
+    }
+
+    save_volume_cluster_payload({
+        "symbol": normalized_symbol,
+        "timeframe": timeframe,
+        "tick_volume": tick_volume,
+        "future_volume": future_volume,
+        "buy_volume": buy_volume,
+        "sell_volume": sell_volume,
+        "delta": delta,
+        "cumulative_delta": cumulative_delta,
+        "future_delta": future_delta,
+        "hft_signal": hft_signal,
+        "bars": bars,
+        "broker": broker,
+        "account": account,
+    })
+
+    return {
+        "ok": True,
+        "route": "ingest-get",
+        "symbol": normalized_symbol,
+        "timeframe": timeframe,
+    }
+
+
 @app.post("/api/mt4/push-candles")
 async def api_mt4_push_candles(request: Request):
     try:
