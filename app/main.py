@@ -4,6 +4,7 @@ import json
 import lzma
 import logging
 import os
+import gc
 import struct
 import time
 import asyncio
@@ -29,6 +30,8 @@ from app.services.signal_audit_logger import log_signal_audit
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.getLogger().setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -87,7 +90,8 @@ MT4_SIGNALS_CACHE_TTL_SECONDS = 30
 MT4_MARKUP_CACHE: dict[str, dict[str, Any]] = {}
 MT4_MARKUP_CACHE_TTL_SECONDS = 60
 MT4_CANDLE_STORE: dict[str, dict[str, Any]] = {}
-MT4_CANDLE_STORE_MAX_BARS = 600
+MT4_CANDLE_STORE_MAX_BARS = 300
+MT4_CANDLE_STORE_STALE_SECONDS = 1800
 MT4_CANDLE_FRESH_SECONDS = 300
 MT4_CANDLE_STALE_MAX_SECONDS = int(os.getenv("MT4_CANDLE_STALE_MAX_SECONDS", "604800"))
 DATA_PRIMARY_PROVIDER = os.getenv("DATA_PRIMARY_PROVIDER", "mt4_bridge").strip()
@@ -140,6 +144,30 @@ def _extract_ai_json_payload(ai_text: str) -> dict[str, Any]:
 
     logger.error("market_idea_ai_json_parse_failed response_preview=%s", sanitized[:500])
     return {}
+
+
+def _compact_candle(candle: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "time": int(candle.get("time") or 0),
+        "open": float(candle.get("open") or 0.0),
+        "high": float(candle.get("high") or 0.0),
+        "low": float(candle.get("low") or 0.0),
+        "close": float(candle.get("close") or 0.0),
+    }
+
+
+def _prune_stale_mt4_store() -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=MT4_CANDLE_STORE_STALE_SECONDS)
+    stale_keys = []
+    for key, item in MT4_CANDLE_STORE.items():
+        if not isinstance(item, dict):
+            stale_keys.append(key)
+            continue
+        updated_at = item.get("updated_at")
+        if isinstance(updated_at, datetime) and updated_at < cutoff:
+            stale_keys.append(key)
+    for key in stale_keys:
+        MT4_CANDLE_STORE.pop(key, None)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -1027,21 +1055,14 @@ def api_mt4_ingest_get(
 
     store_key = f"{normalized_symbol}:{timeframe}"
     candle_time = int(time or 0)
-    candle_row = {
-        "time": candle_time,
-        "datetime": datetime.fromtimestamp(candle_time, timezone.utc).isoformat() if candle_time > 0 else None,
-        "open": float(open or 0.0),
-        "high": float(high or 0.0),
-        "low": float(low or 0.0),
-        "close": float(close or 0.0),
-        "volume": float(volume or 0.0),
-    }
+    candle_row = _compact_candle({"time": candle_time, "open": open, "high": high, "low": low, "close": close})
     existing = (MT4_CANDLE_STORE.get(store_key) or {}).get("candles") or []
     merged = {int(c.get("time") or 0): c for c in existing if isinstance(c, dict) and int(c.get("time") or 0) > 0}
     if candle_time > 0:
         merged[candle_time] = candle_row
     merged_candles = [merged[k] for k in sorted(merged.keys()) if k > 0][-MT4_CANDLE_STORE_MAX_BARS:]
 
+    _prune_stale_mt4_store()
     MT4_CANDLE_STORE[store_key] = {
         "updated_at": datetime.now(timezone.utc),
         "symbol": normalized_symbol,
@@ -1104,10 +1125,9 @@ def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
                 h = float(c.get("high"))
                 l = float(c.get("low"))
                 cl = float(c.get("close"))
-                v = float(c.get("volume") or 0)
                 if t <= 0 or o <= 0 or h <= 0 or l <= 0 or cl <= 0:
                     continue
-                candles.append({"time": t, "datetime": datetime.fromtimestamp(t, timezone.utc).isoformat(), "open": o, "high": h, "low": l, "close": cl, "volume": v})
+                candles.append(_compact_candle({"time": t, "open": o, "high": h, "low": l, "close": cl}))
             except Exception:
                 continue
 
@@ -1126,6 +1146,7 @@ def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
         for c in candles:
             merged[c["time"]] = c
         merged_candles = [merged[k] for k in sorted(merged.keys())][-MT4_CANDLE_STORE_MAX_BARS:]
+        _prune_stale_mt4_store()
         MT4_CANDLE_STORE[key] = {
             "updated_at": datetime.now(timezone.utc),
             "symbol": symbol,
@@ -1134,6 +1155,7 @@ def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
             "account": payload.get("account"),
             "candles": merged_candles,
         }
+        gc.collect()
         return {"ok": True, "symbol": symbol, "timeframe": tf, "received": len(candles), "stored": len(merged_candles), "updated_at_utc": MT4_CANDLE_STORE[key]["updated_at"].isoformat()}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
@@ -1419,6 +1441,23 @@ def api_debug_api_usage():
         "mt4_signals_cache_age": None if not mt4_updated else (now - mt4_updated).total_seconds(),
         "provider_last_request_at": PROVIDER_LAST_REQUEST_AT,
         "api_budget_mode": "basic_safe",
+    }
+
+
+@app.get("/api/debug/memory")
+def api_debug_memory():
+    _prune_stale_mt4_store()
+    candles_total = 0
+    for item in MT4_CANDLE_STORE.values():
+        candles_total += len(item.get("candles") or []) if isinstance(item, dict) else 0
+
+    from app.services.mt4_options_bridge import get_options_store_size
+
+    return {
+        "store_keys": len(MT4_CANDLE_STORE),
+        "candles_total": candles_total,
+        "options_objects": get_options_store_size(),
+        "memory_mode": "optimized",
     }
 
 
