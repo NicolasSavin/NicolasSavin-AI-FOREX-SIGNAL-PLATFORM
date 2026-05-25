@@ -4,6 +4,7 @@ from calendar import timegm
 from datetime import datetime
 import logging
 import os
+import sys
 from threading import Lock
 from time import monotonic, time
 from typing import Any
@@ -63,7 +64,76 @@ class ChartDataService:
         }
 
     def get_chart(self, symbol: str, timeframe: str, limit: int | None = None) -> dict[str, Any]:
+        mt4_payload = self._get_chart_from_mt4_store(symbol=symbol, timeframe=timeframe, limit=limit)
+        if mt4_payload is not None:
+            return mt4_payload
         return self._get_chart_from_canonical(symbol=symbol, timeframe=timeframe, limit=limit)
+
+    def _get_chart_from_mt4_store(self, *, symbol: str, timeframe: str, limit: int | None = None) -> dict[str, Any] | None:
+        module = sys.modules.get("app.main")
+        if module is None:
+            return None
+        store = getattr(module, "MT4_CANDLE_STORE", None)
+        if not isinstance(store, dict):
+            return None
+
+        normalized_symbol = self._normalize_symbol(symbol)
+        normalized_tf = self._normalize_timeframe(timeframe)
+        requested_limit = max(1, min(int(limit or self.output_size), 5000))
+        requested_key = f"{normalized_symbol}:{normalized_tf}"
+
+        candidate_keys = [requested_key]
+        for key in store.keys():
+            if not isinstance(key, str) or ":" not in key:
+                continue
+            stored_symbol, stored_tf = key.split(":", 1)
+            if stored_tf != normalized_tf:
+                continue
+            if self._normalize_symbol(stored_symbol) == normalized_symbol and key not in candidate_keys:
+                candidate_keys.append(key)
+
+        selected_key = None
+        selected_item = None
+        for key in candidate_keys:
+            item = store.get(key)
+            if isinstance(item, dict):
+                selected_key = key
+                selected_item = item
+                break
+        if not selected_item:
+            return None
+
+        raw_candles = selected_item.get("candles") if isinstance(selected_item.get("candles"), list) else []
+        candles = self._normalize_candles(raw_candles)[-requested_limit:]
+        if not candles:
+            return None
+
+        available_timeframes = sorted(
+            {
+                key.split(":", 1)[1]
+                for key in store.keys()
+                if isinstance(key, str) and ":" in key and self._normalize_symbol(key.split(":", 1)[0]) == normalized_symbol
+            }
+        )
+        return {
+            "symbol": normalized_symbol,
+            "timeframe": normalized_tf,
+            "source": "mt4_ingest",
+            "status": "ok",
+            "message_ru": None,
+            "candles": candles,
+            "meta": {
+                "provider": "MT4_INGEST",
+                "source": "mt4_ingest",
+                "store_key": selected_key or requested_key,
+                "outputsize": len(candles),
+            },
+            "debug": {
+                "source": "mt4_ingest",
+                "candles_count": len(candles),
+                "available_timeframes": available_timeframes,
+            },
+        }
 
     def _get_chart_from_canonical(self, *, symbol: str, timeframe: str, limit: int | None = None) -> dict[str, Any]:
         normalized_symbol = self._normalize_symbol(symbol)
