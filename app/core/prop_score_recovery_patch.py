@@ -37,13 +37,64 @@ def _text(value: Any) -> str:
         return value.strip()
     if isinstance(value, dict):
         parts = []
-        for key in ("summary", "summary_ru", "reason_ru", "bias", "direction", "signal", "action", "trend", "trend_regime", "internal_structure", "mode", "grade"):
+        for key in (
+            "summary", "summary_ru", "reason_ru", "bias", "direction", "signal", "action",
+            "trend", "trend_regime", "internal_structure", "mode", "grade",
+        ):
             if value.get(key) not in (None, "", "—"):
                 parts.append(str(value.get(key)))
         return " ".join(parts)
     if isinstance(value, list):
         return " ".join(_text(x) for x in value[:5])
     return str(value).strip()
+
+
+def _normalize_symbol(symbol: Any) -> str:
+    raw = str(symbol or "").upper().strip().replace("/", "")
+    for suffix in (".CS", ".I", ".PRO", ".RAW", ".M", ".ECN"):
+        if raw.endswith(suffix):
+            raw = raw[: -len(suffix)]
+    if "." in raw:
+        raw = raw.split(".", 1)[0]
+    return raw
+
+
+def _candles_from_main(symbol: str) -> list[dict[str, Any]]:
+    """Score patch fallback: read the canonical in-memory MT4 store/fetch_candles directly.
+
+    The UI can draw chart candles while the idea object passed to prop_signal_engine may not
+    contain `candles`. Without this fallback the scorer shows `Реальные свечи missing`,
+    direction WAIT and no Entry/SL/TP even though MT4 ingest is healthy.
+    """
+    symbol = _normalize_symbol(symbol)
+    if not symbol:
+        return []
+    module = sys.modules.get("app.main")
+    if module is None:
+        return []
+
+    for tf in ("M15", "H1", "H4"):
+        try:
+            resolver = getattr(module, "resolve_mt4_candle_item", None)
+            if callable(resolver):
+                _, item = resolver(symbol, tf)
+                rows = (item or {}).get("candles") or []
+                if isinstance(rows, list) and len(rows) >= 10:
+                    return [x for x in rows if isinstance(x, dict)]
+        except Exception:
+            pass
+
+    fetch_candles = getattr(module, "fetch_candles", None)
+    if callable(fetch_candles):
+        for tf in ("M15", "H1", "H4"):
+            try:
+                payload = fetch_candles(symbol, tf, 220)
+                rows = (payload or {}).get("candles") or []
+                if isinstance(rows, list) and len(rows) >= 10:
+                    return [x for x in rows if isinstance(x, dict)]
+            except Exception:
+                continue
+    return []
 
 
 def _candles(idea: dict[str, Any]) -> list[dict[str, Any]]:
@@ -65,20 +116,24 @@ def _candles(idea: dict[str, Any]) -> list[dict[str, Any]]:
                 rows = [x for x in item.get("candles", []) if isinstance(x, dict)]
                 if rows:
                     return rows
-    return []
+    return _candles_from_main(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
 
 
 def _direction(idea: dict[str, Any], candles: list[dict[str, Any]]) -> str:
     chunks = []
     for key in ("signal", "action", "final_signal", "direction", "bias", "htf_bias", "summary_ru", "reason_ru"):
         value = idea.get(key)
-        if value not in (None, "", "—"):
+        if value not in (None, "", "—", "WAIT", "wait", "NO TRADE", "no_trade"):
             chunks.append(str(value))
-    for path in (("market_structure", "trend_regime"), ("market_structure", "internal_structure"), ("htf_context", "h4_bias"), ("htf_context", "h1_bias"), ("prop_signal_score", "direction"), ("advisor_signal", "action")):
+    for path in (
+        ("market_structure", "trend_regime"), ("market_structure", "internal_structure"),
+        ("htf_context", "h4_bias"), ("htf_context", "h1_bias"),
+        ("prop_signal_score", "direction"), ("advisor_signal", "action"),
+    ):
         cur: Any = idea
         for part in path:
             cur = cur.get(part) if isinstance(cur, dict) else None
-        if cur not in (None, "", "—"):
+        if cur not in (None, "", "—", "WAIT", "wait", "NO TRADE", "no_trade"):
             chunks.append(str(cur))
     raw = " ".join(chunks).upper()
     if "SELL" in raw or "BEAR" in raw or "ПРОДА" in raw:
@@ -158,14 +213,7 @@ def _levels(symbol: str, direction: str, candles: list[dict[str, Any]], entry: f
 
 def _row(key: str, label: str, weight: int, score: int, text: str) -> dict[str, Any]:
     score = max(0, min(int(score), int(weight)))
-    return {
-        "key": key,
-        "label_ru": label,
-        "weight": weight,
-        "score": score,
-        "status": "confirmed" if score >= weight * 0.7 else "partial" if score > 0 else "missing",
-        "text_ru": text,
-    }
+    return {"key": key, "label_ru": label, "weight": weight, "score": score, "status": "confirmed" if score >= weight * 0.7 else "partial" if score > 0 else "missing", "text_ru": text}
 
 
 def _has_sentiment(idea: dict[str, Any]) -> bool:
@@ -181,8 +229,8 @@ def _has_options(idea: dict[str, Any]) -> bool:
 
 
 def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     candles = _candles(idea)
-    symbol = str(idea.get("symbol") or idea.get("pair") or "").upper()
     direction = _direction(idea, candles)
     entry = _num(idea.get("entry") or idea.get("entry_price"))
     sl = _num(idea.get("sl") or idea.get("stop_loss"))
@@ -225,22 +273,10 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         "criteria": rows,
         "blockers": blockers,
         "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"],
-        "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid},
+        "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "candles_count": len(candles)},
         "sentiment_used": sentiment,
     }
-    advisor = {
-        "allowed": allowed,
-        "reason": "allowed: consistent prop score, valid direction, levels and RR" if allowed else "; ".join(blockers) or "score below autotrade threshold",
-        "symbol": symbol,
-        "action": direction,
-        "entry": entry,
-        "sl": sl,
-        "tp": tp,
-        "rr": rr,
-        "score": score,
-        "grade": grade,
-        "mode": mode,
-    }
+    advisor = {"allowed": allowed, "reason": "allowed: consistent prop score, valid direction, levels and RR" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode}
     return score_payload, advisor
 
 
@@ -254,7 +290,7 @@ def install_prop_score_recovery_patch() -> None:
         while time.time() < deadline:
             module = sys.modules.get("app.services.prop_signal_engine")
             if module and hasattr(module, "enrich_idea_with_prop_score"):
-                if getattr(module, "_PROP_SCORE_RECOVERY_PATCHED_V2", False):
+                if getattr(module, "_PROP_SCORE_RECOVERY_PATCHED_V3", False):
                     return
                 original_enrich = module.enrich_idea_with_prop_score
 
@@ -297,8 +333,8 @@ def install_prop_score_recovery_patch() -> None:
 
                 module.build_prop_signal_score = patched_build_prop_signal_score
                 module.enrich_idea_with_prop_score = patched_enrich_idea_with_prop_score
-                setattr(module, "_PROP_SCORE_RECOVERY_PATCHED_V2", True)
-                logger.info("prop_score_recovery_patch_v2_installed")
+                setattr(module, "_PROP_SCORE_RECOVERY_PATCHED_V3", True)
+                logger.info("prop_score_recovery_patch_v3_installed")
                 return
             time.sleep(0.25)
         logger.warning("prop_score_recovery_patch_timeout")
