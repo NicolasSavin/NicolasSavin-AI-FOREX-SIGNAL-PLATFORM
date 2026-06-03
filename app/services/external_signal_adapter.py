@@ -23,7 +23,7 @@ EXTERNAL_SIGNAL_SOURCES = {
         "source": "sharkfx_ru",
         "kind": "trading_signal_source",
         "url": TELEGRAM_SOURCE_URLS["sharkfx_ru"],
-        "opens_trades_directly": True,
+        "opens_trades_directly": False,
     },
     "CME_OptionsFX": {
         "source": "CME_OptionsFX",
@@ -211,6 +211,54 @@ def parse_cme_optionsfx_message(raw_text: str, published_at: str | None = None) 
     return parsed
 
 
+def parse_sharkfx_message(raw_text: str, published_at: str | None = None) -> list[dict[str, Any]]:
+    text = html.unescape(str(raw_text or "")).strip()
+    if not text:
+        return []
+    symbols = _extract_symbols(text)
+    if not symbols:
+        return []
+    upper = text.upper()
+    action = "WAIT"
+    if any(marker in upper for marker in ("BUY", "LONG", "ПОКУП", "ЛОНГ")):
+        action = "BUY"
+    elif any(marker in upper for marker in ("SELL", "SHORT", "ПРОДА", "ШОРТ")):
+        action = "SELL"
+    if action == "WAIT":
+        return []
+
+    entry_values = []
+    for label in (r"entry|вход", r"buy\s+limit|sell\s+limit|buy|sell"):
+        value = _extract_first_number_after(label, text)
+        if value is not None:
+            entry_values.append(value)
+    sl = _extract_first_number_after(r"sl|s/l|stop\s*loss|стоп", text)
+    tp_values: list[float] = []
+    for match in re.finditer(r"(?:tp\d*|t/p\d*|take\s*profit|тейк)[:\s\-–]+(\d{1,5}(?:[.,]\d{1,5})?)", text, re.IGNORECASE):
+        tp_values.extend(_extract_numbers(match.group(1)))
+    confidence = _extract_first_number_after(r"confidence|score|уверенность", text)
+    parsed: list[dict[str, Any]] = []
+    for symbol in symbols:
+        parsed.append(
+            {
+                "source": "sharkfx_ru",
+                "source_kind": "trading_signal_source",
+                "symbol": symbol,
+                "pair": symbol,
+                "action": action,
+                "entry": entry_values[0] if entry_values else None,
+                "stop_loss": sl,
+                "take_profit": tp_values[0] if tp_values else None,
+                "take_profits": tp_values[:4],
+                "confidence": confidence,
+                "opens_trades_directly": False,
+                "raw_text": text,
+                "published_at": published_at,
+            }
+        )
+    return parsed
+
+
 def _fetch_public_telegram_messages(channel: str) -> list[dict[str, str]]:
     response = requests.get(
         f"https://t.me/s/{channel}",
@@ -319,3 +367,75 @@ def get_cme_optionsfx_confirmation(symbol: Any) -> dict[str, Any]:
         "option_bias": signal.get("option_bias") or "neutral",
         "signal": signal,
     }
+
+
+
+def get_sharkfx_signals(force_refresh: bool = False) -> dict[str, Any]:
+    source = EXTERNAL_SIGNAL_SOURCES["sharkfx_ru"]
+    now = time.time()
+    cached = _CACHE.get("sharkfx_ru")
+    if cached and not force_refresh and now - float(cached.get("cached_at_epoch") or 0) < TELEGRAM_CACHE_TTL_SECONDS:
+        return dict(cached["payload"])
+
+    if not _telegram_credentials_available():
+        payload = {
+            "source": "sharkfx_ru",
+            "source_kind": source["kind"],
+            "source_url": source["url"],
+            "available": False,
+            "reason": "telegram_credentials_missing",
+            "opens_trades_directly": False,
+            "signals": [],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _CACHE["sharkfx_ru"] = {"cached_at_epoch": now, "payload": payload}
+        return payload
+
+    try:
+        messages = _fetch_public_telegram_messages("sharkfx_ru")
+        signals: list[dict[str, Any]] = []
+        for message in messages:
+            signals.extend(parse_sharkfx_message(message.get("text", ""), message.get("published_at") or None))
+        payload = {
+            "source": "sharkfx_ru",
+            "source_kind": source["kind"],
+            "source_url": source["url"],
+            "available": True,
+            "opens_trades_directly": False,
+            "signals": signals,
+            "messages_checked": len(messages),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:  # pragma: no cover
+        logger.warning("sharkfx_fetch_failed: %s", exc)
+        payload = {
+            "source": "sharkfx_ru",
+            "source_kind": source["kind"],
+            "source_url": source["url"],
+            "available": False,
+            "reason": "telegram_fetch_failed",
+            "error": str(exc)[:240],
+            "opens_trades_directly": False,
+            "signals": [],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    _CACHE["sharkfx_ru"] = {"cached_at_epoch": now, "payload": payload}
+    return payload
+
+
+def get_sharkfx_confirmation(symbol: Any, action: Any = None) -> dict[str, Any]:
+    normalized = _normalize_symbol(symbol)
+    desired_action = str(action or "").upper().strip()
+    payload = get_sharkfx_signals()
+    signals = payload.get("signals") if isinstance(payload.get("signals"), list) else []
+    matches = [item for item in signals if isinstance(item, dict) and _normalize_symbol(item.get("symbol") or item.get("pair")) == normalized]
+    if not payload.get("available") or not normalized:
+        return {"source": "sharkfx_ru", "available": False, "used": False, "alignment": "neutral", "reason": payload.get("reason") or "unavailable", "signal": None}
+    if not matches:
+        return {"source": "sharkfx_ru", "available": True, "used": False, "alignment": "neutral", "reason": "no_symbol_match", "signal": None}
+    signal = matches[-1]
+    signal_action = str(signal.get("action") or "WAIT").upper()
+    alignment = "neutral"
+    if desired_action in {"BUY", "SELL"} and signal_action in {"BUY", "SELL"}:
+        alignment = "aligned" if desired_action == signal_action else "conflict"
+    return {"source": "sharkfx_ru", "available": True, "used": True, "alignment": alignment, "signal_action": signal_action, "signal": signal}

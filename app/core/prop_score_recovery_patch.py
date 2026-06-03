@@ -279,6 +279,42 @@ def _external_options_alignment(symbol: str, direction: str) -> dict[str, Any]:
     high_conflict = any(marker in raw for marker in ("HIGH CONFIDENCE", "STRONG", "СИЛЬН", "ВЫСОК", "AGGRESSIVE", "DOMINATE"))
     return {**confirmation, "used": True, "alignment": "conflict", "score_adjustment": -4, "implied_action": implied, "high_confidence_conflict": high_conflict, "text_ru": f"CME_OptionsFX против {direction}: options bias {bias} ожидает {implied}"}
 
+
+def _sharkfx_confirmation(symbol: str, direction: str) -> dict[str, Any]:
+    try:
+        module = sys.modules.get("app.services.prop_signal_engine")
+        getter = getattr(module, "get_sharkfx_confirmation", None) if module is not None else None
+        if callable(getter):
+            payload = getter(symbol, direction)
+            return payload if isinstance(payload, dict) else {}
+        from app.services.external_signal_adapter import get_sharkfx_confirmation
+        payload = get_sharkfx_confirmation(symbol, direction)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _sharkfx_alignment(symbol: str, direction: str) -> dict[str, Any]:
+    payload = _sharkfx_confirmation(symbol, direction)
+    used = bool(payload.get("used") and isinstance(payload.get("signal"), dict))
+    alignment = str(payload.get("alignment") or "neutral")
+    adjustment = 3 if used and alignment == "aligned" else -2 if used and alignment == "conflict" else 0
+    text = "SharkFX: нет свежих данных по инструменту, канал не обязателен для сделки"
+    if used and alignment == "aligned":
+        text = f"SharkFX подтверждает {direction} как дополнительный Telegram-фильтр"
+    elif used and alignment == "conflict":
+        text = f"SharkFX не совпадает с {direction}, score снижен без блокировки"
+    return {**payload, "used": used, "alignment": alignment, "score_adjustment": adjustment, "text_ru": text}
+
+
+def _future_delta(symbol: str, candles: list[dict[str, Any]]) -> dict[str, Any]:
+    try:
+        from app.services.future_delta_service import get_future_delta_snapshot
+        payload = get_future_delta_snapshot(symbol, "H1", candles)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
 def _row(key: str, label: str, weight: int, score: int, text: str) -> dict[str, Any]:
     score = max(0, min(score, weight))
     return {"key": key, "label_ru": label, "weight": weight, "score": score, "status": "confirmed" if score >= weight * 0.7 else "partial" if score > 0 else "missing", "text_ru": text}
@@ -294,6 +330,13 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     entry, sl, tp, rr, valid, level_source = _levels(symbol, direction, candles, entry, sl, tp)
     sentiment = _sentiment_alignment(idea, direction)
     external_options = _external_options_alignment(symbol, direction)
+    sharkfx = _sharkfx_alignment(symbol, direction)
+    future_delta = _future_delta(symbol, candles)
+    future_delta_adjustment = 0
+    if future_delta.get("available") and direction in {"BUY", "SELL"}:
+        bias = str(future_delta.get("bias") or "neutral").lower()
+        if (direction == "BUY" and bias == "bullish") or (direction == "SELL" and bias == "bearish"):
+            future_delta_adjustment = 2
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     has_structure = any(_text_has_data(idea.get(k)) for k in ("reason_ru", "summary_ru", "market_structure", "htf_context", "entry_source"))
@@ -314,7 +357,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         _row("sentiment", "Sentiment / новости", 5, int(sentiment.get("score") or 0), str(sentiment.get("text_ru") or "нет sentiment")),
     ]
     base_score = round(sum(r["score"] for r in rows) / max(sum(r["weight"] for r in rows), 1) * 100)
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0)))
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(sharkfx.get("score_adjustment") or 0) + future_delta_adjustment))
     allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict and not external_options_high_conflict)
     grade = "A" if score >= 70 else "B" if score >= 55 else "C" if score >= 40 else "D"
     mode = "prop_entry" if allowed and score >= 70 else "watchlist" if allowed else "research_only" if score >= 40 else "no_trade"
@@ -329,8 +372,8 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         blockers.append(str(sentiment.get("text_ru")))
     if external_options_high_conflict:
         blockers.append(str(external_options.get("text_ru")))
-    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing", "external_options_filter": external_options, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX"}
-    advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "external_options_filter": external_options, "level_source": level_source}
+    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing", "external_options_filter": external_options, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "telegram_signal_filter": sharkfx, "telegram_signal_used": bool(sharkfx.get("used")), "telegram_signal_source": "sharkfx_ru", "future_delta": future_delta, "future_delta_used": bool(future_delta.get("available")), "future_delta_score_adjustment": future_delta_adjustment}
+    advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "external_options_filter": external_options, "telegram_signal_used": bool(sharkfx.get("used")), "telegram_signal_alignment": sharkfx.get("alignment") or "neutral", "telegram_signal_source": "sharkfx_ru", "telegram_signal_filter": sharkfx, "level_source": level_source}
     return score_payload, advisor
 
 
@@ -389,6 +432,11 @@ def install_prop_score_recovery_patch() -> None:
                     enriched["external_options_used"] = score.get("external_options_used")
                     enriched["external_options_alignment"] = score.get("external_options_alignment")
                     enriched["external_options_source"] = "CME_OptionsFX"
+                    enriched["telegram_signal_filter"] = score.get("telegram_signal_filter")
+                    enriched["telegram_signal_used"] = score.get("telegram_signal_used")
+                    enriched["telegram_signal_source"] = "sharkfx_ru"
+                    enriched["future_delta"] = score.get("future_delta")
+                    enriched["future_delta_used"] = score.get("future_delta_used")
                     enriched["external_options_ru"] = external_options_filter.get("text_ru") or "CME_OptionsFX: нет данных"
                     enriched["external_options_bias"] = external_options_signal.get("option_bias") or external_options_filter.get("option_bias") or "neutral"
                     enriched["external_options_key_strikes"] = external_options_signal.get("key_strikes") or []

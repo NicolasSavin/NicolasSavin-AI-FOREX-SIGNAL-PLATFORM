@@ -402,3 +402,11 @@ curl http://127.0.0.1:8000/ideas/market
 - Если Telegram credentials не заданы (`TELEGRAM_API_ID`/`TELEGRAM_API_HASH` или `TELEGRAM_BOT_TOKEN`, также поддерживаются `TG_*` aliases), endpoint возвращает `available=false`, а scoring работает как раньше без блокировки сделок.
 - В Prop Signal Engine слой `CME_OptionsFX` используется только как confirmation layer: совпадение options bias с направлением сделки даёт `+4` к score, явный конфликт даёт `-4`, а high-confidence conflict может стать blocker.
 - В payload идеи добавлены `external_options_ru`, `external_options_bias`, `external_options_key_strikes`, `external_options_max_pain`, а `advisor_signal` содержит `external_options_used`, `external_options_alignment`, `external_options_source="CME_OptionsFX"`.
+
+
+## Signal engine recovery / Telegram optional layers
+- Создан recovery-контур для MT4: если MT4 присылает валидные свечи, engine может восстановить направление BUY/SELL по структуре свечей, рассчитать Entry/SL/TP через ATR/range fallback и пройти `advisor_allowed=true` без Telegram/CME данных.
+- `sharkfx_ru` подключён как Telegram adapter для разборки сигналов (`symbol`, `action`, `entry`, `stop_loss`, `take_profit`, `confidence`, `raw_text`) через `GET /api/external-signals/sharkfx`. Канал не открывает сделки напрямую и используется только как optional score boost/penalty.
+- `CME_OptionsFX` остаётся optional confirmation layer: отсутствие credentials или данных возвращает `available=false` и не блокирует сделку. Совпадение options bias повышает score; только явно сильный конфликт может блокировать prop advisor как риск-фильтр.
+- Добавлен FutureDelta/FutureVolume слой: реальные/bridge значения из MT4 volume cluster используются при наличии, иначе применяется явно помеченный `calculated_cum_delta_proxy` по OHLC/tick volume. Proxy-метрики маркируются `is_proxy_metric=true` и не выдаются за реальные фьючерсные данные.
+- Prop scorer recovery теперь учитывает candle direction fallback, ATR levels fallback, repaired sentiment alignment, optional SharkFX/CME confirmations и FutureDelta proxy так, чтобы отсутствие Telegram не было обязательным условием сделки.

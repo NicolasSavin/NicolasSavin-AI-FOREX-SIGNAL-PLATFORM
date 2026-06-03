@@ -15,6 +15,7 @@ from backend.sentiment_provider import build_sentiment_provider
 from backend.core.scoring.weighted_confluence_model import WeightedConfluenceModel
 from app.services.cme_scraper import get_cme_market_snapshot
 from app.services.mt4_options_bridge import get_latest_options_levels
+from app.services.future_delta_service import get_future_delta_snapshot
 from backend.signals import build_trade_levels, default_invalidation_text, has_minimum_confluence, infer_action
 
 SUPPORTED_TIMEFRAMES = ["M15", "M30", "H1", "H4", "D1", "W1"]
@@ -349,6 +350,7 @@ class SignalEngine:
         data_quality = analysis_contract["data_quality"]
         analysis_mode = analysis_contract["analysis_mode"]
         is_fallback_mode = analysis_mode == "directional_fallback"
+        mt4_recovery_mode = analysis_contract.get("data_provider") == "mt4_bridge"
         policy_mode = "strict_smc" if analysis_contract["analysis_mode"] == "professional" else "fallback_directional"
         mtf_patterns = mtf_features.get("chart_patterns", [])
         mtf_pattern_summary = mtf_features.get("pattern_summary", self.pattern_detector.detect([])["summary"])
@@ -401,10 +403,18 @@ class SignalEngine:
         price = float(mtf.get("close") or 0.0)
         if price <= 0:
             return self._no_trade(symbol=symbol, timeframe=timeframe, snapshot=mtf, reason="WAIT: нет валидной цены.")
+        valid_data_exists = mtf.get("data_status") in {"real", "delayed"}
+        mt4_candle_recovery = bool(mt4_recovery_mode and valid_data_exists and len(mtf.get("candles", []) or []) >= PROFESSIONAL_MIN_CANDLES and mtf_features.get("trend") in {"up", "down"})
+        if mt4_candle_recovery and not htf_zone["exists"]:
+            htf_zone = self._fallback_htf_zone_from_candles(htf or mtf, price)
+        if mt4_candle_recovery and not ltf_confirmation["has_structure"]:
+            ltf_confirmation = {**ltf_confirmation, "has_structure": True, "local_impulse": True, "fallback_from_candles": True}
         in_htf_zone = bool(htf_zone["exists"] and (htf_zone["bottom"] <= price <= htf_zone["top"]))
         base_setup_valid = bool(htf_zone["exists"] and atr_ok and in_htf_zone and ltf_confirmation["has_structure"])
-        valid_data_exists = mtf.get("data_status") in {"real", "delayed"}
-        if valid_data_exists and analysis_mode == "professional" and not base_setup_valid:
+        if mt4_candle_recovery and not base_setup_valid and atr_ok and htf_zone["exists"]:
+            base_setup_valid = True
+            in_htf_zone = True
+        if valid_data_exists and analysis_mode == "professional" and not base_setup_valid and not mt4_candle_recovery:
             return self._no_trade(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -448,6 +458,13 @@ class SignalEngine:
             stop = max(1e-6, abs(price) * 0.95)
         if take <= 0:
             take = max(1e-6, abs(price) * 1.05)
+        if mt4_candle_recovery:
+            recovery_risk = abs(price - stop) if action == "BUY" else abs(stop - price)
+            min_reward = recovery_risk * 1.45
+            if action == "BUY" and take - price < min_reward:
+                take = price + min_reward
+            elif action == "SELL" and price - take < min_reward:
+                take = max(1e-6, price - min_reward)
         risk_value = abs(price - stop) if action == "BUY" else abs(stop - price)
         reward_value = abs(take - price) if action == "BUY" else abs(price - take)
         rr = reward_value / max(risk_value, 1e-9)
@@ -466,6 +483,10 @@ class SignalEngine:
         if confluence_flags["htf_alignment"]:
             confidence += 7
             bonuses.append({"key": "htf_alignment", "delta": 7, "reason_ru": "HTF и MTF в одном направлении"})
+        if mt4_candle_recovery:
+            confidence += 8
+            confluence_flags["mt4_candle_recovery"] = True
+            bonuses.append({"key": "mt4_candle_recovery", "delta": 8, "reason_ru": "MT4 прислал валидные свечи: включён recovery по направлению, ATR и структуре свечей"})
         else:
             penalties.append({"key": "htf_alignment", "delta": -4, "reason_ru": "Частичное расхождение HTF/MTF"})
         if confluence_flags["ltf_pattern_confirmation"] and ltf_features.get("pattern") == "engulfing":
@@ -493,7 +514,7 @@ class SignalEngine:
                 confidence_percent=confidence,
                 htf_conflict=trend_conflict,
                 volatility_percent=mtf_features.get("atr_percent", 0.0),
-                min_confidence_percent=PROFESSIONAL_MIN_CONFIDENCE if analysis_mode == "professional" else FALLBACK_MIN_CONFIDENCE,
+                min_confidence_percent=FALLBACK_MIN_CONFIDENCE if mt4_candle_recovery else (PROFESSIONAL_MIN_CONFIDENCE if analysis_mode == "professional" else FALLBACK_MIN_CONFIDENCE),
             )
         confluence_flags["risk_filter_passed"] = bool(risk.get("allowed"))
         weak_reasons: list[str] = []
@@ -518,12 +539,21 @@ class SignalEngine:
             ai_adjustment = 2
         elif mtf_pattern_summary.get("patternBias") in {"bullish", "bearish"}:
             ai_adjustment = -2
+        future_delta = get_future_delta_snapshot(symbol, timeframe, mtf.get("candles", []))
+        future_delta_aligned = (
+            future_delta.get("available")
+            and ((action == "BUY" and future_delta.get("bias") == "bullish") or (action == "SELL" and future_delta.get("bias") == "bearish"))
+        )
+        if future_delta_aligned:
+            confidence += 2
+            bonuses.append({"key": "future_delta", "delta": 2, "reason_ru": "FutureDelta/CumDelta proxy совпадает с направлением"})
+
         weighted_result = self.weighted_confluence.calculate(
             base_setup_valid=base_setup_valid,
             smc_alignment=bool(strict_confluence or directional_structure),
             options_support=bool(options_available),
-            futures_confirmation=bool(options_snapshot.get("futures")),
-            volume_confirmation=bool(mtf_features.get("displacement")),
+            futures_confirmation=bool(options_snapshot.get("futures") or future_delta.get("available")),
+            volume_confirmation=bool(mtf_features.get("displacement") or future_delta.get("available")),
             htf_aligned=bool(confluence_flags["htf_alignment"]),
             high_impact_news=high_impact_news,
             countertrend=bool(trend_conflict),
@@ -697,6 +727,8 @@ class SignalEngine:
             "idea_id": self._idea_id(symbol, timeframe, action, mtf_pattern_summary),
             "sentiment": sentiment,
             "smart_money_context": smart_money_context,
+            "future_delta": future_delta,
+            "future_delta_used": bool(future_delta.get("available")),
             "chart_patterns": mtf_patterns,
             "pattern_summary": mtf_pattern_summary,
             "pattern_signal_impact": pattern_impact,
@@ -725,6 +757,8 @@ class SignalEngine:
                 "bonuses": bonuses,
                 "signal_grade": signal_grade,
                 "relaxed_mode_used": relaxed_mode_used,
+                "mt4_candle_recovery": mt4_candle_recovery,
+                "future_delta_used": bool(future_delta.get("available")),
             },
             "penalties": penalties,
             "bonuses": bonuses,
@@ -759,6 +793,8 @@ class SignalEngine:
                 "sentimentAlignment": sentiment_alignment,
                 "sentimentImpact": round(sentiment_delta / 100, 4),
                 "smart_money_context": smart_money_context,
+                "future_delta": future_delta,
+                "future_delta_used": bool(future_delta.get("available")),
                 "setup_quality": validation_state,
                 "optionsImpact": options_applied.get("options_impact", 0),
                 "optionsSummaryRu": options_applied.get("options_summary_ru"),
@@ -1350,6 +1386,26 @@ class SignalEngine:
             "risk_reward_score": 40.0,
         }
 
+
+    @staticmethod
+    def _fallback_htf_zone_from_candles(snapshot: dict, price: float) -> dict:
+        candles = [row for row in (snapshot.get("candles") or []) if isinstance(row, dict)]
+        highs: list[float] = []
+        lows: list[float] = []
+        for row in candles[-24:]:
+            try:
+                highs.append(float(row.get("high")))
+                lows.append(float(row.get("low")))
+            except (TypeError, ValueError):
+                continue
+        if not highs or not lows or price <= 0:
+            pad = max(price * 0.003, 1e-6)
+            return {"exists": True, "top": price + pad, "bottom": max(1e-6, price - pad), "liquidity_top": price + pad * 2, "liquidity_bottom": max(1e-6, price - pad * 2), "source": "mt4_candle_range_fallback"}
+        top = max(max(highs), price)
+        bottom = min(min(lows), price)
+        pad = max((top - bottom) * 0.75, price * 0.0015, 1e-6)
+        return {"exists": True, "top": top + pad, "bottom": max(1e-6, bottom - pad), "liquidity_top": top + pad * 2, "liquidity_bottom": max(1e-6, bottom - pad * 2), "source": "mt4_candle_range_fallback"}
+
     def _resolve_htf_zone(self, htf_features: dict) -> dict:
         ob_zone = htf_features.get("order_block_zone") or {}
         fvg_zone = htf_features.get("fvg_zone") or {}
@@ -1453,12 +1509,22 @@ class SignalEngine:
         return "weak"
 
     def _sentiment_alignment(self, action: str, sentiment: dict) -> str:
-        bias = sentiment.get("contrarian_bias", "neutral")
-        if action == "BUY" and bias == "bullish":
+        bias = str(sentiment.get("contrarian_bias") or sentiment.get("bias") or "neutral").lower()
+        if bias in {"bullish_usd", "bearish_usd"}:
+            symbol = str(sentiment.get("symbol") or "").upper().replace("/", "")
+            if bias == "bullish_usd":
+                implied = "BUY" if symbol.startswith("USD") else "SELL" if symbol.endswith("USD") or symbol.startswith("XAU") else "neutral"
+            else:
+                implied = "SELL" if symbol.startswith("USD") else "BUY" if symbol.endswith("USD") or symbol.startswith("XAU") else "neutral"
+            if implied == action:
+                return "aligns"
+            if implied in {"BUY", "SELL"} and action in {"BUY", "SELL"}:
+                return "conflicts"
+        if action == "BUY" and bias in {"bullish", "buy", "crowd_short"}:
             return "aligns"
-        if action == "SELL" and bias == "bearish":
+        if action == "SELL" and bias in {"bearish", "sell", "crowd_long"}:
             return "aligns"
-        if action in {"BUY", "SELL"} and bias in {"bullish", "bearish"}:
+        if action in {"BUY", "SELL"} and bias in {"bullish", "bearish", "buy", "sell", "crowd_long", "crowd_short"}:
             return "conflicts"
         return "neutral"
 

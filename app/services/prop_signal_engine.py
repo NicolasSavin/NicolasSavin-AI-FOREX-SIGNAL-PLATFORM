@@ -3,7 +3,8 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from app.services.external_signal_adapter import get_cme_optionsfx_confirmation
+from app.services.external_signal_adapter import get_cme_optionsfx_confirmation, get_sharkfx_confirmation
+from app.services.future_delta_service import get_future_delta_snapshot
 
 try:
     from app.services.openai_idea_narrative import enrich_idea_with_openai_narrative
@@ -178,6 +179,34 @@ def _external_options_alignment(idea: dict[str, Any], direction: str) -> dict[st
         "high_confidence_conflict": high_conflict,
         "text_ru": f"CME_OptionsFX против {direction}: options bias {bias} ожидает {implied}",
     }
+
+
+def _sharkfx_alignment(idea: dict[str, Any], direction: str) -> dict[str, Any]:
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    try:
+        confirmation = get_sharkfx_confirmation(symbol, direction)
+    except Exception:
+        confirmation = {"source": "sharkfx_ru", "available": False, "used": False, "alignment": "neutral", "reason": "adapter_error", "signal": None}
+    used = bool(confirmation.get("used") and isinstance(confirmation.get("signal"), dict))
+    alignment = str(confirmation.get("alignment") or "neutral")
+    adjustment = 0
+    if used and alignment == "aligned":
+        adjustment = 3
+    elif used and alignment == "conflict":
+        adjustment = -2
+    text = "SharkFX: нет свежих данных по инструменту, канал не обязателен для сделки"
+    if used and alignment == "aligned":
+        text = f"SharkFX подтверждает {direction} как дополнительный Telegram-фильтр"
+    elif used and alignment == "conflict":
+        text = f"SharkFX не совпадает с {direction}, score снижен без блокировки"
+    return {**confirmation, "used": used, "alignment": alignment, "score_adjustment": adjustment, "text_ru": text}
+
+
+def _future_delta_context(idea: dict[str, Any]) -> dict[str, Any]:
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    timeframe = str(idea.get("timeframe") or idea.get("tf") or "H1").upper()
+    return get_future_delta_snapshot(symbol, timeframe, _candles(idea))
+
 
 def _pip_size(symbol: str, entry: float | None = None) -> float:
     symbol = (symbol or "").upper()
@@ -467,7 +496,12 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     liquidity_text = _first_text(idea, "selected_zone_type", "selected_zone_low", "liquidity", "liquidity_zones", "liquidity_levels")
     rows.append(_row("liquidity", weights["liquidity"] if liquidity_text else 2 if direction in {"BUY", "SELL"} else 0, weights["liquidity"], liquidity_text or "нет отдельного liquidity слоя"))
 
-    volume_text = _first_text(idea, "volume", "volume_ru", "data_status", "provider")
+    volume_text = _first_text(idea, "volume", "volume_ru", "future_volume", "future_delta", "data_status", "provider")
+    future_delta = _future_delta_context(idea)
+    if future_delta.get("available"):
+        delta_bias = future_delta.get("bias") or future_delta.get("delta_trend") or "neutral"
+        proxy_label = "proxy" if future_delta.get("is_proxy_metric") else "real/bridge"
+        volume_text = volume_text or f"FutureDelta {proxy_label}: {delta_bias}, FutureVolume={future_delta.get('future_volume', 'n/a')}"
     rows.append(_row("volume", weights["volume"] if volume_text else 1 if candles else 0, weights["volume"], volume_text or "только OHLC/tick proxy"))
 
     external_options = _external_options_alignment(idea, direction)
@@ -478,7 +512,8 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
         options_score = weights["options"]
     elif external_options.get("alignment") == "conflict":
         options_score = 0
-    rows.append(_row("options", options_score, weights["options"], " | ".join(part for part in (options_text, external_text) if part) or "опционный слой не обязателен для базовой идеи"))
+    sharkfx = _sharkfx_alignment(idea, direction)
+    rows.append(_row("options", options_score, weights["options"], " | ".join(part for part in (options_text, external_text, sharkfx.get("text_ru")) if part) or "опционный слой не обязателен для базовой идеи"))
 
     sentiment = _sentiment_alignment(idea, direction)
     rows.append(_row("sentiment", int(sentiment.get("score") or 0), weights["sentiment"], str(sentiment.get("text_ru") or "нет sentiment")))
@@ -494,7 +529,14 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     geo = _trade_geometry(safe_idea)
     sentiment = _sentiment_alignment(safe_idea, direction)
     external_options = _external_options_alignment(safe_idea, direction)
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0)))
+    sharkfx = _sharkfx_alignment(safe_idea, direction)
+    future_delta = _future_delta_context(safe_idea)
+    future_delta_adjustment = 0
+    if future_delta.get("available") and direction in {"BUY", "SELL"}:
+        bias = str(future_delta.get("bias") or "neutral").lower()
+        if (direction == "BUY" and bias == "bullish") or (direction == "SELL" and bias == "bearish"):
+            future_delta_adjustment = 2
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(sharkfx.get("score_adjustment") or 0) + future_delta_adjustment))
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     blockers: list[str] = []
@@ -539,7 +581,13 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "external_options_used": bool(external_options.get("used")),
         "external_options_alignment": external_options.get("alignment") or "neutral",
         "external_options_source": "CME_OptionsFX",
-        "delta_divergence": None,
+        "telegram_signal_filter": sharkfx,
+        "telegram_signal_used": bool(sharkfx.get("used")),
+        "telegram_signal_source": "sharkfx_ru",
+        "future_delta": future_delta,
+        "future_delta_used": bool(future_delta.get("available")),
+        "future_delta_score_adjustment": future_delta_adjustment,
+        "delta_divergence": future_delta.get("delta", {}).get("divergence") if isinstance(future_delta.get("delta"), dict) else None,
         "margin_zone_confluence": None,
         "disclaimer_ru": "Score не блокирует идею только из-за отсутствия optional CME/options/news слоёв; но если sentiment/news явно против направления, автоторговля блокируется.",
     }
@@ -553,6 +601,7 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
     mode = str(score.get("mode") or "").lower()
     sentiment_filter = score.get("sentiment_filter") if isinstance(score.get("sentiment_filter"), dict) else {}
     external_options_filter = score.get("external_options_filter") if isinstance(score.get("external_options_filter"), dict) else {}
+    telegram_signal_filter = score.get("telegram_signal_filter") if isinstance(score.get("telegram_signal_filter"), dict) else {}
     sentiment_conflict = sentiment_filter.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options_filter.get("alignment") == "conflict" and external_options_filter.get("high_confidence_conflict"))
     allowed = (
@@ -587,6 +636,10 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         "external_options_alignment": external_options_filter.get("alignment") or "neutral",
         "external_options_source": "CME_OptionsFX",
         "external_options_filter": external_options_filter,
+        "telegram_signal_used": bool(telegram_signal_filter.get("used")),
+        "telegram_signal_alignment": telegram_signal_filter.get("alignment") or "neutral",
+        "telegram_signal_source": "sharkfx_ru",
+        "telegram_signal_filter": telegram_signal_filter,
         "level_source": geo.get("level_source"),
     }
 
@@ -638,6 +691,11 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "external_options_used": score.get("external_options_used"),
             "external_options_alignment": score.get("external_options_alignment"),
             "external_options_source": "CME_OptionsFX",
+            "telegram_signal_filter": score.get("telegram_signal_filter"),
+            "telegram_signal_used": score.get("telegram_signal_used"),
+            "telegram_signal_source": "sharkfx_ru",
+            "future_delta": score.get("future_delta"),
+            "future_delta_used": score.get("future_delta_used"),
         }
     )
     return enriched

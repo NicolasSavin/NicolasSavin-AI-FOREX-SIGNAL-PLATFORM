@@ -3,11 +3,27 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.mt4_volume_cluster_bridge import get_latest_volume_cluster
+from app.services.future_delta_service import get_future_delta_snapshot
 
 
 def build_volume_cluster_analysis(symbol: str, timeframe: str, action: str, entry: float | None, price: float | None) -> dict[str, Any]:
     payload = get_latest_volume_cluster(symbol, timeframe)
     if not payload:
+        fallback = get_future_delta_snapshot(symbol, timeframe, [])
+        if fallback.get("available"):
+            bias = str(fallback.get("bias") or "neutral")
+            action_upper = str(action or "WAIT").upper()
+            aligned = (action_upper == "BUY" and bias == "bullish") or (action_upper == "SELL" and bias == "bearish")
+            score = 4 if aligned else 0
+            return {
+                "available": True,
+                "source": fallback.get("source") or "calculated_cum_delta_proxy",
+                "is_proxy_metric": True,
+                "scoreImpact": score,
+                "future_delta": fallback,
+                "signals": {"volume_confirmation": "proxy", "cluster_bias": bias},
+                "summary_ru": "Кластерный слой недоступен; используется расчётный CumDelta/FutureVolume proxy без подмены реальной ленты.",
+            }
         return {"available": False, "reason": "MT4 volume cluster data is not available", "scoreImpact": 0}
 
     vp = payload.get("volume_profile") if isinstance(payload.get("volume_profile"), dict) else {}

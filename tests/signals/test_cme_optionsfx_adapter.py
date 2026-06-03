@@ -81,3 +81,44 @@ def test_prop_score_uses_cme_optionsfx_as_confirmation_layer(monkeypatch):
     assert enriched["external_options_bias"] == "bullish"
     assert enriched["external_options_key_strikes"] == [1.08, 1.09]
     assert enriched["external_options_max_pain"] == 1.085
+
+from app.services.external_signal_adapter import parse_sharkfx_message
+
+
+def test_parse_sharkfx_message_contract():
+    parsed = parse_sharkfx_message("EURUSD BUY entry 1.0800 SL 1.0750 TP1 1.0920 confidence 70")
+
+    assert parsed[0]["source"] == "sharkfx_ru"
+    assert parsed[0]["source_kind"] == "trading_signal_source"
+    assert parsed[0]["symbol"] == "EURUSD"
+    assert parsed[0]["action"] == "BUY"
+    assert parsed[0]["entry"] == 1.08
+    assert parsed[0]["stop_loss"] == 1.075
+    assert parsed[0]["take_profit"] == 1.092
+    assert parsed[0]["opens_trades_directly"] is False
+
+
+def test_prop_score_uses_sharkfx_only_as_optional_boost(monkeypatch):
+    def fake_cme(symbol):
+        return {"source": "CME_OptionsFX", "available": False, "used": False, "reason": "telegram_credentials_missing", "signal": None}
+
+    def fake_shark(symbol, action=None):
+        return {"source": "sharkfx_ru", "available": True, "used": True, "alignment": "aligned", "signal": {"action": action, "symbol": symbol}}
+
+    monkeypatch.setattr(prop_signal_engine, "get_cme_optionsfx_confirmation", fake_cme)
+    monkeypatch.setattr(prop_signal_engine, "get_sharkfx_confirmation", fake_shark)
+    idea = {
+        "symbol": "EURUSD",
+        "signal": "BUY",
+        "entry": 1.08,
+        "sl": 1.07,
+        "tp": 1.10,
+        "candles": [{"open": 1.07, "high": 1.10, "low": 1.06, "close": 1.08, "tick_volume": 100}] * 40,
+        "reason_ru": "технический импульс",
+    }
+
+    score = prop_signal_engine.build_prop_signal_score(idea)
+
+    assert score["telegram_signal_used"] is True
+    assert score["telegram_signal_filter"]["alignment"] == "aligned"
+    assert score["score"] >= 55

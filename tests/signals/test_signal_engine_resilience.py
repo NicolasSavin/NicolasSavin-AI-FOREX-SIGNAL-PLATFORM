@@ -351,3 +351,60 @@ def test_generate_live_signals_keeps_scenario_if_htf_or_ltf_missing(monkeypatch)
     assert signals
     assert signals[0]["action"] in {"BUY", "SELL"}
     assert signals[0]["structure_state"] == "analyzable"
+
+
+def test_mt4_valid_candles_recover_trade_without_telegram(monkeypatch) -> None:
+    engine = SignalEngine()
+    monkeypatch.setattr(
+        engine,
+        "_resolve_options_analysis",
+        lambda options_snapshot, symbol=None: {"available": False, "source": "unavailable"},
+    )
+    base = {
+        "timeframe": "H1",
+        "data_status": "real",
+        "source": "mt4_bridge",
+        "source_symbol": "EURUSD",
+        "last_updated_utc": "2026-06-03T12:00:00+00:00",
+        "is_live_market_data": True,
+        "message": "MT4 candles",
+        "close": 1.1123,
+        "candles": _candles(count=40),
+    }
+    weak_directional = {
+        "status": "ready",
+        "trend": "up",
+        "bos": False,
+        "liquidity_sweep": False,
+        "order_block": None,
+        "fvg": False,
+        "choch": False,
+        "divergence": "none",
+        "pattern": "none",
+        "delta_percent": 0.05,
+        "atr_percent": 0.3,
+        "pattern_summary": {"patternSummaryRu": "MT4 свечи дают направленный импульс."},
+        "chart_patterns": [],
+    }
+
+    signal = engine._build_signal(
+        "EURUSD",
+        "M15",
+        base,
+        {**base, "timeframe": "M15"},
+        {**base, "timeframe": "M15"},
+        weak_directional,
+        weak_directional,
+        weak_directional,
+        {"data_status": "unavailable", "confidence": 0.0},
+        {"available": False},
+    )
+
+    assert signal["action"] in {"BUY", "SELL"}
+    assert signal["entry"] is not None
+    assert signal["stop_loss"] is not None
+    assert signal["take_profit"] is not None
+    assert signal["confidence_percent"] > 55
+    assert signal["advisor_allowed"] is True
+    assert signal["confluence_flags"]["mt4_candle_recovery"] is True
+    assert signal["options_available"] is False
