@@ -57,3 +57,28 @@ def test_prop_signal_blocks_when_sentiment_conflicts_with_fallback_direction():
     assert enriched["action"] == "BUY"
     assert enriched["prop_signal_score"]["sentiment_filter"]["alignment"] == "conflict"
     assert enriched["advisor_signal"]["allowed"] is False
+
+
+def test_prop_signal_exposes_blocking_reasons_without_real_candles():
+    idea = {
+        "symbol": "EURUSD",
+        "signal": "WAIT",
+        "summary_ru": "Структура подтверждена, но свечи не пришли.",
+        "sentiment": {"sentiment_score": 0},
+    }
+
+    enriched = enrich_idea_with_prop_score(idea)
+    score = enriched["prop_signal_score"]
+    advisor = enriched["advisor_signal"]
+
+    assert score["direction"] == "WAIT"
+    assert "нужно >=12 свечей" in score["direction_reason"]
+    assert "direction is WAIT" in score["entry_reason"]
+    assert score["sl_reason"] == score["entry_reason"]
+    assert score["tp_reason"] == score["entry_reason"]
+    assert "получено 0" in score["real_candle_reason"]
+    assert score["real_candle_diagnostics"]["count"] == 0
+    assert advisor["allowed"] is False
+    assert "direction is WAIT" in advisor["reason"]
+    assert enriched["direction_reason"] == score["direction_reason"]
+    assert enriched["real_candle_reason"] == score["real_candle_reason"]
