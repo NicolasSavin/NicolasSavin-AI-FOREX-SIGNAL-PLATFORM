@@ -6,6 +6,8 @@ import threading
 import time
 from typing import Any
 
+from app.services.external_signal_adapter import get_latest_sharkfx_signal
+
 logger = logging.getLogger(__name__)
 
 
@@ -240,6 +242,37 @@ def _row(key: str, label: str, weight: int, score: int, text: str) -> dict[str, 
     return {"key": key, "label_ru": label, "weight": weight, "score": score, "status": "confirmed" if score >= weight * 0.7 else "partial" if score > 0 else "missing", "text_ru": text}
 
 
+def _external_signal_filter(symbol: str, direction: str) -> dict[str, Any]:
+    normalized = _normalize_symbol(symbol)
+    result: dict[str, Any] = {
+        "source": "sharkfx_ru",
+        "symbol": normalized,
+        "alignment": "neutral",
+        "score_delta": 0,
+        "used": False,
+        "blocker": False,
+        "signal": None,
+        "text_ru": "SharkFX: свежий внешний сигнал по symbol не найден; фильтр нейтрален.",
+    }
+    if not normalized or direction not in {"BUY", "SELL"}:
+        return result
+    try:
+        external_signal = get_latest_sharkfx_signal(normalized)
+    except Exception:
+        external_signal = None
+    if not isinstance(external_signal, dict):
+        return result
+    external_action = str(external_signal.get("action") or "").upper().strip()
+    if external_action not in {"BUY", "SELL"}:
+        return result
+    result.update({"used": True, "signal": external_signal})
+    if external_action == direction:
+        result.update({"alignment": "aligned", "score_delta": 5, "text_ru": f"SharkFX подтверждает {direction} по {normalized}; +5 к score."})
+    else:
+        result.update({"alignment": "conflict", "score_delta": -10, "blocker": True, "text_ru": f"SharkFX против {direction} по {normalized}: внешний сигнал {external_action}; blocker / -10 к score."})
+    return result
+
+
 def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     candles = _candles(idea)
@@ -250,6 +283,8 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     entry, sl, tp, rr, valid, level_source = _levels(symbol, direction, candles, entry, sl, tp)
     sentiment = _sentiment_alignment(idea, direction)
     sentiment_conflict = sentiment.get("alignment") == "conflict"
+    external_filter = _external_signal_filter(symbol, direction)
+    external_conflict = external_filter.get("alignment") == "conflict"
     has_structure = any(_text_has_data(idea.get(k)) for k in ("reason_ru", "summary_ru", "market_structure", "htf_context", "entry_source"))
     has_liquidity = any(_text_has_data(idea.get(k)) for k in ("liquidity", "selected_zone_type", "selected_zone_low", "fvg", "order_blocks"))
     has_volume = any(_text_has_data(idea.get(k)) for k in ("volume", "volume_ru", "data_status", "provider", "volume_delta"))
@@ -266,7 +301,8 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         _row("sentiment", "Sentiment / новости", 5, int(sentiment.get("score") or 0), str(sentiment.get("text_ru") or "нет sentiment")),
     ]
     score = round(sum(r["score"] for r in rows) / max(sum(r["weight"] for r in rows), 1) * 100)
-    allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict)
+    score = max(0, min(100, score + int(external_filter.get("score_delta") or 0)))
+    allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict and not external_conflict)
     grade = "A" if score >= 70 else "B" if score >= 55 else "C" if score >= 40 else "D"
     mode = "prop_entry" if allowed and score >= 70 else "watchlist" if allowed else "research_only" if score >= 40 else "no_trade"
     blockers = []
@@ -278,8 +314,10 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         blockers.append(f"Слабый R/R {rr:.2f}")
     if sentiment_conflict:
         blockers.append(str(sentiment.get("text_ru")))
-    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles)}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing"}
-    advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "level_source": level_source}
+    if external_conflict:
+        blockers.append(str(external_filter.get("text_ru")))
+    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles)}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing", "external_signal_filter": external_filter, "external_signal_used": bool(external_filter.get("used")), "external_signal_alignment": external_filter.get("alignment") or "neutral", "external_signal_source": "sharkfx_ru"}
+    advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment/SharkFX not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "external_signal_filter": external_filter, "external_signal_used": bool(external_filter.get("used")), "external_signal_alignment": external_filter.get("alignment") or "neutral", "external_signal_source": "sharkfx_ru", "level_source": level_source}
     return score_payload, advisor
 
 
@@ -332,6 +370,10 @@ def install_prop_score_recovery_patch() -> None:
                     enriched["advisor_allowed"] = advisor["allowed"]
                     enriched["advisor_signal"] = advisor
                     enriched["sentiment_filter"] = score.get("sentiment_filter")
+                    enriched["external_signal_filter"] = score.get("external_signal_filter")
+                    enriched["external_signal_used"] = score.get("external_signal_used")
+                    enriched["external_signal_alignment"] = score.get("external_signal_alignment")
+                    enriched["external_signal_source"] = "sharkfx_ru"
                     return enriched
 
                 module.build_prop_signal_score = patched_build_prop_signal_score

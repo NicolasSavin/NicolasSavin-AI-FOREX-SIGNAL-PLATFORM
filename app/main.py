@@ -26,6 +26,7 @@ from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
+from app.services.external_signal_adapter import fetch_sharkfx_external_signals
 from app.services.signal_audit_logger import log_signal_audit
 from backend.chat_service import ChatRequest, ForexChatService
 
@@ -758,6 +759,24 @@ def heatmap_page():
 @app.get("/api/heatmap")
 def api_heatmap(mode: str = "core", tf: str = "M15"):
     return build_currency_heatmap(mode=mode, tf=tf)
+
+
+@app.get("/api/external-signals/sharkfx")
+def api_external_signals_sharkfx(force_refresh: bool = False):
+    try:
+        return fetch_sharkfx_external_signals(force_refresh=force_refresh)
+    except Exception as exc:
+        logger.exception("api_external_signals_sharkfx_failed")
+        return {
+            "available": False,
+            "source": "sharkfx_ru",
+            "channel_url": "https://t.me/sharkfx_ru",
+            "signals": [],
+            "count": 0,
+            "updated_at_utc": now_utc(),
+            "reason": "external_signal_adapter_error",
+            "error": str(exc)[:500],
+        }
 
 
 @app.get("/api/signals")

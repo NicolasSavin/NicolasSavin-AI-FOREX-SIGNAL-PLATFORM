@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.external_signal_adapter import get_latest_sharkfx_signal
+
 try:
     from app.services.openai_idea_narrative import enrich_idea_with_openai_narrative
 except Exception:  # pragma: no cover
@@ -221,6 +223,52 @@ def _sentiment_alignment(idea: dict[str, Any], direction: str) -> dict[str, Any]
     return {**payload, "alignment": "conflict", "score": 0, "text_ru": f"sentiment против {direction}: ожидает {implied} ({payload.get('usd_bias')})"}
 
 
+def _external_signal_filter(idea: dict[str, Any], direction: str) -> dict[str, Any]:
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    result: dict[str, Any] = {
+        "source": "sharkfx_ru",
+        "symbol": symbol,
+        "alignment": "neutral",
+        "score_delta": 0,
+        "used": False,
+        "blocker": False,
+        "signal": None,
+        "text_ru": "SharkFX: свежий внешний сигнал по symbol не найден; фильтр нейтрален.",
+    }
+    if not symbol or direction not in {"BUY", "SELL"}:
+        return result
+    try:
+        external_signal = get_latest_sharkfx_signal(symbol)
+    except Exception:
+        external_signal = None
+    if not isinstance(external_signal, dict):
+        return result
+
+    external_action = str(external_signal.get("action") or "").upper().strip()
+    if external_action not in {"BUY", "SELL"}:
+        return result
+
+    result.update({"used": True, "signal": external_signal})
+    if external_action == direction:
+        result.update(
+            {
+                "alignment": "aligned",
+                "score_delta": 5,
+                "text_ru": f"SharkFX подтверждает {direction} по {symbol}; +5 к score.",
+            }
+        )
+    else:
+        result.update(
+            {
+                "alignment": "conflict",
+                "score_delta": -10,
+                "blocker": True,
+                "text_ru": f"SharkFX против {direction} по {symbol}: внешний сигнал {external_action}; blocker / -10 к score.",
+            }
+        )
+    return result
+
+
 def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     direction = _direction(idea)
     geo = _trade_geometry(idea)
@@ -277,6 +325,9 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     geo = _trade_geometry(safe_idea)
     sentiment = _sentiment_alignment(safe_idea, direction)
     sentiment_conflict = sentiment.get("alignment") == "conflict"
+    external_filter = _external_signal_filter(safe_idea, direction)
+    score = max(0, min(100, score + int(external_filter.get("score_delta") or 0)))
+    external_conflict = external_filter.get("alignment") == "conflict"
     blockers: list[str] = []
 
     if direction == "WAIT":
@@ -289,8 +340,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         blockers.append(f"Слабый R/R {geo.get('rr'):.2f}, минимум 1.10")
     if sentiment_conflict:
         blockers.append(str(sentiment.get("text_ru") or "Sentiment/news против направления сделки"))
+    if external_conflict:
+        blockers.append(str(external_filter.get("text_ru") or "SharkFX против направления сделки"))
 
-    hard_blocked = direction == "WAIT" or not geo.get("has_levels") or not geo.get("valid_geometry") or geo.get("tiny_tp") or geo.get("weak_rr") or sentiment_conflict
+    hard_blocked = direction == "WAIT" or not geo.get("has_levels") or not geo.get("valid_geometry") or geo.get("tiny_tp") or geo.get("weak_rr") or sentiment_conflict or external_conflict
     if score >= 70 and not hard_blocked:
         grade, mode, decision_ru = "A", "prop_entry", "Рабочая prop-идея: есть направление, уровни, свечи, приемлемый риск/прибыль и sentiment не против сделки."
     elif score >= 55 and not hard_blocked:
@@ -313,6 +366,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "trade_geometry": geo,
         "sentiment_filter": sentiment,
         "sentiment_used": sentiment.get("alignment") != "missing",
+        "external_signal_filter": external_filter,
+        "external_signal_used": bool(external_filter.get("used")),
+        "external_signal_alignment": external_filter.get("alignment") or "neutral",
+        "external_signal_source": "sharkfx_ru",
         "delta_divergence": None,
         "margin_zone_confluence": None,
         "disclaimer_ru": "Score не блокирует идею только из-за отсутствия optional CME/options/news слоёв; но если sentiment/news явно против направления, автоторговля блокируется.",
@@ -327,6 +384,8 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
     mode = str(score.get("mode") or "").lower()
     sentiment_filter = score.get("sentiment_filter") if isinstance(score.get("sentiment_filter"), dict) else {}
     sentiment_conflict = sentiment_filter.get("alignment") == "conflict"
+    external_filter = score.get("external_signal_filter") if isinstance(score.get("external_signal_filter"), dict) else {}
+    external_conflict = external_filter.get("alignment") == "conflict"
     allowed = (
         action in {"BUY", "SELL"}
         and grade in {"A", "B"}
@@ -337,8 +396,9 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         and not geo.get("tiny_tp")
         and not geo.get("weak_rr")
         and not sentiment_conflict
+        and not external_conflict
     )
-    reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + TP distance ok + sentiment not against + score>=55" if allowed else "blocked: нужен BUY/SELL, валидные уровни, RR>=1.10, sentiment не против и score>=55"
+    reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + TP distance ok + sentiment not against + SharkFX not against + score>=55" if allowed else "blocked: нужен BUY/SELL, валидные уровни, RR>=1.10, sentiment/SharkFX не против и score>=55"
     return {
         "allowed": allowed,
         "reason": reason,
@@ -354,6 +414,10 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         "grade": score.get("grade"),
         "mode": score.get("mode"),
         "sentiment_filter": sentiment_filter,
+        "external_signal_filter": external_filter,
+        "external_signal_used": bool(external_filter.get("used")),
+        "external_signal_alignment": external_filter.get("alignment") or "neutral",
+        "external_signal_source": "sharkfx_ru",
     }
 
 
@@ -373,6 +437,10 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "advisor_allowed": advisor_signal["allowed"],
             "advisor_signal": advisor_signal,
             "sentiment_filter": score.get("sentiment_filter"),
+            "external_signal_filter": score.get("external_signal_filter"),
+            "external_signal_used": score.get("external_signal_used"),
+            "external_signal_alignment": score.get("external_signal_alignment"),
+            "external_signal_source": "sharkfx_ru",
         }
     )
     return enriched
