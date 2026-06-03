@@ -614,6 +614,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0)))
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
+    external_options_note = ""
     blockers: list[str] = []
 
     if direction == "WAIT":
@@ -627,11 +628,11 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     if sentiment_conflict:
         blockers.append(str(sentiment.get("text_ru") or "Sentiment/news против направления сделки"))
     if external_options_high_conflict:
-        blockers.append(str(external_options.get("text_ru") or "CME_OptionsFX high-confidence conflict против сделки"))
+        external_options_note = str(external_options.get("text_ru") or "CME_OptionsFX high-confidence conflict против сделки")
     if volume_delta.get("delta_divergence"):
         blockers.append("Delta divergence: цена и CumDelta расходятся")
 
-    hard_blocked = direction == "WAIT" or not geo.get("has_levels") or not geo.get("valid_geometry") or geo.get("tiny_tp") or geo.get("weak_rr") or sentiment_conflict or external_options_high_conflict
+    hard_blocked = direction == "WAIT" or not geo.get("has_levels") or not geo.get("valid_geometry") or geo.get("tiny_tp") or geo.get("weak_rr") or sentiment_conflict
     if score >= 70 and not hard_blocked:
         grade, mode, decision_ru = "A", "prop_entry", "Рабочая prop-идея: есть направление, уровни, свечи, приемлемый риск/прибыль и sentiment не против сделки."
     elif score >= 55 and not hard_blocked:
@@ -655,6 +656,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "sentiment_filter": sentiment,
         "sentiment_used": sentiment.get("alignment") != "missing",
         "external_options_filter": external_options,
+        "external_options_note": external_options_note,
         "external_options_used": bool(external_options.get("used")),
         "external_options_alignment": external_options.get("alignment") or "neutral",
         "external_options_source": "CME_OptionsFX",
@@ -686,9 +688,11 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         and not geo.get("tiny_tp")
         and not geo.get("weak_rr")
         and not sentiment_conflict
-        and not external_options_high_conflict
     )
-    reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + TP distance ok + sentiment not against + score>=55" if allowed else "blocked: нужен BUY/SELL, валидные уровни, RR>=1.10, sentiment не против и score>=55"
+    if allowed and external_options_high_conflict:
+        reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + score>=55; CME/Telegram conflict сохранён как подтверждающий слой, но не блокирует"
+    else:
+        reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + TP distance ok + sentiment not against + score>=55" if allowed else "blocked: нужен BUY/SELL, валидные уровни, RR>=1.10, sentiment не против и score>=55"
     return {
         "allowed": allowed,
         "reason": reason,
