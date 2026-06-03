@@ -82,3 +82,48 @@ def test_prop_signal_exposes_blocking_reasons_without_real_candles():
     assert "direction is WAIT" in advisor["reason"]
     assert enriched["direction_reason"] == score["direction_reason"]
     assert enriched["real_candle_reason"] == score["real_candle_reason"]
+
+
+def test_prop_signal_uses_future_delta_direction_and_fixed_risk_without_candles():
+    idea = {
+        "symbol": "EURUSD",
+        "signal": "WAIT",
+        "current_price": 1.1050,
+        "summary_ru": "Structure confirmed",
+        "options_ru": "Options confirmed",
+        "volume_delta": {"source": "FutureDelta", "delta": 220, "cumdelta": 1200, "is_proxy": False, "priority_used": 1},
+        "sentiment": {"sentiment_score": 0},
+    }
+
+    enriched = enrich_idea_with_prop_score(idea)
+    score = enriched["prop_signal_score"]
+    geometry = score["trade_geometry"]
+
+    assert enriched["signal"] == "BUY"
+    assert geometry["level_source"] == "fixed_risk_fallback"
+    assert geometry["fallback_used"] is True
+    assert geometry["entry"] == 1.105
+    assert geometry["sl"] < geometry["entry"] < geometry["tp"]
+    assert geometry["rr"] >= 1.45
+    assert enriched["advisor_allowed"] is True
+    assert "direction_from_future_delta" in score["direction_reason"]
+    assert "entry_from_current_price" in score["entry_reason"]
+    assert score["diagnostics"]["fallback_used"] is True
+    assert score["diagnostics"]["level_source"] == "fixed_risk_fallback"
+
+
+def test_prop_signal_checks_action_after_wait_signal_text():
+    idea = {
+        "symbol": "EURUSD",
+        "signal": "WAIT",
+        "action": "SELL",
+        "current_price": 1.1050,
+        "summary_ru": "Structure confirmed",
+    }
+
+    enriched = enrich_idea_with_prop_score(idea)
+    geometry = enriched["prop_signal_score"]["trade_geometry"]
+
+    assert enriched["signal"] == "SELL"
+    assert geometry["level_source"] == "fixed_risk_fallback"
+    assert geometry["tp"] < geometry["entry"] < geometry["sl"]
