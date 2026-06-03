@@ -41,6 +41,7 @@ def _text(value: Any) -> str:
         for key in (
             "summary", "summary_ru", "reason_ru", "bias", "signal", "direction", "type", "side",
             "entry_source", "selected_zone_type", "provider", "data_status", "headline", "title",
+            "impact", "risk_mode", "currency", "sentiment_score",
         ):
             if value.get(key) not in (None, "", "—"):
                 parts.append(f"{key}: {value.get(key)}")
@@ -73,6 +74,16 @@ def _direction(idea: dict[str, Any]) -> str:
     return "WAIT"
 
 
+def _normalize_symbol(symbol: Any) -> str:
+    raw = str(symbol or "").upper().strip().replace("/", "")
+    for suffix in (".CS", ".I", ".PRO", ".RAW", ".M", ".ECN"):
+        if raw.endswith(suffix):
+            raw = raw[: -len(suffix)]
+    if "." in raw:
+        raw = raw.split(".", 1)[0]
+    return raw
+
+
 def _pip_size(symbol: str, entry: float | None = None) -> float:
     symbol = (symbol or "").upper()
     if "XAU" in symbol or "GOLD" in symbol:
@@ -95,7 +106,7 @@ def _candles(idea: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
-    symbol = str(idea.get("symbol") or idea.get("pair") or idea.get("instrument") or "").upper().strip()
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     entry = _to_float(idea.get("entry") if idea.get("entry") is not None else idea.get("entry_price"))
     sl = _to_float(idea.get("sl") if idea.get("sl") is not None else idea.get("stop_loss"))
     tp = _to_float(idea.get("tp") if idea.get("tp") is not None else idea.get("take_profit") or idea.get("target"))
@@ -145,6 +156,71 @@ def _row(key: str, score: int, weight: int, text: str) -> dict[str, Any]:
     }
 
 
+def _sentiment_direction_for_symbol(symbol: str, sentiment: Any, news_text: str = "") -> dict[str, Any]:
+    """Translate USD/news/client sentiment into BUY/SELL support for a concrete pair.
+
+    Existing data can be shaped differently depending on source:
+    - {bias: bullish_usd|bearish_usd|bullish|bearish}
+    - {sentiment_score: -1..1, currency: USD}
+    - simple text from news_context_ru/fundamental_context_ru
+    """
+    symbol = _normalize_symbol(symbol)
+    text = f"{_text(sentiment)} {news_text}".upper()
+    score = None
+    if isinstance(sentiment, dict):
+        score = _to_float(sentiment.get("sentiment_score") or sentiment.get("score"))
+
+    usd_bias = "neutral"
+    if "BULLISH_USD" in text or "USD BULL" in text or "ДОЛЛАР" in text and "СИЛ" in text:
+        usd_bias = "bullish_usd"
+    elif "BEARISH_USD" in text or "USD BEAR" in text or "ДОЛЛАР" in text and "СЛАБ" in text:
+        usd_bias = "bearish_usd"
+    elif score is not None:
+        if score >= 0.2:
+            usd_bias = "bullish_usd"
+        elif score <= -0.2:
+            usd_bias = "bearish_usd"
+
+    direct_bias = "neutral"
+    if any(word in text for word in ("BULLISH", "BUY", "ПОКУП", "LONG")) and "USD" not in text:
+        direct_bias = "BUY"
+    if any(word in text for word in ("BEARISH", "SELL", "ПРОДА", "SHORT")) and "USD" not in text:
+        direct_bias = "SELL"
+
+    implied = "neutral"
+    if direct_bias in {"BUY", "SELL"}:
+        implied = direct_bias
+    elif usd_bias == "bullish_usd":
+        implied = "BUY" if symbol.startswith("USD") else "SELL" if symbol.endswith("USD") or symbol.startswith("XAU") else "neutral"
+    elif usd_bias == "bearish_usd":
+        implied = "SELL" if symbol.startswith("USD") else "BUY" if symbol.endswith("USD") or symbol.startswith("XAU") else "neutral"
+
+    impact = ""
+    if isinstance(sentiment, dict):
+        impact = str(sentiment.get("impact") or sentiment.get("risk_mode") or "").lower()
+    if not impact:
+        impact = "high" if "HIGH" in text or "ВАЖ" in text else ""
+
+    return {"implied_action": implied, "usd_bias": usd_bias, "impact": impact, "text": text[:240]}
+
+
+def _sentiment_alignment(idea: dict[str, Any], direction: str) -> dict[str, Any]:
+    symbol = str(idea.get("symbol") or idea.get("pair") or idea.get("instrument") or "")
+    news_text = _first_text(idea, "news_context_ru", "fundamental_context_ru")
+    sentiment = idea.get("sentiment")
+    payload = _sentiment_direction_for_symbol(symbol, sentiment, news_text)
+    implied = str(payload.get("implied_action") or "neutral").upper()
+    has_data = bool(_text(sentiment) or news_text)
+    if not has_data:
+        return {**payload, "alignment": "missing", "score": 1, "text_ru": "нет свежего sentiment/news слоя"}
+    if implied not in {"BUY", "SELL"} or direction not in {"BUY", "SELL"}:
+        return {**payload, "alignment": "neutral", "score": 2, "text_ru": f"sentiment нейтральный: {payload.get('usd_bias')}"}
+    if implied == direction:
+        return {**payload, "alignment": "aligned", "score": 5, "text_ru": f"sentiment подтверждает {direction}: {payload.get('usd_bias')}"}
+    # high-impact/news conflict is not automatically catastrophic, but it must reduce quality.
+    return {**payload, "alignment": "conflict", "score": 0, "text_ru": f"sentiment против {direction}: ожидает {implied} ({payload.get('usd_bias')})"}
+
+
 def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     direction = _direction(idea)
     geo = _trade_geometry(idea)
@@ -187,8 +263,8 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     options_text = _first_text(idea, "options_ru", "options_analysis.summary", "options_analysis.bias")
     rows.append(_row("options", weights["options"] if options_text else 1, weights["options"], options_text or "опционный слой не обязателен для базовой идеи"))
 
-    sentiment_text = _first_text(idea, "sentiment.summary", "sentiment.bias", "fundamental_context_ru", "news_context_ru")
-    rows.append(_row("sentiment", weights["sentiment"] if sentiment_text else 1, weights["sentiment"], sentiment_text or "нет свежего sentiment/news слоя"))
+    sentiment = _sentiment_alignment(idea, direction)
+    rows.append(_row("sentiment", int(sentiment.get("score") or 0), weights["sentiment"], str(sentiment.get("text_ru") or "нет sentiment")))
     return rows
 
 
@@ -199,6 +275,8 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     score = round(sum(row["score"] for row in rows) / total_weight * 100)
     direction = _direction(safe_idea)
     geo = _trade_geometry(safe_idea)
+    sentiment = _sentiment_alignment(safe_idea, direction)
+    sentiment_conflict = sentiment.get("alignment") == "conflict"
     blockers: list[str] = []
 
     if direction == "WAIT":
@@ -209,10 +287,12 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         blockers.append(f"TP слишком близко: {geo.get('tp_pips'):.1f} пипс, минимум {geo.get('min_tp_pips'):.0f}")
     if geo.get("weak_rr"):
         blockers.append(f"Слабый R/R {geo.get('rr'):.2f}, минимум 1.10")
+    if sentiment_conflict:
+        blockers.append(str(sentiment.get("text_ru") or "Sentiment/news против направления сделки"))
 
-    hard_blocked = direction == "WAIT" or not geo.get("has_levels") or not geo.get("valid_geometry") or geo.get("tiny_tp") or geo.get("weak_rr")
+    hard_blocked = direction == "WAIT" or not geo.get("has_levels") or not geo.get("valid_geometry") or geo.get("tiny_tp") or geo.get("weak_rr") or sentiment_conflict
     if score >= 70 and not hard_blocked:
-        grade, mode, decision_ru = "A", "prop_entry", "Рабочая prop-идея: есть направление, уровни, свечи и приемлемый риск/прибыль."
+        grade, mode, decision_ru = "A", "prop_entry", "Рабочая prop-идея: есть направление, уровни, свечи, приемлемый риск/прибыль и sentiment не против сделки."
     elif score >= 55 and not hard_blocked:
         grade, mode, decision_ru = "B", "watchlist", "Рабочая идея в watchlist: можно ждать триггер в зоне входа."
     elif score >= 40:
@@ -231,9 +311,11 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "blockers": blockers,
         "missing_inputs": missing,
         "trade_geometry": geo,
+        "sentiment_filter": sentiment,
+        "sentiment_used": sentiment.get("alignment") != "missing",
         "delta_divergence": None,
         "margin_zone_confluence": None,
-        "disclaimer_ru": "Score не блокирует идею только из-за отсутствия optional CME/options/news слоёв; они повышают качество, но не являются обязательными для базового сигнала.",
+        "disclaimer_ru": "Score не блокирует идею только из-за отсутствия optional CME/options/news слоёв; но если sentiment/news явно против направления, автоторговля блокируется.",
     }
 
 
@@ -243,6 +325,8 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
     numeric_score = int(score.get("score") or 0)
     grade = str(score.get("grade") or "").upper()
     mode = str(score.get("mode") or "").lower()
+    sentiment_filter = score.get("sentiment_filter") if isinstance(score.get("sentiment_filter"), dict) else {}
+    sentiment_conflict = sentiment_filter.get("alignment") == "conflict"
     allowed = (
         action in {"BUY", "SELL"}
         and grade in {"A", "B"}
@@ -252,8 +336,9 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         and bool(geo.get("valid_geometry"))
         and not geo.get("tiny_tp")
         and not geo.get("weak_rr")
+        and not sentiment_conflict
     )
-    reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + TP distance ok + score>=55" if allowed else "blocked: нужен BUY/SELL, валидные уровни, RR>=1.10 и score>=55"
+    reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + TP distance ok + sentiment not against + score>=55" if allowed else "blocked: нужен BUY/SELL, валидные уровни, RR>=1.10, sentiment не против и score>=55"
     return {
         "allowed": allowed,
         "reason": reason,
@@ -268,6 +353,7 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         "score": score.get("score"),
         "grade": score.get("grade"),
         "mode": score.get("mode"),
+        "sentiment_filter": sentiment_filter,
     }
 
 
@@ -286,6 +372,7 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "prop_decision_ru": score["decision_ru"],
             "advisor_allowed": advisor_signal["allowed"],
             "advisor_signal": advisor_signal,
+            "sentiment_filter": score.get("sentiment_filter"),
         }
     )
     return enriched
