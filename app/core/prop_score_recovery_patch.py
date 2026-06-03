@@ -244,6 +244,41 @@ def _sentiment_alignment(idea: dict[str, Any], direction: str) -> dict[str, Any]
     return {"alignment": "conflict", "score": 0, "text_ru": f"sentiment против {direction}: ожидает {implied} ({usd_bias})", "implied_action": implied, "usd_bias": usd_bias}
 
 
+
+def _external_options_confirmation(symbol: str) -> dict[str, Any]:
+    module = sys.modules.get("app.services.prop_signal_engine")
+    getter = getattr(module, "get_cme_optionsfx_confirmation", None) if module is not None else None
+    if callable(getter):
+        try:
+            payload = getter(symbol)
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+    try:
+        from app.services.external_signal_adapter import get_cme_optionsfx_confirmation
+
+        payload = get_cme_optionsfx_confirmation(symbol)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _external_options_alignment(symbol: str, direction: str) -> dict[str, Any]:
+    confirmation = _external_options_confirmation(symbol)
+    signal = confirmation.get("signal") if isinstance(confirmation.get("signal"), dict) else None
+    bias = str(confirmation.get("option_bias") or (signal or {}).get("option_bias") or "neutral").lower()
+    implied = "BUY" if bias == "bullish" else "SELL" if bias == "bearish" else "neutral"
+    used = bool(confirmation.get("used") and signal)
+    if not used:
+        return {**confirmation, "used": False, "alignment": "neutral", "score_adjustment": 0, "implied_action": "neutral", "high_confidence_conflict": False, "text_ru": "CME_OptionsFX: нет свежих данных по инструменту, слой не блокирует сделку"}
+    if implied not in {"BUY", "SELL"} or direction not in {"BUY", "SELL"}:
+        return {**confirmation, "used": True, "alignment": "neutral", "score_adjustment": 0, "implied_action": implied, "high_confidence_conflict": False, "text_ru": f"CME_OptionsFX нейтрален: options bias {bias}"}
+    if implied == direction:
+        return {**confirmation, "used": True, "alignment": "aligned", "score_adjustment": 4, "implied_action": implied, "high_confidence_conflict": False, "text_ru": f"CME_OptionsFX подтверждает {direction}: options bias {bias}"}
+    raw = str((signal or {}).get("raw_text") or "").upper()
+    high_conflict = any(marker in raw for marker in ("HIGH CONFIDENCE", "STRONG", "СИЛЬН", "ВЫСОК", "AGGRESSIVE", "DOMINATE"))
+    return {**confirmation, "used": True, "alignment": "conflict", "score_adjustment": -4, "implied_action": implied, "high_confidence_conflict": high_conflict, "text_ru": f"CME_OptionsFX против {direction}: options bias {bias} ожидает {implied}"}
+
 def _row(key: str, label: str, weight: int, score: int, text: str) -> dict[str, Any]:
     score = max(0, min(score, weight))
     return {"key": key, "label_ru": label, "weight": weight, "score": score, "status": "confirmed" if score >= weight * 0.7 else "partial" if score > 0 else "missing", "text_ru": text}
@@ -258,11 +293,15 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     tp = _num(idea.get("tp") or idea.get("take_profit") or idea.get("target"))
     entry, sl, tp, rr, valid, level_source = _levels(symbol, direction, candles, entry, sl, tp)
     sentiment = _sentiment_alignment(idea, direction)
+    external_options = _external_options_alignment(symbol, direction)
     sentiment_conflict = sentiment.get("alignment") == "conflict"
+    external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     has_structure = any(_text_has_data(idea.get(k)) for k in ("reason_ru", "summary_ru", "market_structure", "htf_context", "entry_source"))
     has_liquidity = any(_text_has_data(idea.get(k)) for k in ("liquidity", "selected_zone_type", "selected_zone_low", "fvg", "order_blocks"))
     has_volume = any(_text_has_data(idea.get(k)) for k in ("volume", "volume_ru", "data_status", "provider", "volume_delta"))
     has_options = any(_text_has_data(idea.get(k)) for k in ("options_ru", "options_analysis", "cme"))
+    options_score = 4 if has_options or external_options.get("alignment") == "aligned" else 0 if external_options.get("alignment") == "conflict" else 1
+    options_text = str(external_options.get("text_ru") or ("опционный слой есть" if has_options else "опционный слой не обязателен"))
     rows = [
         _row("direction", "Направление BUY/SELL", 18, 18 if direction in {"BUY", "SELL"} else 0, direction),
         _row("levels", "Entry / SL / TP", 18, 18 if valid else 0, f"уровни валидны ({level_source})" if valid else "нет валидных entry/sl/tp"),
@@ -271,11 +310,12 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         _row("structure", "Структура / импульс", 12, 12 if has_structure else 6 if direction in {"BUY", "SELL"} else 0, "структура/импульс есть" if has_structure else "технический импульс без расширенной структуры"),
         _row("liquidity", "Ликвидность / POI", 8, 8 if has_liquidity else 2 if direction in {"BUY", "SELL"} else 0, "liquidity/POI есть" if has_liquidity else "нет отдельного liquidity слоя"),
         _row("volume", "Volume / tick volume", 5, 5 if has_volume else 1 if candles else 0, "volume/tick proxy есть" if has_volume else "только OHLC/tick proxy"),
-        _row("options", "Опционы / CME", 4, 4 if has_options else 1, "опционный слой есть" if has_options else "опционный слой не обязателен"),
+        _row("options", "Опционы / CME", 4, options_score, options_text),
         _row("sentiment", "Sentiment / новости", 5, int(sentiment.get("score") or 0), str(sentiment.get("text_ru") or "нет sentiment")),
     ]
-    score = round(sum(r["score"] for r in rows) / max(sum(r["weight"] for r in rows), 1) * 100)
-    allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict)
+    base_score = round(sum(r["score"] for r in rows) / max(sum(r["weight"] for r in rows), 1) * 100)
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0)))
+    allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict and not external_options_high_conflict)
     grade = "A" if score >= 70 else "B" if score >= 55 else "C" if score >= 40 else "D"
     mode = "prop_entry" if allowed and score >= 70 else "watchlist" if allowed else "research_only" if score >= 40 else "no_trade"
     blockers = []
@@ -287,8 +327,10 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         blockers.append(f"Слабый R/R {rr:.2f}")
     if sentiment_conflict:
         blockers.append(str(sentiment.get("text_ru")))
-    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing"}
-    advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "level_source": level_source}
+    if external_options_high_conflict:
+        blockers.append(str(external_options.get("text_ru")))
+    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing", "external_options_filter": external_options, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX"}
+    advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "external_options_filter": external_options, "level_source": level_source}
     return score_payload, advisor
 
 
@@ -339,8 +381,18 @@ def install_prop_score_recovery_patch() -> None:
                     enriched["prop_mode"] = score["mode"]
                     enriched["prop_decision_ru"] = score["decision_ru"]
                     enriched["advisor_allowed"] = advisor["allowed"]
+                    external_options_filter = score.get("external_options_filter") if isinstance(score.get("external_options_filter"), dict) else {}
+                    external_options_signal = external_options_filter.get("signal") if isinstance(external_options_filter.get("signal"), dict) else {}
                     enriched["advisor_signal"] = advisor
                     enriched["sentiment_filter"] = score.get("sentiment_filter")
+                    enriched["external_options_filter"] = external_options_filter
+                    enriched["external_options_used"] = score.get("external_options_used")
+                    enriched["external_options_alignment"] = score.get("external_options_alignment")
+                    enriched["external_options_source"] = "CME_OptionsFX"
+                    enriched["external_options_ru"] = external_options_filter.get("text_ru") or "CME_OptionsFX: нет данных"
+                    enriched["external_options_bias"] = external_options_signal.get("option_bias") or external_options_filter.get("option_bias") or "neutral"
+                    enriched["external_options_key_strikes"] = external_options_signal.get("key_strikes") or []
+                    enriched["external_options_max_pain"] = external_options_signal.get("max_pain")
                     return enriched
 
                 module.build_prop_signal_score = patched_build_prop_signal_score

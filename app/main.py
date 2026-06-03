@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.services.htf_context_filter import HtfContextFilter
 from app.services.cme_scraper import get_cme_market_snapshot
+from app.services.external_signal_adapter import get_cme_optionsfx_signals
 from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
@@ -194,6 +195,11 @@ def health(request: Request):
         "version": "htf-context-real-candles-1.0",
         "time": now_utc(),
     }
+
+
+@app.get("/api/external-signals/cme-optionsfx")
+def api_external_signals_cme_optionsfx(force_refresh: bool = False) -> dict[str, Any]:
+    return get_cme_optionsfx_signals(force_refresh=force_refresh)
 
 
 @app.get("/", include_in_schema=False)

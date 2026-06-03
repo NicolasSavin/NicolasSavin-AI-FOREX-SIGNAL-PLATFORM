@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from typing import Any
 
+from app.services.external_signal_adapter import get_cme_optionsfx_confirmation
+
 try:
     from app.services.openai_idea_narrative import enrich_idea_with_openai_narrative
 except Exception:  # pragma: no cover
@@ -111,6 +113,71 @@ def _normalize_symbol(symbol: Any) -> str:
         raw = raw.split(".", 1)[0]
     return raw
 
+
+
+def _external_options_bias_to_action(symbol: str, option_bias: Any) -> str:
+    bias = str(option_bias or "neutral").lower().strip()
+    if bias == "bullish":
+        return "BUY"
+    if bias == "bearish":
+        return "SELL"
+    return "neutral"
+
+
+def _is_high_confidence_options_conflict(signal: dict[str, Any] | None) -> bool:
+    if not isinstance(signal, dict):
+        return False
+    raw = _text(signal.get("raw_text")).upper()
+    return any(marker in raw for marker in ("HIGH CONFIDENCE", "STRONG", "СИЛЬН", "ВЫСОК", "AGGRESSIVE", "DOMINATE"))
+
+
+def _external_options_alignment(idea: dict[str, Any], direction: str) -> dict[str, Any]:
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    confirmation = get_cme_optionsfx_confirmation(symbol)
+    signal = confirmation.get("signal") if isinstance(confirmation.get("signal"), dict) else None
+    bias = str(confirmation.get("option_bias") or (signal or {}).get("option_bias") or "neutral").lower()
+    implied = _external_options_bias_to_action(symbol, bias)
+    used = bool(confirmation.get("used") and signal)
+    if not used:
+        return {
+            **confirmation,
+            "used": False,
+            "alignment": "neutral",
+            "score_adjustment": 0,
+            "implied_action": "neutral",
+            "high_confidence_conflict": False,
+            "text_ru": "CME_OptionsFX: нет свежих данных по инструменту, слой не блокирует сделку",
+        }
+    if implied not in {"BUY", "SELL"} or direction not in {"BUY", "SELL"}:
+        return {
+            **confirmation,
+            "used": True,
+            "alignment": "neutral",
+            "score_adjustment": 0,
+            "implied_action": implied,
+            "high_confidence_conflict": False,
+            "text_ru": f"CME_OptionsFX нейтрален: options bias {bias}",
+        }
+    if implied == direction:
+        return {
+            **confirmation,
+            "used": True,
+            "alignment": "aligned",
+            "score_adjustment": 4,
+            "implied_action": implied,
+            "high_confidence_conflict": False,
+            "text_ru": f"CME_OptionsFX подтверждает {direction}: options bias {bias}",
+        }
+    high_conflict = _is_high_confidence_options_conflict(signal)
+    return {
+        **confirmation,
+        "used": True,
+        "alignment": "conflict",
+        "score_adjustment": -4,
+        "implied_action": implied,
+        "high_confidence_conflict": high_conflict,
+        "text_ru": f"CME_OptionsFX против {direction}: options bias {bias} ожидает {implied}",
+    }
 
 def _pip_size(symbol: str, entry: float | None = None) -> float:
     symbol = (symbol or "").upper()
@@ -403,8 +470,15 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     volume_text = _first_text(idea, "volume", "volume_ru", "data_status", "provider")
     rows.append(_row("volume", weights["volume"] if volume_text else 1 if candles else 0, weights["volume"], volume_text or "только OHLC/tick proxy"))
 
+    external_options = _external_options_alignment(idea, direction)
+    external_text = str(external_options.get("text_ru") or "")
     options_text = _first_text(idea, "options_ru", "options_analysis.summary", "options_analysis.bias")
-    rows.append(_row("options", weights["options"] if options_text else 1, weights["options"], options_text or "опционный слой не обязателен для базовой идеи"))
+    options_score = weights["options"] if options_text else 1
+    if external_options.get("alignment") == "aligned":
+        options_score = weights["options"]
+    elif external_options.get("alignment") == "conflict":
+        options_score = 0
+    rows.append(_row("options", options_score, weights["options"], " | ".join(part for part in (options_text, external_text) if part) or "опционный слой не обязателен для базовой идеи"))
 
     sentiment = _sentiment_alignment(idea, direction)
     rows.append(_row("sentiment", int(sentiment.get("score") or 0), weights["sentiment"], str(sentiment.get("text_ru") or "нет sentiment")))
@@ -415,11 +489,14 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     safe_idea = idea if isinstance(idea, dict) else {}
     rows = _criterion_rows(safe_idea)
     total_weight = sum(row["weight"] for row in rows) or 1
-    score = round(sum(row["score"] for row in rows) / total_weight * 100)
+    base_score = round(sum(row["score"] for row in rows) / total_weight * 100)
     direction = _direction(safe_idea)
     geo = _trade_geometry(safe_idea)
     sentiment = _sentiment_alignment(safe_idea, direction)
+    external_options = _external_options_alignment(safe_idea, direction)
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0)))
     sentiment_conflict = sentiment.get("alignment") == "conflict"
+    external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     blockers: list[str] = []
 
     if direction == "WAIT":
@@ -432,8 +509,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         blockers.append(f"Слабый R/R {geo.get('rr'):.2f}, минимум 1.10")
     if sentiment_conflict:
         blockers.append(str(sentiment.get("text_ru") or "Sentiment/news против направления сделки"))
+    if external_options_high_conflict:
+        blockers.append(str(external_options.get("text_ru") or "CME_OptionsFX high-confidence conflict против сделки"))
 
-    hard_blocked = direction == "WAIT" or not geo.get("has_levels") or not geo.get("valid_geometry") or geo.get("tiny_tp") or geo.get("weak_rr") or sentiment_conflict
+    hard_blocked = direction == "WAIT" or not geo.get("has_levels") or not geo.get("valid_geometry") or geo.get("tiny_tp") or geo.get("weak_rr") or sentiment_conflict or external_options_high_conflict
     if score >= 70 and not hard_blocked:
         grade, mode, decision_ru = "A", "prop_entry", "Рабочая prop-идея: есть направление, уровни, свечи, приемлемый риск/прибыль и sentiment не против сделки."
     elif score >= 55 and not hard_blocked:
@@ -456,6 +535,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "trade_geometry": geo,
         "sentiment_filter": sentiment,
         "sentiment_used": sentiment.get("alignment") != "missing",
+        "external_options_filter": external_options,
+        "external_options_used": bool(external_options.get("used")),
+        "external_options_alignment": external_options.get("alignment") or "neutral",
+        "external_options_source": "CME_OptionsFX",
         "delta_divergence": None,
         "margin_zone_confluence": None,
         "disclaimer_ru": "Score не блокирует идею только из-за отсутствия optional CME/options/news слоёв; но если sentiment/news явно против направления, автоторговля блокируется.",
@@ -469,7 +552,9 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
     grade = str(score.get("grade") or "").upper()
     mode = str(score.get("mode") or "").lower()
     sentiment_filter = score.get("sentiment_filter") if isinstance(score.get("sentiment_filter"), dict) else {}
+    external_options_filter = score.get("external_options_filter") if isinstance(score.get("external_options_filter"), dict) else {}
     sentiment_conflict = sentiment_filter.get("alignment") == "conflict"
+    external_options_high_conflict = bool(external_options_filter.get("alignment") == "conflict" and external_options_filter.get("high_confidence_conflict"))
     allowed = (
         action in {"BUY", "SELL"}
         and grade in {"A", "B"}
@@ -480,6 +565,7 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         and not geo.get("tiny_tp")
         and not geo.get("weak_rr")
         and not sentiment_conflict
+        and not external_options_high_conflict
     )
     reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + TP distance ok + sentiment not against + score>=55" if allowed else "blocked: нужен BUY/SELL, валидные уровни, RR>=1.10, sentiment не против и score>=55"
     return {
@@ -497,6 +583,10 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         "grade": score.get("grade"),
         "mode": score.get("mode"),
         "sentiment_filter": sentiment_filter,
+        "external_options_used": bool(external_options_filter.get("used")),
+        "external_options_alignment": external_options_filter.get("alignment") or "neutral",
+        "external_options_source": "CME_OptionsFX",
+        "external_options_filter": external_options_filter,
         "level_source": geo.get("level_source"),
     }
 
@@ -528,6 +618,12 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
         enriched["risk_reward"] = rounded_rr
     if advisor_signal.get("level_source"):
         enriched["entry_source"] = advisor_signal.get("level_source")
+    external_options_filter = score.get("external_options_filter") if isinstance(score.get("external_options_filter"), dict) else {}
+    external_options_signal = external_options_filter.get("signal") if isinstance(external_options_filter.get("signal"), dict) else {}
+    enriched["external_options_ru"] = external_options_filter.get("text_ru") or "CME_OptionsFX: нет данных"
+    enriched["external_options_bias"] = external_options_signal.get("option_bias") or external_options_filter.get("option_bias") or "neutral"
+    enriched["external_options_key_strikes"] = external_options_signal.get("key_strikes") or []
+    enriched["external_options_max_pain"] = external_options_signal.get("max_pain")
     enriched.update(
         {
             "prop_signal_score": score,
@@ -538,6 +634,10 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "advisor_allowed": advisor_signal["allowed"],
             "advisor_signal": advisor_signal,
             "sentiment_filter": score.get("sentiment_filter"),
+            "external_options_filter": score.get("external_options_filter"),
+            "external_options_used": score.get("external_options_used"),
+            "external_options_alignment": score.get("external_options_alignment"),
+            "external_options_source": "CME_OptionsFX",
         }
     )
     return enriched

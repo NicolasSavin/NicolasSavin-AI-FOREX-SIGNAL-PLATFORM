@@ -395,3 +395,10 @@ curl -X POST http://127.0.0.1:8000/api/options/levels \
 curl http://127.0.0.1:8000/api/options/levels/EURUSD
 curl http://127.0.0.1:8000/ideas/market
 ```
+
+## External Telegram options confirmation
+- `CME_OptionsFX` подключён как дополнительный `options_flow_source`, а не как источник прямого открытия сделок и не как замена существующего CME/options модуля.
+- Endpoint `GET /api/external-signals/cme-optionsfx` возвращает последние распарсенные Telegram-сообщения по `EURUSD`, `GBPUSD`, `USDJPY`, `XAUUSD`, `DXY` с полями `option_bias`, `key_strikes`, `max_pain`, `expiry`, `gamma_zone`, `put_call_bias`, `raw_text`, `source`.
+- Если Telegram credentials не заданы (`TELEGRAM_API_ID`/`TELEGRAM_API_HASH` или `TELEGRAM_BOT_TOKEN`, также поддерживаются `TG_*` aliases), endpoint возвращает `available=false`, а scoring работает как раньше без блокировки сделок.
+- В Prop Signal Engine слой `CME_OptionsFX` используется только как confirmation layer: совпадение options bias с направлением сделки даёт `+4` к score, явный конфликт даёт `-4`, а high-confidence conflict может стать blocker.
+- В payload идеи добавлены `external_options_ru`, `external_options_bias`, `external_options_key_strikes`, `external_options_max_pain`, а `advisor_signal` содержит `external_options_used`, `external_options_alignment`, `external_options_source="CME_OptionsFX"`.
