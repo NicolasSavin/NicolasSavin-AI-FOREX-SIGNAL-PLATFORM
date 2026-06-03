@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import sys
 from typing import Any
 
 from app.services.external_signal_adapter import get_cme_optionsfx_confirmation
 from app.services.mt4_volume_cluster_bridge import get_latest_volume_cluster
+
+logger = logging.getLogger(__name__)
 
 try:
     from app.services.openai_idea_narrative import enrich_idea_with_openai_narrative
@@ -69,8 +72,27 @@ def _first_text(idea: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+DIRECTION_TEXT_KEYS = ("signal", "action", "final_signal", "label", "direction", "bias", "htf_bias")
+
+
+
+
+def _direction_text_candidates(idea: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for key in DIRECTION_TEXT_KEYS:
+        current: Any = idea
+        for part in key.split("."):
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(part)
+        text = _text(current)
+        if text and text.lower() not in {"none", "null", "нет данных", "unavailable", "—"}:
+            candidates.append(f"{key}={text}")
+    return candidates
+
 def _direction_from_text(idea: dict[str, Any]) -> str:
-    raw = _first_text(idea, "signal", "action", "final_signal", "label", "direction", "bias", "htf_bias").upper()
+    raw = _first_text(idea, *DIRECTION_TEXT_KEYS).upper()
     if "BUY" in raw or "BULL" in raw or "ПОКУП" in raw:
         return "BUY"
     if "SELL" in raw or "BEAR" in raw or "ПРОДА" in raw:
@@ -103,6 +125,24 @@ def _direction(idea: dict[str, Any]) -> str:
     if text_direction in {"BUY", "SELL"}:
         return text_direction
     return _direction_from_candles(_candles(idea))
+
+
+def _direction_with_reason(idea: dict[str, Any], candles: list[dict[str, Any]] | None = None) -> tuple[str, str]:
+    raw_text = _first_text(idea, *DIRECTION_TEXT_KEYS)
+    text_candidates = _direction_text_candidates(idea)
+    candidates_text = "; ".join(text_candidates) or "empty"
+    text_direction = _direction_from_text(idea)
+    if text_direction in {"BUY", "SELL"}:
+        return text_direction, f"direction_from_text: first_match={raw_text}; candidates={candidates_text}"
+
+    candle_rows = candles if candles is not None else _candles(idea)
+    candle_direction = _direction_from_candles(candle_rows)
+    candle_count = len(candle_rows)
+    if candle_direction in {"BUY", "SELL"}:
+        return candle_direction, f"direction_from_candles: {candle_count} свечей, текстовые поля не дали BUY/SELL; candidates={candidates_text}"
+    if candle_count < 12:
+        return "WAIT", f"direction_missing: текстовые поля не содержат BUY/SELL; candidates={candidates_text}; candle fallback невозможен: нужно >=12 свечей, получено {candle_count}"
+    return "WAIT", f"direction_wait: {candle_count} свечей есть, но MA/close fallback не дал направленного импульса; candidates={candidates_text}"
 
 
 def _normalize_symbol(symbol: Any) -> str:
@@ -281,6 +321,41 @@ def _candles(idea: dict[str, Any]) -> list[dict[str, Any]]:
     return _candles_from_main(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
 
 
+def _candle_diagnostics(idea: dict[str, Any], candles: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    rows = candles if candles is not None else _candles(idea)
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    source = "missing"
+    for key in ("candles", "chartData", "chart_data", "market_data"):
+        raw = idea.get(key)
+        if isinstance(raw, list) and raw:
+            source = key
+            break
+        if isinstance(raw, dict) and isinstance(raw.get("candles"), list) and raw.get("candles"):
+            source = f"{key}.candles"
+            break
+    else:
+        timeframe_ideas = idea.get("timeframe_ideas")
+        if isinstance(timeframe_ideas, dict):
+            for timeframe in ("M15", "H1", "H4", "D1"):
+                item = timeframe_ideas.get(timeframe)
+                if isinstance(item, dict) and isinstance(item.get("candles"), list) and item.get("candles"):
+                    source = f"timeframe_ideas.{timeframe}.candles"
+                    break
+        if source == "missing" and rows:
+            source = "app.main.mt4_or_fetch_candles"
+
+    count = len(rows)
+    if count >= 80:
+        reason = f"real_candles_confirmed: {count} свечей, source={source}"
+    elif count >= 30:
+        reason = f"real_candles_partial: {count} свечей, source={source}; full score needs >=80"
+    elif count >= 12:
+        reason = f"real_candles_partial: {count} свечей, source={source}; full score needs >=80"
+    else:
+        reason = f"real_candles_missing: нужно >=12 валидных OHLC свечей, получено {count}; source={source}; MT4/fetch fallback не вернул достаточную историю"
+    return {"count": count, "source": source, "reason": reason}
+
+
 def _price_delta(candles: list[dict[str, Any]]) -> float | None:
     closes = [_to_float(candle.get("close")) for candle in candles[-3:]]
     closes = [close for close in closes if close is not None]
@@ -394,10 +469,12 @@ def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
     entry = _to_float(idea.get("entry") if idea.get("entry") is not None else idea.get("entry_price"))
     sl = _to_float(idea.get("sl") if idea.get("sl") is not None else idea.get("stop_loss"))
     tp = _to_float(idea.get("tp") if idea.get("tp") is not None else idea.get("take_profit") or idea.get("target"))
-    direction = _direction(idea)
     candles = _candles(idea)
+    direction, direction_reason = _direction_with_reason(idea, candles)
+    missing_level_names = [name for name, value in (("entry", entry), ("sl", sl), ("tp", tp)) if value is None]
     level_source = "provided" if all(value is not None for value in (entry, sl, tp)) else "missing"
     fallback_used = False
+    fallback_reason = "not_needed" if not missing_level_names else f"missing provided levels: {', '.join(missing_level_names)}"
 
     if direction in {"BUY", "SELL"} and not all(value is not None for value in (entry, sl, tp)) and len(candles) >= 12:
         closes = [_to_float(candle.get("close")) for candle in candles]
@@ -426,11 +503,19 @@ def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
             tp = round(tp, precision)
             level_source = "atr_fallback"
             fallback_used = True
+            fallback_reason = f"atr_fallback_generated_from_{len(candles)}_candles"
+        else:
+            fallback_reason = "atr_fallback_failed: candles exist but valid close/high/low arrays are empty"
+    elif direction not in {"BUY", "SELL"} and missing_level_names:
+        fallback_reason = "atr_fallback_blocked: direction is WAIT; cannot generate directional entry/sl/tp"
+    elif len(candles) < 12 and missing_level_names:
+        fallback_reason = f"atr_fallback_blocked: need >=12 candles, got {len(candles)}"
 
     has_levels = all(value is not None for value in (entry, sl, tp))
     rr = None
     tp_pips = None
     valid_geometry = False
+    geometry_reason = "levels_missing"
     if has_levels:
         risk = abs(entry - sl)  # type: ignore[operator]
         reward = abs(tp - entry)  # type: ignore[operator]
@@ -440,6 +525,7 @@ def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
             valid_geometry = bool(sl < entry < tp)  # type: ignore[operator]
         elif direction == "SELL":
             valid_geometry = bool(tp < entry < sl)  # type: ignore[operator]
+        geometry_reason = "valid_directional_geometry" if valid_geometry else f"invalid_geometry_for_{direction}: entry={entry}, sl={sl}, tp={tp}"
     min_tp_pips = 8.0
     if "XAU" in symbol or "GOLD" in symbol:
         min_tp_pips = 20.0
@@ -460,6 +546,12 @@ def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
         "level_source": level_source,
         "candles_count": len(candles),
         "fallback_used": fallback_used,
+        "direction_reason": direction_reason,
+        "entry_reason": "entry_available" if entry is not None else fallback_reason,
+        "sl_reason": "sl_available" if sl is not None else fallback_reason,
+        "tp_reason": "tp_available" if tp is not None else fallback_reason,
+        "levels_reason": geometry_reason if has_levels else fallback_reason,
+        "fallback_reason": fallback_reason,
     }
 
 
@@ -565,9 +657,10 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
         rr_score, rr_text = 1, f"слабый R/R {rr:.2f}"
     rows.append(_row("risk_reward", rr_score, weights["risk_reward"], rr_text))
 
-    candle_count = len(candles)
+    candle_diag = _candle_diagnostics(idea, candles)
+    candle_count = int(candle_diag.get("count") or 0)
     candle_score = weights["candles"] if candle_count >= 80 else round(weights["candles"] * 0.7) if candle_count >= 30 else round(weights["candles"] * 0.45) if candle_count >= 12 else 0
-    rows.append(_row("candles", candle_score, weights["candles"], f"{candle_count} свечей"))
+    rows.append(_row("candles", candle_score, weights["candles"], str(candle_diag.get("reason") or f"{candle_count} свечей")))
 
     structure_text = _first_text(idea, "reason_ru", "summary_ru", "summary", "htf_reason", "market_structure.summary", "bias", "entry_source")
     structure_score = weights["structure"] if structure_text else round(weights["structure"] * 0.5) if direction in {"BUY", "SELL"} else 0
@@ -608,6 +701,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     base_score = round(sum(row["score"] for row in rows) / total_weight * 100)
     direction = _direction(safe_idea)
     geo = _trade_geometry(safe_idea)
+    candle_diag = _candle_diagnostics(safe_idea)
     sentiment = _sentiment_alignment(safe_idea, direction)
     external_options = _external_options_alignment(safe_idea, direction)
     volume_delta = _volume_delta_context(safe_idea, direction)
@@ -617,10 +711,16 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     external_options_note = ""
     blockers: list[str] = []
 
+    direction_reason = str(geo.get("direction_reason") or _direction_with_reason(safe_idea)[1])
+    entry_reason = str(geo.get("entry_reason") or "unknown")
+    sl_reason = str(geo.get("sl_reason") or "unknown")
+    tp_reason = str(geo.get("tp_reason") or "unknown")
+    real_candle_reason = str(candle_diag.get("reason") or "unknown")
+
     if direction == "WAIT":
-        blockers.append("Нет активного направления BUY/SELL")
+        blockers.append(f"Нет активного направления BUY/SELL: {direction_reason}")
     if not geo.get("has_levels") or not geo.get("valid_geometry"):
-        blockers.append("Нет валидных уровней Entry/SL/TP")
+        blockers.append(f"Нет валидных уровней Entry/SL/TP: {geo.get('levels_reason') or entry_reason}")
     if geo.get("tiny_tp"):
         blockers.append(f"TP слишком близко: {geo.get('tp_pips'):.1f} пипс, минимум {geo.get('min_tp_pips'):.0f}")
     if geo.get("weak_rr"):
@@ -643,12 +743,30 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         grade, mode, decision_ru = "D", "no_trade", "No trade: подтверждений недостаточно."
 
     missing = [row["label_ru"] for row in rows if row["status"] == "missing"]
+    logger.info(
+        "prop_signal_engine_trace symbol=%s direction=%s score=%s candles=%s advisor_blockers=%s direction_reason=%s entry_reason=%s sl_reason=%s tp_reason=%s real_candle_reason=%s",
+        geo.get("symbol"),
+        direction,
+        score,
+        candle_diag.get("count"),
+        blockers,
+        direction_reason,
+        entry_reason,
+        sl_reason,
+        tp_reason,
+        real_candle_reason,
+    )
     return {
         "score": score,
         "grade": grade,
         "mode": mode,
         "decision_ru": decision_ru,
         "direction": direction,
+        "direction_reason": direction_reason,
+        "entry_reason": entry_reason,
+        "sl_reason": sl_reason,
+        "tp_reason": tp_reason,
+        "real_candle_reason": real_candle_reason,
         "criteria": rows,
         "blockers": blockers,
         "missing_inputs": missing,
@@ -661,6 +779,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "external_options_alignment": external_options.get("alignment") or "neutral",
         "external_options_source": "CME_OptionsFX",
         "volume_delta": volume_delta,
+        "real_candle_diagnostics": candle_diag,
         "volume_delta_source": volume_delta.get("source"),
         "delta_divergence": bool(volume_delta.get("delta_divergence")),
         "margin_zone_confluence": None,
@@ -691,8 +810,27 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
     )
     if allowed and external_options_high_conflict:
         reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + score>=55; CME/Telegram conflict сохранён как подтверждающий слой, но не блокирует"
+    elif allowed:
+        reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + TP distance ok + sentiment not against + score>=55"
     else:
-        reason = "allowed: BUY/SELL + valid levels + RR>=1.10 + TP distance ok + sentiment not against + score>=55" if allowed else "blocked: нужен BUY/SELL, валидные уровни, RR>=1.10, sentiment не против и score>=55"
+        advisor_reasons = []
+        if action not in {"BUY", "SELL"}:
+            advisor_reasons.append(str(score.get("direction_reason") or "direction_not_buy_sell"))
+        if not geo.get("has_levels") or not geo.get("valid_geometry"):
+            advisor_reasons.append(str(geo.get("levels_reason") or score.get("entry_reason") or "invalid_levels"))
+        if geo.get("tiny_tp"):
+            advisor_reasons.append(f"tiny_tp={geo.get('tp_pips')} min={geo.get('min_tp_pips')}")
+        if geo.get("weak_rr"):
+            advisor_reasons.append(f"weak_rr={geo.get('rr')}")
+        if sentiment_conflict:
+            advisor_reasons.append(str((sentiment_filter or {}).get("text_ru") or "sentiment_conflict"))
+        if numeric_score < 55:
+            advisor_reasons.append(f"score_below_55={numeric_score}")
+        if grade not in {"A", "B"}:
+            advisor_reasons.append(f"grade_not_A_B={grade or 'empty'}")
+        if mode not in {"prop_entry", "watchlist"}:
+            advisor_reasons.append(f"mode_not_tradable={mode or 'empty'}")
+        reason = "blocked: " + "; ".join(advisor_reasons or ["нужен BUY/SELL, валидные уровни, RR>=1.10, sentiment не против и score>=55"])
     return {
         "allowed": allowed,
         "reason": reason,
@@ -713,6 +851,11 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         "external_options_source": "CME_OptionsFX",
         "external_options_filter": external_options_filter,
         "level_source": geo.get("level_source"),
+        "direction_reason": score.get("direction_reason"),
+        "entry_reason": score.get("entry_reason"),
+        "sl_reason": score.get("sl_reason"),
+        "tp_reason": score.get("tp_reason"),
+        "real_candle_reason": score.get("real_candle_reason"),
     }
 
 
@@ -758,6 +901,11 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "prop_decision_ru": score["decision_ru"],
             "advisor_allowed": advisor_signal["allowed"],
             "advisor_signal": advisor_signal,
+            "direction_reason": score.get("direction_reason"),
+            "entry_reason": score.get("entry_reason"),
+            "sl_reason": score.get("sl_reason"),
+            "tp_reason": score.get("tp_reason"),
+            "real_candle_reason": score.get("real_candle_reason"),
             "sentiment_filter": score.get("sentiment_filter"),
             "external_options_filter": score.get("external_options_filter"),
             "external_options_used": score.get("external_options_used"),

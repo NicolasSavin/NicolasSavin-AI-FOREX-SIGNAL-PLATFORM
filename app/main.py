@@ -1057,6 +1057,7 @@ def api_mt4_ingest_get(
     normalized_symbol = normalize_mt4_symbol(symbol or broker_symbol)
     timeframe = str(tf or "M15").upper()
     if not normalized_symbol:
+        logger.warning("mt4_ingest_get_rejected reason=symbol_required raw_symbol=%s broker_symbol=%s tf=%s", symbol, broker_symbol, tf)
         return JSONResponse(status_code=400, content={"ok": False, "error": "symbol_required"})
 
     store_key = f"{normalized_symbol}:{timeframe}"
@@ -1077,6 +1078,16 @@ def api_mt4_ingest_get(
         "account": account,
         "candles": merged_candles,
     }
+    logger.info(
+        "mt4_ingest_get_stored symbol=%s timeframe=%s store_key=%s candle_time=%s stored=%s broker=%s account=%s",
+        normalized_symbol,
+        timeframe,
+        store_key,
+        candle_time,
+        len(merged_candles),
+        broker,
+        account,
+    )
 
     save_volume_cluster_payload({
         "symbol": normalized_symbol,
@@ -1129,6 +1140,7 @@ def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
             return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_payload"})
 
         candles = []
+        invalid_candles = 0
         for c in candles_in[:300]:
             try:
                 t = int(c.get("time"))
@@ -1137,12 +1149,21 @@ def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
                 l = float(c.get("low"))
                 cl = float(c.get("close"))
                 if t <= 0 or o <= 0 or h <= 0 or l <= 0 or cl <= 0:
+                    invalid_candles += 1
                     continue
                 candles.append(_compact_candle({"time": t, "open": o, "high": h, "low": l, "close": cl}))
             except Exception:
+                invalid_candles += 1
                 continue
 
         if not candles:
+            logger.warning(
+                "mt4_push_candles_rejected symbol=%s timeframe=%s received=%s invalid=%s reason=no_valid_candles",
+                symbol,
+                tf,
+                len(candles_in),
+                invalid_candles,
+            )
             return JSONResponse(status_code=400, content={"ok": False, "error": "no_valid_candles"})
 
         candles.sort(key=lambda x: x["time"])
@@ -1166,6 +1187,18 @@ def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
             "account": payload.get("account"),
             "candles": merged_candles,
         }
+        logger.info(
+            "mt4_push_candles_stored symbol=%s timeframe=%s store_key=%s received=%s valid=%s invalid=%s stored=%s broker=%s account=%s",
+            symbol,
+            tf,
+            key,
+            len(candles_in),
+            len(candles),
+            invalid_candles,
+            len(merged_candles),
+            payload.get("broker"),
+            payload.get("account"),
+        )
         gc.collect()
         return {"ok": True, "symbol": symbol, "timeframe": tf, "received": len(candles), "stored": len(merged_candles), "updated_at_utc": MT4_CANDLE_STORE[key]["updated_at"].isoformat()}
     except Exception as exc:
@@ -2644,6 +2677,7 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
     tf_norm = str(tf or "M15").upper()
     key, item = resolve_mt4_candle_item(symbol_norm, tf_norm)
     if not item:
+        logger.info("mt4_fetch_candles_miss symbol=%s timeframe=%s resolved_key=%s reason=no_mt4_data", symbol_norm, tf_norm, key)
         return {"candles": [], "provider": "mt4_bridge", "warning_ru": "Нет свечей от MT4 bridge.", "raw_error": "no_mt4_data"}
 
     updated_at = item.get("updated_at") if isinstance(item, dict) else None
@@ -2655,6 +2689,14 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
     if age_seconds > MT4_BRIDGE_FRESH_SECONDS:
         stale_candles = (item.get("candles") or [])[-int(limit):]
         if stale_candles and age_seconds <= MT4_CANDLE_STALE_MAX_SECONDS:
+            logger.info(
+                "mt4_fetch_candles_hit symbol=%s timeframe=%s key=%s returned=%s age_seconds=%.2f status=stale",
+                symbol_norm,
+                tf_norm,
+                key,
+                len(stale_candles),
+                age_seconds,
+            )
             return {
                 "candles": stale_candles,
                 "provider": "mt4_bridge",
@@ -2664,6 +2706,13 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
                 "raw_error": None,
                 "diagnostics": {"age_seconds": age_seconds, "stale_fallback": True},
             }
+        logger.info(
+            "mt4_fetch_candles_stale_empty symbol=%s timeframe=%s key=%s age_seconds=%.2f reason=stale_mt4_data",
+            symbol_norm,
+            tf_norm,
+            key,
+            age_seconds,
+        )
         return {
             "candles": [],
             "provider": "mt4_bridge",
@@ -2675,6 +2724,14 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
         }
 
     candles = (item.get("candles") or [])[-int(limit):]
+    logger.info(
+        "mt4_fetch_candles_hit symbol=%s timeframe=%s key=%s returned=%s age_seconds=%.2f status=real",
+        symbol_norm,
+        tf_norm,
+        key,
+        len(candles),
+        age_seconds,
+    )
     return {
         "candles": candles,
         "provider": "mt4_bridge",
