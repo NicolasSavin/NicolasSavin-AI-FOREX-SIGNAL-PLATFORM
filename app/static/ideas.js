@@ -105,6 +105,32 @@ function formatNumber(value) {
   return String(num);
 }
 
+function formatListValue(value) {
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
+  if (value === undefined || value === null || value === "") return "—";
+  return String(value);
+}
+
+function resolveExternalOptionsRu(idea) {
+  return firstText(
+    idea.external_options_ru,
+    idea.advisor_signal?.external_options_filter?.text_ru,
+    idea.prop_signal_score?.external_options_filter?.text_ru,
+  ) || "CME_OptionsFX: нет данных, слой не блокирует сделку";
+}
+
+function resolveExternalOptionsBias(idea) {
+  return firstText(
+    idea.external_options_bias,
+    idea.advisor_signal?.external_options_filter?.option_bias,
+    idea.prop_signal_score?.external_options_filter?.option_bias,
+  ) || "neutral";
+}
+
+function renderExternalOptionsCompact(idea) {
+  return `<div class="idea-news-line">CME_OptionsFX: <strong>${escapeHtml(resolveExternalOptionsBias(idea))}</strong> · strikes: ${escapeHtml(formatListValue(idea.external_options_key_strikes))} · max pain: ${escapeHtml(formatListValue(idea.external_options_max_pain))}</div>`;
+}
+
 function getIdeaSymbol(idea) {
   return String(idea.instrument || idea.symbol || idea.pair || "РЫНОК").toUpperCase();
 }
@@ -430,6 +456,7 @@ function renderIdeaCard(idea, index) {
       <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
     </div>
     ${renderPropCompact(idea)}
+    ${renderExternalOptionsCompact(idea)}
     <div class="idea-news-line">BOS: ${escapeHtml(idea.market_structure?.bos || "—")} · Sweep: ${escapeHtml(idea.liquidity?.sweep || "—")} · FVG: ${escapeHtml(idea.fvg?.type || idea.selected_zone_type || "—")} · HTF: ${escapeHtml(idea.htf_bias || idea.market_structure?.trend_regime || "—")}</div>
     <div class="idea-summary-compact">${escapeHtml(resolveNarrative(idea))}</div>
   </article>`;
@@ -497,6 +524,7 @@ function openIdeaModal(idea) {
         <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
       </div>
       <p class="modal-text"><strong>Новости/фундаментал:</strong> ${escapeHtml(resolveNewsContext(idea))}</p>
+      <p class="modal-text"><strong>Options/CME confirmation:</strong> ${escapeHtml(resolveExternalOptionsRu(idea))}<br><strong>Bias:</strong> ${escapeHtml(resolveExternalOptionsBias(idea))}; <strong>Key strikes:</strong> ${escapeHtml(formatListValue(idea.external_options_key_strikes))}; <strong>Max pain:</strong> ${escapeHtml(formatListValue(idea.external_options_max_pain))}</p>
       <p class="modal-text"><strong>Источник:</strong> ${escapeHtml(idea.data_provider || idea.provider || "нет данных")}</p>
       <p class="modal-text"><strong>Setup:</strong> ${escapeHtml(idea.setup_type || "—")}; <strong>BOS:</strong> ${escapeHtml(idea.market_structure?.bos || "—")}; <strong>Sweep:</strong> ${escapeHtml(idea.liquidity?.sweep || "—")}; <strong>FVG:</strong> ${escapeHtml(idea.fvg?.type || idea.selected_zone_type || "—")}; <strong>HTF bias:</strong> ${escapeHtml(idea.htf_bias || idea.market_structure?.trend_regime || "—")}</p>
     </section>`;
