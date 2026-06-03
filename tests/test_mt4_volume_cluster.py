@@ -44,3 +44,35 @@ def test_divergence_reduces_confidence():
     div = ConfluenceEngine().evaluate({"action": "SELL", "price": 1.171, "symbol": "EURUSD", "timeframe": "H1"})
     assert div["breakdown"]["volume_cluster"] < base["breakdown"]["volume_cluster"]
 
+
+
+from fastapi.testclient import TestClient
+from app.main import app
+
+
+def test_push_volume_delta_endpoint_accepts_payload():
+    client = TestClient(app)
+    payload = {
+        "symbol": "EURUSD",
+        "timeframe": "M15",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "cum_delta": 1200,
+        "delta_change": 85,
+        "cluster_volume": 4300,
+        "poc_price": 1.1025,
+        "absorption_zone": {"low": 1.1018, "high": 1.1022},
+        "hft_spike": True,
+        "source": "optionlevels_fx",
+    }
+    res = client.post('/api/mt4/push-volume-delta', json=payload)
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+
+
+def test_score_breakdown_contains_volume_delta_fields():
+    save_volume_cluster_payload(_payload(summary={"absorption_side": "sell", "hft_spike": True}, delta={"delta_trend": "falling", "divergence": "none"}))
+    res = ConfluenceEngine().evaluate({"action": "SELL", "price": 1.171, "symbol": "EURUSD", "timeframe": "H1"})
+    vc = res["volume_cluster_analysis"]
+    assert "score_breakdown" in vc
+    assert vc["score_breakdown"]["volume_delta_available"] is True
+    assert "delta_confirmation" in vc["score_breakdown"]
