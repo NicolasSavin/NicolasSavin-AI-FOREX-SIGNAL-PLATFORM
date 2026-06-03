@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.services.options_analysis import analyze_options
+from app.services.mt4_volume_cluster_bridge import build_volume_delta_priority_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +54,16 @@ def _float_or_none(value: Any) -> float | None:
         return None
 
 
-def _build_volume_delta_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+def _build_volume_delta_snapshot(payload: dict[str, Any], symbol: str = "", timeframe: str = "") -> dict[str, Any]:
     cluster_volume = _float_or_none(payload.get("cluster_volume"))
-    cum_delta = _float_or_none(payload.get("cum_delta") or payload.get("cumulative_delta"))
-    delta_change = _float_or_none(payload.get("delta_change") or payload.get("cluster_delta") or payload.get("delta"))
     poc_price = _float_or_none(payload.get("poc_price") or payload.get("poc"))
     hft_spike = bool(payload.get("hft_spike"))
     absorption_zone = payload.get("absorption_zone") if isinstance(payload.get("absorption_zone"), dict) else {}
-    available = bool(payload.get("volume_delta_available")) or any(
+    snapshot = build_volume_delta_priority_snapshot(payload, symbol=symbol, timeframe=timeframe)
+
+    delta_change = _float_or_none(snapshot.get("delta"))
+    cum_delta = _float_or_none(snapshot.get("cumdelta"))
+    available = bool(snapshot.get("available")) or any(
         value not in (None, 0.0) for value in (cluster_volume, cum_delta, delta_change, poc_price)
     ) or hft_spike
 
@@ -77,11 +80,7 @@ def _build_volume_delta_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
 
     parts: list[str] = []
     if available:
-        parts.append("Future Volume / CumDelta получены")
-    if cum_delta is not None:
-        parts.append(f"cum_delta={cum_delta:.2f}")
-    if delta_change is not None:
-        parts.append(f"delta_change={delta_change:.2f}")
+        parts.append(str(snapshot.get("summary_ru") or "Volume Delta получена"))
     if cluster_volume is not None:
         parts.append(f"cluster_volume={cluster_volume:.2f}")
     if poc_price is not None:
@@ -91,9 +90,11 @@ def _build_volume_delta_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "available": available,
-        "source": payload.get("volume_source") or "future_volume",
+        "source": snapshot.get("source") or payload.get("volume_source") or "unavailable",
         "timeframe": payload.get("timeframe"),
         "cluster_volume": cluster_volume,
+        "delta": delta_change,
+        "cumdelta": cum_delta,
         "cum_delta": cum_delta,
         "cumulative_delta": cum_delta,
         "delta_change": delta_change,
@@ -101,6 +102,9 @@ def _build_volume_delta_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
         "hft_spike": hft_spike,
         "absorption_zone": absorption_zone,
         "delta_bias": delta_bias,
+        "is_proxy": bool(snapshot.get("is_proxy")),
+        "priority_used": snapshot.get("priority_used"),
+        "body_ratio": snapshot.get("body_ratio"),
         "summary_ru": ", ".join(parts) if parts else "Данные CumDelta / delta не получены.",
     }
 
@@ -124,7 +128,7 @@ def save_options_levels(payload: dict[str, Any]) -> dict[str, Any]:
 
     now = datetime.now(timezone.utc)
     _prune_options_store(now)
-    volume_delta = _build_volume_delta_snapshot(payload)
+    volume_delta = _build_volume_delta_snapshot(payload, symbol=symbol, timeframe=str(payload.get("timeframe") or ""))
     entry = {
         "symbol": symbol,
         "timestamp": (source_timestamp or now).isoformat(),
@@ -137,8 +141,13 @@ def save_options_levels(payload: dict[str, Any]) -> dict[str, Any]:
         "volume_delta": volume_delta,
         "volume_delta_available": bool(volume_delta.get("available")),
         "cum_delta": volume_delta.get("cum_delta"),
+        "cumdelta": volume_delta.get("cumdelta"),
         "cumulative_delta": volume_delta.get("cumulative_delta"),
         "delta_change": volume_delta.get("delta_change"),
+        "delta": volume_delta.get("delta"),
+        "volume_delta_source": volume_delta.get("source"),
+        "volume_delta_is_proxy": volume_delta.get("is_proxy"),
+        "volume_delta_priority_used": volume_delta.get("priority_used"),
         "cluster_volume": volume_delta.get("cluster_volume"),
         "poc_price": volume_delta.get("poc_price"),
         "hft_spike": volume_delta.get("hft_spike"),
@@ -282,8 +291,13 @@ def _build_analysis(entry: dict[str, Any]) -> dict[str, Any]:
         "volume_delta": volume_delta,
         "volume_delta_available": bool(volume_delta.get("available")),
         "cum_delta": volume_delta.get("cum_delta"),
+        "cumdelta": volume_delta.get("cumdelta"),
         "cumulative_delta": volume_delta.get("cumulative_delta"),
         "delta_change": volume_delta.get("delta_change"),
+        "delta": volume_delta.get("delta"),
+        "volume_delta_source": volume_delta.get("source"),
+        "volume_delta_is_proxy": volume_delta.get("is_proxy"),
+        "volume_delta_priority_used": volume_delta.get("priority_used"),
         "cluster_volume": volume_delta.get("cluster_volume"),
         "poc_price": volume_delta.get("poc_price"),
         "hft_spike": volume_delta.get("hft_spike"),

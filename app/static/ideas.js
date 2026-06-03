@@ -131,6 +131,46 @@ function renderExternalOptionsCompact(idea) {
   return `<div class="idea-news-line">CME_OptionsFX: <strong>${escapeHtml(resolveExternalOptionsBias(idea))}</strong> · strikes: ${escapeHtml(formatListValue(idea.external_options_key_strikes))} · max pain: ${escapeHtml(formatListValue(idea.external_options_max_pain))}</div>`;
 }
 
+
+function resolveVolumeDelta(idea) {
+  const prop = getPropScore(idea);
+  const vd = (idea?.volume_delta && typeof idea.volume_delta === "object")
+    ? idea.volume_delta
+    : (prop?.volume_delta && typeof prop.volume_delta === "object")
+      ? prop.volume_delta
+      : {};
+  return {
+    source: vd.source || idea?.volume_delta_source || prop?.volume_delta_source || "unavailable",
+    delta: vd.delta,
+    cumdelta: vd.cumdelta ?? vd.cum_delta ?? vd.cumulative_delta,
+    isProxy: vd.is_proxy === true,
+    priority: vd.priority_used ?? "—",
+    divergence: Boolean(vd.delta_divergence || idea?.delta_divergence || prop?.delta_divergence),
+    priceTrend: vd.price_trend || "—",
+    cumdeltaTrend: vd.cumdelta_trend || "—",
+  };
+}
+
+function volumeDeltaSourceLabel(source) {
+  const raw = String(source || "unavailable");
+  const labels = {
+    FutureDelta: "FutureDelta",
+    FutureVolume: "FutureVolume",
+    tick_volume: "tick_volume",
+    unavailable: "нет данных",
+  };
+  return labels[raw] || raw;
+}
+
+function renderVolumeDeltaCompact(idea) {
+  const vd = resolveVolumeDelta(idea);
+  return `<div class="volume-delta-pill ${vd.divergence ? "divergent" : ""}">
+    <span>CumDelta source</span><strong>${escapeHtml(volumeDeltaSourceLabel(vd.source))}</strong>
+    <em>${vd.isProxy ? "proxy" : "real"} · priority ${escapeHtml(vd.priority)}</em>
+    <small>Δ ${escapeHtml(formatNumber(vd.delta))} · CumΔ ${escapeHtml(formatNumber(vd.cumdelta))}${vd.divergence ? " · Delta divergence" : ""}</small>
+  </div>`;
+}
+
 function getIdeaSymbol(idea) {
   return String(idea.instrument || idea.symbol || idea.pair || "РЫНОК").toUpperCase();
 }
@@ -376,6 +416,12 @@ function injectUiStyles() {
     .idea-card-top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:12px; }
     .idea-title { margin:8px 0 6px; font-size:22px; line-height:1.15; }
     .idea-news-line { color:#b9d6f8; font-size:12px; line-height:1.5; }
+    .volume-delta-pill { margin:10px 0; padding:10px 11px; border-radius:14px; border:1px solid rgba(69,202,255,.24); background:rgba(69,202,255,.08); display:grid; gap:2px; color:#dbeeff; }
+    .volume-delta-pill span { color:#9bb8d8; font-size:10px; font-weight:950; text-transform:uppercase; letter-spacing:.06em; }
+    .volume-delta-pill strong { color:#f4f8ff; font-size:14px; }
+    .volume-delta-pill em, .volume-delta-pill small { color:#b9d6f8; font-style:normal; font-size:12px; }
+    .volume-delta-pill.divergent { border-color:rgba(248,113,113,.48); background:rgba(127,29,29,.24); }
+    .volume-delta-pill.divergent strong { color:#fecdd3; }
     .idea-label,.badge { border-radius:999px; padding:8px 12px; font-size:12px; font-weight:950; white-space:nowrap; }
     .badge-buy,.idea-label-buy { color:#00150c; background:linear-gradient(180deg,#54ffb5,#31f59d); }
     .badge-sell,.idea-label-sell { color:#fff; background:linear-gradient(180deg,#d93f5b,#8f2034); }
@@ -456,6 +502,7 @@ function renderIdeaCard(idea, index) {
       <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
     </div>
     ${renderPropCompact(idea)}
+    ${renderVolumeDeltaCompact(idea)}
     ${renderExternalOptionsCompact(idea)}
     <div class="idea-news-line">BOS: ${escapeHtml(idea.market_structure?.bos || "—")} · Sweep: ${escapeHtml(idea.liquidity?.sweep || "—")} · FVG: ${escapeHtml(idea.fvg?.type || idea.selected_zone_type || "—")} · HTF: ${escapeHtml(idea.htf_bias || idea.market_structure?.trend_regime || "—")}</div>
     <div class="idea-summary-compact">${escapeHtml(resolveNarrative(idea))}</div>
@@ -525,6 +572,7 @@ function openIdeaModal(idea) {
       </div>
       <p class="modal-text"><strong>Новости/фундаментал:</strong> ${escapeHtml(resolveNewsContext(idea))}</p>
       <p class="modal-text"><strong>Options/CME confirmation:</strong> ${escapeHtml(resolveExternalOptionsRu(idea))}<br><strong>Bias:</strong> ${escapeHtml(resolveExternalOptionsBias(idea))}; <strong>Key strikes:</strong> ${escapeHtml(formatListValue(idea.external_options_key_strikes))}; <strong>Max pain:</strong> ${escapeHtml(formatListValue(idea.external_options_max_pain))}</p>
+      <p class="modal-text"><strong>CumDelta source:</strong> ${escapeHtml(volumeDeltaSourceLabel(resolveVolumeDelta(idea).source))}; <strong>Delta divergence:</strong> ${resolveVolumeDelta(idea).divergence ? "true" : "false"}; <strong>Price/CumDelta:</strong> ${escapeHtml(resolveVolumeDelta(idea).priceTrend)} / ${escapeHtml(resolveVolumeDelta(idea).cumdeltaTrend)}</p>
       <p class="modal-text"><strong>Источник:</strong> ${escapeHtml(idea.data_provider || idea.provider || "нет данных")}</p>
       <p class="modal-text"><strong>Setup:</strong> ${escapeHtml(idea.setup_type || "—")}; <strong>BOS:</strong> ${escapeHtml(idea.market_structure?.bos || "—")}; <strong>Sweep:</strong> ${escapeHtml(idea.liquidity?.sweep || "—")}; <strong>FVG:</strong> ${escapeHtml(idea.fvg?.type || idea.selected_zone_type || "—")}; <strong>HTF bias:</strong> ${escapeHtml(idea.htf_bias || idea.market_structure?.trend_regime || "—")}</p>
     </section>`;

@@ -1081,6 +1081,11 @@ def api_mt4_ingest_get(
     save_volume_cluster_payload({
         "symbol": normalized_symbol,
         "timeframe": timeframe,
+        "timestamp": datetime.fromtimestamp(candle_time, tz=timezone.utc).isoformat() if candle_time > 0 else None,
+        "open": open,
+        "high": high,
+        "low": low,
+        "close": close,
         "tick_volume": tick_volume,
         "future_volume": future_volume,
         "buy_volume": buy_volume,

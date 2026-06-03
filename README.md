@@ -197,6 +197,17 @@
 - `symbol` и `timeframe` всегда остаются в ответе API;
 - текущий UI не менялся, поэтому карточки продолжают рендериться в прежнем дизайне.
 
+
+### Volume Delta priority chain
+MT4/FutureVolume слой теперь передаёт стабильный объект `volume_delta` в payload и prop score:
+- `source` — `FutureDelta`, `FutureVolume`, `tick_volume` или `unavailable`;
+- `delta` — дельта текущей свечи/буфера;
+- `cumdelta` — накопленная дельта;
+- `is_proxy` — `false` только для primary-данных FutureDelta, `true` для расчётов от FutureVolume/tick volume;
+- `priority_used` — 1 для FutureDelta, 2 для расчёта от FutureVolume, 3 для расчёта от MT4 tick volume.
+
+Приоритет расчёта: сначала реальные буферы FutureDelta (`delta`/`cumdelta`), затем proxy-дельта `future_volume * body_ratio`, затем proxy-дельта `tick_volume * body_ratio`, где `body_ratio = (close - open) / max(high - low, tiny)`. Prop engine подтверждает BUY только при росте цены и CumDelta, SELL — при падении цены и CumDelta; при расхождении выставляется `delta_divergence=true` и score уменьшается.
+
 ### Модель статистики сигналов
 Ответ `GET /api/signals` дополнительно содержит:
 - `stats.total`
