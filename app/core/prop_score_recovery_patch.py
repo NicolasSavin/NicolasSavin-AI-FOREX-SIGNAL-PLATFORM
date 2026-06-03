@@ -284,6 +284,56 @@ def _row(key: str, label: str, weight: int, score: int, text: str) -> dict[str, 
     return {"key": key, "label_ru": label, "weight": weight, "score": score, "status": "confirmed" if score >= weight * 0.7 else "partial" if score > 0 else "missing", "text_ru": text}
 
 
+def _price_delta(candles: list[dict[str, Any]]) -> float | None:
+    closes = [_num(c.get("close")) for c in candles[-3:]]
+    closes = [x for x in closes if x is not None]
+    if len(closes) < 2:
+        return None
+    return closes[-1] - closes[-2]
+
+
+def _extract_volume_delta(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    nested = payload.get("volume_delta") if isinstance(payload.get("volume_delta"), dict) else {}
+    delta = _num(nested.get("delta") if nested else payload.get("volume_delta_delta") or payload.get("delta") or payload.get("delta_change"))
+    cumdelta = _num((nested.get("cumdelta") or nested.get("cum_delta") or nested.get("cumulative_delta")) if nested else payload.get("cumdelta") or payload.get("cum_delta") or payload.get("cumulative_delta"))
+    if delta is None and cumdelta is None:
+        return None
+    source = str((nested.get("source") if nested else None) or payload.get("volume_delta_source") or "unavailable")
+    priority = (nested.get("priority_used") if nested else payload.get("volume_delta_priority_used"))
+    is_proxy = nested.get("is_proxy") if nested else payload.get("volume_delta_is_proxy")
+    if is_proxy is None:
+        is_proxy = source != "FutureDelta"
+    return {"available": True, "source": source, "delta": delta, "cumdelta": cumdelta, "is_proxy": bool(is_proxy), "priority_used": priority}
+
+
+def _volume_delta_context(idea: dict[str, Any], symbol: str, timeframe: str, direction: str, candles: list[dict[str, Any]]) -> dict[str, Any]:
+    vd = _extract_volume_delta(idea)
+    if vd is None:
+        try:
+            from app.services.mt4_volume_cluster_bridge import get_latest_volume_cluster
+            vd = _extract_volume_delta(get_latest_volume_cluster(symbol, timeframe))
+        except Exception:
+            vd = None
+    price_delta = _price_delta(candles)
+    if vd is None:
+        return {"available": False, "source": "unavailable", "delta": None, "cumdelta": None, "is_proxy": True, "priority_used": None, "price_trend": "unknown", "cumdelta_trend": "unknown", "confirmed": False, "delta_divergence": False, "score_adjustment": 0, "text_ru": "Volume Delta недоступна: FutureDelta/FutureVolume/tick volume не получены."}
+    delta = _num(vd.get("delta"))
+    price_trend = "rising" if price_delta is not None and price_delta > 0 else "falling" if price_delta is not None and price_delta < 0 else "flat"
+    cumdelta_trend = "rising" if delta is not None and delta > 0 else "falling" if delta is not None and delta < 0 else "flat"
+    confirmed = (direction == "BUY" and price_trend == "rising" and cumdelta_trend == "rising") or (direction == "SELL" and price_trend == "falling" and cumdelta_trend == "falling")
+    divergence = False
+    adjustment = 0
+    if direction in {"BUY", "SELL"} and price_trend in {"rising", "falling"} and cumdelta_trend in {"rising", "falling"} and not confirmed:
+        divergence = price_trend != cumdelta_trend
+        adjustment = -5 if divergence else -3
+    text = f"CumDelta source={vd.get('source')} ({'proxy' if vd.get('is_proxy') else 'real'}), priority={vd.get('priority_used') or '—'}, delta={vd.get('delta')}, cumdelta={vd.get('cumdelta')}, price={price_trend}, cumdelta_trend={cumdelta_trend}"
+    if divergence:
+        text += "; delta_divergence=true"
+    return {**vd, "price_delta": price_delta, "price_trend": price_trend, "cumdelta_trend": cumdelta_trend, "confirmed": confirmed, "delta_divergence": divergence, "score_adjustment": adjustment, "text_ru": text}
+
+
 def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     candles = _candles(idea)
@@ -294,11 +344,12 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     entry, sl, tp, rr, valid, level_source = _levels(symbol, direction, candles, entry, sl, tp)
     sentiment = _sentiment_alignment(idea, direction)
     external_options = _external_options_alignment(symbol, direction)
+    volume_delta = _volume_delta_context(idea, symbol, str(idea.get("timeframe") or idea.get("tf") or ""), direction, candles)
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     has_structure = any(_text_has_data(idea.get(k)) for k in ("reason_ru", "summary_ru", "market_structure", "htf_context", "entry_source"))
     has_liquidity = any(_text_has_data(idea.get(k)) for k in ("liquidity", "selected_zone_type", "selected_zone_low", "fvg", "order_blocks"))
-    has_volume = any(_text_has_data(idea.get(k)) for k in ("volume", "volume_ru", "data_status", "provider", "volume_delta"))
+    has_volume = any(_text_has_data(idea.get(k)) for k in ("volume", "volume_ru", "data_status", "provider", "volume_delta")) or bool(volume_delta.get("available"))
     has_options = any(_text_has_data(idea.get(k)) for k in ("options_ru", "options_analysis", "cme"))
     options_score = 4 if has_options or external_options.get("alignment") == "aligned" else 0 if external_options.get("alignment") == "conflict" else 1
     options_text = str(external_options.get("text_ru") or ("опционный слой есть" if has_options else "опционный слой не обязателен"))
@@ -309,12 +360,12 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         _row("candles", "Реальные свечи", 14, 14 if len(candles) >= 80 else 10 if len(candles) >= 30 else 6 if len(candles) >= 12 else 0, f"{len(candles)} свечей"),
         _row("structure", "Структура / импульс", 12, 12 if has_structure else 6 if direction in {"BUY", "SELL"} else 0, "структура/импульс есть" if has_structure else "технический импульс без расширенной структуры"),
         _row("liquidity", "Ликвидность / POI", 8, 8 if has_liquidity else 2 if direction in {"BUY", "SELL"} else 0, "liquidity/POI есть" if has_liquidity else "нет отдельного liquidity слоя"),
-        _row("volume", "Volume / tick volume", 5, 5 if has_volume else 1 if candles else 0, "volume/tick proxy есть" if has_volume else "только OHLC/tick proxy"),
+        _row("volume", "Volume / tick volume", 5, 5 if volume_delta.get("confirmed") else 3 if volume_delta.get("available") else 5 if has_volume else 1 if candles else 0, str(volume_delta.get("text_ru") or ("volume/tick proxy есть" if has_volume else "только OHLC/tick proxy"))),
         _row("options", "Опционы / CME", 4, options_score, options_text),
         _row("sentiment", "Sentiment / новости", 5, int(sentiment.get("score") or 0), str(sentiment.get("text_ru") or "нет sentiment")),
     ]
     base_score = round(sum(r["score"] for r in rows) / max(sum(r["weight"] for r in rows), 1) * 100)
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0)))
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0)))
     allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict and not external_options_high_conflict)
     grade = "A" if score >= 70 else "B" if score >= 55 else "C" if score >= 40 else "D"
     mode = "prop_entry" if allowed and score >= 70 else "watchlist" if allowed else "research_only" if score >= 40 else "no_trade"
@@ -329,7 +380,9 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         blockers.append(str(sentiment.get("text_ru")))
     if external_options_high_conflict:
         blockers.append(str(external_options.get("text_ru")))
-    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing", "external_options_filter": external_options, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX"}
+    if volume_delta.get("delta_divergence"):
+        blockers.append("Delta divergence: цена и CumDelta расходятся")
+    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing", "external_options_filter": external_options, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "volume_delta": volume_delta, "volume_delta_source": volume_delta.get("source"), "delta_divergence": bool(volume_delta.get("delta_divergence"))}
     advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "external_options_filter": external_options, "level_source": level_source}
     return score_payload, advisor
 
@@ -389,6 +442,9 @@ def install_prop_score_recovery_patch() -> None:
                     enriched["external_options_used"] = score.get("external_options_used")
                     enriched["external_options_alignment"] = score.get("external_options_alignment")
                     enriched["external_options_source"] = "CME_OptionsFX"
+                    enriched["volume_delta"] = score.get("volume_delta")
+                    enriched["volume_delta_source"] = score.get("volume_delta_source")
+                    enriched["delta_divergence"] = score.get("delta_divergence")
                     enriched["external_options_ru"] = external_options_filter.get("text_ru") or "CME_OptionsFX: нет данных"
                     enriched["external_options_bias"] = external_options_signal.get("option_bias") or external_options_filter.get("option_bias") or "neutral"
                     enriched["external_options_key_strikes"] = external_options_signal.get("key_strikes") or []

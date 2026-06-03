@@ -4,6 +4,7 @@ import sys
 from typing import Any
 
 from app.services.external_signal_adapter import get_cme_optionsfx_confirmation
+from app.services.mt4_volume_cluster_bridge import get_latest_volume_cluster
 
 try:
     from app.services.openai_idea_narrative import enrich_idea_with_openai_narrative
@@ -280,6 +281,114 @@ def _candles(idea: dict[str, Any]) -> list[dict[str, Any]]:
     return _candles_from_main(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
 
 
+def _price_delta(candles: list[dict[str, Any]]) -> float | None:
+    closes = [_to_float(candle.get("close")) for candle in candles[-3:]]
+    closes = [close for close in closes if close is not None]
+    if len(closes) < 2:
+        return None
+    return closes[-1] - closes[-2]
+
+
+def _extract_volume_delta_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    nested = payload.get("volume_delta") if isinstance(payload.get("volume_delta"), dict) else {}
+    delta = _to_float(nested.get("delta") if nested else payload.get("delta") or payload.get("delta_change"))
+    cumdelta = _to_float(
+        (nested.get("cumdelta") or nested.get("cum_delta") or nested.get("cumulative_delta"))
+        if nested else payload.get("cumdelta") or payload.get("cum_delta") or payload.get("cumulative_delta")
+    )
+    if delta is None and cumdelta is None:
+        return None
+    source = str((nested.get("source") if nested else None) or payload.get("volume_delta_source") or payload.get("volume_source") or "unavailable")
+    priority_used = nested.get("priority_used") if nested else payload.get("volume_delta_priority_used")
+    try:
+        priority_used = int(priority_used) if priority_used not in (None, "") else None
+    except (TypeError, ValueError):
+        priority_used = None
+    is_proxy = (nested.get("is_proxy") if nested else payload.get("volume_delta_is_proxy"))
+    if is_proxy is None:
+        is_proxy = source != "FutureDelta"
+    return {
+        "available": True,
+        "source": source,
+        "delta": delta,
+        "cumdelta": cumdelta,
+        "is_proxy": bool(is_proxy),
+        "priority_used": priority_used,
+        "summary_ru": str((nested.get("summary_ru") if nested else None) or payload.get("delta_summary_ru") or ""),
+    }
+
+
+def _volume_delta_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
+    candles = _candles(idea)
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    timeframe = str(idea.get("timeframe") or idea.get("tf") or "").upper().strip() or None
+    volume_delta = _extract_volume_delta_from_payload(idea)
+    if volume_delta is None:
+        volume_delta = _extract_volume_delta_from_payload(idea.get("analysis") if isinstance(idea.get("analysis"), dict) else None)
+    if volume_delta is None and symbol:
+        volume_delta = _extract_volume_delta_from_payload(get_latest_volume_cluster(symbol, timeframe))
+    if volume_delta is None:
+        return {
+            "available": False,
+            "source": "unavailable",
+            "delta": None,
+            "cumdelta": None,
+            "is_proxy": True,
+            "priority_used": None,
+            "price_delta": _price_delta(candles),
+            "price_trend": "unknown",
+            "cumdelta_trend": "unknown",
+            "confirmed": False,
+            "delta_divergence": False,
+            "score_adjustment": 0,
+            "text_ru": "Volume Delta недоступна: FutureDelta/FutureVolume/tick volume не получены.",
+        }
+
+    price_delta = _price_delta(candles)
+    delta_value = _to_float(volume_delta.get("delta"))
+    price_trend = "rising" if price_delta is not None and price_delta > 0 else "falling" if price_delta is not None and price_delta < 0 else "flat"
+    cumdelta_trend = "rising" if delta_value is not None and delta_value > 0 else "falling" if delta_value is not None and delta_value < 0 else "flat"
+    confirmed = False
+    divergence = False
+    adjustment = 0
+    if direction == "BUY" and price_trend == "rising" and cumdelta_trend == "rising":
+        confirmed = True
+    elif direction == "SELL" and price_trend == "falling" and cumdelta_trend == "falling":
+        confirmed = True
+    elif direction in {"BUY", "SELL"} and price_trend in {"rising", "falling"} and cumdelta_trend in {"rising", "falling"}:
+        divergence = price_trend != cumdelta_trend
+        if divergence:
+            adjustment = -5
+        elif direction == "BUY" and price_trend == "falling" and cumdelta_trend == "falling":
+            adjustment = -3
+        elif direction == "SELL" and price_trend == "rising" and cumdelta_trend == "rising":
+            adjustment = -3
+
+    source_label = volume_delta.get("source") or "unavailable"
+    proxy_label = "proxy" if volume_delta.get("is_proxy") else "real"
+    text = (
+        f"CumDelta source={source_label} ({proxy_label}), priority={volume_delta.get('priority_used') or '—'}, "
+        f"delta={volume_delta.get('delta')}, cumdelta={volume_delta.get('cumdelta')}, "
+        f"price={price_trend}, cumdelta_trend={cumdelta_trend}"
+    )
+    if divergence:
+        text += "; delta_divergence=true"
+    elif confirmed:
+        text += "; delta подтверждает направление"
+    return {
+        **volume_delta,
+        "price_delta": price_delta,
+        "price_trend": price_trend,
+        "cumdelta_trend": cumdelta_trend,
+        "confirmed": confirmed,
+        "delta_divergence": divergence,
+        "score_adjustment": adjustment,
+        "text_ru": text,
+    }
+
+
 def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     entry = _to_float(idea.get("entry") if idea.get("entry") is not None else idea.get("entry_price"))
@@ -467,8 +576,15 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     liquidity_text = _first_text(idea, "selected_zone_type", "selected_zone_low", "liquidity", "liquidity_zones", "liquidity_levels")
     rows.append(_row("liquidity", weights["liquidity"] if liquidity_text else 2 if direction in {"BUY", "SELL"} else 0, weights["liquidity"], liquidity_text or "нет отдельного liquidity слоя"))
 
+    volume_delta = _volume_delta_context(idea, direction)
     volume_text = _first_text(idea, "volume", "volume_ru", "data_status", "provider")
-    rows.append(_row("volume", weights["volume"] if volume_text else 1 if candles else 0, weights["volume"], volume_text or "только OHLC/tick proxy"))
+    if volume_delta.get("confirmed"):
+        volume_score = weights["volume"]
+    elif volume_delta.get("available"):
+        volume_score = round(weights["volume"] * 0.55)
+    else:
+        volume_score = weights["volume"] if volume_text else 1 if candles else 0
+    rows.append(_row("volume", volume_score, weights["volume"], str(volume_delta.get("text_ru") or volume_text or "только OHLC/tick proxy")))
 
     external_options = _external_options_alignment(idea, direction)
     external_text = str(external_options.get("text_ru") or "")
@@ -494,7 +610,8 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     geo = _trade_geometry(safe_idea)
     sentiment = _sentiment_alignment(safe_idea, direction)
     external_options = _external_options_alignment(safe_idea, direction)
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0)))
+    volume_delta = _volume_delta_context(safe_idea, direction)
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0)))
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     blockers: list[str] = []
@@ -511,6 +628,8 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         blockers.append(str(sentiment.get("text_ru") or "Sentiment/news против направления сделки"))
     if external_options_high_conflict:
         blockers.append(str(external_options.get("text_ru") or "CME_OptionsFX high-confidence conflict против сделки"))
+    if volume_delta.get("delta_divergence"):
+        blockers.append("Delta divergence: цена и CumDelta расходятся")
 
     hard_blocked = direction == "WAIT" or not geo.get("has_levels") or not geo.get("valid_geometry") or geo.get("tiny_tp") or geo.get("weak_rr") or sentiment_conflict or external_options_high_conflict
     if score >= 70 and not hard_blocked:
@@ -539,7 +658,9 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "external_options_used": bool(external_options.get("used")),
         "external_options_alignment": external_options.get("alignment") or "neutral",
         "external_options_source": "CME_OptionsFX",
-        "delta_divergence": None,
+        "volume_delta": volume_delta,
+        "volume_delta_source": volume_delta.get("source"),
+        "delta_divergence": bool(volume_delta.get("delta_divergence")),
         "margin_zone_confluence": None,
         "disclaimer_ru": "Score не блокирует идею только из-за отсутствия optional CME/options/news слоёв; но если sentiment/news явно против направления, автоторговля блокируется.",
     }
@@ -638,6 +759,9 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "external_options_used": score.get("external_options_used"),
             "external_options_alignment": score.get("external_options_alignment"),
             "external_options_source": "CME_OptionsFX",
+            "volume_delta": score.get("volume_delta"),
+            "volume_delta_source": score.get("volume_delta_source"),
+            "delta_divergence": score.get("delta_divergence"),
         }
     )
     return enriched
