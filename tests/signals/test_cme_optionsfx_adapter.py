@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from app.services.external_signal_adapter import get_cme_optionsfx_signals, parse_cme_optionsfx_message
 from app.services import prop_signal_engine
 
@@ -81,3 +79,38 @@ def test_prop_score_uses_cme_optionsfx_as_confirmation_layer(monkeypatch):
     assert enriched["external_options_bias"] == "bullish"
     assert enriched["external_options_key_strikes"] == [1.08, 1.09]
     assert enriched["external_options_max_pain"] == 1.085
+
+
+def test_external_telegram_options_conflict_is_confirmation_not_hard_blocker(monkeypatch):
+    def fake_confirmation(symbol):
+        return {
+            "source": "CME_OptionsFX",
+            "available": True,
+            "used": True,
+            "option_bias": "bearish",
+            "signal": {
+                "source": "CME_OptionsFX",
+                "symbol": symbol,
+                "option_bias": "bearish",
+                "raw_text": "HIGH CONFIDENCE bearish options flow",
+            },
+        }
+
+    monkeypatch.setattr(prop_signal_engine, "get_cme_optionsfx_confirmation", fake_confirmation)
+    idea = {
+        "symbol": "EURUSD",
+        "signal": "BUY",
+        "entry": 1.1000,
+        "sl": 1.0950,
+        "tp": 1.1100,
+        "candles": [{"high": 1.1020, "low": 1.0940, "close": 1.1000}] * 80,
+        "reason_ru": "валидный импульс от MT4 свечей",
+    }
+
+    enriched = prop_signal_engine.enrich_idea_with_prop_score(idea)
+
+    assert enriched["advisor_allowed"] is True
+    assert enriched["advisor_signal"]["allowed"] is True
+    assert enriched["external_options_alignment"] == "conflict"
+    assert enriched["prop_signal_score"]["external_options_note"]
+    assert not any("CME_OptionsFX" in blocker for blocker in enriched["prop_signal_score"]["blockers"])
