@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 try:
@@ -65,13 +66,40 @@ def _first_text(idea: dict[str, Any], *keys: str) -> str:
     return ""
 
 
-def _direction(idea: dict[str, Any]) -> str:
-    raw = _first_text(idea, "signal", "action", "label", "direction").upper()
+def _direction_from_text(idea: dict[str, Any]) -> str:
+    raw = _first_text(idea, "signal", "action", "final_signal", "label", "direction", "bias", "htf_bias").upper()
     if "BUY" in raw or "BULL" in raw or "ПОКУП" in raw:
         return "BUY"
     if "SELL" in raw or "BEAR" in raw or "ПРОДА" in raw:
         return "SELL"
     return "WAIT"
+
+
+def _direction_from_candles(candles: list[dict[str, Any]]) -> str:
+    closes = [_to_float(candle.get("close")) for candle in candles]
+    closes = [close for close in closes if close is not None]
+    if len(closes) < 12:
+        return "WAIT"
+    fast_ma = sum(closes[-8:]) / 8
+    slow_window = closes[-24:] if len(closes) >= 24 else closes
+    slow_ma = sum(slow_window) / len(slow_window)
+    threshold = max(abs(closes[-1]) * 0.00002, (_atr(candles) or 0) * 0.08)
+    if fast_ma - slow_ma > threshold:
+        return "BUY"
+    if slow_ma - fast_ma > threshold:
+        return "SELL"
+    if closes[-1] > closes[-12]:
+        return "BUY"
+    if closes[-1] < closes[-12]:
+        return "SELL"
+    return "WAIT"
+
+
+def _direction(idea: dict[str, Any]) -> str:
+    text_direction = _direction_from_text(idea)
+    if text_direction in {"BUY", "SELL"}:
+        return text_direction
+    return _direction_from_candles(_candles(idea))
 
 
 def _normalize_symbol(symbol: Any) -> str:
@@ -95,14 +123,94 @@ def _pip_size(symbol: str, entry: float | None = None) -> float:
     return 0.0001
 
 
+def _precision(symbol: str) -> int:
+    symbol = (symbol or "").upper()
+    if "XAU" in symbol or "GOLD" in symbol:
+        return 2
+    if "JPY" in symbol:
+        return 3
+    return 5
+
+
+def _atr(candles: list[dict[str, Any]], period: int = 14) -> float:
+    rows: list[tuple[float, float, float]] = []
+    for candle in candles[-(period + 8):]:
+        high = _to_float(candle.get("high"))
+        low = _to_float(candle.get("low"))
+        close = _to_float(candle.get("close"))
+        if high is not None and low is not None and close is not None:
+            rows.append((high, low, close))
+    if len(rows) < 3:
+        return 0.0
+    true_ranges = []
+    for index in range(1, len(rows)):
+        high, low, _ = rows[index]
+        prev_close = rows[index - 1][2]
+        true_ranges.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    if not true_ranges:
+        return 0.0
+    return sum(true_ranges[-period:]) / min(period, len(true_ranges))
+
+
+def _candles_from_main(symbol: str) -> list[dict[str, Any]]:
+    symbol = _normalize_symbol(symbol)
+    module = sys.modules.get("app.main")
+    if module is None or not symbol:
+        return []
+    resolver = getattr(module, "resolve_mt4_candle_item", None)
+    if callable(resolver):
+        for timeframe in ("M15", "H1", "H4", "D1"):
+            try:
+                _, item = resolver(symbol, timeframe)
+                rows = (item or {}).get("candles") or []
+                rows = [row for row in rows if isinstance(row, dict)]
+                if len(rows) >= 12:
+                    return rows
+            except Exception:
+                continue
+    store = getattr(module, "MT4_CANDLE_STORE", None)
+    if isinstance(store, dict):
+        for key, item in store.items():
+            if symbol not in _normalize_symbol(str(key)):
+                continue
+            rows = (item or {}).get("candles") if isinstance(item, dict) else None
+            rows = [row for row in rows or [] if isinstance(row, dict)]
+            if len(rows) >= 12:
+                return rows
+    fetch_candles = getattr(module, "fetch_candles", None)
+    if callable(fetch_candles):
+        for timeframe in ("M15", "H1", "H4", "D1"):
+            try:
+                payload = fetch_candles(symbol, timeframe, 220)
+                rows = (payload or {}).get("candles") or []
+                rows = [row for row in rows if isinstance(row, dict)]
+                if len(rows) >= 12:
+                    return rows
+            except Exception:
+                continue
+    return []
+
+
 def _candles(idea: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("candles", "chartData", "chart_data", "market_data"):
         raw = idea.get(key)
         if isinstance(raw, list):
-            return [item for item in raw if isinstance(item, dict)]
+            rows = [item for item in raw if isinstance(item, dict)]
+            if rows:
+                return rows
         if isinstance(raw, dict) and isinstance(raw.get("candles"), list):
-            return [item for item in raw.get("candles", []) if isinstance(item, dict)]
-    return []
+            rows = [item for item in raw.get("candles", []) if isinstance(item, dict)]
+            if rows:
+                return rows
+    timeframe_ideas = idea.get("timeframe_ideas")
+    if isinstance(timeframe_ideas, dict):
+        for timeframe in ("M15", "H1", "H4", "D1"):
+            item = timeframe_ideas.get(timeframe)
+            if isinstance(item, dict) and isinstance(item.get("candles"), list):
+                rows = [row for row in item.get("candles", []) if isinstance(row, dict)]
+                if rows:
+                    return rows
+    return _candles_from_main(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
 
 
 def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
@@ -110,8 +218,40 @@ def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
     entry = _to_float(idea.get("entry") if idea.get("entry") is not None else idea.get("entry_price"))
     sl = _to_float(idea.get("sl") if idea.get("sl") is not None else idea.get("stop_loss"))
     tp = _to_float(idea.get("tp") if idea.get("tp") is not None else idea.get("take_profit") or idea.get("target"))
-    has_levels = all(value is not None for value in (entry, sl, tp))
     direction = _direction(idea)
+    candles = _candles(idea)
+    level_source = "provided" if all(value is not None for value in (entry, sl, tp)) else "missing"
+    fallback_used = False
+
+    if direction in {"BUY", "SELL"} and not all(value is not None for value in (entry, sl, tp)) and len(candles) >= 12:
+        closes = [_to_float(candle.get("close")) for candle in candles]
+        highs = [_to_float(candle.get("high")) for candle in candles]
+        lows = [_to_float(candle.get("low")) for candle in candles]
+        closes = [close for close in closes if close is not None]
+        highs = [high for high in highs if high is not None]
+        lows = [low for low in lows if low is not None]
+        if closes and highs and lows:
+            entry = entry if entry is not None else closes[-1]
+            atr = _atr(candles) or _pip_size(symbol, entry) * 18
+            lookback = min(24, len(highs), len(lows))
+            recent_high = max(highs[-lookback:])
+            recent_low = min(lows[-lookback:])
+            if direction == "BUY":
+                sl = min(recent_low, entry - atr) - atr * 0.35
+                risk = max(abs(entry - sl), _pip_size(symbol, entry) * 8)
+                tp = entry + risk * 1.45
+            else:
+                sl = max(recent_high, entry + atr) + atr * 0.35
+                risk = max(abs(sl - entry), _pip_size(symbol, entry) * 8)
+                tp = entry - risk * 1.45
+            precision = _precision(symbol)
+            entry = round(entry, precision)
+            sl = round(sl, precision)
+            tp = round(tp, precision)
+            level_source = "atr_fallback"
+            fallback_used = True
+
+    has_levels = all(value is not None for value in (entry, sl, tp))
     rr = None
     tp_pips = None
     valid_geometry = False
@@ -141,6 +281,9 @@ def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
         "min_tp_pips": min_tp_pips,
         "tiny_tp": bool(tp_pips is not None and tp_pips < min_tp_pips),
         "weak_rr": bool(rr is not None and rr < 1.10),
+        "level_source": level_source,
+        "candles_count": len(candles),
+        "fallback_used": fallback_used,
     }
 
 
@@ -247,7 +390,7 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     rows.append(_row("risk_reward", rr_score, weights["risk_reward"], rr_text))
 
     candle_count = len(candles)
-    candle_score = weights["candles"] if candle_count >= 80 else round(weights["candles"] * 0.7) if candle_count >= 30 else 0
+    candle_score = weights["candles"] if candle_count >= 80 else round(weights["candles"] * 0.7) if candle_count >= 30 else round(weights["candles"] * 0.45) if candle_count >= 12 else 0
     rows.append(_row("candles", candle_score, weights["candles"], f"{candle_count} свечей"))
 
     structure_text = _first_text(idea, "reason_ru", "summary_ru", "summary", "htf_reason", "market_structure.summary", "bias", "entry_source")
@@ -320,8 +463,8 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
 
 
 def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> dict[str, Any]:
-    geo = _trade_geometry(idea)
-    action = _direction(idea)
+    geo = score.get("trade_geometry") if isinstance(score.get("trade_geometry"), dict) else _trade_geometry(idea)
+    action = str(score.get("direction") or _direction(idea)).upper()
     numeric_score = int(score.get("score") or 0)
     grade = str(score.get("grade") or "").upper()
     mode = str(score.get("mode") or "").lower()
@@ -354,6 +497,7 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         "grade": score.get("grade"),
         "mode": score.get("mode"),
         "sentiment_filter": sentiment_filter,
+        "level_source": geo.get("level_source"),
     }
 
 
@@ -363,6 +507,27 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
     score = build_prop_signal_score(idea)
     advisor_signal = _advisor_signal_from_idea(idea, score)
     enriched = dict(idea)
+    action = str(advisor_signal.get("action") or score.get("direction") or "WAIT").upper()
+    if action in {"BUY", "SELL"}:
+        enriched["signal"] = action
+        enriched["action"] = action
+        enriched["final_signal"] = action
+        enriched["direction"] = action
+    for key in ("entry", "sl", "tp"):
+        if advisor_signal.get(key) is not None:
+            enriched[key] = advisor_signal.get(key)
+    if advisor_signal.get("entry") is not None:
+        enriched["entry_price"] = advisor_signal.get("entry")
+    if advisor_signal.get("sl") is not None:
+        enriched["stop_loss"] = advisor_signal.get("sl")
+    if advisor_signal.get("tp") is not None:
+        enriched["take_profit"] = advisor_signal.get("tp")
+    if advisor_signal.get("rr") is not None:
+        rounded_rr = round(float(advisor_signal.get("rr")), 2)
+        enriched["rr"] = rounded_rr
+        enriched["risk_reward"] = rounded_rr
+    if advisor_signal.get("level_source"):
+        enriched["entry_source"] = advisor_signal.get("level_source")
     enriched.update(
         {
             "prop_signal_score": score,

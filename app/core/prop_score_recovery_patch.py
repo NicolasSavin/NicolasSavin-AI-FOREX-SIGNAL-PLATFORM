@@ -66,6 +66,15 @@ def _candles_from_main(symbol: str) -> list[dict[str, Any]]:
                     return rows
         except Exception:
             pass
+    store = getattr(module, "MT4_CANDLE_STORE", None)
+    if isinstance(store, dict):
+        for key, item in store.items():
+            if symbol not in _normalize_symbol(str(key)):
+                continue
+            rows = (item or {}).get("candles") if isinstance(item, dict) else None
+            rows = [x for x in rows or [] if isinstance(x, dict)]
+            if len(rows) >= 12:
+                return rows
     fetch_candles = getattr(module, "fetch_candles", None)
     if callable(fetch_candles):
         for tf in ("M15", "H1", "H4"):
@@ -191,11 +200,11 @@ def _levels(symbol: str, direction: str, candles: list[dict[str, Any]], entry: f
     if direction == "BUY":
         sl = min(recent_low, entry - atr) - pad
         risk = max(abs(entry - sl), _pip(symbol, entry) * 8)
-        tp = max(recent_high, entry + risk * 1.45)
+        tp = entry + risk * 1.45
     else:
         sl = max(recent_high, entry + atr) + pad
         risk = max(abs(sl - entry), _pip(symbol, entry) * 8)
-        tp = min(recent_low, entry - risk * 1.45)
+        tp = entry - risk * 1.45
     rr = abs(tp - entry) / max(abs(entry - sl), 1e-9)
     p = _precision(symbol)
     return round(entry, p), round(sl, p), round(tp, p), round(rr, 2), True, "atr_fallback"
@@ -278,7 +287,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         blockers.append(f"Слабый R/R {rr:.2f}")
     if sentiment_conflict:
         blockers.append(str(sentiment.get("text_ru")))
-    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles)}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing"}
+    score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing"}
     advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "level_source": level_source}
     return score_payload, advisor
 
@@ -310,7 +319,7 @@ def install_prop_score_recovery_patch() -> None:
                         enriched["signal"] = action
                         enriched["action"] = action
                         enriched["final_signal"] = action
-                        enriched["direction"] = "bullish" if action == "BUY" else "bearish"
+                        enriched["direction"] = action
                     for key in ("entry", "sl", "tp"):
                         if advisor.get(key) is not None:
                             enriched[key] = advisor.get(key)
