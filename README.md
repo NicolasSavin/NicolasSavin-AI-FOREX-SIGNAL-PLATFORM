@@ -413,3 +413,9 @@ curl http://127.0.0.1:8000/ideas/market
 - Если Telegram credentials не заданы (`TELEGRAM_API_ID`/`TELEGRAM_API_HASH` или `TELEGRAM_BOT_TOKEN`, также поддерживаются `TG_*` aliases), endpoint возвращает `available=false`, а scoring работает как раньше без блокировки сделок.
 - В Prop Signal Engine слой `CME_OptionsFX` используется только как confirmation layer: совпадение options bias с направлением сделки даёт `+4` к score, явный конфликт даёт `-4`, а high-confidence conflict может стать blocker.
 - В payload идеи добавлены `external_options_ru`, `external_options_bias`, `external_options_key_strikes`, `external_options_max_pain`, а `advisor_signal` содержит `external_options_used`, `external_options_alignment`, `external_options_source="CME_OptionsFX"`.
+
+## Статистика и архив сигналов
+
+- Страница `/stats` показывает общие показатели жизненного цикла идей, WinRate, средний плановый RR и результаты TP/SL за текущий UTC-день из `/api/stats`.
+- Страница `/archive` показывает журнал идей из `/api/archive`, поддерживает фильтры по основным инструментам и открывает подробности архивной идеи в модальном окне.
+- Существующие поля и маршруты API сохранены; в `/api/stats` добавлены совместимые поля `total_ideas`, `average_rr`, `today_tp` и `today_sl`.

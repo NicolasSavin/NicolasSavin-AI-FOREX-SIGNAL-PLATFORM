@@ -20,6 +20,8 @@
         <nav class="top-nav">
           <a href="/">Главная</a>
           <a href="/ideas">Сигналы</a>
+          <a href="/stats">Статистика</a>
+          <a href="/archive">Архив</a>
           <a href="/analytics">Аналитика</a>
           <a href="/news">Новости</a>
           <a href="/calendar">Календарь</a>
@@ -41,6 +43,12 @@
       </section>
 
       <main class="content-stack">
+        <section class="panel today-signal-summary" aria-label="Результаты сигналов сегодня">
+          <div><p class="section-kicker">Сигналы</p><h2>Сегодня:</h2></div>
+          <div class="today-signal-summary__metric"><span>TP</span><strong id="homeTodayTp">—</strong></div>
+          <div class="today-signal-summary__metric"><span>SL</span><strong id="homeTodaySl">—</strong></div>
+          <div class="today-signal-summary__metric"><span>WinRate</span><strong id="homeWinrate">—</strong></div>
+        </section>
         <section class="panel">
           <div class="panel-heading compact">
             <div>
@@ -53,6 +61,14 @@
             <a class="nav-card" href="/ideas">
               <strong>Сигналы</strong>
               <span>AI-сигналы, торговые сценарии и prop setup'ы.</span>
+            </a>
+            <a class="nav-card" href="/stats">
+              <strong>Статистика</strong>
+              <span>WinRate, средний RR и результаты за сегодня.</span>
+            </a>
+            <a class="nav-card" href="/archive">
+              <strong>Архив</strong>
+              <span>История активных и закрытых торговых идей.</span>
             </a>
             <a class="nav-card" href="/analytics">
               <strong>Аналитика</strong>
@@ -76,6 +92,7 @@
     </div>
 
     <script src="/static/landing.js"></script>
+    <script src="/static/home-stats.js"></script>
     <script src="/static/nav.js"></script>
     <div class="app-version-block">
       <div class="app-version-line">
