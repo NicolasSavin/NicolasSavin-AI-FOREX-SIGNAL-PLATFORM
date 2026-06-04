@@ -235,6 +235,49 @@ def build_volume_delta_priority_snapshot(payload: dict[str, Any], symbol: str = 
     }
 
 
+def _has_dpoc_or_margin_zone(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    has_dpoc = extract_dpoc_price(payload) is not None
+    has_margin = (
+        _nested_float(payload, "margin_lower", "margin_zone_lower") is not None
+        and _nested_float(payload, "margin_upper", "margin_zone_upper") is not None
+    )
+    return has_dpoc or has_margin
+
+
+def _is_fresh_payload(payload: dict[str, Any] | None) -> bool:
+    return isinstance(payload, dict) and not is_stale(payload.get("timestamp") or payload.get("received_at"))
+
+
+def _merge_missing_rich_fields(record: dict[str, Any], fallback: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(fallback, dict) or not _has_dpoc_or_margin_zone(fallback):
+        return record
+    merged = dict(record)
+    if extract_dpoc_price(merged) is None and extract_dpoc_price(fallback) is not None:
+        merged["dpoc_price"] = extract_dpoc_price(fallback)
+        merged["dpoc"] = (
+            fallback.get("dpoc")
+            if isinstance(fallback.get("dpoc"), dict)
+            else build_dpoc_context(merged, str(merged.get("symbol") or ""))
+        )
+        merged["distance_to_dpoc_pips"] = (
+            merged.get("dpoc", {}).get("distance_to_dpoc_pips")
+            if isinstance(merged.get("dpoc"), dict)
+            else fallback.get("distance_to_dpoc_pips")
+        )
+    has_margin = (
+        _nested_float(merged, "margin_lower", "margin_zone_lower") is not None
+        and _nested_float(merged, "margin_upper", "margin_zone_upper") is not None
+    )
+    if not has_margin:
+        for key in ("margin_lower", "margin_upper", "margin_zone_lower", "margin_zone_upper", "margin_source"):
+            value = fallback.get(key)
+            if value is not None:
+                merged[key] = value
+    return merged
+
+
 def save_volume_cluster_payload(payload: dict[str, Any]) -> dict[str, Any]:
     symbol = normalize_broker_symbol(payload.get("symbol") or payload.get("broker_symbol"))
     timeframe = str(payload.get("timeframe") or "H1").upper().strip()
@@ -260,19 +303,41 @@ def save_volume_cluster_payload(payload: dict[str, Any]) -> dict[str, Any]:
     record["volume_delta_is_proxy"] = record["volume_delta"].get("is_proxy")
     record["volume_delta_priority_used"] = record["volume_delta"].get("priority_used")
     record["received_at"] = datetime.now(timezone.utc).isoformat()
+
+    previous_symbol_record = _STORE.get(symbol)
     _STORE[f"{symbol}:{timeframe}"] = record
-    _STORE[symbol] = record
+    _STORE[symbol] = (
+        record
+        if _has_dpoc_or_margin_zone(record)
+        else _merge_missing_rich_fields(record, previous_symbol_record)
+    )
     return record
 
 
 def get_latest_volume_cluster(symbol: str, timeframe: str | None = None) -> dict[str, Any] | None:
     normalized = normalize_broker_symbol(symbol)
-    key = f"{normalized}:{str(timeframe or '').upper().strip()}" if timeframe else normalized
-    payload = _STORE.get(key)
-    if payload is None and timeframe:
-        payload = _STORE.get(normalized)
-    if not isinstance(payload, dict):
+    requested_timeframe = str(timeframe or "").upper().strip()
+    fallback_keys: list[str] = []
+    if requested_timeframe:
+        fallback_keys.append(f"{normalized}:{requested_timeframe}")
+    for candidate_timeframe in ("H1", "M15"):
+        key = f"{normalized}:{candidate_timeframe}"
+        if key not in fallback_keys:
+            fallback_keys.append(key)
+    if normalized not in fallback_keys:
+        fallback_keys.append(normalized)
+
+    fresh_payloads = [
+        _STORE.get(key)
+        for key in fallback_keys
+        if _is_fresh_payload(_STORE.get(key))
+    ]
+    if not fresh_payloads:
         return None
-    if is_stale(payload.get("timestamp") or payload.get("received_at")):
-        return None
-    return payload
+
+    selected = fresh_payloads[0]
+    for fallback in fresh_payloads[1:]:
+        selected = _merge_missing_rich_fields(selected, fallback)
+        if _has_dpoc_or_margin_zone(selected):
+            break
+    return selected

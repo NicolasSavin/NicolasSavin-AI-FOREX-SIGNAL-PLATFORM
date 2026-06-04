@@ -88,6 +88,45 @@ def test_mt4_bridge_stores_margin_zone_fields_and_ingest_aliases():
     assert stored["margin_source"] == "Future_Volume_v5.00"
 
 
+def test_h1_dpoc_margin_survive_later_m15_ingest_without_rich_fields():
+    now = datetime.now(timezone.utc).isoformat()
+    save_volume_cluster_payload(
+        {
+            "symbol": "GBPJPY",
+            "timeframe": "H1",
+            "timestamp": now,
+            "close": 191.40,
+            "dpoc_price": 191.20,
+            "margin_lower": 191.10,
+            "margin_upper": 191.30,
+        }
+    )
+    save_volume_cluster_payload(
+        {
+            "symbol": "GBPJPY",
+            "timeframe": "M15",
+            "timestamp": now,
+            "close": 191.45,
+            "tick_volume": 100,
+        }
+    )
+
+    exact_m15 = get_latest_volume_cluster("GBPJPY", "M15")
+    symbol_level = get_latest_volume_cluster("GBPJPY")
+    score = build_prop_signal_score({**_idea(symbol="GBPJPY", close=191.45), "timeframe": "M15"})
+
+    assert exact_m15["dpoc_price"] == 191.20
+    assert exact_m15["margin_lower"] == 191.10
+    assert exact_m15["margin_upper"] == 191.30
+    assert symbol_level["dpoc_price"] == 191.20
+    assert symbol_level["margin_zone_lower"] == 191.10
+    assert score["dpoc_price"] == 191.20
+    assert score["distance_to_dpoc_pips"] == 25.0
+    assert score["margin_lower"] == 191.10
+    assert score["margin_upper"] == 191.30
+    assert score["margin_zone_confluence"]["available"] is True
+
+
 def test_margin_zone_confluence_adjusts_score_and_is_exposed_in_enriched_idea():
     idea = _idea()
     without_margin = build_prop_signal_score(idea)
