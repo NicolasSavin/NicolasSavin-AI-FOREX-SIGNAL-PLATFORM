@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any
 
-from app.services.mt4_volume_cluster_bridge import build_dpoc_context, get_latest_volume_cluster
+from app.services.mt4_volume_cluster_bridge import build_dpoc_context, build_margin_zone_context, get_latest_volume_cluster
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +351,19 @@ def _dpoc_context(idea: dict[str, Any], symbol: str, timeframe: str, direction: 
     return {"available": False, "source": "unavailable", "dpoc_price": None, "distance_to_dpoc_pips": None, "aligned": False, "score_adjustment": 0}
 
 
+def _margin_zone_context(idea: dict[str, Any], symbol: str, timeframe: str, candles: list[dict[str, Any]]) -> dict[str, Any]:
+    current_price = _num(idea.get("current_price") or idea.get("price"))
+    if current_price is None and candles:
+        current_price = _num(candles[-1].get("close"))
+    entry_price = _num(idea.get("entry") or idea.get("entry_price"))
+    sources = [idea, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None, get_latest_volume_cluster(symbol, timeframe)]
+    for payload in sources:
+        context = build_margin_zone_context(payload, symbol, current_price, entry_price)
+        if context.get("available"):
+            return context
+    return build_margin_zone_context(None, symbol, current_price, entry_price)
+
+
 def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     candles = _candles(idea)
@@ -364,6 +377,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     timeframe = str(idea.get("timeframe") or idea.get("tf") or "")
     volume_delta = _volume_delta_context(idea, symbol, timeframe, direction, candles)
     dpoc = _dpoc_context(idea, symbol, timeframe, direction, candles)
+    margin_zone = _margin_zone_context(idea, symbol, timeframe, candles)
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     has_structure = any(_text_has_data(idea.get(k)) for k in ("reason_ru", "summary_ru", "market_structure", "htf_context", "entry_source"))
@@ -384,7 +398,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         _row("sentiment", "Sentiment / новости", 5, int(sentiment.get("score") or 0), str(sentiment.get("text_ru") or "нет sentiment")),
     ]
     base_score = round(sum(r["score"] for r in rows) / max(sum(r["weight"] for r in rows), 1) * 100)
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0)))
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0)))
     allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict and not external_options_high_conflict)
     grade = "A" if score >= 70 else "B" if score >= 55 else "C" if score >= 40 else "D"
     mode = "prop_entry" if allowed and score >= 70 else "watchlist" if allowed else "research_only" if score >= 40 else "no_trade"
@@ -402,6 +416,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     if volume_delta.get("delta_divergence"):
         blockers.append("Delta divergence: цена и CumDelta расходятся")
     score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing", "external_options_filter": external_options, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "volume_delta": volume_delta, "volume_delta_source": volume_delta.get("source"), "delta_divergence": bool(volume_delta.get("delta_divergence")), "dpoc": dpoc, "dpoc_price": dpoc.get("dpoc_price"), "distance_to_dpoc_pips": dpoc.get("distance_to_dpoc_pips")}
+    score_payload.update({"margin_lower": margin_zone.get("margin_lower"), "margin_upper": margin_zone.get("margin_upper"), "margin_zone_lower": margin_zone.get("margin_zone_lower"), "margin_zone_upper": margin_zone.get("margin_zone_upper"), "margin_source": margin_zone.get("margin_source"), "margin_zone_confluence": margin_zone})
     advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "external_options_filter": external_options, "level_source": level_source}
     return score_payload, advisor
 
@@ -467,6 +482,12 @@ def install_prop_score_recovery_patch() -> None:
                     enriched["dpoc"] = score.get("dpoc")
                     enriched["dpoc_price"] = score.get("dpoc_price")
                     enriched["distance_to_dpoc_pips"] = score.get("distance_to_dpoc_pips")
+                    enriched["margin_lower"] = score.get("margin_lower")
+                    enriched["margin_upper"] = score.get("margin_upper")
+                    enriched["margin_zone_lower"] = score.get("margin_zone_lower")
+                    enriched["margin_zone_upper"] = score.get("margin_zone_upper")
+                    enriched["margin_source"] = score.get("margin_source")
+                    enriched["margin_zone_confluence"] = score.get("margin_zone_confluence")
                     market_structure = dict(enriched.get("market_structure") or {})
                     market_structure["dpoc_price"] = score.get("dpoc_price")
                     market_structure["distance_to_dpoc_pips"] = score.get("distance_to_dpoc_pips")
