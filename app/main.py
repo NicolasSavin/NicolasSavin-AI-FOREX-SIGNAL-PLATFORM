@@ -10,6 +10,8 @@ import time
 import asyncio
 import re
 import concurrent.futures
+from copy import deepcopy
+from threading import Lock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,7 @@ from app.services.mt4_options_bridge import get_latest_options_levels, save_opti
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.idea_lifecycle import apply_idea_lifecycle, build_lifecycle_stats
 from app.services.signal_audit_logger import log_signal_audit
+from app.services.timing import timing_log
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -101,6 +104,11 @@ MT4_BRIDGE_FRESH_SECONDS = int(os.getenv("MT4_BRIDGE_FRESH_SECONDS", "180"))
 ALLOW_EXTERNAL_FALLBACK = os.getenv("ALLOW_EXTERNAL_FALLBACK", "1") == "1"
 SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
 SENTIMENT_CACHE_TTL_SECONDS = 900
+MARKET_IDEAS_CACHE_TTL_SECONDS = int(os.getenv("MARKET_IDEAS_CACHE_TTL_SECONDS", "60"))
+MARKET_IDEAS_CACHE: dict[str, Any] = {"updated_at_epoch": 0.0, "payload": None}
+MARKET_IDEAS_REFRESH_LOCK = Lock()
+MARKET_IDEAS_REFRESH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="market-ideas-refresh")
+MARKET_IDEAS_REFRESH_IN_PROGRESS = False
 
 ACTIVE_FILE = Path("active_trades.json")
 ARCHIVE_FILE = Path("archive.json")
@@ -178,6 +186,7 @@ if STATIC_DIR.exists():
 @app.on_event("startup")
 def startup() -> None:
     twelvedata_ws_service.start()
+    _queue_market_ideas_refresh()
 
 
 @app.on_event("shutdown")
@@ -777,63 +786,73 @@ def api_heatmap(mode: str = "core", tf: str = "M15"):
     return build_currency_heatmap(mode=mode, tf=tf)
 
 
-@app.get("/api/signals")
-def api_signals():
+def generate_trade_ideas() -> tuple[list[dict[str, Any]], list[str]]:
     signals: list[dict[str, Any]] = []
     failed_symbols: list[str] = []
-
-    for symbol in SYMBOLS:
-        try:
-            signal = build_signal_from_candles(symbol, "M15")
-            if isinstance(signal, dict) and signal:
-                signals.append(_normalize_quote_signal(signal))
-            else:
+    with timing_log(logger, "generate_trade_ideas", symbols_count=len(SYMBOLS)):
+        for symbol in SYMBOLS:
+            try:
+                signal = build_signal_from_candles(symbol, "M15")
+                if isinstance(signal, dict) and signal:
+                    signals.append(_normalize_quote_signal(signal))
+                else:
+                    failed_symbols.append(symbol)
+                    logger.error("generate_trade_ideas invalid_signal_payload symbol=%s", symbol)
+            except Exception:
                 failed_symbols.append(symbol)
-                logger.exception("api_signals: invalid signal payload for %s", symbol)
-        except Exception:
-            failed_symbols.append(symbol)
-            logger.exception("api_signals: failed to build signal for %s", symbol)
+                logger.exception("generate_trade_ideas failed symbol=%s", symbol)
+    return signals, failed_symbols
 
-    if signals:
-        enriched_signals = enrich_ideas_with_prop_scores(signals)
-        lifecycle = apply_idea_lifecycle(enriched_signals)
+
+def build_market() -> dict[str, Any]:
+    with timing_log(logger, "build_market"):
+        signals, failed_symbols = generate_trade_ideas()
+
+        if signals:
+            enriched_signals = enrich_ideas_with_prop_scores(signals)
+            lifecycle = apply_idea_lifecycle(enriched_signals)
+            return {
+                "signals": lifecycle["ideas"],
+                "ideas": lifecycle["ideas"],
+                "archive": lifecycle["archive"],
+                "statistics": lifecycle["statistics"],
+                "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
+                "updated_at_utc": now_utc(),
+                "ai_provider": "signal_engine",
+                "ai_model_used": "",
+                "ai_status": "not_used",
+                "ai_error": None,
+            }
+
         return {
-            "signals": lifecycle["ideas"],
-            "ideas": lifecycle["ideas"],
-            "archive": lifecycle["archive"],
-            "statistics": lifecycle["statistics"],
+            "signals": [],
+            "ideas": [],
+            "archive": [],
+            "statistics": {
+                "total": 0,
+                "buy": 0,
+                "sell": 0,
+                "wait": 0,
+                "active": 0,
+                "blocked": 0,
+            },
             "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
             "updated_at_utc": now_utc(),
             "ai_provider": "signal_engine",
             "ai_model_used": "",
             "ai_status": "not_used",
             "ai_error": None,
+            "ok": False,
+            "diagnostics": {
+                "error": "Не удалось сформировать сигналы ни по одному символу.",
+                "failed_symbols": failed_symbols,
+            },
         }
 
-    return {
-        "signals": [],
-        "ideas": [],
-        "archive": [],
-        "statistics": {
-            "total": 0,
-            "buy": 0,
-            "sell": 0,
-            "wait": 0,
-            "active": 0,
-            "blocked": 0,
-        },
-        "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
-        "updated_at_utc": now_utc(),
-        "ai_provider": "signal_engine",
-        "ai_model_used": "",
-        "ai_status": "not_used",
-        "ai_error": None,
-        "ok": False,
-        "diagnostics": {
-            "error": "Не удалось сформировать сигналы ни по одному символу.",
-            "failed_symbols": failed_symbols,
-        },
-    }
+
+@app.get("/api/signals")
+def api_signals():
+    return build_market()
 
 
 @app.get("/api/ideas")
@@ -927,9 +946,54 @@ def api_ideas():
     }
 
 
+def _refresh_market_ideas_cache() -> None:
+    global MARKET_IDEAS_REFRESH_IN_PROGRESS
+    try:
+        payload = build_market()
+        with MARKET_IDEAS_REFRESH_LOCK:
+            MARKET_IDEAS_CACHE["payload"] = deepcopy(payload)
+            MARKET_IDEAS_CACHE["updated_at_epoch"] = time.time()
+    except Exception:
+        logger.exception("market_ideas_background_refresh_failed")
+    finally:
+        with MARKET_IDEAS_REFRESH_LOCK:
+            MARKET_IDEAS_REFRESH_IN_PROGRESS = False
+
+
+def _queue_market_ideas_refresh() -> bool:
+    global MARKET_IDEAS_REFRESH_IN_PROGRESS
+    with MARKET_IDEAS_REFRESH_LOCK:
+        if MARKET_IDEAS_REFRESH_IN_PROGRESS:
+            return False
+        MARKET_IDEAS_REFRESH_IN_PROGRESS = True
+    MARKET_IDEAS_REFRESH_EXECUTOR.submit(_refresh_market_ideas_cache)
+    return True
+
+
 @app.get("/ideas/market")
 def ideas_market():
-    return api_signals()
+    with timing_log(logger, "ideas_market_request"):
+        with MARKET_IDEAS_REFRESH_LOCK:
+            cached = deepcopy(MARKET_IDEAS_CACHE.get("payload"))
+            age_seconds = time.time() - float(MARKET_IDEAS_CACHE.get("updated_at_epoch") or 0.0)
+        if cached is not None:
+            if age_seconds >= MARKET_IDEAS_CACHE_TTL_SECONDS:
+                _queue_market_ideas_refresh()
+            cached["cache_status"] = "fresh" if age_seconds < MARKET_IDEAS_CACHE_TTL_SECONDS else "stale_refreshing"
+            cached["cache_age_seconds"] = round(age_seconds, 3)
+            return cached
+
+        _queue_market_ideas_refresh()
+        return {
+            "signals": [],
+            "ideas": [],
+            "archive": [],
+            "statistics": {"total": 0, "buy": 0, "sell": 0, "wait": 0, "active": 0, "blocked": 0},
+            "updated_at_utc": now_utc(),
+            "cache_status": "warming",
+            "ok": False,
+            "diagnostics": {"reason": "market_refresh_running_in_background"},
+        }
 
 
 @app.post("/ideas/market")
@@ -1495,7 +1559,8 @@ def api_candles(symbol: str, tf: str = "M15", limit: int = 160):
 
 @app.get("/api/chart/{symbol}")
 def api_chart(symbol: str, tf: str = "M15", limit: int = 160):
-    return get_candles_with_markup(symbol, tf, limit)
+    with timing_log(logger, "chart_endpoint", symbol=symbol, timeframe=tf, limit=limit):
+        return get_candles_with_markup(symbol, tf, limit)
 
 
 @app.get("/api/canonical/chart/{symbol}/{tf}")

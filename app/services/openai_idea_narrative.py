@@ -10,6 +10,7 @@ from typing import Any
 
 import requests
 from app.services.signal_audit_logger import log_signal_audit
+from app.services.timing import timing_log
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,11 @@ _OPENAI_COOLDOWN_UNTIL = 0.0
 
 
 def enrich_idea_with_openai_narrative(payload: dict[str, Any]) -> dict[str, Any]:
+    with timing_log(logger, "enrich_idea_with_openai_narrative", symbol=payload.get("symbol"), timeframe=payload.get("timeframe") or payload.get("tf")):
+        return _enrich_idea_with_openai_narrative(payload)
+
+
+def _enrich_idea_with_openai_narrative(payload: dict[str, Any]) -> dict[str, Any]:
     global _OPENAI_COOLDOWN_UNTIL
 
     result = deepcopy(payload if isinstance(payload, dict) else {})

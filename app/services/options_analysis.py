@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import logging
+
+from app.services.timing import timing_log
+
+logger = logging.getLogger(__name__)
+
 SUPPORTED_TYPES = {
     "call",
     "put",
@@ -27,6 +33,11 @@ def _safe_float(value: Any) -> float | None:
 
 
 def analyze_options(levels: list[dict[str, Any]] | None, price: float | int | None, symbol: str = "EURUSD") -> dict[str, Any]:
+    with timing_log(logger, "options_analysis", symbol=symbol, levels_count=len(levels) if isinstance(levels, list) else 0):
+        return _analyze_options(levels, price, symbol)
+
+
+def _analyze_options(levels: list[dict[str, Any]] | None, price: float | int | None, symbol: str = "EURUSD") -> dict[str, Any]:
     rows = [row for row in (levels or []) if isinstance(row, dict)]
     parsed_price = _safe_float(price)
     tolerance = 0.0005 if str(symbol).upper() == "EURUSD" else 0.001
