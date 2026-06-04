@@ -56,6 +56,51 @@ def _nested_float(payload: dict[str, Any], *keys: str) -> float | None:
     return None
 
 
+def extract_dpoc_price(payload: dict[str, Any] | None) -> float | None:
+    """Read the current daily DPOC exported by Future_Volume_v5.00."""
+    if not isinstance(payload, dict):
+        return None
+    for key in (
+        "dpoc_price",
+        "dpoc",
+        "daily_dpoc",
+        "daily_dpoc_price",
+        "volume_profile.dpoc_price",
+        "volume_profile.dpoc",
+    ):
+        value = _nested_float(payload, key)
+        if value is not None and value > 0:
+            return value
+    return None
+
+
+def pip_size_for_symbol(symbol: str) -> float:
+    normalized = normalize_broker_symbol(symbol)
+    if normalized.endswith("JPY"):
+        return 0.01
+    if normalized.startswith("XAU"):
+        return 0.1
+    return 0.0001
+
+
+def build_dpoc_context(payload: dict[str, Any] | None, symbol: str = "", current_price: Any = None) -> dict[str, Any]:
+    dpoc_price = extract_dpoc_price(payload)
+    price = _float_or_none(current_price)
+    if price is None and isinstance(payload, dict):
+        price = _nested_float(payload, "current_price", "close", "price", "entry", "entry_price")
+    distance = None
+    if dpoc_price is not None and price is not None:
+        distance = round((price - dpoc_price) / pip_size_for_symbol(symbol), 1)
+    return {
+        "available": dpoc_price is not None,
+        "source": "Future_Volume_v5.00" if dpoc_price is not None else "unavailable",
+        "is_proxy": False if dpoc_price is not None else None,
+        "dpoc_price": dpoc_price,
+        "distance_to_dpoc_pips": distance,
+        "current_price": price,
+    }
+
+
 def _previous_cumdelta(symbol: str, timeframe: str) -> float:
     previous = _STORE.get(f"{symbol}:{timeframe}") or _STORE.get(symbol) or {}
     if not isinstance(previous, dict):
@@ -138,6 +183,9 @@ def save_volume_cluster_payload(payload: dict[str, Any]) -> dict[str, Any]:
     record["symbol"] = symbol
     record["timeframe"] = timeframe
     record["volume_delta"] = build_volume_delta_priority_snapshot(record, symbol, timeframe)
+    record["dpoc_price"] = extract_dpoc_price(record)
+    record["dpoc"] = build_dpoc_context(record, symbol)
+    record["distance_to_dpoc_pips"] = record["dpoc"].get("distance_to_dpoc_pips")
     record["volume_delta_available"] = bool(record["volume_delta"].get("available"))
     if not isinstance(record.get("delta"), dict):
         record["delta"] = record["volume_delta"].get("delta")

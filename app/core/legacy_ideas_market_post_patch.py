@@ -32,6 +32,10 @@ VOLUME_KEYS = {
     "hft_signal",
     "future_tick",
     "future_delta",
+    "dpoc",
+    "dpoc_price",
+    "daily_dpoc",
+    "daily_dpoc_price",
 }
 
 OPTION_KEYS = {

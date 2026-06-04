@@ -5,7 +5,7 @@ import sys
 from typing import Any
 
 from app.services.external_signal_adapter import get_cme_optionsfx_confirmation
-from app.services.mt4_volume_cluster_bridge import get_latest_volume_cluster
+from app.services.mt4_volume_cluster_bridge import build_dpoc_context, get_latest_volume_cluster
 
 logger = logging.getLogger(__name__)
 
@@ -476,6 +476,30 @@ def _hft_signal_context(idea: dict[str, Any]) -> dict[str, Any]:
     return {"hft_signal": "", "hft_signal_source": "unavailable"}
 
 
+def _dpoc_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    timeframe = str(idea.get("timeframe") or idea.get("tf") or "").upper().strip() or None
+    candles = _candles(idea)
+    current_price = _to_float(idea.get("current_price") or idea.get("price"))
+    if current_price is None and candles:
+        current_price = _to_float(candles[-1].get("close"))
+    if current_price is None:
+        current_price = _to_float(idea.get("entry") or idea.get("entry_price"))
+
+    sources = [idea, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None]
+    if symbol:
+        sources.append(get_latest_volume_cluster(symbol, timeframe))
+    for payload in sources:
+        context = build_dpoc_context(payload, symbol, current_price)
+        if context.get("available"):
+            aligned = (direction == "BUY" and current_price is not None and current_price > context["dpoc_price"]) or (direction == "SELL" and current_price is not None and current_price < context["dpoc_price"])
+            context["aligned"] = aligned
+            context["score_adjustment"] = 3 if aligned else 0
+            context["text_ru"] = f"DPOC подтверждает {direction}: цена {'выше' if direction == 'BUY' else 'ниже'} дневного DPOC" if aligned else "DPOC доступен, но не подтверждает направление"
+            return context
+    return {"available": False, "source": "unavailable", "dpoc_price": None, "distance_to_dpoc_pips": None, "aligned": False, "score_adjustment": 0, "text_ru": "DPOC недоступен; сделки не блокируются."}
+
+
 def _volume_delta_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
     candles = _candles(idea)
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
@@ -857,9 +881,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     sentiment = _sentiment_alignment(safe_idea, direction)
     external_options = _external_options_alignment(safe_idea, direction)
     volume_delta = _volume_delta_context(safe_idea, direction)
+    dpoc = _dpoc_context(safe_idea, direction)
     volume_delta_source = volume_delta.get("source")
     hft_signal = volume_delta.get("hft_signal") or _hft_signal_context(safe_idea).get("hft_signal")
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0)))
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0)))
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     external_options_note = ""
@@ -946,6 +971,9 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "external_options_alignment": external_options.get("alignment") or "neutral",
         "external_options_source": "CME_OptionsFX",
         "volume_delta": volume_delta,
+        "dpoc": dpoc,
+        "dpoc_price": dpoc.get("dpoc_price"),
+        "distance_to_dpoc_pips": dpoc.get("distance_to_dpoc_pips"),
         "real_candle_diagnostics": candle_diag,
         "volume_delta_source": volume_delta_source,
         "hft_signal": hft_signal,
@@ -1081,8 +1109,15 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "volume_delta_source": score.get("volume_delta_source"),
             "hft_signal": score.get("hft_signal"),
             "delta_divergence": score.get("delta_divergence"),
+            "dpoc": score.get("dpoc"),
+            "dpoc_price": score.get("dpoc_price"),
+            "distance_to_dpoc_pips": score.get("distance_to_dpoc_pips"),
         }
     )
+    market_structure = dict(enriched.get("market_structure") or {})
+    market_structure["dpoc_price"] = score.get("dpoc_price")
+    market_structure["distance_to_dpoc_pips"] = score.get("distance_to_dpoc_pips")
+    enriched["market_structure"] = market_structure
     return enriched
 
 

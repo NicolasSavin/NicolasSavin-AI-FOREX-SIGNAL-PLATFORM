@@ -419,3 +419,9 @@ curl http://127.0.0.1:8000/ideas/market
 - Страница `/stats` показывает общие показатели жизненного цикла идей, WinRate, средний плановый RR и результаты TP/SL за текущий UTC-день из `/api/stats`.
 - Страница `/archive` показывает журнал идей из `/api/archive`, поддерживает фильтры по основным инструментам и открывает подробности архивной идеи в модальном окне.
 - Существующие поля и маршруты API сохранены; в `/api/stats` добавлены совместимые поля `total_ideas`, `average_rr`, `today_tp` и `today_sl`.
+
+### DPOC из Future_Volume_v5.00
+
+Существующий MT4 bridge принимает текущий дневной DPOC без отдельного маршрута: передайте `dpoc_price` (также поддерживаются aliases `dpoc`, `daily_dpoc`, `daily_dpoc_price`) в `GET /api/mt4/ingest-get`, `POST /api/mt4/volume-clusters` или legacy `POST /ideas/market` вместе с FutureVolume payload.
+
+Backend сохраняет реальный уровень индикатора как `dpoc_price`, рассчитывает подписанное поле `distance_to_dpoc_pips` от текущей цены и публикует оба поля на верхнем уровне идеи и внутри `market_structure`. DPOC используется только как подтверждение: BUY получает +3 score при цене выше DPOC, SELL — +3 при цене ниже DPOC. Отсутствующий или неподтверждающий DPOC не блокирует сделку.

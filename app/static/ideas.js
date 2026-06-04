@@ -481,9 +481,19 @@ function renderPropCompact(idea) {
   </div>`;
 }
 
+function resolveDpoc(idea) {
+  const dpocPrice = pickFirstFiniteNumber(idea.dpoc_price, idea.market_structure?.dpoc_price, idea.dpoc?.dpoc_price);
+  const distance = pickFirstFiniteNumber(idea.distance_to_dpoc_pips, idea.market_structure?.distance_to_dpoc_pips, idea.dpoc?.distance_to_dpoc_pips);
+  return {
+    price: dpocPrice !== null && dpocPrice > 0 ? formatNumber(dpocPrice) : "—",
+    distance: distance !== null ? `${distance > 0 ? "+" : ""}${distance.toFixed(1)} пипс` : "—",
+  };
+}
+
 function renderIdeaCard(idea, index) {
   const symbol = getIdeaSymbol(idea);
   const action = idea.action || idea.signal || idea.label || "WAIT";
+  const dpoc = resolveDpoc(idea);
   return `<article class="idea-card" data-idea-index="${index}" tabindex="0" role="button" aria-label="Открыть идею ${escapeHtml(symbol)}">
     <div class="idea-card-top">
       <div>
@@ -500,6 +510,7 @@ function renderIdeaCard(idea, index) {
       <div><span>SL</span><strong>${escapeHtml(formatNumber(idea.sl ?? idea.stop_loss))}</strong></div>
       <div><span>TP</span><strong>${escapeHtml(formatNumber(idea.tp ?? idea.take_profit ?? idea.target))}</strong></div>
       <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
+      <div><span>DPOC / дистанция</span><strong>${escapeHtml(dpoc.price)} · ${escapeHtml(dpoc.distance)}</strong></div>
     </div>
     ${renderPropCompact(idea)}
     ${renderVolumeDeltaCompact(idea)}
@@ -548,6 +559,7 @@ function openIdeaModal(idea) {
   const body = modal.querySelector(".ideas-modal-body");
   const title = modal.querySelector(".ideas-modal-title");
   const zoneType = sanitizeText(idea.selected_zone_type);
+  const dpoc = resolveDpoc(idea);
   title.textContent = zoneType ? `${symbol} · ${getIdeaDirection(idea)} · ${zoneType}` : `${symbol} · ${getIdeaDirection(idea)}`;
   body.innerHTML = `<div class="modal-grid">
       <div>
@@ -569,6 +581,8 @@ function openIdeaModal(idea) {
         <div><span>SL</span><strong>${escapeHtml(formatNumber(idea.sl ?? idea.stop_loss))}</strong></div>
         <div><span>TP</span><strong>${escapeHtml(formatNumber(idea.tp ?? idea.take_profit ?? idea.target))}</strong></div>
         <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
+        <div><span>DPOC</span><strong>${escapeHtml(dpoc.price)}</strong></div>
+        <div><span>До DPOC</span><strong>${escapeHtml(dpoc.distance)}</strong></div>
       </div>
       <p class="modal-text"><strong>Новости/фундаментал:</strong> ${escapeHtml(resolveNewsContext(idea))}</p>
       <p class="modal-text"><strong>Options/CME confirmation:</strong> ${escapeHtml(resolveExternalOptionsRu(idea))}<br><strong>Bias:</strong> ${escapeHtml(resolveExternalOptionsBias(idea))}; <strong>Key strikes:</strong> ${escapeHtml(formatListValue(idea.external_options_key_strikes))}; <strong>Max pain:</strong> ${escapeHtml(formatListValue(idea.external_options_max_pain))}</p>
@@ -653,6 +667,8 @@ function renderModalChart(idea) {
   if (Number.isFinite(entry)) series.createPriceLine({ price: entry, color: "#ffd84d", lineWidth: 2, title: "ENTRY" });
   if (Number.isFinite(sl)) series.createPriceLine({ price: sl, color: "#ff5f7a", lineWidth: 2, title: "SL" });
   if (Number.isFinite(tp)) series.createPriceLine({ price: tp, color: "#31f59d", lineWidth: 2, title: "TP" });
+  const dpocPrice = Number(idea.dpoc_price ?? idea.market_structure?.dpoc_price ?? idea.dpoc?.dpoc_price);
+  if (Number.isFinite(dpocPrice) && dpocPrice > 0) series.createPriceLine({ price: dpocPrice, color: "#f59e0b", lineWidth: 2, lineStyle: 2, title: "DPOC" });
 
   const selectedZoneLow = pickFirstFiniteNumber(idea.selected_zone_low, idea.selectedZoneLow);
   const selectedZoneHigh = pickFirstFiniteNumber(idea.selected_zone_high, idea.selectedZoneHigh);
