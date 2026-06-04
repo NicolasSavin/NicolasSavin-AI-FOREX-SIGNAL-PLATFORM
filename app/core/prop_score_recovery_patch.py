@@ -281,6 +281,19 @@ def _external_options_alignment(symbol: str, direction: str) -> dict[str, Any]:
     high_conflict = any(marker in raw for marker in ("HIGH CONFIDENCE", "STRONG", "СИЛЬН", "ВЫСОК", "AGGRESSIVE", "DOMINATE"))
     return {**confirmation, "used": True, "alignment": "conflict", "score_adjustment": -4, "implied_action": implied, "high_confidence_conflict": high_conflict, "text_ru": f"CME_OptionsFX против {direction}: options bias {bias} ожидает {implied}"}
 
+def _max_pain_context(idea: dict[str, Any], direction: str, external_options: dict[str, Any]) -> dict[str, Any]:
+    module = sys.modules.get("app.services.prop_signal_engine")
+    builder = getattr(module, "_max_pain_context", None) if module is not None else None
+    if callable(builder):
+        try:
+            context = builder(idea, direction, external_options)
+            if isinstance(context, dict):
+                return context
+        except Exception:
+            logger.exception("prop_score_recovery_max_pain_context_failed")
+    return {"available": False, "max_pain_price": None, "distance_to_max_pain_pips": None, "max_pain_alignment": "unavailable", "score_adjustment": 0, "max_pain_text_ru": "MaxPain недоступен; подтверждающий слой не блокирует сделку."}
+
+
 def _row(key: str, label: str, weight: int, score: int, text: str) -> dict[str, Any]:
     score = max(0, min(score, weight))
     return {"key": key, "label_ru": label, "weight": weight, "score": score, "status": "confirmed" if score >= weight * 0.7 else "partial" if score > 0 else "missing", "text_ru": text}
@@ -378,6 +391,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     volume_delta = _volume_delta_context(idea, symbol, timeframe, direction, candles)
     dpoc = _dpoc_context(idea, symbol, timeframe, direction, candles)
     margin_zone = _margin_zone_context(idea, symbol, timeframe, candles)
+    max_pain = _max_pain_context(idea, direction, external_options)
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     has_structure = any(_text_has_data(idea.get(k)) for k in ("reason_ru", "summary_ru", "market_structure", "htf_context", "entry_source"))
@@ -385,7 +399,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     has_volume = any(_text_has_data(idea.get(k)) for k in ("volume", "volume_ru", "data_status", "provider", "volume_delta")) or bool(volume_delta.get("available"))
     has_options = any(_text_has_data(idea.get(k)) for k in ("options_ru", "options_analysis", "cme"))
     options_score = 4 if has_options or external_options.get("alignment") == "aligned" else 0 if external_options.get("alignment") == "conflict" else 1
-    options_text = str(external_options.get("text_ru") or ("опционный слой есть" if has_options else "опционный слой не обязателен"))
+    options_text = " | ".join(part for part in (str(external_options.get("text_ru") or ("опционный слой есть" if has_options else "опционный слой не обязателен")), str(max_pain.get("max_pain_text_ru") or "")) if part)
     rows = [
         _row("direction", "Направление BUY/SELL", 18, 18 if direction in {"BUY", "SELL"} else 0, direction),
         _row("levels", "Entry / SL / TP", 18, 18 if valid else 0, f"уровни валидны ({level_source})" if valid else "нет валидных entry/sl/tp"),
@@ -398,8 +412,8 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         _row("sentiment", "Sentiment / новости", 5, int(sentiment.get("score") or 0), str(sentiment.get("text_ru") or "нет sentiment")),
     ]
     base_score = round(sum(r["score"] for r in rows) / max(sum(r["weight"] for r in rows), 1) * 100)
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0)))
-    allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict and not external_options_high_conflict)
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0)))
+    allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict)
     grade = "A" if score >= 70 else "B" if score >= 55 else "C" if score >= 40 else "D"
     mode = "prop_entry" if allowed and score >= 70 else "watchlist" if allowed else "research_only" if score >= 40 else "no_trade"
     blockers = []
@@ -411,12 +425,11 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         blockers.append(f"Слабый R/R {rr:.2f}")
     if sentiment_conflict:
         blockers.append(str(sentiment.get("text_ru")))
-    if external_options_high_conflict:
-        blockers.append(str(external_options.get("text_ru")))
     if volume_delta.get("delta_divergence"):
         blockers.append("Delta divergence: цена и CumDelta расходятся")
     score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing", "external_options_filter": external_options, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "volume_delta": volume_delta, "volume_delta_source": volume_delta.get("source"), "delta_divergence": bool(volume_delta.get("delta_divergence")), "dpoc": dpoc, "dpoc_price": dpoc.get("dpoc_price"), "distance_to_dpoc_pips": dpoc.get("distance_to_dpoc_pips")}
-    score_payload.update({"margin_lower": margin_zone.get("margin_lower"), "margin_upper": margin_zone.get("margin_upper"), "margin_zone_lower": margin_zone.get("margin_zone_lower"), "margin_zone_upper": margin_zone.get("margin_zone_upper"), "margin_source": margin_zone.get("margin_source"), "margin_zone_confluence": margin_zone})
+    score_payload.update({"margin_lower": margin_zone.get("margin_lower"), "margin_upper": margin_zone.get("margin_upper"), "margin_zone_lower": margin_zone.get("margin_zone_lower"), "margin_zone_upper": margin_zone.get("margin_zone_upper"), "margin_source": margin_zone.get("margin_source"), "margin_zone_confluence": margin_zone, "max_pain_context": max_pain, "max_pain_price": max_pain.get("max_pain_price"), "distance_to_max_pain_pips": max_pain.get("distance_to_max_pain_pips"), "max_pain_alignment": max_pain.get("max_pain_alignment"), "max_pain_text_ru": max_pain.get("max_pain_text_ru")})
+    score_payload["external_options_note"] = str(external_options.get("text_ru") or "") if external_options_high_conflict else ""
     advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "external_options_filter": external_options, "level_source": level_source}
     return score_payload, advisor
 
@@ -488,6 +501,11 @@ def install_prop_score_recovery_patch() -> None:
                     enriched["margin_zone_upper"] = score.get("margin_zone_upper")
                     enriched["margin_source"] = score.get("margin_source")
                     enriched["margin_zone_confluence"] = score.get("margin_zone_confluence")
+                    enriched["max_pain_context"] = score.get("max_pain_context")
+                    enriched["max_pain_price"] = score.get("max_pain_price")
+                    enriched["distance_to_max_pain_pips"] = score.get("distance_to_max_pain_pips")
+                    enriched["max_pain_alignment"] = score.get("max_pain_alignment")
+                    enriched["max_pain_text_ru"] = score.get("max_pain_text_ru")
                     market_structure = dict(enriched.get("market_structure") or {})
                     market_structure["dpoc_price"] = score.get("dpoc_price")
                     market_structure["distance_to_dpoc_pips"] = score.get("distance_to_dpoc_pips")
@@ -495,7 +513,7 @@ def install_prop_score_recovery_patch() -> None:
                     enriched["external_options_ru"] = external_options_filter.get("text_ru") or "CME_OptionsFX: нет данных"
                     enriched["external_options_bias"] = external_options_signal.get("option_bias") or external_options_filter.get("option_bias") or "neutral"
                     enriched["external_options_key_strikes"] = external_options_signal.get("key_strikes") or []
-                    enriched["external_options_max_pain"] = external_options_signal.get("max_pain")
+                    enriched["external_options_max_pain"] = external_options_signal.get("max_pain") or score.get("max_pain_price")
                     return enriched
 
                 module.build_prop_signal_score = patched_build_prop_signal_score

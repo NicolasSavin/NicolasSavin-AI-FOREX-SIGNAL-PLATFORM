@@ -274,6 +274,124 @@ def _external_options_alignment(idea: dict[str, Any], direction: str) -> dict[st
         "text_ru": f"CME_OptionsFX против {direction}: options bias {bias} ожидает {implied}",
     }
 
+def _nested_float(payload: dict[str, Any] | None, *paths: str) -> tuple[float | None, str | None]:
+    if not isinstance(payload, dict):
+        return None, None
+    for path in paths:
+        current: Any = payload
+        for part in path.split("."):
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(part)
+        value = _to_float(current)
+        if value is not None:
+            return value, path
+    return None, None
+
+
+def _max_pain_context(
+    idea: dict[str, Any],
+    direction: str,
+    external_options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    max_pain_price, source = _nested_float(
+        idea,
+        "external_options_filter.signal.max_pain",
+        "external_options_filter.max_pain",
+        "external_options_max_pain",
+        "options_analysis.maxPain",
+        "options_analysis.max_pain",
+        "market_context.optionsAnalysis.maxPain",
+    )
+    if max_pain_price is None:
+        max_pain_price, external_source = _nested_float(external_options, "signal.max_pain", "max_pain")
+        if external_source:
+            source = f"external_options_filter.{external_source}"
+
+    candles = _candles(idea)
+    current_price, current_price_source = _nested_float(idea, "entry", "entry_price", "current_price")
+    if current_price is None and candles:
+        current_price = _to_float(candles[-1].get("close"))
+        if current_price is not None:
+            current_price_source = "candles[-1].close"
+    entry_price = _to_float(idea.get("entry") if idea.get("entry") is not None else idea.get("entry_price"))
+    if entry_price is None:
+        entry_price = current_price
+    tp_price = _to_float(idea.get("tp") if idea.get("tp") is not None else idea.get("take_profit") or idea.get("target"))
+
+    unavailable = {
+        "available": False,
+        "source": source or "unavailable",
+        "current_price": current_price,
+        "current_price_source": current_price_source or "unavailable",
+        "max_pain_price": max_pain_price,
+        "distance_to_max_pain_pips": None,
+        "max_pain_side": "unknown",
+        "max_pain_magnet_risk": False,
+        "max_pain_alignment": "unavailable",
+        "score_adjustment": 0,
+        "max_pain_text_ru": "MaxPain недоступен; подтверждающий слой не блокирует сделку.",
+    }
+    if max_pain_price is None or current_price is None:
+        if max_pain_price is not None:
+            unavailable["source"] = source or "unknown"
+            unavailable["max_pain_text_ru"] = "MaxPain доступен, но текущая цена недоступна; слой не влияет на score."
+        return unavailable
+
+    pip = _pip_size(symbol, current_price)
+    distance_pips = (max_pain_price - current_price) / pip
+    abs_distance_pips = abs(distance_pips)
+    near_threshold_pips = 10.0
+    strong_threshold_pips = 30.0
+    near_entry = entry_price is not None and abs(max_pain_price - entry_price) / pip <= near_threshold_pips
+    near_tp = tp_price is not None and abs(max_pain_price - tp_price) / pip <= near_threshold_pips
+    side = "near" if abs_distance_pips <= near_threshold_pips else "above" if distance_pips > 0 else "below"
+    alignment = "neutral"
+    score_adjustment = 0
+    magnet_risk = False
+
+    if near_entry or near_tp:
+        alignment, score_adjustment, magnet_risk = "near", 1, True
+        near_label = "entry и TP" if near_entry and near_tp else "entry" if near_entry else "TP"
+        explanation = f"{near_label} близко к MaxPain: возможен пиннинг"
+    elif direction == "BUY" and current_price < max_pain_price and entry_price is not None and entry_price < max_pain_price:
+        alignment, score_adjustment = "aligned", 3
+        explanation = "магнит вверх подтверждает BUY"
+    elif direction == "SELL" and current_price > max_pain_price and entry_price is not None and entry_price > max_pain_price:
+        alignment, score_adjustment = "aligned", 3
+        explanation = "магнит вниз подтверждает SELL"
+    elif direction == "BUY" and distance_pips < -strong_threshold_pips:
+        alignment, score_adjustment, magnet_risk = "conflict", -2, True
+        explanation = "цена сильно выше MaxPain: риск возврата вниз"
+    elif direction == "SELL" and distance_pips > strong_threshold_pips:
+        alignment, score_adjustment, magnet_risk = "conflict", -2, True
+        explanation = "цена сильно ниже MaxPain: риск возврата вверх"
+    else:
+        explanation = "MaxPain доступен без явного подтверждения направления"
+
+    text = (
+        f"MaxPain: {max_pain_price:.{_precision(symbol)}f}, distance {distance_pips:+.1f} пипс, "
+        f"alignment {alignment}; {explanation}."
+    )
+    return {
+        "available": True,
+        "source": source or "unknown",
+        "current_price": current_price,
+        "current_price_source": current_price_source or "unknown",
+        "max_pain_price": max_pain_price,
+        "distance_to_max_pain_pips": round(distance_pips, 1),
+        "max_pain_side": side,
+        "max_pain_magnet_risk": magnet_risk,
+        "max_pain_alignment": alignment,
+        "near_entry": near_entry,
+        "near_tp": near_tp,
+        "score_adjustment": score_adjustment,
+        "max_pain_text_ru": text,
+    }
+
+
 def _pip_size(symbol: str, entry: float | None = None) -> float:
     symbol = (symbol or "").upper()
     if "XAU" in symbol or "GOLD" in symbol:
@@ -876,13 +994,15 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
 
     external_options = _external_options_alignment(idea, direction)
     external_text = str(external_options.get("text_ru") or "")
+    max_pain = _max_pain_context(idea, direction, external_options)
+    max_pain_text = str(max_pain.get("max_pain_text_ru") or "")
     options_text = _first_text(idea, "options_ru", "options_analysis.summary", "options_analysis.bias")
     options_score = weights["options"] if options_text else 1
     if external_options.get("alignment") == "aligned":
         options_score = weights["options"]
     elif external_options.get("alignment") == "conflict":
         options_score = 0
-    rows.append(_row("options", options_score, weights["options"], " | ".join(part for part in (options_text, external_text) if part) or "опционный слой не обязателен для базовой идеи"))
+    rows.append(_row("options", options_score, weights["options"], " | ".join(part for part in (options_text, external_text, max_pain_text) if part) or "опционный слой не обязателен для базовой идеи"))
 
     sentiment = _sentiment_alignment(idea, direction)
     rows.append(_row("sentiment", int(sentiment.get("score") or 0), weights["sentiment"], str(sentiment.get("text_ru") or "нет sentiment")))
@@ -902,9 +1022,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     volume_delta = _volume_delta_context(safe_idea, direction)
     dpoc = _dpoc_context(safe_idea, direction)
     margin_zone = _margin_zone_context(safe_idea)
+    max_pain = _max_pain_context(safe_idea, direction, external_options)
     volume_delta_source = volume_delta.get("source")
     hft_signal = volume_delta.get("hft_signal") or _hft_signal_context(safe_idea).get("hft_signal")
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0)))
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0)))
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     external_options_note = ""
@@ -1000,6 +1121,11 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "margin_zone_upper": margin_zone.get("margin_zone_upper"),
         "margin_source": margin_zone.get("margin_source"),
         "margin_zone_confluence": margin_zone,
+        "max_pain_context": max_pain,
+        "max_pain_price": max_pain.get("max_pain_price"),
+        "distance_to_max_pain_pips": max_pain.get("distance_to_max_pain_pips"),
+        "max_pain_alignment": max_pain.get("max_pain_alignment"),
+        "max_pain_text_ru": max_pain.get("max_pain_text_ru"),
         "real_candle_diagnostics": candle_diag,
         "volume_delta_source": volume_delta_source,
         "hft_signal": hft_signal,
@@ -1107,7 +1233,7 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
     enriched["external_options_ru"] = external_options_filter.get("text_ru") or "CME_OptionsFX: нет данных"
     enriched["external_options_bias"] = external_options_signal.get("option_bias") or external_options_filter.get("option_bias") or "neutral"
     enriched["external_options_key_strikes"] = external_options_signal.get("key_strikes") or []
-    enriched["external_options_max_pain"] = external_options_signal.get("max_pain")
+    enriched["external_options_max_pain"] = external_options_signal.get("max_pain") or score.get("max_pain_price")
     enriched.update(
         {
             "prop_signal_score": score,
@@ -1143,6 +1269,11 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "margin_zone_upper": score.get("margin_zone_upper"),
             "margin_source": score.get("margin_source"),
             "margin_zone_confluence": score.get("margin_zone_confluence"),
+            "max_pain_context": score.get("max_pain_context"),
+            "max_pain_price": score.get("max_pain_price"),
+            "distance_to_max_pain_pips": score.get("distance_to_max_pain_pips"),
+            "max_pain_alignment": score.get("max_pain_alignment"),
+            "max_pain_text_ru": score.get("max_pain_text_ru"),
         }
     )
     market_structure = dict(enriched.get("market_structure") or {})
