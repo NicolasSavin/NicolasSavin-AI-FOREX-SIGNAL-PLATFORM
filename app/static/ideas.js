@@ -490,10 +490,23 @@ function resolveDpoc(idea) {
   };
 }
 
+function resolveMarginZone(idea) {
+  const lower = pickFirstFiniteNumber(idea.margin_lower, idea.market_structure?.margin_lower, idea.margin_zone?.margin_lower);
+  const upper = pickFirstFiniteNumber(idea.margin_upper, idea.market_structure?.margin_upper, idea.margin_zone?.margin_upper);
+  const inside = Boolean(idea.inside_margin_zone ?? idea.market_structure?.inside_margin_zone ?? idea.margin_zone?.inside_margin_zone);
+  return {
+    lower: lower !== null && lower > 0 ? formatNumber(lower) : "—",
+    upper: upper !== null && upper > 0 ? formatNumber(upper) : "—",
+    inside: lower !== null && upper !== null ? (inside ? "да" : "нет") : "—",
+  };
+}
+
+
 function renderIdeaCard(idea, index) {
   const symbol = getIdeaSymbol(idea);
   const action = idea.action || idea.signal || idea.label || "WAIT";
   const dpoc = resolveDpoc(idea);
+  const marginZone = resolveMarginZone(idea);
   return `<article class="idea-card" data-idea-index="${index}" tabindex="0" role="button" aria-label="Открыть идею ${escapeHtml(symbol)}">
     <div class="idea-card-top">
       <div>
@@ -511,6 +524,8 @@ function renderIdeaCard(idea, index) {
       <div><span>TP</span><strong>${escapeHtml(formatNumber(idea.tp ?? idea.take_profit ?? idea.target))}</strong></div>
       <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
       <div><span>DPOC / дистанция</span><strong>${escapeHtml(dpoc.price)} · ${escapeHtml(dpoc.distance)}</strong></div>
+      <div><span>margin_lower / margin_upper</span><strong>${escapeHtml(marginZone.lower)} / ${escapeHtml(marginZone.upper)}</strong></div>
+      <div><span>inside_margin_zone</span><strong>${escapeHtml(marginZone.inside)}</strong></div>
     </div>
     ${renderPropCompact(idea)}
     ${renderVolumeDeltaCompact(idea)}
@@ -560,6 +575,7 @@ function openIdeaModal(idea) {
   const title = modal.querySelector(".ideas-modal-title");
   const zoneType = sanitizeText(idea.selected_zone_type);
   const dpoc = resolveDpoc(idea);
+  const marginZone = resolveMarginZone(idea);
   title.textContent = zoneType ? `${symbol} · ${getIdeaDirection(idea)} · ${zoneType}` : `${symbol} · ${getIdeaDirection(idea)}`;
   body.innerHTML = `<div class="modal-grid">
       <div>
@@ -583,6 +599,9 @@ function openIdeaModal(idea) {
         <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
         <div><span>DPOC</span><strong>${escapeHtml(dpoc.price)}</strong></div>
         <div><span>До DPOC</span><strong>${escapeHtml(dpoc.distance)}</strong></div>
+        <div><span>margin_lower</span><strong>${escapeHtml(marginZone.lower)}</strong></div>
+        <div><span>margin_upper</span><strong>${escapeHtml(marginZone.upper)}</strong></div>
+        <div><span>inside_margin_zone</span><strong>${escapeHtml(marginZone.inside)}</strong></div>
       </div>
       <p class="modal-text"><strong>Новости/фундаментал:</strong> ${escapeHtml(resolveNewsContext(idea))}</p>
       <p class="modal-text"><strong>Options/CME confirmation:</strong> ${escapeHtml(resolveExternalOptionsRu(idea))}<br><strong>Bias:</strong> ${escapeHtml(resolveExternalOptionsBias(idea))}; <strong>Key strikes:</strong> ${escapeHtml(formatListValue(idea.external_options_key_strikes))}; <strong>Max pain:</strong> ${escapeHtml(formatListValue(idea.external_options_max_pain))}</p>

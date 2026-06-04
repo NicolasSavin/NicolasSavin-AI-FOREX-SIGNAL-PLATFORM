@@ -36,6 +36,10 @@ VOLUME_KEYS = {
     "dpoc_price",
     "daily_dpoc",
     "daily_dpoc_price",
+    "margin_lower",
+    "margin_upper",
+    "margin_source",
+    "margin_object",
 }
 
 OPTION_KEYS = {

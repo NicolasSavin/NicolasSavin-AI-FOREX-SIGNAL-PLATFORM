@@ -425,3 +425,9 @@ curl http://127.0.0.1:8000/ideas/market
 Существующий MT4 bridge принимает текущий дневной DPOC без отдельного маршрута: передайте `dpoc_price` (также поддерживаются aliases `dpoc`, `daily_dpoc`, `daily_dpoc_price`) в `GET /api/mt4/ingest-get`, `POST /api/mt4/volume-clusters` или legacy `POST /ideas/market` вместе с FutureVolume payload.
 
 Backend сохраняет реальный уровень индикатора как `dpoc_price`, рассчитывает подписанное поле `distance_to_dpoc_pips` от текущей цены и публикует оба поля на верхнем уровне идеи и внутри `market_structure`. DPOC используется только как подтверждение: BUY получает +3 score при цене выше DPOC, SELL — +3 при цене ниже DPOC. Отсутствующий или неподтверждающий DPOC не блокирует сделку.
+
+### Маржинальные зоны Future_Volume_v5.00
+
+MT4 bridge `AI_Ideas_Trader.mq4` проверяет объекты `MZ_1/1`, `MZ_1/2`, `MZ_1/4`, `MZ_3/4`, читает для каждого `OBJPROP_PRICE1` и `OBJPROP_PRICE2`, выбирает содержащую текущую цену или ближайшую зону и отправляет её через `GET /api/mt4/margin-zones`.
+
+Backend сохраняет реальные поля `margin_lower`, `margin_upper`, `inside_margin_zone`, `margin_source=Future_Volume_v5.00` в MT4-контексте и публикует их в `/api/ideas`. Критерий `Margin Zones / Volume Profile` является только подтверждающим: нахождение цены внутри зоны добавляет `+3` к score, отсутствие зоны или цена вне зоны не создают hard-block.

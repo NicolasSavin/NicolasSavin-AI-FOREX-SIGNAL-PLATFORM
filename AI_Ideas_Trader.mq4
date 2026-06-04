@@ -24,6 +24,9 @@ input bool UseBufferedSL = true;
 input bool SkipIfTpTooClose = true;
 input bool AllowFallbackProviderTrading = false;
 input string MarkupUrlTemplate = "https://your-domain.onrender.com/api/mt4/markup/{symbol}?tf=M15";
+input bool PublishMarginZones = true;
+input string MarginZonesUrlTemplate = "https://your-domain.onrender.com/api/mt4/margin-zones?symbol={symbol}&tf={tf}&margin_lower={lower}&margin_upper={upper}&current_price={price}&margin_source=Future_Volume_v5.00&margin_object={object}";
+input string MarginZonesTimeframe = "M15";
 
 datetime g_lastPoll = 0;
 datetime g_lastMarkupPoll = 0;
@@ -38,8 +41,60 @@ void OnTick()
 {
    if(TimeCurrent() - g_lastPoll < RefreshSeconds) return;
    g_lastPoll = TimeCurrent();
+   PublishNearestMarginZone();
    PollSignalsAndTrade();
 }
+
+void PublishNearestMarginZone()
+{
+   if(!PublishMarginZones) return;
+
+   string names[4] = {"MZ_1/1", "MZ_1/2", "MZ_1/4", "MZ_3/4"};
+   double marketPrice = (Bid + Ask) / 2.0;
+   double selectedLower = 0.0, selectedUpper = 0.0, selectedDistance = 1.0e100;
+   string selectedName = "";
+
+   for(int i = 0; i < ArraySize(names); i++)
+   {
+      string name = names[i];
+      if(ObjectFind(0, name) < 0) continue;
+
+      double price1 = ObjectGetDouble(0, name, OBJPROP_PRICE1);
+      double price2 = ObjectGetDouble(0, name, OBJPROP_PRICE2);
+      if(price1 <= 0 || price2 <= 0) continue;
+
+      double lower = MathMin(price1, price2);
+      double upper = MathMax(price1, price2);
+      double distance = 0.0;
+      if(marketPrice < lower) distance = lower - marketPrice;
+      else if(marketPrice > upper) distance = marketPrice - upper;
+
+      if(selectedName == "" || distance < selectedDistance)
+      {
+         selectedName = name;
+         selectedLower = lower;
+         selectedUpper = upper;
+         selectedDistance = distance;
+      }
+   }
+
+   if(selectedName == "") return;
+
+   string encodedName = selectedName;
+   StringReplace(encodedName, "/", "%2F");
+   string url = MarginZonesUrlTemplate;
+   StringReplace(url, "{symbol}", Symbol());
+   StringReplace(url, "{tf}", MarginZonesTimeframe);
+   StringReplace(url, "{lower}", DoubleToString(selectedLower, Digits));
+   StringReplace(url, "{upper}", DoubleToString(selectedUpper, Digits));
+   StringReplace(url, "{price}", DoubleToString(marketPrice, Digits));
+   StringReplace(url, "{object}", encodedName);
+
+   string response = "";
+   if(HttpGet(url, response))
+      Print("Margin zone published: ", selectedName, " [", DoubleToString(selectedLower, Digits), ", ", DoubleToString(selectedUpper, Digits), "]");
+}
+
 
 void PollSignalsAndTrade()
 {

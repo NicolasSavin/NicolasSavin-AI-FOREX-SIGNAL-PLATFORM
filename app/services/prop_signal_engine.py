@@ -5,7 +5,7 @@ import sys
 from typing import Any
 
 from app.services.external_signal_adapter import get_cme_optionsfx_confirmation
-from app.services.mt4_volume_cluster_bridge import build_dpoc_context, get_latest_volume_cluster
+from app.services.mt4_volume_cluster_bridge import build_dpoc_context, build_margin_zone_context, get_latest_volume_cluster
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ PROP_CRITERIA = (
     {"key": "structure", "label_ru": "Структура / импульс", "weight": 12},
     {"key": "liquidity", "label_ru": "Ликвидность / POI", "weight": 8},
     {"key": "volume", "label_ru": "Volume / tick volume", "weight": 5},
+    {"key": "margin_zones", "label_ru": "Margin Zones / Volume Profile", "weight": 3},
     {"key": "options", "label_ru": "Опционы / CME", "weight": 4},
     {"key": "sentiment", "label_ru": "Sentiment / новости", "weight": 5},
 )
@@ -500,6 +501,38 @@ def _dpoc_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
     return {"available": False, "source": "unavailable", "dpoc_price": None, "distance_to_dpoc_pips": None, "aligned": False, "score_adjustment": 0, "text_ru": "DPOC недоступен; сделки не блокируются."}
 
 
+def _margin_zone_context(idea: dict[str, Any]) -> dict[str, Any]:
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    timeframe = str(idea.get("timeframe") or idea.get("tf") or "").upper().strip() or None
+    candles = _candles(idea)
+    current_price = _to_float(idea.get("current_price") or idea.get("price"))
+    if current_price is None and candles:
+        current_price = _to_float(candles[-1].get("close"))
+    if current_price is None:
+        current_price = _to_float(idea.get("entry") or idea.get("entry_price"))
+
+    sources = [idea, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None]
+    if symbol:
+        sources.append(get_latest_volume_cluster(symbol, timeframe))
+    for payload in sources:
+        context = build_margin_zone_context(payload, current_price)
+        if context.get("available"):
+            inside = bool(context.get("inside_margin_zone"))
+            context["score_adjustment"] = 3 if inside else 0
+            context["text_ru"] = "Цена внутри маржинальной зоны Future_Volume_v5.00; подтверждение +3." if inside else "Маржинальная зона доступна, но цена находится вне неё; hard-block не применяется."
+            return context
+    return {
+        "available": False,
+        "margin_lower": None,
+        "margin_upper": None,
+        "inside_margin_zone": False,
+        "margin_source": "unavailable",
+        "margin_object": "",
+        "score_adjustment": 0,
+        "text_ru": "Margin Zones недоступны; сделки не блокируются.",
+    }
+
+
 def _volume_delta_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
     candles = _candles(idea)
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
@@ -855,6 +888,9 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
         volume_score = weights["volume"] if volume_text else 1 if candles else 0
     rows.append(_row("volume", volume_score, weights["volume"], str(volume_delta.get("text_ru") or volume_text or "только OHLC/tick proxy")))
 
+    margin_zone = _margin_zone_context(idea)
+    rows.append(_row("margin_zones", weights["margin_zones"] if margin_zone.get("inside_margin_zone") else 0, weights["margin_zones"], str(margin_zone.get("text_ru"))))
+
     external_options = _external_options_alignment(idea, direction)
     external_text = str(external_options.get("text_ru") or "")
     options_text = _first_text(idea, "options_ru", "options_analysis.summary", "options_analysis.bias")
@@ -873,8 +909,9 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
 def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     safe_idea = idea if isinstance(idea, dict) else {}
     rows = _criterion_rows(safe_idea)
-    total_weight = sum(row["weight"] for row in rows) or 1
-    base_score = round(sum(row["score"] for row in rows) / total_weight * 100)
+    base_rows = [row for row in rows if row.get("key") != "margin_zones"]
+    total_weight = sum(row["weight"] for row in base_rows) or 1
+    base_score = round(sum(row["score"] for row in base_rows) / total_weight * 100)
     direction = _direction(safe_idea)
     geo = _trade_geometry(safe_idea)
     candle_diag = _candle_diagnostics(safe_idea)
@@ -882,9 +919,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     external_options = _external_options_alignment(safe_idea, direction)
     volume_delta = _volume_delta_context(safe_idea, direction)
     dpoc = _dpoc_context(safe_idea, direction)
+    margin_zone = _margin_zone_context(safe_idea)
     volume_delta_source = volume_delta.get("source")
     hft_signal = volume_delta.get("hft_signal") or _hft_signal_context(safe_idea).get("hft_signal")
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0)))
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0)))
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     external_options_note = ""
@@ -974,11 +1012,16 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "dpoc": dpoc,
         "dpoc_price": dpoc.get("dpoc_price"),
         "distance_to_dpoc_pips": dpoc.get("distance_to_dpoc_pips"),
+        "margin_zone": margin_zone,
+        "margin_lower": margin_zone.get("margin_lower"),
+        "margin_upper": margin_zone.get("margin_upper"),
+        "inside_margin_zone": bool(margin_zone.get("inside_margin_zone")),
+        "margin_source": margin_zone.get("margin_source"),
         "real_candle_diagnostics": candle_diag,
         "volume_delta_source": volume_delta_source,
         "hft_signal": hft_signal,
         "delta_divergence": bool(volume_delta.get("delta_divergence")),
-        "margin_zone_confluence": None,
+        "margin_zone_confluence": margin_zone,
         "disclaimer_ru": "Score не блокирует идею только из-за отсутствия optional CME/options/news слоёв; но если sentiment/news явно против направления, автоторговля блокируется.",
     }
 
@@ -1112,11 +1155,20 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "dpoc": score.get("dpoc"),
             "dpoc_price": score.get("dpoc_price"),
             "distance_to_dpoc_pips": score.get("distance_to_dpoc_pips"),
+            "margin_zone": score.get("margin_zone"),
+            "margin_lower": score.get("margin_lower"),
+            "margin_upper": score.get("margin_upper"),
+            "inside_margin_zone": score.get("inside_margin_zone"),
+            "margin_source": score.get("margin_source"),
         }
     )
     market_structure = dict(enriched.get("market_structure") or {})
     market_structure["dpoc_price"] = score.get("dpoc_price")
     market_structure["distance_to_dpoc_pips"] = score.get("distance_to_dpoc_pips")
+    market_structure["margin_lower"] = score.get("margin_lower")
+    market_structure["margin_upper"] = score.get("margin_upper")
+    market_structure["inside_margin_zone"] = score.get("inside_margin_zone")
+    market_structure["margin_source"] = score.get("margin_source")
     enriched["market_structure"] = market_structure
     return enriched
 

@@ -74,6 +74,35 @@ def extract_dpoc_price(payload: dict[str, Any] | None) -> float | None:
     return None
 
 
+def extract_margin_zone(payload: dict[str, Any] | None) -> tuple[float | None, float | None]:
+    """Read a normalized Future_Volume_v5.00 margin zone from an MT4 payload."""
+    if not isinstance(payload, dict):
+        return None, None
+    lower = _nested_float(payload, "margin_lower", "margin_zone.lower", "margin_zone.margin_lower")
+    upper = _nested_float(payload, "margin_upper", "margin_zone.upper", "margin_zone.margin_upper")
+    if lower is None or upper is None or lower <= 0 or upper <= 0:
+        return None, None
+    return (min(lower, upper), max(lower, upper))
+
+
+def build_margin_zone_context(payload: dict[str, Any] | None, current_price: Any = None) -> dict[str, Any]:
+    lower, upper = extract_margin_zone(payload)
+    price = _float_or_none(current_price)
+    if price is None and isinstance(payload, dict):
+        price = _nested_float(payload, "current_price", "close", "price", "entry", "entry_price")
+    available = lower is not None and upper is not None
+    inside = bool(available and price is not None and lower <= price <= upper)
+    return {
+        "available": available,
+        "margin_lower": lower,
+        "margin_upper": upper,
+        "inside_margin_zone": inside,
+        "margin_source": str(payload.get("margin_source") or "Future_Volume_v5.00") if available and isinstance(payload, dict) else "unavailable",
+        "margin_object": str(payload.get("margin_object") or "") if available and isinstance(payload, dict) else "",
+        "current_price": price,
+    }
+
+
 def pip_size_for_symbol(symbol: str) -> float:
     normalized = normalize_broker_symbol(symbol)
     if normalized.endswith("JPY"):
@@ -102,7 +131,7 @@ def build_dpoc_context(payload: dict[str, Any] | None, symbol: str = "", current
 
 
 def _previous_cumdelta(symbol: str, timeframe: str) -> float:
-    previous = _STORE.get(f"{symbol}:{timeframe}") or _STORE.get(symbol) or {}
+    previous = _STORE.get(f"{symbol}:{timeframe}") or {}
     if not isinstance(previous, dict):
         return 0.0
     volume_delta = previous.get("volume_delta") if isinstance(previous.get("volume_delta"), dict) else {}
@@ -179,13 +208,23 @@ def build_volume_delta_priority_snapshot(payload: dict[str, Any], symbol: str = 
 def save_volume_cluster_payload(payload: dict[str, Any]) -> dict[str, Any]:
     symbol = normalize_broker_symbol(payload.get("symbol") or payload.get("broker_symbol"))
     timeframe = str(payload.get("timeframe") or "H1").upper().strip()
-    record = dict(payload)
+    previous = _STORE.get(f"{symbol}:{timeframe}") or {}
+    record = dict(previous) if isinstance(previous, dict) else {}
+    record.update({key: value for key, value in payload.items() if value is not None})
     record["symbol"] = symbol
     record["timeframe"] = timeframe
+    incoming_close = _float_or_none(payload.get("close"))
+    if incoming_close is not None and incoming_close > 0:
+        record["current_price"] = incoming_close
     record["volume_delta"] = build_volume_delta_priority_snapshot(record, symbol, timeframe)
     record["dpoc_price"] = extract_dpoc_price(record)
     record["dpoc"] = build_dpoc_context(record, symbol)
     record["distance_to_dpoc_pips"] = record["dpoc"].get("distance_to_dpoc_pips")
+    record["margin_zone"] = build_margin_zone_context(record)
+    record["margin_lower"] = record["margin_zone"].get("margin_lower")
+    record["margin_upper"] = record["margin_zone"].get("margin_upper")
+    record["inside_margin_zone"] = record["margin_zone"].get("inside_margin_zone")
+    record["margin_source"] = record["margin_zone"].get("margin_source")
     record["volume_delta_available"] = bool(record["volume_delta"].get("available"))
     if not isinstance(record.get("delta"), dict):
         record["delta"] = record["volume_delta"].get("delta")

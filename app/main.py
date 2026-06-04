@@ -1058,6 +1058,10 @@ def api_mt4_ingest_get(
     future_delta: float = 0.0,
     dpoc_price: float = 0.0,
     dpoc: float = 0.0,
+    margin_lower: float = 0.0,
+    margin_upper: float = 0.0,
+    margin_source: str = "Future_Volume_v5.00",
+    margin_object: str = "",
     hft_signal: str = "",
     bars: str = "",
     broker: str = "",
@@ -1118,6 +1122,10 @@ def api_mt4_ingest_get(
         "cumulative_delta": cumulative_delta,
         "future_delta": future_delta,
         "dpoc_price": dpoc_price or dpoc or None,
+        "margin_lower": margin_lower or None,
+        "margin_upper": margin_upper or None,
+        "margin_source": margin_source if margin_lower > 0 and margin_upper > 0 else None,
+        "margin_object": margin_object,
         "hft_signal": hft_signal,
         "bars": bars,
         "broker": broker,
@@ -1219,6 +1227,46 @@ def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
 
+
+
+@app.get("/api/mt4/margin-zones")
+def api_mt4_margin_zones(
+    symbol: str = "",
+    broker_symbol: str = "",
+    tf: str = "M15",
+    margin_lower: float = 0.0,
+    margin_upper: float = 0.0,
+    current_price: float = 0.0,
+    margin_source: str = "Future_Volume_v5.00",
+    margin_object: str = "",
+    token: str = "",
+):
+    if MT4_BRIDGE_TOKEN and token.strip() != MT4_BRIDGE_TOKEN:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
+    normalized_symbol = normalize_mt4_symbol(symbol or broker_symbol)
+    if not normalized_symbol:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "symbol_required"})
+    if margin_lower <= 0 or margin_upper <= 0:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "valid_margin_bounds_required"})
+    saved = save_volume_cluster_payload({
+        "symbol": normalized_symbol,
+        "timeframe": str(tf or "M15").upper(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "current_price": current_price or None,
+        "margin_lower": min(margin_lower, margin_upper),
+        "margin_upper": max(margin_lower, margin_upper),
+        "margin_source": margin_source or "Future_Volume_v5.00",
+        "margin_object": margin_object,
+    })
+    return {
+        "ok": True,
+        "symbol": saved.get("symbol"),
+        "timeframe": saved.get("timeframe"),
+        "margin_lower": saved.get("margin_lower"),
+        "margin_upper": saved.get("margin_upper"),
+        "inside_margin_zone": saved.get("inside_margin_zone"),
+        "margin_source": saved.get("margin_source"),
+    }
 
 
 @app.post("/api/mt4/volume-clusters")
