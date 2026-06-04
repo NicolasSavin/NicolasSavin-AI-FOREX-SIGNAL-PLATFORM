@@ -92,42 +92,20 @@ def _enrich_idea(card: dict[str, Any]) -> dict[str, Any]:
     existing = _clean(out.get("unified_narrative") or out.get("idea_article_ru") or out.get("description") or out.get("summary"))
     is_bad = (not existing) or ("fallback" in str(out.get("narrative_source") or out.get("text_source") or "").lower())
     if is_bad:
-        prompt = (
-            "Объясни торговую идею как institutional Forex prop desk analyst. Верни JSON: "
-            "unified_narrative, idea_article_ru, trade_logic, risk_logic. Не меняй signal/entry/SL/TP.\n\nIDEA:\n"
-            + json.dumps(out, ensure_ascii=False, default=str)
-        )
-        result = _call_openrouter(
-            "Ты institutional Forex trader (SMC/ICT + options). Пиши по-русски, конкретно, без обещаний прибыли.",
-            prompt,
-            primary_model=os.getenv("OPENROUTER_MODEL"),
-            max_tokens=900,
-        )
-        if result.get("ok"):
-            data = result.get("data") if isinstance(result.get("data"), dict) else {}
-            text = _clean(data.get("unified_narrative") or data.get("idea_article_ru") or result.get("text"))
-            out.update(data)
-            out["unified_narrative"] = text
-            out["idea_article_ru"] = _clean(data.get("idea_article_ru") or text)
-            out["description"] = text
-            out["summary"] = text
-            out["text_source"] = out["textSource"] = "grok"
-            out["narrative_source"] = out["narrativeSource"] = "grok"
-            out["ai_provider"] = "grok"
-            out["grok_used"] = out["grokUsed"] = True
-            out["fallback"] = out["fallback_text"] = out["is_fallback_text"] = False
-            out["ai_model_used"] = result.get("model")
-        else:
-            text = _fallback_idea_text(out)
-            out.setdefault("unified_narrative", text)
-            out.setdefault("idea_article_ru", text)
-            out.setdefault("description", text)
-            out.setdefault("summary", text)
-            out["text_source"] = out["textSource"] = "local_safe"
-            out["narrative_source"] = out["narrativeSource"] = "local_safe"
-            out["fallback"] = False
-            out["fallback_text"] = False
-            out["is_fallback_text"] = False
+        # JSONResponse.render runs on the request critical path. Never perform an
+        # external LLM request here: Render/client timeouts cancel the response
+        # before a 30-second OpenRouter call can complete. Narrative generation
+        # remains available in the background market build pipeline.
+        text = _fallback_idea_text(out)
+        out.setdefault("unified_narrative", text)
+        out.setdefault("idea_article_ru", text)
+        out.setdefault("description", text)
+        out.setdefault("summary", text)
+        out["text_source"] = out["textSource"] = "local_safe"
+        out["narrative_source"] = out["narrativeSource"] = "local_safe"
+        out["fallback"] = False
+        out["fallback_text"] = False
+        out["is_fallback_text"] = False
     try:
         from app.services.prop_engine import prop_engine
         out = prop_engine.enrich_idea(out)

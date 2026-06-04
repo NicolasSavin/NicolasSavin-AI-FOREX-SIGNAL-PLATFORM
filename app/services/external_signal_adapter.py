@@ -8,6 +8,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services.timing import timing_log
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -233,6 +235,11 @@ def _fetch_public_telegram_messages(channel: str) -> list[dict[str, str]]:
 
 
 def get_cme_optionsfx_signals(force_refresh: bool = False) -> dict[str, Any]:
+    with timing_log(logger, "CME_OptionsFX", force_refresh=force_refresh):
+        return _get_cme_optionsfx_signals(force_refresh)
+
+
+def _get_cme_optionsfx_signals(force_refresh: bool = False) -> dict[str, Any]:
     source = EXTERNAL_SIGNAL_SOURCES["CME_OptionsFX"]
     now = time.time()
     cached = _CACHE.get("CME_OptionsFX")

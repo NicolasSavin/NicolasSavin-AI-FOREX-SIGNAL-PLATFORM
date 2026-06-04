@@ -425,3 +425,9 @@ curl http://127.0.0.1:8000/ideas/market
 Существующий MT4 bridge принимает текущий дневной DPOC без отдельного маршрута: передайте `dpoc_price` (также поддерживаются aliases `dpoc`, `daily_dpoc`, `daily_dpoc_price`) в `GET /api/mt4/ingest-get`, `POST /api/mt4/volume-clusters` или legacy `POST /ideas/market` вместе с FutureVolume payload.
 
 Backend сохраняет реальный уровень индикатора как `dpoc_price`, рассчитывает подписанное поле `distance_to_dpoc_pips` от текущей цены и публикует оба поля на верхнем уровне идеи и внутри `market_structure`. DPOC используется только как подтверждение: BUY получает +3 score при цене выше DPOC, SELL — +3 при цене ниже DPOC. Отсутствующий или неподтверждающий DPOC не блокирует сделку.
+
+## Диагностика таймаутов `/ideas/market`
+
+Маршрут `/ideas/market` использует stale-while-revalidate кэш (TTL задаётся через `MARKET_IDEAS_CACHE_TTL_SECONDS`, по умолчанию 60 секунд). Построение рынка запускается в фоне при старте приложения и при устаревании кэша, поэтому внешний HTTP/LLM provider больше не блокирует основной запрос Render.
+
+Для потенциально медленных этапов пишутся парные структурированные записи `START` / `END` с `elapsed_ms` и флагом `slow_over_5s`. В Render logs можно фильтровать `timing operation=` и отдельно проверять `build_market`, `generate_trade_ideas`, `enrich_ideas_with_prop_scores`, `enrich_idea_with_openai_narrative`, `options_analysis`, `CME_OptionsFX` и `chart_endpoint`.
