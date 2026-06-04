@@ -27,6 +27,7 @@ from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
+from app.services.idea_lifecycle import apply_idea_lifecycle, build_lifecycle_stats
 from app.services.signal_audit_logger import log_signal_audit
 from backend.chat_service import ChatRequest, ForexChatService
 
@@ -785,12 +786,12 @@ def api_signals():
 
     if signals:
         enriched_signals = enrich_ideas_with_prop_scores(signals)
-        archive = load_json(ARCHIVE_FILE)
+        lifecycle = apply_idea_lifecycle(enriched_signals)
         return {
-            "signals": enriched_signals,
-            "ideas": enriched_signals,
-            "archive": archive,
-            "statistics": build_stats(),
+            "signals": lifecycle["ideas"],
+            "ideas": lifecycle["ideas"],
+            "archive": lifecycle["archive"],
+            "statistics": lifecycle["statistics"],
             "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
             "updated_at_utc": now_utc(),
             "ai_provider": "signal_engine",
@@ -884,12 +885,12 @@ def api_ideas():
 
     if signals:
         enriched_signals = enrich_ideas_with_prop_scores(signals)
-        archive = load_json(ARCHIVE_FILE)
+        lifecycle = apply_idea_lifecycle(enriched_signals)
         return {
-            "signals": enriched_signals,
-            "ideas": enriched_signals,
-            "archive": archive,
-            "statistics": build_stats(),
+            "signals": lifecycle["ideas"],
+            "ideas": lifecycle["ideas"],
+            "archive": lifecycle["archive"],
+            "statistics": lifecycle["statistics"],
             "metric_warning_ru": "Proxy — это расчётная метрика, не реальная рыночная котировка.",
             "updated_at_utc": now_utc(),
         }
@@ -1375,13 +1376,13 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
     return payload
 @app.get("/api/archive")
 def api_archive():
-    archive = load_json(ARCHIVE_FILE)
+    archive = apply_idea_lifecycle([])["archive"]
     return {"archive": archive, "total": len(archive)}
 
 
 @app.get("/api/stats")
 def api_stats():
-    return build_stats()
+    return build_lifecycle_stats()
 
 
 @app.get("/api/news")

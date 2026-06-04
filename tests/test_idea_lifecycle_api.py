@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from app import main
+from app.services import idea_lifecycle
+
+
+def _lifecycle_payload() -> dict:
+    ideas = [{"symbol": "EURUSD", "signal": "BUY", "lifecycle_status": "active"}]
+    archive = [{"symbol": "GBPUSD", "result": "TP"}]
+    statistics = {"total": 1, "active": 1, "tp": 1, "sl": 0}
+    return {"ideas": ideas, "active": [], "archive": archive, "statistics": statistics}
+
+
+def test_api_signals_returns_lifecycle_payload(monkeypatch) -> None:
+    payload = _lifecycle_payload()
+    monkeypatch.setattr(main, "SYMBOLS", ["EURUSD"])
+    monkeypatch.setattr(main, "build_signal_from_candles", lambda symbol, tf: {"symbol": symbol, "signal": "BUY"})
+    monkeypatch.setattr(main, "enrich_ideas_with_prop_scores", lambda signals: signals)
+    monkeypatch.setattr(main, "apply_idea_lifecycle", lambda ideas: payload)
+
+    response = main.api_signals()
+
+    assert response["signals"] == payload["ideas"]
+    assert response["ideas"] == payload["ideas"]
+    assert response["archive"] == payload["archive"]
+    assert response["statistics"] == payload["statistics"]
+
+
+def test_api_ideas_returns_lifecycle_payload(monkeypatch) -> None:
+    payload = _lifecycle_payload()
+    monkeypatch.setattr(main, "build_signal_from_candles", lambda symbol, tf: {"symbol": symbol, "signal": "BUY"})
+    monkeypatch.setattr(main, "enrich_ideas_with_prop_scores", lambda signals: signals)
+    monkeypatch.setattr(main, "apply_idea_lifecycle", lambda ideas: payload)
+    monkeypatch.setattr(main, "log_signal_audit", lambda entry: None)
+
+    response = main.api_ideas()
+
+    assert response["signals"] == payload["ideas"]
+    assert response["ideas"] == payload["ideas"]
+    assert response["archive"] == payload["archive"]
+    assert response["statistics"] == payload["statistics"]
+
+
+def test_archive_and_stats_endpoints_use_lifecycle_service(monkeypatch) -> None:
+    payload = _lifecycle_payload()
+    monkeypatch.setattr(main, "apply_idea_lifecycle", lambda ideas: payload)
+    monkeypatch.setattr(main, "build_lifecycle_stats", lambda: payload["statistics"])
+
+    assert main.api_archive() == {"archive": payload["archive"], "total": 1}
+    assert main.api_stats() == payload["statistics"]
+
+
+def test_active_idea_is_locked_until_tp_or_sl(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(idea_lifecycle, "ACTIVE_FILE", tmp_path / "active_ideas.json")
+    monkeypatch.setattr(idea_lifecycle, "ARCHIVE_FILE", tmp_path / "archive.json")
+
+    original = {
+        "symbol": "EURUSD",
+        "signal": "BUY",
+        "current_price": 1.10,
+        "entry": 1.10,
+        "sl": 1.09,
+        "tp": 1.20,
+        "advisor_allowed": True,
+    }
+    recalculated = {
+        "symbol": "EURUSD",
+        "signal": "SELL",
+        "current_price": 1.15,
+        "entry": 1.15,
+        "sl": 1.25,
+        "tp": 1.05,
+        "advisor_allowed": True,
+    }
+
+    first = idea_lifecycle.apply_idea_lifecycle([original])
+    locked = idea_lifecycle.apply_idea_lifecycle([recalculated])
+
+    assert locked["ideas"][0]["idea_id"] == first["ideas"][0]["idea_id"]
+    assert locked["ideas"][0]["signal"] == "BUY"
+    assert locked["archive"] == []
+
+    recalculated["current_price"] = 1.20
+    replaced = idea_lifecycle.apply_idea_lifecycle([recalculated])
+
+    assert replaced["ideas"][0]["idea_id"] != first["ideas"][0]["idea_id"]
+    assert replaced["ideas"][0]["signal"] == "SELL"
+    assert replaced["archive"][0]["result"] == "TP"
