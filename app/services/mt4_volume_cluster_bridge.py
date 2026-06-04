@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 TINY_PRICE_RANGE = 1e-12
+MARGIN_ZONE_NEAR_PIPS = 10.0
 
 MT4_VOLUME_CLUSTER_TTL_SECONDS = int(os.getenv("MT4_VOLUME_CLUSTER_TTL_SECONDS", "1800"))
 _STORE: dict[str, dict[str, Any]] = {}
@@ -101,6 +102,64 @@ def build_dpoc_context(payload: dict[str, Any] | None, symbol: str = "", current
     }
 
 
+def build_margin_zone_context(
+    payload: dict[str, Any] | None,
+    symbol: str = "",
+    current_price: Any = None,
+    entry_price: Any = None,
+) -> dict[str, Any]:
+    """Build optional Margin Zone confluence without blocking when data is absent."""
+    data = payload if isinstance(payload, dict) else {}
+    lower = _nested_float(data, "margin_lower", "margin_zone_lower")
+    upper = _nested_float(data, "margin_upper", "margin_zone_upper")
+    if lower is not None and upper is not None and lower > upper:
+        lower, upper = upper, lower
+
+    available = lower is not None and upper is not None
+    current = _float_or_none(current_price)
+    entry = _float_or_none(entry_price)
+    if current is None:
+        current = _nested_float(data, "current_price", "close", "price")
+    if entry is None:
+        entry = _nested_float(data, "entry", "entry_price")
+
+    prices = [price for price in (entry, current) if price is not None]
+    inside = bool(available and any(lower <= price <= upper for price in prices))
+    distance = None
+    if available and prices:
+        distances = [0.0 if lower <= price <= upper else min(abs(price - lower), abs(price - upper)) for price in prices]
+        distance = round(min(distances) / pip_size_for_symbol(symbol), 1)
+    nearby = bool(distance is not None and 0 < distance <= MARGIN_ZONE_NEAR_PIPS)
+    score_adjustment = 4 if inside else 2 if nearby else 0
+    source = str(data.get("margin_source") or "Future_Volume_v5.00") if available else "unavailable"
+
+    return {
+        "available": available,
+        "source": source,
+        "margin_source": source,
+        "is_proxy": False if available else None,
+        "margin_lower": lower,
+        "margin_upper": upper,
+        "margin_zone_lower": lower,
+        "margin_zone_upper": upper,
+        "inside_margin_zone": inside,
+        "near_margin_zone": nearby,
+        "distance_to_margin_pips": distance,
+        "score_adjustment": score_adjustment,
+        "current_price": current,
+        "entry_price": entry,
+        "text_ru": (
+            "Entry/текущая цена внутри Margin Zone"
+            if inside
+            else f"Entry/текущая цена рядом с Margin Zone: {distance:.1f} пипс"
+            if nearby and distance is not None
+            else "Margin Zone доступна, но цена вне зоны"
+            if available
+            else "Margin Zone недоступна; сделки не блокируются."
+        ),
+    }
+
+
 def _previous_cumdelta(symbol: str, timeframe: str) -> float:
     previous = _STORE.get(f"{symbol}:{timeframe}") or _STORE.get(symbol) or {}
     if not isinstance(previous, dict):
@@ -186,6 +245,11 @@ def save_volume_cluster_payload(payload: dict[str, Any]) -> dict[str, Any]:
     record["dpoc_price"] = extract_dpoc_price(record)
     record["dpoc"] = build_dpoc_context(record, symbol)
     record["distance_to_dpoc_pips"] = record["dpoc"].get("distance_to_dpoc_pips")
+    record["margin_lower"] = _nested_float(record, "margin_lower", "margin_zone_lower")
+    record["margin_upper"] = _nested_float(record, "margin_upper", "margin_zone_upper")
+    record["margin_zone_lower"] = _nested_float(record, "margin_zone_lower", "margin_lower")
+    record["margin_zone_upper"] = _nested_float(record, "margin_zone_upper", "margin_upper")
+    record["margin_source"] = str(record.get("margin_source") or "Future_Volume_v5.00")
     record["volume_delta_available"] = bool(record["volume_delta"].get("available"))
     if not isinstance(record.get("delta"), dict):
         record["delta"] = record["volume_delta"].get("delta")
