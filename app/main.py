@@ -228,6 +228,16 @@ def analytics_page():
     return FileResponse(STATIC_DIR / "analytics.html")
 
 
+@app.get("/stats", include_in_schema=False)
+def stats_page():
+    return FileResponse(STATIC_DIR / "stats.html")
+
+
+@app.get("/archive", include_in_schema=False)
+def archive_page():
+    return FileResponse(STATIC_DIR / "archive.html")
+
+
 @app.post("/api/chat")
 async def api_chat(payload: ChatRequest):
     use_fundamental = bool(getattr(payload, "context", {}).get("use_fundamental", False))
@@ -1375,9 +1385,14 @@ def api_mt4_markup(symbol: str, tf: str = "M15"):
     }
     return payload
 @app.get("/api/archive")
-def api_archive():
-    archive = apply_idea_lifecycle([])["archive"]
-    return {"archive": archive, "total": len(archive)}
+def api_archive(include_active: bool = False):
+    lifecycle = apply_idea_lifecycle([])
+    archive = lifecycle["archive"]
+    payload = {"archive": archive, "total": len(archive)}
+    if include_active:
+        active = lifecycle["active"]
+        payload.update({"active": active, "items": [*active, *archive]})
+    return payload
 
 
 @app.get("/api/stats")

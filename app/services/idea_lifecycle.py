@@ -220,6 +220,25 @@ def build_lifecycle_stats(active: dict[str, Any] | None = None, archive: list[di
     total = len(archive)
     wins = sum(1 for x in archive if x.get("status") == "tp_hit" or x.get("result") == "TP")
     losses = sum(1 for x in archive if x.get("status") == "sl_hit" or x.get("result") == "SL")
+    today = datetime.now(timezone.utc).date().isoformat()
+    today_tp = sum(
+        1 for x in archive
+        if str(x.get("closed_at_utc") or "").startswith(today) and (x.get("status") == "tp_hit" or x.get("result") == "TP")
+    )
+    today_sl = sum(
+        1 for x in archive
+        if str(x.get("closed_at_utc") or "").startswith(today) and (x.get("status") == "sl_hit" or x.get("result") == "SL")
+    )
+
+    rr_values: list[float] = []
+    for item in [*active.values(), *archive]:
+        entry = _num(item.get("entry"))
+        sl = _num(item.get("sl") or item.get("final_sl"))
+        tp = _num(item.get("tp") or item.get("final_tp"))
+        if entry is not None and sl is not None and tp is not None and abs(entry - sl) > 0:
+            rr_values.append(abs(tp - entry) / abs(entry - sl))
+    average_rr = round(sum(rr_values) / len(rr_values), 2) if rr_values else 0.0
+
     by_symbol: dict[str, dict[str, int]] = {}
     for item in archive:
         symbol = normalize_symbol(item.get("symbol")) or "UNKNOWN"
@@ -229,4 +248,17 @@ def build_lifecycle_stats(active: dict[str, Any] | None = None, archive: list[di
             row["tp"] += 1
         if item.get("status") == "sl_hit" or item.get("result") == "SL":
             row["sl"] += 1
-    return {"total": total, "active": len(active), "archived": total, "tp": wins, "sl": losses, "winrate": round(wins / total * 100, 2) if total else 0.0, "by_symbol": by_symbol, "updated_at_utc": now_utc()}
+    return {
+        "total": total,
+        "total_ideas": total + len(active),
+        "active": len(active),
+        "archived": total,
+        "tp": wins,
+        "sl": losses,
+        "winrate": round(wins / total * 100, 2) if total else 0.0,
+        "average_rr": average_rr,
+        "today_tp": today_tp,
+        "today_sl": today_sl,
+        "by_symbol": by_symbol,
+        "updated_at_utc": now_utc(),
+    }

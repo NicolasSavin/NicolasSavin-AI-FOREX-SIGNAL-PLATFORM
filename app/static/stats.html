@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Статистика сигналов</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body data-page="stats">
+  <div class="page-shell">
+    <header class="site-header">
+      <div><p class="eyebrow">Журнал результатов</p><h1>Статистика сигналов</h1><p class="lead">Фактические результаты зафиксированных торговых идей.</p></div>
+      <nav class="top-nav"><a href="/">Главная</a><a href="/ideas">Сигналы</a><a href="/stats">Статистика</a><a href="/archive">Архив</a><a href="/analytics">Аналитика</a><a href="/news">Новости</a></nav>
+    </header>
+    <main class="content-stack">
+      <section class="panel">
+        <div class="panel-heading compact"><div><p class="section-kicker">Результативность</p><h2>Ключевые показатели</h2><p class="section-text" id="statsUpdatedAt">Загрузка данных…</p></div><a class="archive-link-button" href="/archive">Открыть архив</a></div>
+        <div class="stats-page-grid" id="statsPageGrid" aria-live="polite"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/stats.js"></script><script src="/static/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Архив сигналов</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body data-page="archive">
+  <div class="page-shell">
+    <header class="site-header">
+      <div><p class="eyebrow">Журнал идей</p><h1>Архив сигналов</h1><p class="lead">Активные и закрытые идеи с фактическим итогом TP/SL.</p></div>
+      <nav class="top-nav"><a href="/">Главная</a><a href="/ideas">Сигналы</a><a href="/stats">Статистика</a><a href="/archive">Архив</a><a href="/analytics">Аналитика</a><a href="/news">Новости</a></nav>
+    </header>
+    <main class="content-stack"><section class="panel">
+      <div class="panel-heading compact"><div><p class="section-kicker">История сделок</p><h2>Все торговые идеи</h2><p class="section-text" id="archiveMeta">Загрузка архива…</p></div></div>
+      <div class="archive-filters" id="archiveFilters" aria-label="Фильтр по символу"></div>
+      <div class="archive-table-wrap"><table class="archive-table"><thead><tr><th>Дата</th><th>Символ</th><th>Направление</th><th>Entry</th><th>SL</th><th>TP</th><th>Результат</th></tr></thead><tbody id="archiveRows"></tbody></table></div>
+    </section></main>
+  </div>
+  <div class="archive-modal" id="archiveModal" hidden><div class="archive-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="archiveModalTitle"><button class="archive-modal__close" id="archiveModalClose" type="button" aria-label="Закрыть">×</button><div id="archiveModalBody"></div></div></div>
+  <script src="/static/archive.js"></script><script src="/static/nav.js"></script>
+</body>
+</html>
