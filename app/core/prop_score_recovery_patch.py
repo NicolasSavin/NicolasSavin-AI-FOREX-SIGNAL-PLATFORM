@@ -342,7 +342,8 @@ def _dpoc_context(idea: dict[str, Any], symbol: str, timeframe: str, direction: 
         current_price = _num(candles[-1].get("close"))
     if current_price is None:
         current_price = _num(idea.get("entry") or idea.get("entry_price"))
-    sources = [idea, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None, get_latest_volume_cluster(symbol, timeframe)]
+    market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else None
+    sources = [idea, market_context, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None, get_latest_volume_cluster(symbol, timeframe)]
     for payload in sources:
         context = build_dpoc_context(payload, symbol, current_price)
         if context.get("available"):
@@ -356,7 +357,8 @@ def _margin_zone_context(idea: dict[str, Any], symbol: str, timeframe: str, cand
     if current_price is None and candles:
         current_price = _num(candles[-1].get("close"))
     entry_price = _num(idea.get("entry") or idea.get("entry_price"))
-    sources = [idea, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None, get_latest_volume_cluster(symbol, timeframe)]
+    market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else None
+    sources = [idea, market_context, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None, get_latest_volume_cluster(symbol, timeframe)]
     for payload in sources:
         context = build_margin_zone_context(payload, symbol, current_price, entry_price)
         if context.get("available"):

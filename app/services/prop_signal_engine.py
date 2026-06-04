@@ -486,7 +486,8 @@ def _dpoc_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
     if current_price is None:
         current_price = _to_float(idea.get("entry") or idea.get("entry_price"))
 
-    sources = [idea, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None]
+    market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else None
+    sources = [idea, market_context, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None]
     if symbol:
         sources.append(get_latest_volume_cluster(symbol, timeframe))
     for payload in sources:
@@ -509,7 +510,8 @@ def _margin_zone_context(idea: dict[str, Any]) -> dict[str, Any]:
         current_price = _to_float(candles[-1].get("close"))
     entry_price = _to_float(idea.get("entry") or idea.get("entry_price"))
 
-    sources = [idea, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None]
+    market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else None
+    sources = [idea, market_context, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None]
     if symbol:
         sources.append(get_latest_volume_cluster(symbol, timeframe))
     for payload in sources:
@@ -1078,6 +1080,14 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
 def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(idea, dict):
         return idea
+    market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else {}
+    logger.debug(
+        "prop_signal_market_context_before_score symbol=%s dpoc_price=%s margin_lower=%s margin_upper=%s",
+        idea.get("symbol") or idea.get("pair") or idea.get("instrument"),
+        market_context.get("dpoc_price"),
+        market_context.get("margin_lower"),
+        market_context.get("margin_upper"),
+    )
     score = build_prop_signal_score(idea)
     advisor_signal = _advisor_signal_from_idea(idea, score)
     enriched = dict(idea)

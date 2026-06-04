@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from app.main import api_mt4_ingest_get
@@ -104,6 +105,34 @@ def test_margin_zone_confluence_adjusts_score_and_is_exposed_in_enriched_idea():
     assert "distance_to_dpoc_pips" in enriched
 
 
+def test_market_context_fields_feed_score_and_enriched_idea(caplog):
+    idea = {
+        **_idea(symbol="AUDCAD", close=0.9100),
+        "market_context": {
+            "dpoc_price": 0.9080,
+            "margin_lower": 0.9090,
+            "margin_upper": 0.9110,
+            "margin_zone_lower": 0.9090,
+            "margin_zone_upper": 0.9110,
+        },
+    }
+
+    score = build_prop_signal_score(idea)
+    with caplog.at_level(logging.DEBUG, logger="app.services.prop_signal_engine"):
+        enriched = enrich_idea_with_prop_score(idea)
+
+    for payload in (score, enriched):
+        assert payload["dpoc_price"] == 0.9080
+        assert payload["margin_lower"] == 0.9090
+        assert payload["margin_upper"] == 0.9110
+        assert payload["margin_zone_lower"] == 0.9090
+        assert payload["margin_zone_upper"] == 0.9110
+
+    assert "dpoc_price=0.908" in caplog.text
+    assert "margin_lower=0.909" in caplog.text
+    assert "margin_upper=0.911" in caplog.text
+
+
 def test_api_ideas_exposes_dpoc_and_margin_zone_fields(monkeypatch):
     from app import main
 
@@ -111,9 +140,13 @@ def test_api_ideas_exposes_dpoc_and_margin_zone_fields(monkeypatch):
         return {
             **_idea(symbol=symbol),
             "timeframe": timeframe,
-            "dpoc_price": 0.6080,
-            "margin_lower": 0.6090,
-            "margin_upper": 0.6110,
+            "market_context": {
+                "dpoc_price": 0.6080,
+                "margin_lower": 0.6090,
+                "margin_upper": 0.6110,
+                "margin_zone_lower": 0.6090,
+                "margin_zone_upper": 0.6110,
+            },
         }
 
     monkeypatch.setattr(main, "build_signal_from_candles", signal)
