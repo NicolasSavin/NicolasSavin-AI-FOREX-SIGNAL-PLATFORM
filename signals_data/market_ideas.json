@@ -1,25 +1,133 @@
 {
-  "updated_at_utc": "2026-03-18T16:07:34.136560+00:00",
+  "updated_at_utc": "2026-06-16T13:11:12.169342+00:00",
   "ideas": [
     {
-      "title": "GBPUSD: идея по новости",
-      "description_ru": "По инструменту GBPUSD появилась идея после новости: Инфляция меняет ожидания по GBPUSD. Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту. Позитивно для dxy; негативно для gbpusd; негативно для nasdaq; негативно для sp500.",
-      "label": "WATCH"
+      "id": "EURUSD-M15-bullish",
+      "symbol": "EURUSD",
+      "instrument": "EURUSD",
+      "timeframe": "M15",
+      "direction": "BULLISH",
+      "confidence": 72,
+      "title": "EURUSD intraday long",
+      "summary_ru": "EURUSD на M15 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
+      "tags": [
+        "SMC",
+        "Liquidity",
+        "M15",
+        "EURUSD"
+      ]
     },
     {
-      "title": "USOIL: идея по новости",
-      "description_ru": "По инструменту USOIL появилась идея после новости: Инфляция меняет ожидания по USOIL. Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту. Влияние умеренное: следите за реакцией цены по USOIL после подтверждения движения.",
-      "label": "WATCH"
+      "id": "EURUSD-H1-bullish",
+      "symbol": "EURUSD",
+      "instrument": "EURUSD",
+      "timeframe": "H1",
+      "direction": "BULLISH",
+      "confidence": 68,
+      "title": "EURUSD trend continuation",
+      "summary_ru": "EURUSD на H1 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
+      "tags": [
+        "SMC",
+        "Liquidity",
+        "H1",
+        "EURUSD"
+      ]
     },
     {
-      "title": "DXY: идея по новости",
-      "description_ru": "По инструменту DXY появилась идея после новости: Инфляция меняет ожидания по USDJPY. Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту. Влияние умеренное: следите за реакцией цены по USDJPY, DXY после подтверждения движения.",
-      "label": "WATCH"
+      "id": "GBPUSD-M15-bearish",
+      "symbol": "GBPUSD",
+      "instrument": "GBPUSD",
+      "timeframe": "M15",
+      "direction": "BEARISH",
+      "confidence": 71,
+      "title": "GBPUSD short from premium",
+      "summary_ru": "GBPUSD на M15 сохраняет медвежий уклон. Приоритет — short после возврата в premium/supply.",
+      "tags": [
+        "SMC",
+        "Liquidity",
+        "M15",
+        "GBPUSD"
+      ]
     },
     {
-      "title": "XAUUSD: идея по новости",
-      "description_ru": "По инструменту XAUUSD появилась идея после новости: Центробанк дал новый сигнал по ставкам для XAUUSD. Новость меняет ожидания по ставкам и может быстро перестроить движение по валютам и золоту. Влияние умеренное: следите за реакцией цены по XAUUSD после подтверждения движения.",
-      "label": "WATCH"
+      "id": "USDJPY-H1-neutral",
+      "symbol": "USDJPY",
+      "instrument": "USDJPY",
+      "timeframe": "H1",
+      "direction": "NEUTRAL",
+      "confidence": 61,
+      "title": "USDJPY range idea",
+      "summary_ru": "USDJPY на H1 находится в диапазоне. Базовая идея — ждать sweep и подтверждение.",
+      "tags": [
+        "SMC",
+        "Liquidity",
+        "H1",
+        "USDJPY"
+      ]
+    },
+    {
+      "id": "XAUUSD-M15-neutral",
+      "symbol": "XAUUSD",
+      "instrument": "XAUUSD",
+      "timeframe": "M15",
+      "direction": "NEUTRAL",
+      "confidence": 64,
+      "title": "Gold range response",
+      "summary_ru": "XAUUSD на M15 находится в диапазоне. Базовая идея — ждать sweep и подтверждение.",
+      "tags": [
+        "SMC",
+        "Liquidity",
+        "M15",
+        "XAUUSD"
+      ]
+    },
+    {
+      "id": "XAUUSD-H1-bullish",
+      "symbol": "XAUUSD",
+      "instrument": "XAUUSD",
+      "timeframe": "H1",
+      "direction": "BULLISH",
+      "confidence": 70,
+      "title": "Gold continuation long",
+      "summary_ru": "XAUUSD на H1 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
+      "tags": [
+        "SMC",
+        "Liquidity",
+        "H1",
+        "XAUUSD"
+      ]
+    },
+    {
+      "id": "AUDUSD-H4-bearish",
+      "symbol": "AUDUSD",
+      "instrument": "AUDUSD",
+      "timeframe": "H4",
+      "direction": "BEARISH",
+      "confidence": 67,
+      "title": "AUDUSD HTF sell setup",
+      "summary_ru": "AUDUSD на H4 сохраняет медвежий уклон. Приоритет — short после возврата в premium/supply.",
+      "tags": [
+        "SMC",
+        "Liquidity",
+        "H4",
+        "AUDUSD"
+      ]
+    },
+    {
+      "id": "EURJPY-H4-bullish",
+      "symbol": "EURJPY",
+      "instrument": "EURJPY",
+      "timeframe": "H4",
+      "direction": "BULLISH",
+      "confidence": 74,
+      "title": "EURJPY liquidity expansion",
+      "summary_ru": "EURJPY на H4 сохраняет бычий уклон. Приоритет — continuation после отката в demand-зону.",
+      "tags": [
+        "SMC",
+        "Liquidity",
+        "H4",
+        "EURJPY"
+      ]
     }
   ]
 }
