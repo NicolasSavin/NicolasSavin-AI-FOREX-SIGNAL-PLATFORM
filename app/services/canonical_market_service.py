@@ -6,7 +6,7 @@ from threading import Lock
 from time import monotonic
 from typing import Any
 
-from app.services.market_providers import TwelveDataProvider
+from app.services.market_providers import MT4BridgeProvider
 from app.services.real_market_data_provider import RealMarketDataProvider
 
 
@@ -16,9 +16,7 @@ class CanonicalMarketService:
         live_provider: RealMarketDataProvider | None = None,
         historical_fallback: RealMarketDataProvider | None = None,
     ) -> None:
-        self.live_provider = live_provider or TwelveDataProvider()
-        # Yahoo fallback intentionally disabled. Keep the optional constructor
-        # argument for backward compatibility with tests/callers that still pass it.
+        self.live_provider = live_provider or MT4BridgeProvider()
         self.historical_fallback = historical_fallback
         self.finnhub_provider = None
 
@@ -26,14 +24,14 @@ class CanonicalMarketService:
             os.getenv("MARKET_QUOTE_CACHE_TTL_SECONDS", "15")
         )
         self._chart_ttl_seconds = float(
-            os.getenv("MARKET_CHART_CACHE_TTL_SECONDS", "90")
+            os.getenv("MARKET_CHART_CACHE_TTL_SECONDS", "30")
         )
         self._status_ttl_seconds = float(
             os.getenv("MARKET_STATUS_CACHE_TTL_SECONDS", "30")
         )
         self._provider_fetch_ttl_seconds = max(
-            60.0,
-            float(os.getenv("MARKET_PROVIDER_FETCH_CACHE_TTL_SECONDS", "60")),
+            5.0,
+            float(os.getenv("MARKET_PROVIDER_FETCH_CACHE_TTL_SECONDS", "10")),
         )
 
         self._cache_lock = Lock()
@@ -54,12 +52,13 @@ class CanonicalMarketService:
             return cached
 
         quote = self.live_provider.get_quote(symbol)
+        source = quote.get("source") or quote.get("provider") or "mt4_bridge"
 
         if quote.get("price") is None:
             contract = self._contract(
                 symbol=symbol,
                 data_status="unavailable",
-                source="twelvedata",
+                source=source,
                 source_symbol=quote.get("source_symbol") or symbol,
                 last_updated_utc=quote.get("last_updated_utc"),
                 is_live_market_data=False,
@@ -69,9 +68,10 @@ class CanonicalMarketService:
                     "current_price": None,
                     "day_change_percent": None,
                     "warning_ru": (
-                        "Источник live-цены TwelveData недоступен. "
-                        "Yahoo/Stooq/Finnhub fallback отключены."
+                        "Источник live-цены MT4 Bridge недоступен. "
+                        "Проверьте советник, endpoint /api/mt4/ingest-get и свежесть свечей."
                     ),
+                    "diagnostics": quote.get("diagnostics") or {"provider_error": quote.get("error")},
                 },
             )
             self._cache_set(self._quote_cache, cache_key, contract)
@@ -80,7 +80,7 @@ class CanonicalMarketService:
         contract = self._contract(
             symbol=symbol,
             data_status="real",
-            source="twelvedata",
+            source=source,
             source_symbol=quote.get("source_symbol") or symbol,
             last_updated_utc=quote.get("last_updated_utc"),
             is_live_market_data=True,
@@ -90,6 +90,7 @@ class CanonicalMarketService:
                 "current_price": quote.get("price"),
                 "day_change_percent": quote.get("day_change_percent"),
                 "warning_ru": None,
+                "diagnostics": quote.get("diagnostics") or {},
             },
         )
 
@@ -125,12 +126,13 @@ class CanonicalMarketService:
 
         provider_selection = self.get_candles(symbol, normalized_tf, normalized_limit)
         selected_candles = provider_selection.get("candles") or []
+        source = provider_selection.get("provider") or "mt4_bridge"
 
         if selected_candles:
             contract = self._contract(
                 symbol=symbol,
                 data_status="real",
-                source=provider_selection.get("provider") or "twelvedata",
+                source=source,
                 source_symbol=provider_selection.get("source_symbol") or symbol,
                 last_updated_utc=provider_selection.get("last_updated_utc"),
                 is_live_market_data=True,
@@ -150,7 +152,7 @@ class CanonicalMarketService:
         contract = self._contract(
             symbol=symbol,
             data_status="unavailable",
-            source="twelvedata",
+            source=source,
             source_symbol=provider_selection.get("source_symbol") or symbol,
             last_updated_utc=datetime.now(timezone.utc).isoformat(),
             is_live_market_data=False,
@@ -159,9 +161,8 @@ class CanonicalMarketService:
                 "candles": [],
                 "current_price": None,
                 "warning_ru": (
-                    f"Свечные данные TwelveData недоступны: "
-                    f"{provider_selection.get('error') or 'unknown_error'}. "
-                    "Yahoo/Stooq/Finnhub fallback отключены."
+                    f"Свечные данные MT4 Bridge недоступны для {symbol} {normalized_tf}: "
+                    f"{provider_selection.get('error') or 'unknown_error'}."
                 ),
                 "diagnostics": provider_selection.get("diagnostics")
                 or {"provider_error": provider_selection.get("error")},
@@ -183,17 +184,17 @@ class CanonicalMarketService:
 
         diagnostics: dict[str, Any] = {
             "final_provider_used": None,
-            "finnhub_error": "disabled",
-            "twelvedata_error": None,
+            "mt4_bridge_error": None,
             "yahoo_used": False,
             "yahoo_error": "disabled",
+            "twelvedata_error": "disabled_for_ideas",
             "stooq_error": "disabled",
             "cache_hit": False,
             "provider_error": None,
             "fallbacks_disabled": True,
         }
 
-        payload, cache_hit = self.fetch_twelvedata_candles(
+        payload, cache_hit = self.fetch_mt4_bridge_candles(
             normalized_symbol,
             normalized_tf,
             normalized_limit,
@@ -212,12 +213,13 @@ class CanonicalMarketService:
         error = payload.get("error")
 
         if len(candles) < 30:
-            error = error or f"insufficient_candles_{len(candles)}"
+            error = error or f"insufficient_mt4_candles_{len(candles)}"
             diagnostics["final_provider_used"] = "none"
-            diagnostics["twelvedata_error"] = error
+            diagnostics["mt4_bridge_error"] = error
             diagnostics["provider_error"] = error
+            diagnostics["cache_hit"] = bool(cache_hit)
             return {
-                "provider": "twelvedata",
+                "provider": "mt4_bridge",
                 "candles": [],
                 "source_symbol": payload.get("source_symbol") or normalized_symbol,
                 "last_updated_utc": payload.get("last_updated_utc")
@@ -226,11 +228,13 @@ class CanonicalMarketService:
                 "diagnostics": diagnostics,
             }
 
-        diagnostics["final_provider_used"] = "twelvedata"
+        diagnostics["final_provider_used"] = "mt4_bridge"
         diagnostics["cache_hit"] = bool(cache_hit)
+        if isinstance(payload.get("diagnostics"), dict):
+            diagnostics.update(payload["diagnostics"])
 
         return {
-            "provider": "twelvedata",
+            "provider": "mt4_bridge",
             "candles": candles,
             "source_symbol": payload.get("source_symbol") or normalized_symbol,
             "last_updated_utc": payload.get("last_updated_utc"),
@@ -238,17 +242,34 @@ class CanonicalMarketService:
             "diagnostics": diagnostics,
         }
 
-    def fetch_twelvedata_candles(
+    def fetch_mt4_bridge_candles(
         self,
         symbol: str,
         timeframe: str,
         limit: int,
     ) -> tuple[dict[str, Any], bool]:
         return self._fetch_provider_candles(
-            provider="twelvedata",
+            provider="mt4_bridge",
             symbol=symbol,
             timeframe=timeframe,
             limit=limit,
+        )
+
+    def fetch_twelvedata_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int,
+    ) -> tuple[dict[str, Any], bool]:
+        return (
+            {
+                "provider": "twelvedata",
+                "candles": [],
+                "source_symbol": self._normalize_symbol(symbol),
+                "last_updated_utc": datetime.now(timezone.utc).isoformat(),
+                "error": "twelvedata_disabled_for_ideas",
+            },
+            False,
         )
 
     def fetch_finnhub_candles(
@@ -334,7 +355,7 @@ class CanonicalMarketService:
         return self._contract(
             symbol=symbol,
             data_status=data_status,
-            source=f"{h1_contract.get('source') or 'twelvedata'}_derived_h4",
+            source=f"{h1_contract.get('source') or 'mt4_bridge'}_derived_h4",
             source_symbol=h1_contract.get("source_symbol")
             or self._normalize_symbol(symbol),
             last_updated_utc=h1_contract.get("last_updated_utc"),
@@ -537,7 +558,7 @@ class CanonicalMarketService:
                 True,
             )
 
-        if provider != "twelvedata":
+        if provider != "mt4_bridge":
             return (
                 {
                     "provider": provider,
