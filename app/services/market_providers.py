@@ -11,7 +11,6 @@ from time import monotonic
 from typing import Any
 
 import requests
-import yfinance as yf
 
 from app.core.env import get_twelvedata_api_key
 from app.services.real_market_data_provider import RealMarketDataProvider
@@ -31,22 +30,180 @@ _TIMEFRAME_TO_TD = {
     "W1": "1week",
 }
 
-_TIMEFRAME_TO_YF = {
-    "M15": {"interval": "15m", "period": "5d"},
-    "M30": {"interval": "30m", "period": "1mo"},
-    "H1": {"interval": "1h", "period": "1mo"},
-    "H4": {"interval": "1h", "period": "3mo"},
-    "D1": {"interval": "1d", "period": "6mo"},
-    "W1": {"interval": "1wk", "period": "2y"},
-}
+
+def _default_bridge_base_url() -> str:
+    return (
+        os.getenv("MT4_BRIDGE_BASE_URL")
+        or os.getenv("PUBLIC_BASE_URL")
+        or os.getenv("RENDER_EXTERNAL_URL")
+        or "https://ai-forex-signal-platform.onrender.com"
+    ).rstrip("/")
+
+
+class MT4BridgeProvider(RealMarketDataProvider):
+    """Read candles from the live Render MT4 bridge endpoints.
+
+    This is the primary provider for the platform. It lets both the Render app
+    and GitHub Actions worker consume the same bridge data instead of falling
+    back to Yahoo/TwelveData for idea generation.
+    """
+
+    def __init__(self, base_url: str | None = None) -> None:
+        self.base_url = (base_url or _default_bridge_base_url()).rstrip("/")
+        self.timeout = _safe_float_env("MT4_BRIDGE_HTTP_TIMEOUT_SECONDS", 8.0, 2.0, 30.0)
+        self._cache_ttl_seconds = _safe_float_env("MT4_BRIDGE_PROVIDER_CACHE_TTL_SECONDS", 10.0, 1.0, 120.0)
+        self._lock = Lock()
+        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._cycle_id = 0
+        self._cycle_api_calls = 0
+        self._cycle_cache_hits = 0
+        self._cycle_cache_misses = 0
+        self._last_request_debug: dict[str, Any] = {}
+
+    def get_quote(self, symbol: str) -> dict[str, Any]:
+        normalized = _normalize_symbol(symbol)
+        data = self.get_candles(normalized, "M15", 2)
+        candles = data.get("candles") or []
+        price = candles[-1]["close"] if candles else None
+        prev = candles[-2]["close"] if len(candles) >= 2 else None
+        change = ((price - prev) / prev * 100) if price is not None and prev not in (None, 0) else None
+        return {
+            "symbol": normalized,
+            "price": price,
+            "previous_close": prev,
+            "day_change_percent": change,
+            "source_symbol": data.get("source_symbol") or normalized,
+            "last_updated_utc": data.get("last_updated_utc") or datetime.now(timezone.utc).isoformat(),
+            "error": data.get("error"),
+            "source": "mt4_bridge",
+            "provider": "mt4_bridge",
+            "is_live_market_data": bool(price is not None),
+        }
+
+    def get_candles(self, symbol: str, timeframe: str, limit: int) -> dict[str, Any]:
+        normalized = _normalize_symbol(symbol)
+        tf = str(timeframe or "M15").upper().strip()
+        limit = max(1, min(int(limit or 120), 500))
+        cache_key = f"mt4::{normalized}::{tf}::{limit}"
+
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return {**cached, "cache_hit": True}
+
+        url = f"{self.base_url}/api/debug/mt4-bridge/{normalized}/{tf}"
+        params = {"limit": limit}
+        self._last_request_debug = {"url": url, "symbol": normalized, "timeframe": tf, "limit": limit}
+        self._cycle_api_calls += 1
+
+        try:
+            response = requests.get(url, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            logger.warning("mt4_bridge_candles_failed symbol=%s tf=%s error=%s", normalized, tf, exc)
+            return _empty_candles(normalized, tf, normalized, f"mt4_bridge_error:{exc}", provider="mt4_bridge")
+
+        raw_candles = payload.get("candles") if isinstance(payload, dict) else []
+        candles = _normalize_bridge_candles(raw_candles)
+        if not candles:
+            return _empty_candles(normalized, tf, normalized, "no_mt4_bridge_candles", provider="mt4_bridge")
+
+        last_updated = datetime.now(timezone.utc).isoformat()
+        diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
+        if isinstance(payload, dict):
+            diagnostics = {
+                **diagnostics,
+                "provider": payload.get("provider"),
+                "data_status": payload.get("data_status"),
+                "raw_error": payload.get("raw_error"),
+                "warning_ru": payload.get("warning_ru"),
+            }
+
+        result = {
+            "symbol": normalized,
+            "timeframe": tf,
+            "source_symbol": normalized,
+            "last_updated_utc": last_updated,
+            "candles": candles[-limit:],
+            "error": None,
+            "provider": "mt4_bridge",
+            "data_status": "real",
+            "is_live_market_data": True,
+            "diagnostics": diagnostics,
+            "cache_hit": False,
+        }
+        self._cache_set(cache_key, result)
+        return result
+
+    def get_latest_close(self, symbol: str, timeframe: str) -> dict[str, Any]:
+        data = self.get_candles(symbol, timeframe, 2)
+        candles = data.get("candles") or []
+        return {
+            "symbol": data.get("symbol"),
+            "timeframe": data.get("timeframe"),
+            "latest_close": candles[-1]["close"] if candles else None,
+            "source_symbol": data.get("source_symbol"),
+            "last_updated_utc": data.get("last_updated_utc"),
+            "error": data.get("error"),
+        }
+
+    def get_market_status(self, symbol: str) -> dict[str, Any]:
+        is_open = datetime.now(timezone.utc).weekday() < 5
+        return {
+            "symbol": _normalize_symbol(symbol),
+            "is_market_open": is_open,
+            "session": "forex_open" if is_open else "forex_closed",
+            "error": None,
+            "source": "mt4_bridge",
+        }
+
+    def begin_request_cycle(self) -> int:
+        self._cycle_id += 1
+        self._cycle_api_calls = 0
+        self._cycle_cache_hits = 0
+        self._cycle_cache_misses = 0
+        return self._cycle_id
+
+    def end_request_cycle(self, cycle_id: int) -> dict[str, int] | None:
+        return {
+            "api_calls": self._cycle_api_calls,
+            "cache_hits": self._cycle_cache_hits,
+            "cache_misses": self._cycle_cache_misses,
+        }
+
+    def get_last_request_debug(self) -> dict[str, Any]:
+        return dict(self._last_request_debug)
+
+    def _cache_get(self, key: str) -> dict[str, Any] | None:
+        with self._lock:
+            item = self._cache.get(key)
+            if not item:
+                self._cycle_cache_misses += 1
+                return None
+            saved_at, payload = item
+            if monotonic() - saved_at > self._cache_ttl_seconds:
+                self._cycle_cache_misses += 1
+                self._cache.pop(key, None)
+                return None
+            self._cycle_cache_hits += 1
+            return dict(payload)
+
+    def _cache_set(self, key: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._cache[key] = (monotonic(), dict(payload))
 
 
 class TwelveDataProvider(RealMarketDataProvider):
+    """TwelveData provider retained for diagnostics/manual fallback only.
+
+    The live idea pipeline is configured to use MT4BridgeProvider as primary.
+    This provider no longer calls Yahoo or Stooq when TwelveData is unavailable.
+    """
+
     def __init__(self) -> None:
         self.api_key = get_twelvedata_api_key() or ""
         self.timeout = 4.0
         self._cache_ttl_seconds = _safe_float_env("TWELVEDATA_CANDLES_CACHE_TTL_SECONDS", 900.0, 300.0, 1800.0)
-        self._failure_ttl_seconds = _safe_float_env("TWELVEDATA_FAILURE_CACHE_TTL_SECONDS", 300.0, 120.0, 900.0)
         self._rate_limit_cooldown_seconds = _safe_float_env("TWELVEDATA_RATE_LIMIT_COOLDOWN_SECONDS", 900.0, 300.0, 3600.0)
         self._rate_limited_until = 0.0
         self._lock = Lock()
@@ -72,7 +229,7 @@ class TwelveDataProvider(RealMarketDataProvider):
             "source_symbol": candles.get("source_symbol") or _td_symbol(normalized),
             "last_updated_utc": datetime.now(timezone.utc).isoformat(),
             "error": candles.get("error"),
-            "source": candles.get("provider") or "twelvedata",
+            "source": "twelvedata",
         }
 
     def get_candles(self, symbol: str, timeframe: str, limit: int) -> dict[str, Any]:
@@ -88,11 +245,10 @@ class TwelveDataProvider(RealMarketDataProvider):
             return {**cached, "cache_hit": True}
 
         stale = self._cache_get(cache_key, limit=limit, ttl_seconds=86400.0)
-
         if not interval or not self.api_key or self._is_rate_limited():
             if stale and stale.get("candles"):
                 return {**stale, "error": "twelvedata_cached", "cache_hit": True}
-            return YahooProvider().get_candles(normalized, tf, limit)
+            return _empty_candles(normalized, tf, provider_symbol, "twelvedata_unavailable", provider="twelvedata")
 
         payload = self._request(
             "time_series",
@@ -110,11 +266,11 @@ class TwelveDataProvider(RealMarketDataProvider):
                 self._set_rate_limited()
             if stale and stale.get("candles"):
                 return {**stale, "error": f"cached_after_error:{error}", "cache_hit": True}
-            return YahooProvider().get_candles(normalized, tf, limit)
+            return _empty_candles(normalized, tf, provider_symbol, error, provider="twelvedata")
 
         candles = _normalize_td_candles(payload.get("values") or payload.get("candles"))
         if not candles:
-            return YahooProvider().get_candles(normalized, tf, limit)
+            return _empty_candles(normalized, tf, provider_symbol, "twelvedata_empty", provider="twelvedata")
 
         result = {
             "symbol": normalized,
@@ -217,115 +373,24 @@ class TwelveDataProvider(RealMarketDataProvider):
 
 
 class YahooProvider(RealMarketDataProvider):
-    def __init__(self) -> None:
-        self._cache_ttl_seconds = 900.0
-        self._lock = Lock()
-        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
+    """Disabled compatibility stub. Yahoo must not be used by the platform."""
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
-        normalized = _normalize_symbol(symbol)
-        candles = self.get_candles(normalized, "H1", 2)
-        seq = candles.get("candles") or []
-        price = seq[-1]["close"] if seq else None
-        prev = seq[-2]["close"] if len(seq) >= 2 else None
-        change = ((price - prev) / prev * 100) if price is not None and prev not in (None, 0) else None
-        return {
-            "symbol": normalized,
-            "price": price,
-            "previous_close": prev,
-            "day_change_percent": change,
-            "source_symbol": candles.get("source_symbol"),
-            "last_updated_utc": datetime.now(timezone.utc).isoformat(),
-            "error": candles.get("error"),
-            "source": "yahoo",
-        }
+        return _unavailable(_normalize_symbol(symbol), "yahoo_disabled", "yahoo_disabled")
 
     def get_candles(self, symbol: str, timeframe: str, limit: int) -> dict[str, Any]:
-        normalized = _normalize_symbol(symbol)
-        tf = str(timeframe or "H1").upper().strip()
-        limit = max(1, min(int(limit or 120), 500))
-        cache_key = f"yf::{normalized}::{tf}::{limit}"
-
-        cached = self._cache_get(cache_key)
-        if cached and cached.get("candles"):
-            return {**cached, "cache_hit": True}
-
-        cfg = _TIMEFRAME_TO_YF.get(tf, _TIMEFRAME_TO_YF["H1"])
-        source_symbol = f"{normalized}=X"
-
-        try:
-            history = yf.Ticker(source_symbol).history(period=cfg["period"], interval=cfg["interval"])
-            candles: list[dict[str, Any]] = []
-            if not history.empty:
-                for idx, row in history.tail(limit).iterrows():
-                    ts = idx.to_pydatetime().astimezone(timezone.utc)
-                    candles.append(
-                        {
-                            "timestamp": int(ts.timestamp()),
-                            "time": int(ts.timestamp()),
-                            "open": float(row["Open"]),
-                            "high": float(row["High"]),
-                            "low": float(row["Low"]),
-                            "close": float(row["Close"]),
-                            "volume": 0.0,
-                        }
-                    )
-
-            if not candles:
-                return StooqProvider().get_candles(normalized, tf, limit)
-
-            result = {
-                "symbol": normalized,
-                "timeframe": tf,
-                "source_symbol": source_symbol,
-                "last_updated_utc": datetime.now(timezone.utc).isoformat(),
-                "candles": candles,
-                "error": None,
-                "provider": "yahoo",
-                "cache_hit": False,
-            }
-            self._cache_set(cache_key, result)
-            return result
-        except Exception as exc:
-            logger.warning("yahoo_candles_failed symbol=%s tf=%s error=%s", normalized, tf, exc)
-            return StooqProvider().get_candles(normalized, tf, limit)
+        return _empty_candles(_normalize_symbol(symbol), str(timeframe or "H1").upper(), _normalize_symbol(symbol), "yahoo_disabled", provider="yahoo_disabled")
 
     def get_latest_close(self, symbol: str, timeframe: str) -> dict[str, Any]:
-        data = self.get_candles(symbol, timeframe, 2)
-        candles = data.get("candles") or []
-        return {
-            "symbol": data.get("symbol"),
-            "timeframe": data.get("timeframe"),
-            "latest_close": candles[-1]["close"] if candles else None,
-            "source_symbol": data.get("source_symbol"),
-            "last_updated_utc": data.get("last_updated_utc"),
-            "error": data.get("error"),
-        }
+        return {"symbol": _normalize_symbol(symbol), "timeframe": timeframe, "latest_close": None, "source_symbol": _normalize_symbol(symbol), "last_updated_utc": datetime.now(timezone.utc).isoformat(), "error": "yahoo_disabled"}
 
     def get_market_status(self, symbol: str) -> dict[str, Any]:
-        return {
-            "symbol": _normalize_symbol(symbol),
-            "is_market_open": None,
-            "session": "historical_only",
-            "error": None,
-        }
-
-    def _cache_get(self, key: str) -> dict[str, Any] | None:
-        with self._lock:
-            item = self._cache.get(key)
-            if not item:
-                return None
-            saved_at, payload = item
-            if monotonic() - saved_at > self._cache_ttl_seconds:
-                return None
-            return dict(payload)
-
-    def _cache_set(self, key: str, payload: dict[str, Any]) -> None:
-        with self._lock:
-            self._cache[key] = (monotonic(), dict(payload))
+        return {"symbol": _normalize_symbol(symbol), "is_market_open": None, "session": "disabled", "error": "yahoo_disabled"}
 
 
 class StooqProvider(RealMarketDataProvider):
+    """Disabled compatibility stub. Stooq is not used for live ideas."""
+
     def __init__(self) -> None:
         self.timeout = 8.0
         self._cache_ttl_seconds = 3600.0
@@ -333,119 +398,16 @@ class StooqProvider(RealMarketDataProvider):
         self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
-        normalized = _normalize_symbol(symbol)
-        data = self.get_candles(normalized, "D1", 2)
-        candles = data.get("candles") or []
-        price = candles[-1]["close"] if candles else None
-        prev = candles[-2]["close"] if len(candles) >= 2 else None
-        change = ((price - prev) / prev * 100) if price is not None and prev not in (None, 0) else None
-        return {
-            "symbol": normalized,
-            "price": price,
-            "previous_close": prev,
-            "day_change_percent": change,
-            "source_symbol": data.get("source_symbol"),
-            "last_updated_utc": datetime.now(timezone.utc).isoformat(),
-            "error": data.get("error"),
-            "source": "stooq",
-        }
+        return _unavailable(_normalize_symbol(symbol), "stooq_disabled", "stooq_disabled")
 
     def get_candles(self, symbol: str, timeframe: str, limit: int) -> dict[str, Any]:
-        normalized = _normalize_symbol(symbol)
-        tf = str(timeframe or "D1").upper().strip()
-        limit = max(1, min(int(limit or 120), 500))
-        source_symbol = _stooq_symbol(normalized)
-        cache_key = f"stooq::{normalized}::{limit}"
-
-        cached = self._cache_get(cache_key)
-        if cached and cached.get("candles"):
-            return {**cached, "cache_hit": True}
-
-        try:
-            resp = requests.get(
-                _STOOQ_DAILY_URL,
-                params={"s": source_symbol, "i": "d"},
-                timeout=self.timeout,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            text = resp.text.strip()
-
-            if resp.status_code >= 400 or not text or "No data" in text:
-                return _empty_candles(normalized, tf, source_symbol, "stooq_no_data")
-
-            reader = csv.DictReader(io.StringIO(text))
-            candles: list[dict[str, Any]] = []
-
-            for row in reader:
-                date_raw = row.get("Date")
-                op = _to_float(row.get("Open"))
-                hi = _to_float(row.get("High"))
-                lo = _to_float(row.get("Low"))
-                cl = _to_float(row.get("Close"))
-                vol = _to_float(row.get("Volume")) or 0.0
-
-                if not date_raw or None in {op, hi, lo, cl}:
-                    continue
-
-                ts = _parse_ts(date_raw)
-                if ts is None:
-                    continue
-
-                candles.append(
-                    {
-                        "timestamp": ts,
-                        "time": ts,
-                        "datetime": date_raw,
-                        "open": float(op),
-                        "high": float(hi),
-                        "low": float(lo),
-                        "close": float(cl),
-                        "volume": float(vol),
-                    }
-                )
-
-            candles.sort(key=lambda item: int(item["time"]))
-            candles = candles[-limit:]
-
-            result = {
-                "symbol": normalized,
-                "timeframe": tf,
-                "source_symbol": source_symbol,
-                "last_updated_utc": datetime.now(timezone.utc).isoformat(),
-                "candles": candles,
-                "error": None if candles else "stooq_empty",
-                "provider": "stooq",
-                "fallback_note": "Stooq даёт дневные свечи; используется как аварийный fallback.",
-                "cache_hit": False,
-            }
-
-            if candles:
-                self._cache_set(cache_key, result)
-
-            return result
-        except Exception as exc:
-            logger.warning("stooq_candles_failed symbol=%s tf=%s error=%s", normalized, tf, exc)
-            return _empty_candles(normalized, tf, source_symbol, str(exc))
+        return _empty_candles(_normalize_symbol(symbol), str(timeframe or "D1").upper(), _stooq_symbol(symbol), "stooq_disabled", provider="stooq_disabled")
 
     def get_latest_close(self, symbol: str, timeframe: str) -> dict[str, Any]:
-        data = self.get_candles(symbol, timeframe, 2)
-        candles = data.get("candles") or []
-        return {
-            "symbol": data.get("symbol"),
-            "timeframe": data.get("timeframe"),
-            "latest_close": candles[-1]["close"] if candles else None,
-            "source_symbol": data.get("source_symbol"),
-            "last_updated_utc": data.get("last_updated_utc"),
-            "error": data.get("error"),
-        }
+        return {"symbol": _normalize_symbol(symbol), "timeframe": timeframe, "latest_close": None, "source_symbol": _stooq_symbol(symbol), "last_updated_utc": datetime.now(timezone.utc).isoformat(), "error": "stooq_disabled"}
 
     def get_market_status(self, symbol: str) -> dict[str, Any]:
-        return {
-            "symbol": _normalize_symbol(symbol),
-            "is_market_open": None,
-            "session": "daily_historical_fallback",
-            "error": None,
-        }
+        return {"symbol": _normalize_symbol(symbol), "is_market_open": None, "session": "disabled", "error": "stooq_disabled"}
 
     def _cache_get(self, key: str) -> dict[str, Any] | None:
         with self._lock:
@@ -464,16 +426,16 @@ class StooqProvider(RealMarketDataProvider):
 
 class FinnhubProvider(RealMarketDataProvider):
     def get_quote(self, symbol: str) -> dict[str, Any]:
-        return StooqProvider().get_quote(symbol)
+        return _unavailable(_normalize_symbol(symbol), "finnhub_disabled", "finnhub_disabled")
 
     def get_candles(self, symbol: str, timeframe: str, limit: int) -> dict[str, Any]:
-        return StooqProvider().get_candles(symbol, timeframe, limit)
+        return _empty_candles(_normalize_symbol(symbol), str(timeframe or "H1").upper(), _normalize_symbol(symbol), "finnhub_disabled", provider="finnhub_disabled")
 
     def get_latest_close(self, symbol: str, timeframe: str) -> dict[str, Any]:
-        return StooqProvider().get_latest_close(symbol, timeframe)
+        return {"symbol": _normalize_symbol(symbol), "timeframe": timeframe, "latest_close": None, "source_symbol": _normalize_symbol(symbol), "last_updated_utc": datetime.now(timezone.utc).isoformat(), "error": "finnhub_disabled"}
 
     def get_market_status(self, symbol: str) -> dict[str, Any]:
-        return StooqProvider().get_market_status(symbol)
+        return {"symbol": _normalize_symbol(symbol), "is_market_open": None, "session": "disabled", "error": "finnhub_disabled"}
 
 
 def _safe_float_env(name: str, default: float, min_value: float, max_value: float) -> float:
@@ -481,6 +443,21 @@ def _safe_float_env(name: str, default: float, min_value: float, max_value: floa
         return max(min_value, min(float(os.getenv(name, str(default))), max_value))
     except Exception:
         return default
+
+
+def _normalize_bridge_candles(values: Any) -> list[dict[str, Any]]:
+    if not isinstance(values, list):
+        return []
+
+    output: list[dict[str, Any]] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        normalized = _normalize_candle_dict(item)
+        if normalized is not None:
+            output.append(normalized)
+    output.sort(key=lambda candle: int(candle["time"]))
+    return output
 
 
 def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:
@@ -519,6 +496,28 @@ def _normalize_td_candles(values: Any) -> list[dict[str, Any]]:
     return output
 
 
+def _normalize_candle_dict(item: dict[str, Any]) -> dict[str, Any] | None:
+    ts = _to_int(item.get("time") or item.get("timestamp"))
+    op = _to_float(item.get("open"))
+    hi = _to_float(item.get("high"))
+    lo = _to_float(item.get("low"))
+    cl = _to_float(item.get("close"))
+    vol = _to_float(item.get("volume") or item.get("tick_volume")) or 0.0
+
+    if ts is None or None in {op, hi, lo, cl}:
+        return None
+
+    return {
+        "timestamp": ts,
+        "time": ts,
+        "open": float(op),
+        "high": float(max(hi, op, cl)),
+        "low": float(min(lo, op, cl)),
+        "close": float(cl),
+        "volume": float(vol),
+    }
+
+
 def _parse_ts(value: Any) -> int | None:
     if value is None:
         return None
@@ -542,6 +541,13 @@ def _parse_ts(value: Any) -> int | None:
 def _to_float(value: Any) -> float | None:
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(value: Any) -> int | None:
+    try:
+        return int(float(value))
     except (TypeError, ValueError):
         return None
 
@@ -615,7 +621,7 @@ def _unavailable(symbol: str, source: str, message: str) -> dict[str, Any]:
     }
 
 
-def _empty_candles(symbol: str, timeframe: str, source_symbol: str, error: str) -> dict[str, Any]:
+def _empty_candles(symbol: str, timeframe: str, source_symbol: str, error: str, *, provider: str = "unavailable") -> dict[str, Any]:
     return {
         "symbol": symbol,
         "timeframe": timeframe,
@@ -623,5 +629,6 @@ def _empty_candles(symbol: str, timeframe: str, source_symbol: str, error: str) 
         "last_updated_utc": datetime.now(timezone.utc).isoformat(),
         "candles": [],
         "error": error,
-        "provider": "stooq",
+        "provider": provider,
+        "cache_hit": False,
     }
