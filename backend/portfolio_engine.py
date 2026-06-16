@@ -5,6 +5,75 @@ from typing import Any
 
 
 class PortfolioEngine:
+    def rank_signals(self, signals: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        """Rank worker-generated signals without failing older workflow code.
+
+        GitHub Actions app.worker expects PortfolioEngine.rank_signals(). The
+        method was missing, so the workflow crashed after signal generation.
+        Keep this implementation defensive: normalize scores from common fields
+        and return the same signal payloads sorted from strongest to weakest.
+        """
+        ranked: list[dict[str, Any]] = []
+        for index, signal in enumerate(signals or []):
+            if not isinstance(signal, dict):
+                continue
+            item = dict(signal)
+            score = self._score_signal(item)
+            item.setdefault("portfolio_score", score)
+            item.setdefault("rank_reason", self._rank_reason(item, score))
+            item["rank"] = 0
+            item["_rank_index"] = index
+            ranked.append(item)
+
+        ranked.sort(
+            key=lambda item: (
+                float(item.get("portfolio_score") or 0.0),
+                float(item.get("confidence") or item.get("score") or 0.0),
+                -int(item.get("_rank_index") or 0),
+            ),
+            reverse=True,
+        )
+
+        for position, item in enumerate(ranked, start=1):
+            item["rank"] = position
+            item.pop("_rank_index", None)
+
+        return ranked
+
+    def heatmap(self, signals: list[dict[str, Any]] | None) -> dict[str, Any]:
+        """Build a compact currency/symbol heatmap for the worker output."""
+        items: list[dict[str, Any]] = []
+        for signal in signals or []:
+            if not isinstance(signal, dict):
+                continue
+            symbol = str(signal.get("symbol") or signal.get("instrument") or "").upper()
+            action = str(signal.get("action") or signal.get("signal") or signal.get("direction") or "WAIT").upper()
+            score = self._score_signal(signal)
+            bias = "neutral"
+            if action in {"BUY", "BULLISH"}:
+                bias = "bullish"
+            elif action in {"SELL", "BEARISH"}:
+                bias = "bearish"
+            items.append({"symbol": symbol, "bias": bias, "score": score})
+        return {"updated_at_utc": datetime.now(timezone.utc).isoformat(), "items": items}
+
+    def market_news(self) -> dict[str, Any]:
+        return {
+            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "items": [],
+            "status": "empty",
+            "message_ru": "Фоновый worker не подключает новостной провайдер.",
+        }
+
+    def calendar_events(self) -> dict[str, Any]:
+        return {
+            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "items": [],
+            "events": [],
+            "status": "empty",
+            "message_ru": "Фоновый worker не подключает экономический календарь.",
+        }
+
     def market_ideas(self) -> dict[str, Any]:
         ideas = [
             self._idea("EURUSD", "M15", "BULLISH", 72, "EURUSD intraday long"),
@@ -133,6 +202,42 @@ class PortfolioEngine:
         }
 
         return mapping.get(key, neutral)
+
+    def _score_signal(self, signal: dict[str, Any]) -> int:
+        raw_score = (
+            signal.get("portfolio_score")
+            or signal.get("prop_score")
+            or signal.get("score")
+            or signal.get("confidence")
+            or 0
+        )
+        try:
+            score = int(float(raw_score))
+        except Exception:
+            score = 0
+
+        action = str(signal.get("action") or signal.get("signal") or signal.get("direction") or "").upper()
+        if action in {"BUY", "SELL", "BULLISH", "BEARISH"}:
+            score += 5
+        elif action in {"WAIT", "NEUTRAL", "NO_TRADE"}:
+            score -= 5
+
+        rr = signal.get("rr") or signal.get("risk_reward") or signal.get("riskReward")
+        try:
+            rr_value = float(rr)
+            if rr_value >= 2.0:
+                score += 10
+            elif rr_value >= 1.3:
+                score += 5
+        except Exception:
+            pass
+
+        return max(0, min(100, score))
+
+    def _rank_reason(self, signal: dict[str, Any], score: int) -> str:
+        symbol = str(signal.get("symbol") or signal.get("instrument") or "MARKET").upper()
+        action = str(signal.get("action") or signal.get("signal") or signal.get("direction") or "WAIT").upper()
+        return f"{symbol}: {action}, portfolio_score={score}."
 
     def _summary(self, *, symbol: str, timeframe: str, direction: str) -> str:
         if direction == "BULLISH":
