@@ -155,6 +155,7 @@ def _future_delta_direction_with_reason(idea: dict[str, Any]) -> tuple[str, str]
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     timeframe = str(idea.get("timeframe") or idea.get("tf") or "").upper().strip() or None
     if symbol:
+        sources.append(("mt4_candle_store", _mt4_store_context(symbol, timeframe)))
         sources.append(("mt4_volume_cluster", get_latest_volume_cluster(symbol, timeframe)))
 
     checked: list[str] = []
@@ -494,6 +495,44 @@ def _candles(idea: dict[str, Any]) -> list[dict[str, Any]]:
     return _candles_from_main(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
 
 
+def _mt4_store_context(symbol: str, timeframe: str | None = None) -> dict[str, Any] | None:
+    symbol = _normalize_symbol(symbol)
+    if not symbol:
+        return None
+    module = sys.modules.get("app.main")
+    if module is None:
+        return None
+    resolver = getattr(module, "resolve_mt4_candle_item", None)
+    if callable(resolver):
+        timeframes = [str(timeframe or "").upper().strip()] if timeframe else []
+        for fallback_timeframe in ("M15", "H1", "H4", "D1"):
+            if fallback_timeframe not in timeframes:
+                timeframes.append(fallback_timeframe)
+        for candidate_timeframe in [tf for tf in timeframes if tf]:
+            try:
+                _, item = resolver(symbol, candidate_timeframe)
+                if isinstance(item, dict):
+                    return item
+            except Exception:
+                continue
+    store = getattr(module, "MT4_CANDLE_STORE", None)
+    if not isinstance(store, dict):
+        return None
+    requested_timeframe = str(timeframe or "").upper().strip()
+    for key, item in store.items():
+        if not isinstance(item, dict):
+            continue
+        try:
+            stored_symbol, stored_timeframe = str(key).split(":", 1)
+        except ValueError:
+            continue
+        if requested_timeframe and stored_timeframe != requested_timeframe:
+            continue
+        if _normalize_symbol(stored_symbol) == symbol:
+            return item
+    return None
+
+
 def _candle_diagnostics(idea: dict[str, Any], candles: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     rows = candles if candles is not None else _candles(idea)
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
@@ -579,6 +618,7 @@ def _hft_signal_context(idea: dict[str, Any]) -> dict[str, Any]:
         ("volume_delta", idea.get("volume_delta") if isinstance(idea.get("volume_delta"), dict) else None),
     ]
     if symbol:
+        sources.append(("mt4_candle_store", _mt4_store_context(symbol, timeframe)))
         sources.append(("mt4_volume_cluster", get_latest_volume_cluster(symbol, timeframe)))
     for source_name, payload in sources:
         if not isinstance(payload, dict):
@@ -608,6 +648,7 @@ def _dpoc_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
     market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else None
     sources = [idea, market_context, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None]
     if symbol:
+        sources.append(_mt4_store_context(symbol, timeframe))
         sources.append(get_latest_volume_cluster(symbol, timeframe))
     for payload in sources:
         context = build_dpoc_context(payload, symbol, current_price)
@@ -632,6 +673,7 @@ def _margin_zone_context(idea: dict[str, Any]) -> dict[str, Any]:
     market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else None
     sources = [idea, market_context, idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None]
     if symbol:
+        sources.append(_mt4_store_context(symbol, timeframe))
         sources.append(get_latest_volume_cluster(symbol, timeframe))
     for payload in sources:
         context = build_margin_zone_context(payload, symbol, current_price, entry_price)
