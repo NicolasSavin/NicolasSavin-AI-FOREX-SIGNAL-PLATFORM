@@ -111,24 +111,41 @@ function formatListValue(value) {
   return String(value);
 }
 
+function resolveOptionsSourceLabel(idea) {
+  const source = firstText(idea.options_source, idea.optionsSource, idea.external_options_source);
+  return source === "MT4_OptionsFX" || String(source).toLowerCase() === "mt4_optionsfx" ? "MT4_OptionsFX" : "CME_OptionsFX";
+}
+
 function resolveExternalOptionsRu(idea) {
   return firstText(
+    idea.options_summary_ru,
+    idea.optionsSummaryRu,
     idea.external_options_ru,
     idea.advisor_signal?.external_options_filter?.text_ru,
     idea.prop_signal_score?.external_options_filter?.text_ru,
-  ) || "CME_OptionsFX: нет данных, слой не блокирует сделку";
+  ) || `${resolveOptionsSourceLabel(idea)}: нет данных, слой не блокирует сделку`;
 }
 
 function resolveExternalOptionsBias(idea) {
   return firstText(
+    idea.options_bias,
+    idea.optionsBias,
     idea.external_options_bias,
     idea.advisor_signal?.external_options_filter?.option_bias,
     idea.prop_signal_score?.external_options_filter?.option_bias,
   ) || "neutral";
 }
 
+function resolveOptionsKeyStrikes(idea) {
+  return idea.key_strikes || idea.keyStrikes || idea.key_levels || idea.keyLevels || idea.external_options_key_strikes;
+}
+
+function resolveOptionsMaxPain(idea) {
+  return idea.max_pain ?? idea.maxPain ?? idea.external_options_max_pain;
+}
+
 function renderExternalOptionsCompact(idea) {
-  return `<div class="idea-news-line">CME_OptionsFX: <strong>${escapeHtml(resolveExternalOptionsBias(idea))}</strong> · strikes: ${escapeHtml(formatListValue(idea.external_options_key_strikes))} · max pain: ${escapeHtml(formatListValue(idea.external_options_max_pain))}</div>`;
+  return `<div class="idea-news-line">${escapeHtml(resolveOptionsSourceLabel(idea))}: <strong>${escapeHtml(resolveExternalOptionsBias(idea))}</strong> · strikes: ${escapeHtml(formatListValue(resolveOptionsKeyStrikes(idea)))} · max pain: ${escapeHtml(formatListValue(resolveOptionsMaxPain(idea)))}</div>`;
 }
 
 
@@ -585,7 +602,7 @@ function openIdeaModal(idea) {
         <div><span>До DPOC</span><strong>${escapeHtml(dpoc.distance)}</strong></div>
       </div>
       <p class="modal-text"><strong>Новости/фундаментал:</strong> ${escapeHtml(resolveNewsContext(idea))}</p>
-      <p class="modal-text"><strong>Options/CME confirmation:</strong> ${escapeHtml(resolveExternalOptionsRu(idea))}<br><strong>Bias:</strong> ${escapeHtml(resolveExternalOptionsBias(idea))}; <strong>Key strikes:</strong> ${escapeHtml(formatListValue(idea.external_options_key_strikes))}; <strong>Max pain:</strong> ${escapeHtml(formatListValue(idea.external_options_max_pain))}</p>
+      <p class="modal-text"><strong>Options confirmation:</strong> ${escapeHtml(resolveExternalOptionsRu(idea))}<br><strong>Source:</strong> ${escapeHtml(resolveOptionsSourceLabel(idea))}; <strong>Bias:</strong> ${escapeHtml(resolveExternalOptionsBias(idea))}; <strong>Key strikes:</strong> ${escapeHtml(formatListValue(resolveOptionsKeyStrikes(idea)))}; <strong>Max pain:</strong> ${escapeHtml(formatListValue(resolveOptionsMaxPain(idea)))}</p>
       <p class="modal-text"><strong>CumDelta source:</strong> ${escapeHtml(volumeDeltaSourceLabel(resolveVolumeDelta(idea).source))}; <strong>Delta divergence:</strong> ${resolveVolumeDelta(idea).divergence ? "true" : "false"}; <strong>Price/CumDelta:</strong> ${escapeHtml(resolveVolumeDelta(idea).priceTrend)} / ${escapeHtml(resolveVolumeDelta(idea).cumdeltaTrend)}</p>
       <p class="modal-text"><strong>Источник:</strong> ${escapeHtml(idea.data_provider || idea.provider || "нет данных")}</p>
       <p class="modal-text"><strong>Setup:</strong> ${escapeHtml(idea.setup_type || "—")}; <strong>BOS:</strong> ${escapeHtml(idea.market_structure?.bos || "—")}; <strong>Sweep:</strong> ${escapeHtml(idea.liquidity?.sweep || "—")}; <strong>FVG:</strong> ${escapeHtml(idea.fvg?.type || idea.selected_zone_type || "—")}; <strong>HTF bias:</strong> ${escapeHtml(idea.htf_bias || idea.market_structure?.trend_regime || "—")}</p>
