@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+try:
+    from app.services.mt4_options_bridge import get_latest_options_levels
+except Exception:  # pragma: no cover - keep prop engine import-safe
+    get_latest_options_levels = None  # type: ignore[assignment]
+
 
 @dataclass(frozen=True)
 class PropScore:
@@ -40,6 +45,7 @@ def _text_blob(payload: dict[str, Any]) -> str:
         "divergence_context",
         "options_summary_ru",
         "options_context",
+        "mt4_options_summary_ru",
         "note",
         "description",
         "summary",
@@ -50,10 +56,111 @@ def _text_blob(payload: dict[str, Any]) -> str:
             parts.append(str(value))
         elif value is not None:
             parts.append(str(value))
-    market_context = payload.get("market_context")
-    if isinstance(market_context, dict):
-        parts.append(str(market_context))
+    for key in ("market_context", "options_layer", "mt4_options", "optionsAnalysis"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            parts.append(str(value))
     return " ".join(parts).lower()
+
+
+def _format_levels(values: Any, limit: int = 6) -> str:
+    if not isinstance(values, list):
+        return "—"
+    out: list[str] = []
+    for value in values[:limit]:
+        try:
+            number = float(value)
+            out.append(f"{number:.5f}".rstrip("0").rstrip("."))
+        except Exception:
+            continue
+    return ", ".join(out) if out else "—"
+
+
+def _extract_mt4_options(symbol: str) -> dict[str, Any]:
+    if get_latest_options_levels is None:
+        return {}
+    try:
+        payload = get_latest_options_levels(symbol)
+    except Exception:
+        return {}
+    if not isinstance(payload, dict) or not payload.get("available"):
+        return {}
+    analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+    if not analysis.get("available"):
+        return {}
+    return {"payload": payload, "analysis": analysis}
+
+
+def _merge_mt4_options_layer(idea: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(idea.get("symbol") or idea.get("pair") or "").upper().replace("/", "").replace(".", "").strip()
+    if not symbol:
+        return idea
+    options = _extract_mt4_options(symbol)
+    if not options:
+        return idea
+
+    payload = options["payload"]
+    analysis = options["analysis"]
+    key_strikes = analysis.get("keyStrikes") or analysis.get("keyLevels") or []
+    max_pain = analysis.get("maxPain")
+    bias = str(analysis.get("bias") or analysis.get("prop_bias") or "neutral")
+    source = str(payload.get("source") or analysis.get("source") or "mt4_optionsfx")
+    summary_ru = str(analysis.get("summary_ru") or "MT4 OptionsFX уровни получены из советника.")
+
+    merged = dict(idea)
+    merged["options_available"] = True
+    merged["optionsAvailable"] = True
+    merged["options_source"] = source
+    merged["optionsSource"] = source
+    merged["options_layer_source"] = source
+    merged["optionsLayerSource"] = source
+    merged["options_summary_ru"] = summary_ru
+    merged["optionsSummaryRu"] = summary_ru
+    merged["mt4_options_summary_ru"] = summary_ru
+    merged["options_bias"] = bias
+    merged["optionsBias"] = bias
+    merged["options_prop_bias"] = analysis.get("prop_bias") or bias
+    merged["optionsPropBias"] = analysis.get("prop_bias") or bias
+    merged["key_strikes"] = key_strikes
+    merged["keyStrikes"] = key_strikes
+    merged["key_levels"] = analysis.get("keyLevels") or key_strikes
+    merged["keyLevels"] = analysis.get("keyLevels") or key_strikes
+    merged["max_pain"] = max_pain
+    merged["maxPain"] = max_pain
+    merged["call_walls"] = analysis.get("callWalls") or []
+    merged["callWalls"] = analysis.get("callWalls") or []
+    merged["put_walls"] = analysis.get("putWalls") or []
+    merged["putWalls"] = analysis.get("putWalls") or []
+    merged["target_levels"] = analysis.get("targetLevels") or []
+    merged["targetLevels"] = analysis.get("targetLevels") or []
+    merged["hedge_levels"] = analysis.get("hedgeLevels") or []
+    merged["hedgeLevels"] = analysis.get("hedgeLevels") or []
+    merged["pinning_risk"] = analysis.get("pinningRisk")
+    merged["pinningRisk"] = analysis.get("pinningRisk")
+    merged["range_risk"] = analysis.get("rangeRisk")
+    merged["rangeRisk"] = analysis.get("rangeRisk")
+    merged["options_layer"] = analysis
+    merged["optionsLayer"] = analysis
+    merged["mt4_options"] = payload
+    merged["mt4Options"] = payload
+
+    display = f"MT4_OptionsFX: {bias} · strikes: {_format_levels(key_strikes)} · max pain: {_format_levels([max_pain] if max_pain is not None else [])}"
+    merged["cme_optionsfx_display"] = display
+    merged["cmeOptionsfxDisplay"] = display
+    merged["options_display"] = display
+    merged["optionsDisplay"] = display
+    merged["cme_optionsfx"] = {
+        "available": True,
+        "source": source,
+        "label": "MT4_OptionsFX",
+        "bias": bias,
+        "key_strikes": key_strikes,
+        "keyStrikes": key_strikes,
+        "max_pain": max_pain,
+        "maxPain": max_pain,
+        "summary_ru": summary_ru,
+    }
+    return merged
 
 
 class PropEngine:
@@ -67,7 +174,7 @@ class PropEngine:
     def enrich_idea(self, idea: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(idea, dict):
             return idea
-        enriched = dict(idea)
+        enriched = _merge_mt4_options_layer(dict(idea))
         report = self.build_report(enriched)
         enriched["prop_desk"] = report
         enriched["propDesk"] = report
@@ -110,7 +217,7 @@ class PropEngine:
         symbol = str(idea.get("symbol") or idea.get("pair") or "Инструмент").upper()
         summary = self._summary(symbol=symbol, signal=signal, grade=grade, confidence=confidence, layers=layers)
         return {
-            "version": "prop_engine_v1",
+            "version": "prop_engine_v2_mt4_optionsfx",
             "score": round(score, 3),
             "confidence": confidence,
             "grade": grade,
@@ -150,10 +257,24 @@ class PropEngine:
     def options_score(self, idea: dict[str, Any]) -> PropScore:
         blob = _text_blob(idea)
         available = bool(idea.get("options_available") or idea.get("optionsAvailable"))
-        if "options unavailable" in blob or "опционный слой недоступ" in blob or "unavailable" in blob:
+        if "options unavailable" in blob or "опционный слой недоступ" in blob:
             return PropScore("options", 0.25, "unavailable", "Опционный слой недоступен или неполный, вклад в confidence ограничен.")
+        if available:
+            analysis = idea.get("options_layer") if isinstance(idea.get("options_layer"), dict) else {}
+            pinning = str(analysis.get("pinningRisk") or idea.get("pinningRisk") or "").lower()
+            range_risk = str(analysis.get("rangeRisk") or idea.get("rangeRisk") or "").lower()
+            key_count = len(idea.get("keyStrikes") or idea.get("key_strikes") or []) if isinstance(idea.get("keyStrikes") or idea.get("key_strikes"), list) else 0
+            wall_count = len(idea.get("callWalls") or []) + len(idea.get("putWalls") or [])
+            score = 0.58 + min(key_count, 6) * 0.035 + min(wall_count, 4) * 0.035
+            if pinning == "high":
+                score -= 0.08
+            if range_risk == "medium":
+                score -= 0.03
+            score = _clamp(score, 0.35, 0.90)
+            label = "supportive" if score >= 0.70 else "mixed"
+            return PropScore("options", score, label, "MT4_OptionsFX слой из советника: key strikes, walls, target/hedge levels, pinning/range risk.")
         hits = sum(token in blob for token in ("option", "опцион", "maxpain", "max pain", "strike", "страйк", "gamma", "putcall", "put/call", "open interest", "oi"))
-        score = _clamp((0.42 if available else 0.22) + hits * 0.09)
+        score = _clamp(0.22 + hits * 0.09)
         label = "supportive" if score >= 0.70 else "mixed" if score >= 0.45 else "thin"
         return PropScore("options", score, label, "Оценка put/call, key strikes, max pain, gamma/OI контекста.")
 
