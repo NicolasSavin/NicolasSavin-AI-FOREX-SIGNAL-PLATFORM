@@ -5,7 +5,7 @@ from typing import Any
 
 try:
     from app.services.mt4_options_bridge import get_latest_options_levels
-except Exception:  # pragma: no cover - keep prop engine import-safe
+except Exception:
     get_latest_options_levels = None  # type: ignore[assignment]
 
 
@@ -30,26 +30,26 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
 
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _direction(idea: dict[str, Any]) -> str:
+    raw = str(idea.get("signal") or idea.get("action") or idea.get("direction") or idea.get("bias") or "").lower()
+    if raw in {"buy", "long", "bullish", "покупка"}:
+        return "buy"
+    if raw in {"sell", "short", "bearish", "продажа"}:
+        return "sell"
+    return ""
+
+
 def _text_blob(payload: dict[str, Any]) -> str:
     parts: list[str] = []
     for key in (
-        "symbol",
-        "signal",
-        "action",
-        "direction",
-        "bias",
-        "market_structure",
-        "smart_money_context",
-        "liquidity_context",
-        "volume_context",
-        "divergence_context",
-        "options_summary_ru",
-        "options_context",
-        "mt4_options_summary_ru",
-        "note",
-        "description",
-        "summary",
-        "unified_narrative",
+        "symbol", "signal", "action", "direction", "bias", "market_structure",
+        "smart_money_context", "liquidity_context", "volume_context", "divergence_context",
+        "options_summary_ru", "options_context", "mt4_options_summary_ru", "note", "description",
+        "summary", "unified_narrative",
     ):
         value = payload.get(key)
         if isinstance(value, (dict, list)):
@@ -102,10 +102,10 @@ def _merge_mt4_options_layer(idea: dict[str, Any]) -> dict[str, Any]:
     payload = options["payload"]
     analysis = options["analysis"]
     key_strikes = analysis.get("keyStrikes") or analysis.get("keyLevels") or []
-    max_pain = analysis.get("maxPain")
+    max_pain = analysis.get("maxPain") or analysis.get("max_pain")
     bias = str(analysis.get("bias") or analysis.get("prop_bias") or "neutral")
     source = str(payload.get("source") or analysis.get("source") or "mt4_optionsfx")
-    summary_ru = str(analysis.get("summary_ru") or "MT4 OptionsFX уровни получены из советника.")
+    summary_ru = str(analysis.get("summary_ru") or "MT4 OptionsFX уровни получены из графических объектов индикатора.")
 
     merged = dict(idea)
     merged["options_available"] = True
@@ -121,6 +121,10 @@ def _merge_mt4_options_layer(idea: dict[str, Any]) -> dict[str, Any]:
     merged["optionsBias"] = bias
     merged["options_prop_bias"] = analysis.get("prop_bias") or bias
     merged["optionsPropBias"] = analysis.get("prop_bias") or bias
+    merged["options_prop_score"] = analysis.get("prop_score")
+    merged["optionsPropScore"] = analysis.get("prop_score")
+    merged["options_score_breakdown"] = analysis.get("score_breakdown") or {}
+    merged["optionsScoreBreakdown"] = analysis.get("score_breakdown") or {}
     merged["key_strikes"] = key_strikes
     merged["keyStrikes"] = key_strikes
     merged["key_levels"] = analysis.get("keyLevels") or key_strikes
@@ -164,13 +168,6 @@ def _merge_mt4_options_layer(idea: dict[str, Any]) -> dict[str, Any]:
 
 
 class PropEngine:
-    """Institutional-style scoring layer for trade ideas.
-
-    This does not invent trades. It grades and explains the already generated
-    backend idea using liquidity, market structure, execution, options, volume
-    and risk logic.
-    """
-
     def enrich_idea(self, idea: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(idea, dict):
             return idea
@@ -186,6 +183,8 @@ class PropEngine:
         enriched["propConfidence"] = report["confidence"]
         enriched["prop_summary_ru"] = report["summary_ru"]
         enriched["propSummaryRu"] = report["summary_ru"]
+        enriched["score_breakdown"] = report["score_breakdown"]
+        enriched["scoreBreakdown"] = report["score_breakdown"]
         enriched["liquidity_model"] = report["layers"]["liquidity"]
         enriched["liquidityModel"] = report["layers"]["liquidity"]
         enriched["execution_model"] = report["layers"]["execution"]
@@ -202,28 +201,35 @@ class PropEngine:
             "risk": self.risk_score(idea).__dict__,
         }
         weights = {
-            "liquidity": 0.24,
-            "structure": 0.22,
-            "execution": 0.18,
-            "options": 0.14,
-            "volume": 0.10,
+            "liquidity": 0.22,
+            "structure": 0.20,
+            "execution": 0.16,
+            "options": 0.18,
+            "volume": 0.12,
             "risk": 0.12,
         }
-        score = sum(float(layers[name]["score"]) * weight for name, weight in weights.items())
-        score = _clamp(score)
+        weighted = {name: round(float(layers[name]["score"]) * weight * 100, 2) for name, weight in weights.items()}
+        score = _clamp(sum(weighted.values()) / 100.0)
         confidence = round(score * 100)
         grade = self._grade(score)
         signal = str(idea.get("signal") or idea.get("action") or "WAIT").upper()
         symbol = str(idea.get("symbol") or idea.get("pair") or "Инструмент").upper()
         summary = self._summary(symbol=symbol, signal=signal, grade=grade, confidence=confidence, layers=layers)
         return {
-            "version": "prop_engine_v2_mt4_optionsfx",
+            "version": "prop_engine_v3_score_breakdown",
             "score": round(score, 3),
             "confidence": confidence,
             "grade": grade,
             "signal_quality": self._signal_quality(score),
             "summary_ru": summary,
             "weights": weights,
+            "weighted_points": weighted,
+            "score_breakdown": {
+                "total": confidence,
+                "weighted_points": weighted,
+                "layers": layers,
+                "options_raw": idea.get("options_score_breakdown") or {},
+            },
             "layers": layers,
             "checklist": self._checklist(layers),
         }
@@ -263,16 +269,23 @@ class PropEngine:
             analysis = idea.get("options_layer") if isinstance(idea.get("options_layer"), dict) else {}
             pinning = str(analysis.get("pinningRisk") or idea.get("pinningRisk") or "").lower()
             range_risk = str(analysis.get("rangeRisk") or idea.get("rangeRisk") or "").lower()
-            key_count = len(idea.get("keyStrikes") or idea.get("key_strikes") or []) if isinstance(idea.get("keyStrikes") or idea.get("key_strikes"), list) else 0
-            wall_count = len(idea.get("callWalls") or []) + len(idea.get("putWalls") or [])
-            score = 0.58 + min(key_count, 6) * 0.035 + min(wall_count, 4) * 0.035
+            opt_bias = str(analysis.get("prop_bias") or analysis.get("bias") or idea.get("optionsBias") or "neutral").lower()
+            opt_score = _num(analysis.get("prop_score") or idea.get("options_prop_score") or 0)
+            direction = _direction(idea)
+            key_count = len(_as_list(idea.get("keyStrikes") or idea.get("key_strikes")))
+            wall_count = len(_as_list(idea.get("callWalls"))) + len(_as_list(idea.get("putWalls")))
+            score = 0.50 + min(key_count, 8) * 0.025 + min(wall_count, 6) * 0.025
+            if (direction == "buy" and opt_bias == "bullish") or (direction == "sell" and opt_bias == "bearish"):
+                score += min(0.22, abs(opt_score) * 0.035 + 0.08)
+            elif opt_bias in {"bullish", "bearish"} and direction:
+                score -= min(0.18, abs(opt_score) * 0.03 + 0.06)
             if pinning == "high":
-                score -= 0.08
+                score -= 0.06
             if range_risk == "medium":
-                score -= 0.03
-            score = _clamp(score, 0.35, 0.90)
-            label = "supportive" if score >= 0.70 else "mixed"
-            return PropScore("options", score, label, "MT4_OptionsFX слой из советника: key strikes, walls, target/hedge levels, pinning/range risk.")
+                score -= 0.02
+            score = _clamp(score, 0.30, 0.92)
+            label = "supportive" if score >= 0.70 else "mixed" if score >= 0.50 else "conflicting"
+            return PropScore("options", score, label, "MT4_OptionsFX: key strikes, call/put walls, max pain, pinning/range risk and direction alignment.")
         hits = sum(token in blob for token in ("option", "опцион", "maxpain", "max pain", "strike", "страйк", "gamma", "putcall", "put/call", "open interest", "oi"))
         score = _clamp(0.22 + hits * 0.09)
         label = "supportive" if score >= 0.70 else "mixed" if score >= 0.45 else "thin"
@@ -280,6 +293,28 @@ class PropEngine:
 
     def volume_score(self, idea: dict[str, Any]) -> PropScore:
         blob = _text_blob(idea)
+        direction = _direction(idea)
+        delta = _num(idea.get("delta") or idea.get("future_delta") or idea.get("cum_delta") or idea.get("cumulative_delta"))
+        future_volume = _num(idea.get("future_volume") or idea.get("futureVolume"))
+        hft = str(idea.get("hft_signal") or idea.get("hftSignal") or "").lower()
+        has_real_flow = bool(delta or future_volume or hft in {"bullish", "bearish"})
+        if has_real_flow:
+            score = 0.48
+            if future_volume:
+                score += 0.10
+            if direction == "buy" and delta > 0:
+                score += 0.18
+            elif direction == "sell" and delta < 0:
+                score += 0.18
+            elif direction and delta:
+                score -= 0.14
+            if (direction == "buy" and hft == "bullish") or (direction == "sell" and hft == "bearish"):
+                score += 0.12
+            elif direction and hft in {"bullish", "bearish"}:
+                score -= 0.10
+            score = _clamp(score, 0.25, 0.90)
+            label = "confirmed" if score >= 0.70 else "mixed" if score >= 0.48 else "conflicting"
+            return PropScore("volume", score, label, f"MT4 flow: delta={round(delta, 2)}, future_volume={round(future_volume, 2)}, hft={hft or 'n/a'}.")
         hits = sum(token in blob for token in ("volume", "объем", "объём", "delta", "дельта", "cluster", "oi", "open interest", "cme"))
         score = _clamp(0.20 + hits * 0.11)
         label = "confirmed" if score >= 0.70 else "limited" if score >= 0.42 else "missing"
