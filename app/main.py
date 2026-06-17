@@ -930,7 +930,7 @@ def build_market() -> dict[str, Any]:
         signals, failed_symbols = generate_trade_ideas()
 
         if signals:
-            enriched_signals = enrich_ideas_with_prop_scores(signals)
+            enriched_signals = _attach_mt4_optionsfx_display_many(enrich_ideas_with_prop_scores(signals))
             lifecycle = apply_idea_lifecycle(enriched_signals)
             return {
                 "signals": lifecycle["ideas"],
@@ -1091,6 +1091,7 @@ def _queue_market_ideas_refresh() -> bool:
     return True
 
 
+@app.get("/api/ideas/market")
 @app.get("/ideas/market")
 def ideas_market():
     with timing_log(logger, "ideas_market_request"):
@@ -4377,6 +4378,85 @@ def _extract_numeric_price(row: dict[str, Any] | None) -> tuple[float | None, st
     return None, None
 
 
+def _format_options_levels_for_display(values: Any, limit: int = 6) -> str:
+    if not isinstance(values, list):
+        return "—"
+    out: list[str] = []
+    for value in values[:limit]:
+        try:
+            out.append((f"{float(value):.5f}").rstrip("0").rstrip("."))
+        except (TypeError, ValueError):
+            text = str(value or "").strip()
+            if text:
+                out.append(text)
+    return ", ".join(out) if out else "—"
+
+
+def _attach_mt4_optionsfx_display(signal: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(signal or {})
+    symbol = normalize_symbol(str(normalized.get("symbol") or normalized.get("instrument") or normalized.get("pair") or ""))
+    if not symbol:
+        return normalized
+    try:
+        options_snapshot = get_latest_options_levels(symbol)
+    except Exception:
+        logger.exception("mt4_optionsfx_display_lookup_failed symbol=%s", symbol)
+        return normalized
+    if not isinstance(options_snapshot, dict) or not options_snapshot.get("available"):
+        return normalized
+    analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
+    key_strikes = analysis.get("keyStrikes") or analysis.get("keyLevels") or []
+    max_pain = analysis.get("maxPain")
+    bias = analysis.get("bias") or analysis.get("prop_bias") or "neutral"
+    source = "MT4_OptionsFX"
+    summary_ru = analysis.get("summary_ru")
+    display = f"{source}: {bias} · strikes: {_format_options_levels_for_display(key_strikes)} · max pain: {_format_options_levels_for_display([max_pain] if max_pain is not None else [])}"
+    normalized.update({
+        "options_source": source,
+        "optionsSource": source,
+        "options_available": True,
+        "optionsAvailable": True,
+        "options_bias": bias,
+        "optionsBias": bias,
+        "key_strikes": key_strikes,
+        "keyStrikes": key_strikes,
+        "key_levels": analysis.get("keyLevels") or key_strikes,
+        "keyLevels": analysis.get("keyLevels") or key_strikes,
+        "max_pain": max_pain,
+        "maxPain": max_pain,
+        "call_walls": analysis.get("callWalls") or [],
+        "put_walls": analysis.get("putWalls") or [],
+        "target_levels": analysis.get("targetLevels") or [],
+        "hedge_levels": analysis.get("hedgeLevels") or [],
+        "pinning_risk": analysis.get("pinningRisk"),
+        "range_risk": analysis.get("rangeRisk"),
+        "options_summary_ru": summary_ru,
+        "optionsSummaryRu": summary_ru,
+        "options_analysis": analysis,
+        "options_display": display,
+        "external_options_ru": summary_ru or display,
+        "external_options_bias": bias,
+        "external_options_key_strikes": key_strikes,
+        "external_options_max_pain": max_pain,
+        "external_options_source": source,
+        "debug_options_available": True,
+        "debug_options_source_selected": "mt4_optionsfx",
+    })
+    market_context = normalized.get("market_context") if isinstance(normalized.get("market_context"), dict) else {}
+    market_context.update({"optionsAnalysis": analysis, "options_available": True, "options_source": source, "options_summary_ru": summary_ru})
+    normalized["market_context"] = market_context
+    advisor_signal = normalized.get("advisor_signal") if isinstance(normalized.get("advisor_signal"), dict) else None
+    if advisor_signal is not None:
+        advisor_signal = dict(advisor_signal)
+        advisor_signal["external_options_source"] = source
+        normalized["advisor_signal"] = advisor_signal
+    return normalized
+
+
+def _attach_mt4_optionsfx_display_many(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_attach_mt4_optionsfx_display(signal) for signal in signals if isinstance(signal, dict)]
+
+
 def _normalize_quote_signal(signal: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(signal or {})
     symbol = normalize_symbol(str(normalized.get("symbol") or normalized.get("instrument") or ""))
@@ -4402,7 +4482,7 @@ def _normalize_quote_signal(signal: dict[str, Any]) -> dict[str, Any]:
         options_available = bool(options_snapshot.get("available"))
         analysis = options_snapshot.get("analysis") if isinstance(options_snapshot.get("analysis"), dict) else {}
         normalized["options_available"] = options_available
-        normalized["options_source"] = options_snapshot.get("source")
+        normalized["options_source"] = "MT4_OptionsFX" if options_available else options_snapshot.get("source")
         normalized["options_summary_ru"] = (
             str(analysis.get("summary_ru") or "").strip()
             if options_available
@@ -4414,7 +4494,7 @@ def _normalize_quote_signal(signal: dict[str, Any]) -> dict[str, Any]:
         market_context["options_available"] = options_available
         market_context["options_source"] = normalized["options_source"] if options_available else "unavailable"
         normalized["market_context"] = market_context
-    return normalized
+    return _attach_mt4_optionsfx_display(normalized)
 
 
 

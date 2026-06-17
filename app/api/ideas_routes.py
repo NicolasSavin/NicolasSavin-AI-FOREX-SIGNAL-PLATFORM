@@ -9,6 +9,7 @@ from fastapi import APIRouter
 
 from app.signal_aggregator import SignalAggregator
 from app.services.market_structure_overlay import attach_market_structure_overlays
+from app.services.mt4_options_bridge import get_latest_options_levels
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.signal_hub import DEFAULT_PAIRS
 from app.services.trade_idea_service import TradeIdeaService
@@ -59,6 +60,105 @@ def _localize_output_layer(payload: object) -> object:
         if ru_key:
             localized[ru_key] = localized[key]
     return localized
+
+
+def _format_options_levels(values: Any, limit: int = 6) -> str:
+    if not isinstance(values, list):
+        return "—"
+    formatted: list[str] = []
+    for value in values[:limit]:
+        try:
+            formatted.append((f"{float(value):.5f}").rstrip("0").rstrip("."))
+        except (TypeError, ValueError):
+            text = str(value or "").strip()
+            if text:
+                formatted.append(text)
+    return ", ".join(formatted) if formatted else "—"
+
+
+def _attach_mt4_optionsfx_to_idea(idea: dict) -> dict:
+    if not isinstance(idea, dict):
+        return idea
+    symbol = str(idea.get("symbol") or idea.get("pair") or idea.get("instrument") or "").upper().strip()
+    if not symbol:
+        return idea
+    try:
+        snapshot = get_latest_options_levels(symbol)
+    except Exception as exc:
+        logger.exception("ideas_mt4_optionsfx_lookup_failed symbol=%s reason=%s", symbol, exc)
+        return idea
+    if not isinstance(snapshot, dict) or not snapshot.get("available"):
+        return idea
+    analysis = snapshot.get("analysis") if isinstance(snapshot.get("analysis"), dict) else {}
+    if not analysis.get("available", True):
+        return idea
+
+    key_strikes = analysis.get("keyStrikes") or analysis.get("keyLevels") or []
+    max_pain = analysis.get("maxPain")
+    bias = analysis.get("bias") or analysis.get("prop_bias") or "neutral"
+    source = "MT4_OptionsFX"
+    summary_ru = analysis.get("summary_ru")
+    display = f"{source}: {bias} · strikes: {_format_options_levels(key_strikes)} · max pain: {_format_options_levels([max_pain] if max_pain is not None else [])}"
+
+    enriched = dict(idea)
+    enriched.update({
+        "options_source": source,
+        "optionsSource": source,
+        "options_available": True,
+        "optionsAvailable": True,
+        "options_bias": bias,
+        "optionsBias": bias,
+        "key_strikes": key_strikes,
+        "keyStrikes": key_strikes,
+        "key_levels": analysis.get("keyLevels") or key_strikes,
+        "keyLevels": analysis.get("keyLevels") or key_strikes,
+        "max_pain": max_pain,
+        "maxPain": max_pain,
+        "call_walls": analysis.get("callWalls") or [],
+        "callWalls": analysis.get("callWalls") or [],
+        "put_walls": analysis.get("putWalls") or [],
+        "putWalls": analysis.get("putWalls") or [],
+        "target_levels": analysis.get("targetLevels") or [],
+        "targetLevels": analysis.get("targetLevels") or [],
+        "hedge_levels": analysis.get("hedgeLevels") or [],
+        "hedgeLevels": analysis.get("hedgeLevels") or [],
+        "pinning_risk": analysis.get("pinningRisk"),
+        "pinningRisk": analysis.get("pinningRisk"),
+        "range_risk": analysis.get("rangeRisk"),
+        "rangeRisk": analysis.get("rangeRisk"),
+        "options_summary_ru": summary_ru,
+        "optionsSummaryRu": summary_ru,
+        "options_analysis": analysis,
+        "options_display": display,
+        "optionsDisplay": display,
+        "external_options_ru": summary_ru or display,
+        "external_options_bias": bias,
+        "external_options_key_strikes": key_strikes,
+        "external_options_max_pain": max_pain,
+        "external_options_source": source,
+        "debug_options_available": True,
+        "debug_options_source_selected": "mt4_optionsfx",
+    })
+    market_context = enriched.get("market_context") if isinstance(enriched.get("market_context"), dict) else {}
+    market_context.update({
+        "optionsAnalysis": analysis,
+        "options_available": True,
+        "options_source": source,
+        "options_summary_ru": summary_ru,
+    })
+    enriched["market_context"] = market_context
+    advisor_signal = enriched.get("advisor_signal") if isinstance(enriched.get("advisor_signal"), dict) else None
+    if advisor_signal is not None:
+        advisor_signal = dict(advisor_signal)
+        advisor_signal["external_options_source"] = source
+        enriched["advisor_signal"] = advisor_signal
+    return enriched
+
+
+def _attach_mt4_optionsfx_to_ideas(ideas: Any) -> list[dict]:
+    if not isinstance(ideas, list):
+        return []
+    return [_attach_mt4_optionsfx_to_idea(idea) for idea in ideas if isinstance(idea, dict)]
 
 
 @dataclass
@@ -113,6 +213,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             logger.exception("ideas_market_fallback_failed reason=%s fallback_error=%s", reason, exc)
             return []
 
+    @router.get("/api/ideas/market")
     @router.get("/ideas/market")
     async def market_ideas():
         try:
@@ -134,8 +235,8 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             payload["archive"] = _safe_attach_live_market_contracts(payload.get("archive") or [], field="archive")
             payload["ideas"] = enrich_ideas_with_prop_scores(payload.get("ideas") or [])
             payload["archive"] = enrich_ideas_with_prop_scores(payload.get("archive") or [])
-            payload["ideas"] = SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("ideas") or []))
-            payload["archive"] = SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("archive") or []))
+            payload["ideas"] = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("ideas") or [])))
+            payload["archive"] = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("archive") or [])))
             for idea in payload["ideas"]:
                 if not str(
                     idea.get("description_ru")
@@ -150,7 +251,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             logger.exception("ideas_market_failed reason=%s", exc)
             fallback_reason = f"route_exception:{type(exc).__name__}"
             return _localize_output_layer({
-                "ideas": SignalAggregator.enrich_many(attach_market_structure_overlays(_safe_fallback_ideas(reason=fallback_reason))),
+                "ideas": _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(_safe_fallback_ideas(reason=fallback_reason)))),
                 "archive": [],
                 "market": _safe_market_contracts(list(DEFAULT_PAIRS)),
                 "ok": False,
@@ -189,7 +290,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
                 fallback_reason = "no_generated_ideas_provider_or_env_issue"
                 ideas = services.trade_idea_service.fallback_ideas(reason=fallback_reason)
             ideas = enrich_ideas_with_prop_scores(ideas)
-            ideas = SignalAggregator.enrich_many(attach_market_structure_overlays(ideas))
+            ideas = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(ideas)))
             generated_count = sum(1 for idea in ideas if str(idea.get("source")) != "fallback")
             fallback_count = len(ideas) - generated_count
             logger.info(
@@ -210,7 +311,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             logger.exception("ideas_api_failed reason=%s", exc)
             fallback_reason = f"route_exception:{type(exc).__name__}"
             return _localize_output_layer({
-                "ideas": SignalAggregator.enrich_many(attach_market_structure_overlays(services.trade_idea_service.fallback_ideas(reason=fallback_reason))),
+                "ideas": _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(services.trade_idea_service.fallback_ideas(reason=fallback_reason)))),
                 "market": market,
                 "diagnostics": {"error": str(exc), "reason": fallback_reason},
             })
