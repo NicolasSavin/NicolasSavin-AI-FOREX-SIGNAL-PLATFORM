@@ -1,5 +1,5 @@
 {
-  "updated_at_utc": "2026-06-17T02:00:34.411143+00:00",
+  "updated_at_utc": "2026-06-17T07:22:47.066092+00:00",
   "items": [
     {
       "symbol": "EURUSD",
@@ -48,8 +48,8 @@
     },
     {
       "symbol": "GBPUSD",
-      "bias": "bullish",
-      "score": 10
+      "bias": "bearish",
+      "score": 15
     },
     {
       "symbol": "GBPUSD",
@@ -79,12 +79,12 @@
     {
       "symbol": "USDJPY",
       "bias": "bullish",
-      "score": 10
+      "score": 15
     },
     {
       "symbol": "USDJPY",
       "bias": "bullish",
-      "score": 10
+      "score": 15
     },
     {
       "symbol": "USDJPY",
