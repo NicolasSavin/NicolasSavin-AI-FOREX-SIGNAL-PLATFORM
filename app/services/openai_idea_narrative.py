@@ -9,6 +9,7 @@ from copy import deepcopy
 from typing import Any
 
 import requests
+from app.signal_aggregator import SignalAggregator
 from app.services.signal_audit_logger import log_signal_audit
 from app.services.timing import timing_log
 
@@ -444,11 +445,13 @@ def _build_facts_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(row, dict):
             prop_criteria.append({"key": row.get("key"), "status": row.get("status"), "score": row.get("score"), "text_ru": row.get("text_ru")})
 
+    aggregated = SignalAggregator.aggregate(payload)
+
     return {
-        "symbol": payload.get("symbol") or payload.get("pair"),
+        "symbol": aggregated.get("symbol") or payload.get("symbol") or payload.get("pair"),
         "timeframe": payload.get("timeframe") or payload.get("tf"),
         "signal": payload.get("signal"),
-        "direction": payload.get("direction"),
+        "direction": aggregated.get("direction") or payload.get("direction"),
         "entry": payload.get("entry"),
         "sl": payload.get("sl") or payload.get("stop_loss"),
         "tp": payload.get("tp") or payload.get("take_profit"),
@@ -485,6 +488,7 @@ def _build_facts_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "maxPain": options_analysis.get("maxPain"),
             "summary_ru": options_analysis.get("summary_ru"),
         },
+        "signals": aggregated.get("signals") or {},
         "warnings": _compact_warnings(payload),
     }
 

@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from app.core.env import get_openrouter_api_key, get_openrouter_model
+from app.signal_aggregator import SignalAggregator
 
 
 logger = logging.getLogger(__name__)
@@ -450,21 +451,64 @@ class IdeaNarrativeLLMService:
 
     @staticmethod
     def _compact_facts(facts: dict[str, Any]) -> dict[str, Any]:
-        compact = dict(facts or {})
+        source = facts or {}
+        aggregation = SignalAggregator.aggregate(source)
+        compact_keys = (
+            "symbol",
+            "pair",
+            "timeframe",
+            "tf",
+            "signal",
+            "final_signal",
+            "direction",
+            "bias",
+            "entry",
+            "sl",
+            "stop_loss",
+            "tp",
+            "take_profit",
+            "rr",
+            "risk_reward",
+            "current_price",
+            "price",
+            "data_status",
+            "provider",
+            "entry_source",
+            "selected_zone_type",
+            "selected_zone_low",
+            "selected_zone_high",
+            "confidence",
+            "trade_permission",
+            "prop_score",
+            "prop_grade",
+            "prop_mode",
+            "prop_decision_ru",
+            "advisor_allowed",
+            "structure_state",
+            "key_zone",
+            "headline",
+            "summary",
+            "summary_ru",
+            "warnings",
+        )
+        compact = {key: source.get(key) for key in compact_keys if source.get(key) not in (None, "", "—")}
+        compact["symbol"] = aggregation.get("symbol") or compact.get("symbol") or compact.get("pair")
+        compact["timeframe"] = aggregation.get("timeframe") or compact.get("timeframe") or compact.get("tf")
+        compact["direction"] = aggregation.get("direction") or compact.get("direction")
+        compact["score"] = aggregation.get("score")
+        compact["signals"] = aggregation.get("signals") or {}
 
-        candles = compact.get("candles")
+        candles = source.get("candles")
         if isinstance(candles, list):
-            compact["candles"] = candles[-80:]
+            compact["candles"] = candles[-20:]
 
-        for key in (
-            "raw",
-            "debug",
-            "logs",
-            "diagnostics",
-            "prompt",
-            "system",
-        ):
-            compact.pop(key, None)
+        overlays = source.get("chart_overlays")
+        if isinstance(overlays, dict):
+            compact["chart_overlays"] = {
+                key: value[:6] if isinstance(value, list) else value
+                for key, value in overlays.items()
+                if key in {"order_blocks", "fvg", "liquidity", "levels"}
+            }
 
         return compact
 
