@@ -1,5 +1,5 @@
 {
-  "updated_at_utc": "2026-06-17T12:04:05.290679+00:00",
+  "updated_at_utc": "2026-06-17T16:11:09.956033+00:00",
   "items": [
     {
       "symbol": "EURUSD",
@@ -18,8 +18,8 @@
     },
     {
       "symbol": "EURUSD",
-      "bias": "bullish",
-      "score": 10
+      "bias": "bearish",
+      "score": 15
     },
     {
       "symbol": "EURUSD",
