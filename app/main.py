@@ -166,6 +166,127 @@ def _compact_candle(candle: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+
+def _mt4_float_or_none(value: Any, *, positive_only: bool = False) -> float | None:
+    try:
+        if value in (None, "", "—"):
+            return None
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if positive_only and parsed <= 0:
+        return None
+    return parsed
+
+
+def _first_mt4_float(payload: dict[str, Any], keys: tuple[str, ...], *, positive_only: bool = False) -> float | None:
+    for key in keys:
+        if key not in payload:
+            continue
+        parsed = _mt4_float_or_none(payload.get(key), positive_only=positive_only)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _extract_mt4_rich_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    rich: dict[str, Any] = {}
+    dpoc_price = _first_mt4_float(
+        payload,
+        ("dpoc_price", "dpoc", "daily_dpoc", "daily_dpoc_price"),
+        positive_only=True,
+    )
+    if dpoc_price is not None:
+        rich["dpoc_price"] = dpoc_price
+        rich["dpoc"] = dpoc_price
+
+    margin_lower = _first_mt4_float(
+        payload,
+        ("margin_lower", "margin_low", "margin_zone_lower"),
+        positive_only=True,
+    )
+    margin_upper = _first_mt4_float(
+        payload,
+        ("margin_upper", "margin_high", "margin_zone_upper"),
+        positive_only=True,
+    )
+    if margin_lower is not None and margin_upper is not None and margin_lower > margin_upper:
+        margin_lower, margin_upper = margin_upper, margin_lower
+    if margin_lower is not None:
+        rich["margin_lower"] = margin_lower
+        rich["margin_zone_lower"] = margin_lower
+    if margin_upper is not None:
+        rich["margin_upper"] = margin_upper
+        rich["margin_zone_upper"] = margin_upper
+
+    for key in ("future_volume", "delta", "future_delta", "cumulative_delta"):
+        value = _first_mt4_float(payload, (key,))
+        if value is not None:
+            rich[key] = value
+
+    hft_signal = str(payload.get("hft_signal") or payload.get("hftSignal") or "").strip()
+    if hft_signal:
+        rich["hft_signal"] = hft_signal
+
+    margin_source = str(payload.get("margin_source") or "").strip()
+    if margin_source:
+        rich["margin_source"] = margin_source
+
+    return rich
+
+
+def _merge_mt4_store_item(
+    key: str,
+    *,
+    symbol: str,
+    timeframe: str,
+    broker: Any = None,
+    account: Any = None,
+    candles: list[dict[str, Any]] | None = None,
+    rich_fields: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    existing = MT4_CANDLE_STORE.get(key) if isinstance(MT4_CANDLE_STORE.get(key), dict) else {}
+    item = dict(existing or {})
+    item.update({
+        "updated_at": datetime.now(timezone.utc),
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "broker": broker if broker not in (None, "") else item.get("broker"),
+        "account": account if account not in (None, "") else item.get("account"),
+        "candles": candles if candles is not None else item.get("candles", []),
+    })
+    for field, value in (rich_fields or {}).items():
+        if value not in (None, ""):
+            item[field] = value
+    MT4_CANDLE_STORE[key] = item
+    return item
+
+
+def _mt4_debug_rich_fields(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        field: item.get(field)
+        for field in (
+            "dpoc_price",
+            "dpoc",
+            "margin_lower",
+            "margin_upper",
+            "margin_zone_lower",
+            "margin_zone_upper",
+            "future_volume",
+            "delta",
+            "future_delta",
+            "cumulative_delta",
+            "hft_signal",
+            "margin_source",
+        )
+        if isinstance(item, dict) and item.get(field) is not None
+    }
+
+
 def _prune_stale_mt4_store() -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=MT4_CANDLE_STORE_STALE_SECONDS)
     stale_keys = []
@@ -1122,8 +1243,12 @@ def api_mt4_ingest_get(
     future_delta: float = 0.0,
     dpoc_price: float = 0.0,
     dpoc: float = 0.0,
+    daily_dpoc: float = 0.0,
+    daily_dpoc_price: float = 0.0,
     margin_lower: float = 0.0,
     margin_upper: float = 0.0,
+    margin_low: float = 0.0,
+    margin_high: float = 0.0,
     margin_zone_lower: float = 0.0,
     margin_zone_upper: float = 0.0,
     margin_source: str = "",
@@ -1151,15 +1276,34 @@ def api_mt4_ingest_get(
         merged[candle_time] = candle_row
     merged_candles = [merged[k] for k in sorted(merged.keys()) if k > 0][-MT4_CANDLE_STORE_MAX_BARS:]
 
+    rich_fields = _extract_mt4_rich_fields({
+        "dpoc_price": dpoc_price,
+        "dpoc": dpoc,
+        "daily_dpoc": daily_dpoc,
+        "daily_dpoc_price": daily_dpoc_price,
+        "margin_lower": margin_lower,
+        "margin_upper": margin_upper,
+        "margin_low": margin_low,
+        "margin_high": margin_high,
+        "margin_zone_lower": margin_zone_lower,
+        "margin_zone_upper": margin_zone_upper,
+        "future_volume": future_volume,
+        "delta": delta,
+        "future_delta": future_delta,
+        "cumulative_delta": cumulative_delta,
+        "hft_signal": hft_signal,
+        "margin_source": margin_source,
+    })
     _prune_stale_mt4_store()
-    MT4_CANDLE_STORE[store_key] = {
-        "updated_at": datetime.now(timezone.utc),
-        "symbol": normalized_symbol,
-        "timeframe": timeframe,
-        "broker": broker,
-        "account": account,
-        "candles": merged_candles,
-    }
+    _merge_mt4_store_item(
+        store_key,
+        symbol=normalized_symbol,
+        timeframe=timeframe,
+        broker=broker,
+        account=account,
+        candles=merged_candles,
+        rich_fields=rich_fields,
+    )
     logger.info(
         "mt4_ingest_get_stored symbol=%s timeframe=%s store_key=%s candle_time=%s stored=%s broker=%s account=%s",
         normalized_symbol,
@@ -1186,11 +1330,11 @@ def api_mt4_ingest_get(
         "delta": delta,
         "cumulative_delta": cumulative_delta,
         "future_delta": future_delta,
-        "dpoc_price": dpoc_price or dpoc or None,
-        "margin_lower": margin_lower or margin_zone_lower or None,
-        "margin_upper": margin_upper or margin_zone_upper or None,
-        "margin_zone_lower": margin_zone_lower or margin_lower or None,
-        "margin_zone_upper": margin_zone_upper or margin_upper or None,
+        "dpoc_price": rich_fields.get("dpoc_price"),
+        "margin_lower": rich_fields.get("margin_lower"),
+        "margin_upper": rich_fields.get("margin_upper"),
+        "margin_zone_lower": rich_fields.get("margin_zone_lower"),
+        "margin_zone_upper": rich_fields.get("margin_zone_upper"),
         "margin_source": margin_source or "Future_Volume_v5.00",
         "hft_signal": hft_signal,
         "bars": bars,
@@ -1266,15 +1410,17 @@ def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
         for c in candles:
             merged[c["time"]] = c
         merged_candles = [merged[k] for k in sorted(merged.keys())][-MT4_CANDLE_STORE_MAX_BARS:]
+        rich_fields = _extract_mt4_rich_fields(payload)
         _prune_stale_mt4_store()
-        MT4_CANDLE_STORE[key] = {
-            "updated_at": datetime.now(timezone.utc),
-            "symbol": symbol,
-            "timeframe": tf,
-            "broker": payload.get("broker"),
-            "account": payload.get("account"),
-            "candles": merged_candles,
-        }
+        item = _merge_mt4_store_item(
+            key,
+            symbol=symbol,
+            timeframe=tf,
+            broker=payload.get("broker"),
+            account=payload.get("account"),
+            candles=merged_candles,
+            rich_fields=rich_fields,
+        )
         logger.info(
             "mt4_push_candles_stored symbol=%s timeframe=%s store_key=%s received=%s valid=%s invalid=%s stored=%s broker=%s account=%s",
             symbol,
@@ -1288,7 +1434,7 @@ def _handle_mt4_push_candles_payload(payload: dict[str, Any]):
             payload.get("account"),
         )
         gc.collect()
-        return {"ok": True, "symbol": symbol, "timeframe": tf, "received": len(candles), "stored": len(merged_candles), "updated_at_utc": MT4_CANDLE_STORE[key]["updated_at"].isoformat()}
+        return {"ok": True, "symbol": symbol, "timeframe": tf, "received": len(candles), "stored": len(merged_candles), "updated_at_utc": item["updated_at"].isoformat()}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
@@ -1305,6 +1451,18 @@ async def api_mt4_volume_clusters(request: Request):
         if not isinstance(payload, dict):
             return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_payload"})
         saved = save_volume_cluster_payload(payload)
+        symbol = normalize_mt4_symbol(str(saved.get("symbol") or payload.get("symbol") or payload.get("broker_symbol") or ""))
+        timeframe = str(saved.get("timeframe") or payload.get("timeframe") or payload.get("tf") or "M15").upper()
+        if symbol:
+            key = f"{symbol}:{timeframe}"
+            _merge_mt4_store_item(
+                key,
+                symbol=symbol,
+                timeframe=timeframe,
+                broker=payload.get("broker"),
+                account=payload.get("account"),
+                rich_fields=_extract_mt4_rich_fields(saved),
+            )
         return {"ok": True, "symbol": saved.get("symbol"), "timeframe": saved.get("timeframe"), "updated_at_utc": now_utc()}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
@@ -1333,6 +1491,17 @@ def _handle_mt4_options_levels_payload(payload: dict[str, Any]):
     if levels is None or not isinstance(levels, list):
         return JSONResponse(status_code=400, content={"status": "error", "error": "levels_required"})
     saved = save_options_levels(payload)
+    timeframe = str(payload.get("timeframe") or payload.get("tf") or "M15").upper()
+    rich_fields = _extract_mt4_rich_fields(payload)
+    if rich_fields:
+        _merge_mt4_store_item(
+            f"{symbol}:{timeframe}",
+            symbol=symbol,
+            timeframe=timeframe,
+            broker=payload.get("broker"),
+            account=payload.get("account"),
+            rich_fields=rich_fields,
+        )
     return {"status": "ok", "symbol": saved.get("symbol"), "levels_received": len(saved.get("levels") or [])}
 
 
@@ -1606,7 +1775,7 @@ def api_debug_mt4_bridge():
     for key, item in MT4_CANDLE_STORE.items():
         candles = item.get("candles") or []
         age = (now - item["updated_at"]).total_seconds()
-        items.append({
+        debug_item = {
             "key": key,
             "symbol": item.get("symbol"),
             "timeframe": item.get("timeframe"),
@@ -1616,7 +1785,9 @@ def api_debug_mt4_bridge():
             "account": item.get("account"),
             "first": candles[0] if candles else None,
             "last": candles[-1] if candles else None,
-        })
+        }
+        debug_item.update(_mt4_debug_rich_fields(item))
+        items.append(debug_item)
     return {"items": items}
 
 
@@ -2791,7 +2962,7 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
                 len(stale_candles),
                 age_seconds,
             )
-            return {
+            response = {
                 "candles": stale_candles,
                 "provider": "mt4_bridge",
                 "data_status": "stale",
@@ -2800,6 +2971,8 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
                 "raw_error": None,
                 "diagnostics": {"age_seconds": age_seconds, "stale_fallback": True},
             }
+            response.update(_mt4_debug_rich_fields(item))
+            return response
         logger.info(
             "mt4_fetch_candles_stale_empty symbol=%s timeframe=%s key=%s age_seconds=%.2f reason=stale_mt4_data",
             symbol_norm,
@@ -2826,7 +2999,7 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
         len(candles),
         age_seconds,
     )
-    return {
+    response = {
         "candles": candles,
         "provider": "mt4_bridge",
         "data_status": "real",
@@ -2845,6 +3018,8 @@ def fetch_mt4_pushed_candles(symbol: str, tf: str = "M15", limit: int = 160) -> 
             "account": item.get("account"),
         },
     }
+    response.update(_mt4_debug_rich_fields(item))
+    return response
 
 
 def get_mt4_bridge_status(symbol: str, tf: str) -> dict[str, Any]:
