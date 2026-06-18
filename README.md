@@ -2,6 +2,12 @@
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
+## Что обновлено в версии 3.9
+- Добавлен prop-desk execution layer для `/api/ideas/market` и `/api/ideas` без удаления legacy MT4-полей: killzone, ATR(14), RVOL, VWAP, news lock, correlation risk, cooldown after losses, dynamic risk и market regime.
+- Новые поля включают `base_score`, `execution_score`, `final_score`, `killzone_status`, `atr_pips`, `rvol`, `vwap_alignment`, `news_lock_active`, `correlation_block`, `cooldown_active`, `risk_per_trade_pct`, `recommended_lot`, `market_regime`.
+- Старые поля `entry`, `sl`, `tp`, `signal`, `action`, `trade_permission`, `advisor_allowed`, `score`, `grade`, `mode` сохранены; при блокировках исполнения выставляется `mode=NO TRADE`.
+- На странице `/ideas` добавлен блок `Execution Analysis` с русскими пояснениями по Killzone, ATR, RVOL, VWAP, News Lock, Correlation, Regime и Dynamic Risk.
+
 ## Что обновлено в версии 3.8
 - Добавлен отдельный Confluence Engine (`services/confluence/confluenceEngine.ts`): объединяет SMC + Liquidity + Options + Volume в единый institutional score, даёт fallback при отсутствии слоя, учитывает conflict/pinning warnings и возвращает финальный `signal/confidence/summary` breakdown.
 - Добавлен единый `CanonicalMarketService` и интерфейс `RealMarketDataProvider` для всех рыночных endpoint: `GET /price/{symbol}`, `GET /market`, `GET /chart/{symbol}/{tf}`, а также `GET /api/price/{symbol}`, `GET /api/market`, `GET /api/canonical/chart/{symbol}/{tf}`.

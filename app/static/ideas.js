@@ -537,6 +537,30 @@ function renderIdeaCard(idea, index) {
   </article>`;
 }
 
+
+function renderExecutionAnalysis(idea) {
+  const rows = [
+    ["Killzone", `${idea.killzone_status || "—"} (${idea.killzone_bonus ?? "—"})`, idea.killzone_reason_ru || "—"],
+    ["ATR", `${formatNumber(idea.atr_pips)} пипс`, idea.atr_filter_passed === false ? "Ниже prop-порога" : "Фильтр пройден"],
+    ["RVOL", formatNumber(idea.rvol), idea.rvol_status || "—"],
+    ["VWAP", formatNumber(idea.vwap), idea.vwap_alignment === true ? "Согласован с направлением" : idea.vwap_alignment === false ? "Против направления" : "—"],
+    ["News Lock", idea.news_lock_active ? "ACTIVE" : "OFF", idea.news_minutes_to_event ?? "—"],
+    ["Correlation", idea.correlation_block ? "BLOCK" : "OK", `USD exposure: ${idea.usd_exposure_count ?? "—"}`],
+    ["Regime", idea.market_regime || "—", `Score: ${idea.regime_score ?? "—"}`],
+    ["Dynamic Risk", `${idea.risk_per_trade_pct ?? idea.recommended_risk_percent ?? "—"}%`, `Lot: ${idea.recommended_lot ?? "—"}`],
+  ];
+  return `<section class="modal-section execution-analysis" style="margin-top:16px;">
+    <h4>Execution Analysis</h4>
+    <div class="modal-meta">
+      <div><span>Base score</span><strong>${escapeHtml(idea.base_score ?? "—")}</strong></div>
+      <div><span>Execution score</span><strong>${escapeHtml(idea.execution_score ?? "—")}</strong></div>
+      <div><span>Final score</span><strong>${escapeHtml(idea.final_score ?? idea.score ?? "—")}</strong></div>
+      <div><span>Mode</span><strong>${escapeHtml(idea.mode || "—")}</strong></div>
+    </div>
+    <div class="criteria-grid">${rows.map(([label, value, note]) => `<div class="criterion"><strong>${escapeHtml(label)}</strong><br>${escapeHtml(value)} · ${escapeHtml(note)}</div>`).join("")}</div>
+  </section>`;
+}
+
 function renderPropDetails(idea) {
   const prop = getPropScore(idea);
   const score = Math.max(0, Math.min(100, Number(prop.score) || 0));
@@ -581,6 +605,7 @@ function openIdeaModal(idea) {
   body.innerHTML = `<div class="modal-grid">
       <div>
         ${renderPropDetails(idea)}
+        ${renderExecutionAnalysis(idea)}
         <section class="modal-section" style="margin-top:16px;">
           <h4>Основная идея</h4>
           <div class="modal-text">${escapeHtml(resolveNarrative(idea))}</div>
