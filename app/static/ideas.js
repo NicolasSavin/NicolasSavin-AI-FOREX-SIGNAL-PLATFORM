@@ -210,6 +210,20 @@ function getActionBadgeClass(idea) {
   return "badge-wait";
 }
 
+function getCardDirectionClass(idea) {
+  const raw = getIdeaDirectionRaw(idea);
+  if (raw.includes("BUY") || raw.includes("ПОКУП")) return "idea-card--buy";
+  if (raw.includes("SELL") || raw.includes("ПРОДА")) return "idea-card--sell";
+  return "idea-card--wait";
+}
+
+function getActionIcon(idea) {
+  const raw = getIdeaDirectionRaw(idea);
+  if (raw.includes("BUY") || raw.includes("ПОКУП")) return "🟢";
+  if (raw.includes("SELL") || raw.includes("ПРОДА")) return "🔴";
+  return "⛔";
+}
+
 function getPropScore(idea) {
   const score = idea?.prop_signal_score;
   if (score && typeof score === "object") return score;
@@ -416,20 +430,36 @@ function injectUiStyles() {
   style.id = "ideas-compact-ui-styles";
   style.textContent = `
     body { background:#06111f; color:#f4f8ff; }
+    body::before { content:""; position:fixed; inset:0; pointer-events:none; background:radial-gradient(circle at 18% 8%, rgba(45,212,191,.18), transparent 28%), radial-gradient(circle at 82% 0%, rgba(244,63,94,.14), transparent 25%), linear-gradient(135deg, rgba(15,23,42,.92), rgba(2,6,23,.98)); z-index:-2; }
+    body::after { content:""; position:fixed; inset:0; pointer-events:none; background-image:linear-gradient(rgba(148,163,184,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.035) 1px, transparent 1px); background-size:42px 42px; mask-image:linear-gradient(to bottom, rgba(0,0,0,.75), transparent 82%); z-index:-1; }
+    .page { max-width:1500px; margin:0 auto; padding:26px 24px 56px; }
     .page-shell { max-width:1500px; margin:0 auto; padding:26px 24px 56px; }
     .site-header { margin-bottom:20px; }
-    .site-header h1 { margin:6px 0; font-size:clamp(30px,3vw,46px); }
+    .hero { position:relative; padding:4px 0 10px; }
+    .ideas-page-header { position:relative; overflow:hidden; border:1px solid rgba(95,156,230,.22); border-radius:28px; padding:28px; background:linear-gradient(135deg, rgba(8,25,48,.9), rgba(3,14,28,.72)); box-shadow:0 28px 90px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.08); }
+    .ideas-page-header::before { content:""; position:absolute; inset:-1px; background:radial-gradient(circle at 18% 0%, rgba(69,202,255,.22), transparent 34%), radial-gradient(circle at 85% 20%, rgba(84,255,181,.12), transparent 30%); pointer-events:none; }
+    .ideas-page-header > * { position:relative; z-index:1; }
+    .ideas-page-header h1, .site-header h1 { margin:6px 0; font-size:clamp(34px,4vw,58px); letter-spacing:-.04em; }
     .lead { color:#b9d6f8; }
     .idea-instrument, .nav-link { display:inline-flex; width:fit-content; padding:7px 12px; border-radius:999px; background:rgba(99,102,241,.18); color:#c7d2fe; border:1px solid rgba(99,102,241,.26); font-weight:800; text-decoration:none; font-size:12px; }
     .panel { background:rgba(8,25,48,.72); border:1px solid rgba(95,156,230,.2); border-radius:22px; padding:18px; }
     .prop-filter-row { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 18px; }
     .prop-filter-btn { border:1px solid rgba(95,156,230,.46); background:rgba(3,14,28,.72); color:#dbeeff; border-radius:999px; padding:9px 13px; font-size:12px; font-weight:900; cursor:pointer; }
     .prop-filter-btn.active { background:rgba(69,202,255,.2); border-color:rgba(69,202,255,.72); }
-    .ideas-container { display:grid; gap:16px; }
-    .ideas-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+    .market-status-row { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
+    .health-pill { display:inline-flex; align-items:center; gap:7px; padding:8px 11px; border-radius:999px; border:1px solid rgba(95,156,230,.28); background:rgba(3,14,28,.68); color:#cfe7ff; font-size:12px; font-weight:850; }
+    .health-pill.good { border-color:rgba(52,211,153,.36); box-shadow:0 0 22px rgba(52,211,153,.08); }
+    .health-pill.warn { border-color:rgba(250,204,21,.34); color:#fde68a; }
+    .ideas-container { display:grid; gap:18px; }
+    .ideas-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
     .ideas-loading { padding:18px; border:1px solid rgba(95,156,230,.25); border-radius:16px; background:rgba(3,14,28,.66); color:#b9d6f8; }
-    .idea-card { min-height:300px; padding:17px; border-radius:22px; border:1px solid rgba(95,156,230,.42); background:radial-gradient(circle at 85% 0%, rgba(69,202,255,.16), transparent 35%), linear-gradient(155deg, rgba(20,52,92,.96), rgba(7,22,42,.98) 70%); box-shadow:0 22px 54px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.1); cursor:pointer; transition:.18s ease; }
-    .idea-card:hover { transform:translateY(-4px); border-color:rgba(124,184,255,.75); }
+    .idea-card { position:relative; min-height:300px; padding:18px; border-radius:24px; border:1px solid transparent; background:linear-gradient(#061426,#061426) padding-box, linear-gradient(135deg, rgba(148,163,184,.45), rgba(69,202,255,.16)) border-box; box-shadow:0 28px 80px rgba(0,0,0,.44), inset 0 1px 0 rgba(255,255,255,.1); cursor:pointer; transition:transform .22s ease, box-shadow .22s ease, filter .22s ease; overflow:hidden; }
+    .idea-card::before { content:""; position:absolute; inset:0; background:radial-gradient(circle at 80% 0%, rgba(69,202,255,.18), transparent 35%), linear-gradient(155deg, rgba(20,52,92,.82), rgba(3,14,28,.94) 72%); pointer-events:none; }
+    .idea-card > * { position:relative; z-index:1; }
+    .idea-card--buy { background:linear-gradient(#061426,#061426) padding-box, linear-gradient(135deg, #54ffb5, #45caff 55%, rgba(95,156,230,.2)) border-box; }
+    .idea-card--sell { background:linear-gradient(#061426,#061426) padding-box, linear-gradient(135deg, #ff5f7a, #f472b6 55%, rgba(95,156,230,.2)) border-box; }
+    .idea-card--wait { background:linear-gradient(#061426,#061426) padding-box, linear-gradient(135deg, #94a3b8, #475569 55%, rgba(95,156,230,.18)) border-box; }
+    .idea-card:hover { transform:translateY(-6px); filter:saturate(1.08); box-shadow:0 36px 100px rgba(0,0,0,.56), 0 0 36px rgba(69,202,255,.12), inset 0 1px 0 rgba(255,255,255,.12); }
     .idea-card-top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:12px; }
     .idea-title { margin:8px 0 6px; font-size:22px; line-height:1.15; }
     .idea-news-line { color:#b9d6f8; font-size:12px; line-height:1.5; }
@@ -447,7 +477,12 @@ function injectUiStyles() {
     .compact-levels div, .modal-meta div { padding:9px 10px; border:1px solid rgba(95,156,230,.28); border-radius:12px; background:rgba(3,14,28,.62); }
     .compact-levels span, .modal-meta span { display:block; color:#9bb8d8; font-size:10px; font-weight:950; text-transform:uppercase; margin-bottom:3px; }
     .compact-levels strong, .modal-meta strong { color:#f4f8ff; font-size:13px; }
-    .compact-score { margin-top:12px; padding:12px; border-radius:16px; background:rgba(69,202,255,.08); border:1px solid rgba(69,202,255,.24); }
+    .status-pill-row { display:flex; flex-wrap:wrap; gap:7px; margin:12px 0; }
+    .status-pill { display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border-radius:999px; border:1px solid rgba(95,156,230,.28); background:rgba(3,14,28,.7); color:#dbeeff; font-size:11px; font-weight:950; letter-spacing:.04em; }
+    .status-pill.hot { border-color:rgba(84,255,181,.45); color:#9fffd0; }
+    .status-pill.danger { border-color:rgba(248,113,113,.42); color:#fecdd3; }
+    .status-pill.warn { border-color:rgba(250,204,21,.38); color:#fde68a; }
+    .compact-score { margin-top:12px; padding:14px; border-radius:18px; background:linear-gradient(135deg, rgba(69,202,255,.13), rgba(139,92,246,.08)); border:1px solid rgba(69,202,255,.28); box-shadow:inset 0 1px 0 rgba(255,255,255,.08); }
     .compact-score-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
     .compact-score strong { font-size:16px; }
     .prop-grade-badge { display:inline-flex; align-items:center; justify-content:center; min-width:46px; min-height:46px; border-radius:14px; padding:8px; font-size:22px; font-weight:950; }
@@ -456,7 +491,12 @@ function injectUiStyles() {
     .prop-grade-c { color:#291100; background:linear-gradient(180deg,#ffc478,#fb923c); }
     .prop-grade-d { color:#fff2f5; background:linear-gradient(180deg,#ff7f99,#be123c); }
     .score-meter { height:10px; margin-top:10px; border-radius:999px; overflow:hidden; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.1); }
-    .score-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e); }
+    .score-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e,#45caff); animation:scoreSweep 1.2s ease both; box-shadow:0 0 18px rgba(69,202,255,.38); }
+    @keyframes scoreSweep { from { width:0; } }
+    .institutional-sections { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }
+    .institutional-section { padding:10px; border-radius:14px; border:1px solid rgba(95,156,230,.22); background:rgba(3,14,28,.58); min-width:0; }
+    .institutional-section h4 { margin:0 0 6px; color:#b9d6f8; font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+    .institutional-section p { margin:0; color:#e8f3ff; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
     .idea-summary-compact { margin-top:12px; color:#dbeeff; font-size:13px; line-height:1.55; max-height:62px; overflow:hidden; }
     .ideas-modal-backdrop { position:fixed; inset:0; z-index:9999; display:none; align-items:center; justify-content:center; padding:20px; background:rgba(0,0,0,.78); backdrop-filter:blur(10px); }
     .ideas-modal-backdrop.open { display:flex; }
@@ -480,7 +520,7 @@ function injectUiStyles() {
     .criterion.missing { border-color:rgba(248,113,113,.28); opacity:.82; }
     .blocker { padding:10px; border-radius:12px; border:1px solid rgba(248,113,113,.25); background:rgba(127,29,29,.22); color:#fecdd3; }
     @media(max-width:1100px){ .ideas-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .modal-grid{grid-template-columns:1fr;} .modal-meta{grid-template-columns:repeat(2,minmax(0,1fr));} }
-    @media(max-width:720px){ .ideas-grid{grid-template-columns:1fr;} .compact-levels,.criteria-grid,.modal-meta{grid-template-columns:1fr;} .chart-area,#ideaModalChart{height:390px;min-height:390px;} }
+    @media(max-width:720px){ .page{padding:16px 12px 42px;} .ideas-page-header{padding:20px;} .ideas-grid{grid-template-columns:1fr;} .compact-levels,.criteria-grid,.modal-meta,.institutional-sections{grid-template-columns:1fr;} .idea-card-top{flex-direction:column;} .badge{white-space:normal;} .chart-area,#ideaModalChart{height:390px;min-height:390px;} }
   `;
   document.head.appendChild(style);
 }
@@ -507,11 +547,53 @@ function resolveDpoc(idea) {
   };
 }
 
+function valueOrDash(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return "—";
+}
+
+function renderStatusPills(idea) {
+  const prop = getPropScore(idea);
+  const grade = String(prop.grade || "D").toUpperCase();
+  const mode = String(prop.mode || "");
+  const vd = resolveVolumeDelta(idea);
+  const optionsBias = String(resolveExternalOptionsBias(idea)).toLowerCase();
+  const pills = [
+    ["ACTIVE", "hot", true],
+    ["🚀 PROP ENTRY", "hot", mode === "prop_entry"],
+    [`GRADE ${grade}`, grade === "A" || grade === "B" ? "hot" : grade === "C" ? "warn" : "danger", true],
+    ["📰 NEWS LOCK", "danger", Boolean(idea.news_lock_active)],
+    ["🔥 HEATMAP", "hot", Boolean(idea.heatmap_available)],
+    ["⚡ DELTA DIVERGENCE", "warn", vd.divergence || Boolean(idea.cvd_divergence)],
+    ["🧩 OPTIONS ALIGNED", "hot", ["bullish", "bearish", "aligned", "buy", "sell"].includes(optionsBias)],
+  ].filter(([, , show]) => show);
+  return `<div class="status-pill-row">${pills.map(([label, cls]) => `<span class="status-pill ${cls}">${escapeHtml(label)}</span>`).join("")}</div>`;
+}
+
+function renderInstitutionalSections(idea) {
+  const vd = resolveVolumeDelta(idea);
+  const newsEvent = valueOrDash(idea.news_event, resolveNewsContext(idea));
+  const newsImpact = valueOrDash(idea.news_impact, idea.impact, "—");
+  const minutes = valueOrDash(idea.minutes_to_event, idea.news_minutes_to_event, "—");
+  const heatmap = idea.heatmap_available
+    ? `🔥 ${valueOrDash(idea.heatmap_bias)} · wall ↑ ${valueOrDash(idea.heatmap_wall_above)} / ↓ ${valueOrDash(idea.heatmap_wall_below)}`
+    : "🔥 heatmap: нет подтверждённых данных";
+  return `<div class="institutional-sections">
+    <section class="institutional-section"><h4>Market Structure</h4><p>BOS ${escapeHtml(valueOrDash(idea.market_structure?.bos))} · Sweep ${escapeHtml(valueOrDash(idea.liquidity?.sweep))} · HTF ${escapeHtml(valueOrDash(idea.htf_bias, idea.market_structure?.trend_regime))}</p></section>
+    <section class="institutional-section"><h4>Orderflow</h4><p>⚡ DOM ${escapeHtml(valueOrDash(idea.dom_bias))} · Absorption ${escapeHtml(valueOrDash(idea.absorption))} · CVD div ${escapeHtml(valueOrDash(idea.cvd_divergence, vd.divergence))}<br>${escapeHtml(heatmap)}</p></section>
+    <section class="institutional-section"><h4>Options</h4><p>🧩 Bias ${escapeHtml(resolveExternalOptionsBias(idea))} · Max Pain ${escapeHtml(formatListValue(resolveOptionsMaxPain(idea)))} · Strikes ${escapeHtml(formatListValue(resolveOptionsKeyStrikes(idea)))}</p></section>
+    <section class="institutional-section"><h4>News/Fundamental</h4><p>📰 ${escapeHtml(newsEvent)} · Impact ${escapeHtml(newsImpact)} · до события ${escapeHtml(minutes)} мин.</p></section>
+    <section class="institutional-section"><h4>Risk/Execution</h4><p>🛡️ Execution ${escapeHtml(valueOrDash(idea.execution_score))} · Final ${escapeHtml(valueOrDash(idea.final_score, idea.score))} · Risk ${escapeHtml(valueOrDash(idea.risk_per_trade_pct, idea.recommended_risk_percent))}%</p></section>
+  </div>`;
+}
+
 function renderIdeaCard(idea, index) {
   const symbol = getIdeaSymbol(idea);
   const action = idea.action || idea.signal || idea.label || "WAIT";
   const dpoc = resolveDpoc(idea);
-  return `<article class="idea-card" data-idea-index="${index}" tabindex="0" role="button" aria-label="Открыть идею ${escapeHtml(symbol)}">
+  return `<article class="idea-card ${getCardDirectionClass(idea)}" data-idea-index="${index}" tabindex="0" role="button" aria-label="Открыть идею ${escapeHtml(symbol)}">
     <div class="idea-card-top">
       <div>
         <div class="idea-instrument">${escapeHtml(symbol)}</div>
@@ -519,7 +601,7 @@ function renderIdeaCard(idea, index) {
         <div class="idea-news-line">Новости/фундаментал: ${escapeHtml(resolveNewsContext(idea))}</div>
         <div class="idea-news-line">Статус: <strong>${escapeHtml(idea.trade_permission === false ? "ожидание" : idea.status || "активно")}</strong></div>
       </div>
-      <div class="badge ${getActionBadgeClass(idea)}">${escapeHtml(action)}</div>
+      <div class="badge ${getActionBadgeClass(idea)}">${getActionIcon(idea)} ${escapeHtml(action)}</div>
     </div>
     <div class="compact-levels">
       <div><span>Setup</span><strong>${escapeHtml(idea.setup_type || "—")}</strong></div>
@@ -529,10 +611,11 @@ function renderIdeaCard(idea, index) {
       <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
       <div><span>DPOC / дистанция</span><strong>${escapeHtml(dpoc.price)} · ${escapeHtml(dpoc.distance)}</strong></div>
     </div>
+    ${renderStatusPills(idea)}
     ${renderPropCompact(idea)}
     ${renderVolumeDeltaCompact(idea)}
     ${renderExternalOptionsCompact(idea)}
-    <div class="idea-news-line">BOS: ${escapeHtml(idea.market_structure?.bos || "—")} · Sweep: ${escapeHtml(idea.liquidity?.sweep || "—")} · FVG: ${escapeHtml(idea.fvg?.type || idea.selected_zone_type || "—")} · HTF: ${escapeHtml(idea.htf_bias || idea.market_structure?.trend_regime || "—")}</div>
+    ${renderInstitutionalSections(idea)}
     <div class="idea-summary-compact">${escapeHtml(resolveNarrative(idea))}</div>
   </article>`;
 }
@@ -894,7 +977,7 @@ function renderIdeas(payload) {
   const rawIdeas = Array.isArray(payload?.ideas) ? payload.ideas : Array.isArray(payload?.signals) ? payload.signals : [];
   const ideas = filterIdeasByProp(rawIdeas);
   lastPayload = payload;
-  if (ideasUpdatedAt) ideasUpdatedAt.textContent = `Обновление: ${formatUpdatedAt(payload?.updated_at_utc)}`;
+  if (ideasUpdatedAt) ideasUpdatedAt.innerHTML = `<div class="market-status-row"><span class="health-pill good">● Рынок: мониторинг</span><span class="health-pill good">API: ${escapeHtml(rawIdeas.length)} идей</span><span class="health-pill warn">Обновлено: ${escapeHtml(formatUpdatedAt(payload?.updated_at_utc))}</span><span class="health-pill">Источники: MT4 / CME / News / Proxy chart</span></div>`;
   if (!rawIdeas.length) {
     ideasContainer.innerHTML = `<div class="ideas-loading">Идеи пока недоступны.</div>`;
     return;
