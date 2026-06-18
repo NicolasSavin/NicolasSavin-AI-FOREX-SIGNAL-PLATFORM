@@ -30,7 +30,7 @@ from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.prop_desk_filters import PropDeskFilterService
-from app.services.idea_lifecycle import apply_idea_lifecycle, build_lifecycle_stats
+from app.services.idea_lifecycle import apply_idea_lifecycle, build_lifecycle_stats, enrich_ideas_with_news_calendar
 from app.services.signal_audit_logger import log_signal_audit
 from app.services.timing import timing_log
 from backend.chat_service import ChatRequest, ForexChatService
@@ -985,6 +985,7 @@ def build_market() -> dict[str, Any]:
             enriched_signals = _attach_mt4_optionsfx_display_many(enrich_ideas_with_prop_scores(signals))
             lifecycle = apply_idea_lifecycle(enriched_signals)
             lifecycle["ideas"] = _apply_prop_desk_execution(lifecycle["ideas"], lifecycle.get("archive") or [])
+            lifecycle["ideas"] = enrich_ideas_with_news_calendar(lifecycle["ideas"])
             return {
                 "signals": lifecycle["ideas"],
                 "ideas": lifecycle["ideas"],
@@ -1090,6 +1091,7 @@ def api_ideas():
         enriched_signals = enrich_ideas_with_prop_scores(signals)
         lifecycle = apply_idea_lifecycle(enriched_signals)
         lifecycle["ideas"] = _apply_prop_desk_execution(lifecycle["ideas"], lifecycle.get("archive") or [])
+        lifecycle["ideas"] = enrich_ideas_with_news_calendar(lifecycle["ideas"])
         return {
             "signals": lifecycle["ideas"],
             "ideas": lifecycle["ideas"],

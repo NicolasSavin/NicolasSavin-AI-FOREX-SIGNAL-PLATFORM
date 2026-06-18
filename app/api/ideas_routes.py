@@ -17,6 +17,7 @@ from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.prop_desk_filters import PropDeskFilterService
 from app.services.signal_hub import DEFAULT_PAIRS
 from app.services.trade_idea_service import TradeIdeaService
+from app.services.idea_lifecycle import enrich_ideas_with_news_calendar
 from backend.market.services.snapshot_service import MarketSnapshotService
 
 logger = logging.getLogger(__name__)
@@ -271,6 +272,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             payload["ideas"] = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("ideas") or [])))
             payload["archive"] = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("archive") or [])))
             payload["ideas"] = _apply_prop_desk_filters(payload.get("ideas") or [], archive=payload.get("archive") or [])
+            payload["ideas"] = enrich_ideas_with_news_calendar(payload.get("ideas") or [])
             for idea in payload["ideas"]:
                 if not str(
                     idea.get("description_ru")
@@ -284,8 +286,11 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
         except Exception as exc:
             logger.exception("ideas_market_failed reason=%s", exc)
             fallback_reason = f"route_exception:{type(exc).__name__}"
+            fallback_ideas = _attach_mt4_optionsfx_to_ideas(
+                SignalAggregator.enrich_many(attach_market_structure_overlays(_safe_fallback_ideas(reason=fallback_reason)))
+            )
             return _localize_output_layer({
-                "ideas": _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(_safe_fallback_ideas(reason=fallback_reason)))),
+                "ideas": enrich_ideas_with_news_calendar(fallback_ideas),
                 "archive": [],
                 "market": _safe_market_contracts(list(DEFAULT_PAIRS)),
                 "ok": False,

@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.news_calendar import nearest_news_for_symbol
+
 ACTIVE_FILE = Path("active_ideas.json")
 ARCHIVE_FILE = Path("archive.json")
 
@@ -167,6 +169,82 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+def enrich_idea_with_news_calendar(idea: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(idea, dict):
+        return idea
+    symbol = normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    try:
+        news = nearest_news_for_symbol(symbol) if symbol else {}
+    except Exception:
+        news = {
+            "news_event": None,
+            "news_currency": None,
+            "news_impact": None,
+            "news_time_utc": None,
+            "minutes_to_event": None,
+            "news_lock_active": False,
+            "news_source": "unavailable",
+        }
+
+    for key in (
+        "news_event",
+        "news_currency",
+        "news_impact",
+        "news_time_utc",
+        "minutes_to_event",
+        "news_lock_active",
+        "news_source",
+    ):
+        idea[key] = news.get(key)
+
+    if bool(news.get("news_lock_active")):
+        capped_score = _int_score(idea.get("score"))
+        if capped_score is None:
+            capped_score = _int_score(idea.get("prop_score"))
+        if capped_score is None:
+            advisor = idea.get("advisor_signal") if isinstance(idea.get("advisor_signal"), dict) else {}
+            capped_score = _int_score(advisor.get("score"))
+        if capped_score is None:
+            prop = idea.get("prop_signal_score") if isinstance(idea.get("prop_signal_score"), dict) else {}
+            capped_score = _int_score(prop.get("score"))
+        capped_score = min(capped_score if capped_score is not None else 54, 54)
+
+        idea["trade_permission"] = False
+        idea["advisor_allowed"] = False
+        idea["mode"] = "NO TRADE"
+        idea["prop_mode"] = "no_trade"
+        idea["grade"] = "C"
+        idea["prop_grade"] = "C"
+        idea["score"] = capped_score
+        idea["confidence"] = capped_score
+        idea["prop_score"] = capped_score
+        idea["propScore"] = capped_score
+        idea["propConfidence"] = capped_score
+
+        advisor = idea.get("advisor_signal") if isinstance(idea.get("advisor_signal"), dict) else None
+        if advisor is not None:
+            advisor["allowed"] = False
+            advisor["mode"] = "no_trade"
+            advisor["grade"] = "C"
+            advisor["score"] = capped_score
+
+        prop = idea.get("prop_signal_score") if isinstance(idea.get("prop_signal_score"), dict) else None
+        if prop is not None:
+            prop["mode"] = "no_trade"
+            prop["grade"] = "C"
+            prop["score"] = capped_score
+
+    return idea
+
+
+def enrich_ideas_with_news_calendar(ideas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    for idea in ideas or []:
+        if isinstance(idea, dict):
+            enriched.append(_with_advisor_compat_fields(enrich_idea_with_news_calendar(dict(idea))))
+    return enriched
+
 def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
     """Expose flat advisor fields first so MT4's simple parser sees them before candles."""
     if not isinstance(idea, dict):
@@ -302,7 +380,7 @@ def _active_view(active: dict[str, Any], live_idea: dict[str, Any] | None = None
         idea["live_price"] = price_of(live_idea)
         idea["live_score"] = live_idea.get("prop_score")
         idea["live_grade"] = live_idea.get("prop_grade")
-    return _with_advisor_compat_fields(idea)
+    return _with_advisor_compat_fields(enrich_idea_with_news_calendar(idea))
 
 
 def _hit_status(active: dict[str, Any], current_price: float | None) -> tuple[str | None, float | None]:
@@ -369,7 +447,7 @@ def apply_idea_lifecycle(ideas: list[dict[str, Any]]) -> dict[str, Any]:
     for idea in ideas:
         if not isinstance(idea, dict):
             continue
-        idea = _with_advisor_compat_fields(idea)
+        idea = _with_advisor_compat_fields(enrich_idea_with_news_calendar(dict(idea)))
         symbol = normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
         if not symbol:
             output.append(idea)

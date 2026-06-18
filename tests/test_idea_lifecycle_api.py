@@ -88,3 +88,54 @@ def test_active_idea_is_locked_until_tp_or_sl(tmp_path: Path, monkeypatch) -> No
     assert replaced["ideas"][0]["idea_id"] != first["ideas"][0]["idea_id"]
     assert replaced["ideas"][0]["signal"] == "SELL"
     assert replaced["archive"][0]["result"] == "TP"
+
+
+def test_news_lock_adds_calendar_fields_and_blocks_trade(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(idea_lifecycle, "ACTIVE_FILE", tmp_path / "active_ideas.json")
+    monkeypatch.setattr(idea_lifecycle, "ARCHIVE_FILE", tmp_path / "archive.json")
+    monkeypatch.setattr(
+        idea_lifecycle,
+        "nearest_news_for_symbol",
+        lambda symbol: {
+            "news_event": "CPI",
+            "news_currency": "USD",
+            "news_impact": "High",
+            "news_time_utc": "2026-06-18T12:30:00+00:00",
+            "minutes_to_event": 12.0,
+            "news_lock_active": True,
+            "news_source": "forexfactory_faireconomy_xml",
+        },
+    )
+
+    payload = idea_lifecycle.apply_idea_lifecycle(
+        [
+            {
+                "symbol": "EURUSD",
+                "signal": "BUY",
+                "entry": 1.1,
+                "sl": 1.09,
+                "tp": 1.12,
+                "advisor_allowed": True,
+                "prop_mode": "prop_entry",
+                "prop_grade": "A",
+                "prop_score": 83,
+                "advisor_signal": {"allowed": True, "mode": "prop_entry", "grade": "A", "score": 83},
+            }
+        ]
+    )
+
+    idea = payload["ideas"][0]
+    assert idea["news_event"] == "CPI"
+    assert idea["news_currency"] == "USD"
+    assert idea["news_impact"] == "High"
+    assert idea["news_time_utc"] == "2026-06-18T12:30:00+00:00"
+    assert idea["minutes_to_event"] == 12.0
+    assert idea["news_lock_active"] is True
+    assert idea["news_source"] == "forexfactory_faireconomy_xml"
+    assert idea["trade_permission"] is False
+    assert idea["advisor_allowed"] is False
+    assert idea["mode"] == "NO TRADE"
+    assert idea["prop_mode"] == "no_trade"
+    assert idea["grade"] == "C"
+    assert idea["score"] == 54
+    assert idea["lifecycle_status"] == "candidate"
