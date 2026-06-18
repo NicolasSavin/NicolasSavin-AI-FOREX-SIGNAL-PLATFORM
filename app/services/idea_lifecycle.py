@@ -75,6 +75,98 @@ def _mode_label(value: Any) -> str:
     return raw.upper() if raw else ""
 
 
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        return " ".join(str(v) for v in value.values() if v not in (None, "", "—"))[:1000]
+    if isinstance(value, list):
+        return " ".join(_text(v) for v in value[:8])[:1000]
+    return str(value).strip()
+
+
+def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
+    sentiment_filter = idea.get("sentiment_filter") if isinstance(idea.get("sentiment_filter"), dict) else {}
+    alignment = str(sentiment_filter.get("alignment") or "missing").lower()
+    implied_action = str(sentiment_filter.get("implied_action") or "neutral").upper()
+    sentiment_text = str(sentiment_filter.get("text_ru") or "нет свежего sentiment/news слоя")
+    impact = str(sentiment_filter.get("impact") or "").lower()
+
+    raw_text = " ".join(
+        _text(idea.get(key))
+        for key in (
+            "news_context_ru",
+            "fundamental_context_ru",
+            "fundamental_context",
+            "news_context",
+            "market_news",
+            "sentiment",
+            "sentiment_filter",
+        )
+    ).lower()
+
+    has_data = alignment != "missing" or bool(raw_text.strip())
+    high_impact_markers = (
+        "high impact",
+        "high-impact",
+        "важн",
+        "красн",
+        "fomc",
+        "cpi",
+        "nfp",
+        "nonfarm",
+        "payroll",
+        "fed",
+        "ecb",
+        "boe",
+        "boj",
+        "rate decision",
+        "interest rate",
+        "inflation",
+    )
+    high_impact = impact == "high" or any(marker in raw_text for marker in high_impact_markers)
+
+    if not has_data:
+        sentiment_status = "missing"
+        fundamental_status = "missing"
+        fundamental_risk = "unknown"
+        news_risk = "unknown"
+        decision = "optional_missing_not_blocking"
+    elif alignment == "conflict":
+        sentiment_status = "conflict"
+        fundamental_status = "conflict" if high_impact else "warning"
+        fundamental_risk = "high" if high_impact else "medium"
+        news_risk = "high" if high_impact else "medium"
+        decision = "blocking_or_score_reduction"
+    elif alignment == "aligned":
+        sentiment_status = "aligned"
+        fundamental_status = "aligned"
+        fundamental_risk = "low"
+        news_risk = "elevated" if high_impact else "low"
+        decision = "confirmation"
+    else:
+        sentiment_status = "neutral"
+        fundamental_status = "neutral"
+        fundamental_risk = "medium" if high_impact else "low"
+        news_risk = "elevated" if high_impact else "low"
+        decision = "neutral_filter"
+
+    return {
+        "sentiment_status": sentiment_status,
+        "sentiment_alignment": alignment,
+        "sentiment_implied_action": implied_action,
+        "sentiment_text_ru": sentiment_text,
+        "fundamental_status": fundamental_status,
+        "fundamental_risk": fundamental_risk,
+        "news_risk": news_risk,
+        "high_impact_news": high_impact,
+        "fundamental_decision": decision,
+        "fundamental_summary_ru": sentiment_text if has_data else "Фундаментал/сентимент: свежих данных нет; слой не блокирует сделку.",
+    }
+
+
 def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
     """Expose flat advisor fields first so MT4's simple parser sees them before candles."""
     if not isinstance(idea, dict):
@@ -96,6 +188,7 @@ def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
     prop_mode = str(raw_mode or "").lower().replace(" ", "_") if raw_mode is not None else ""
     mode = _mode_label(raw_mode)
     allowed = bool(idea.get("advisor_allowed") or advisor.get("allowed") or idea.get("trade_permission"))
+    fundamental = _sentiment_and_fundamental_fields(idea)
 
     ordered: dict[str, Any] = {}
     for key in ("id", "symbol", "pair", "timeframe", "tf", "action", "signal", "direction"):
@@ -122,6 +215,7 @@ def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
 
     ordered["trade_permission"] = allowed
     ordered["advisor_allowed"] = allowed
+    ordered.update(fundamental)
 
     for key in ("entry", "entry_price", "sl", "stop_loss", "tp", "take_profit", "rr", "risk_reward"):
         if key in idea:
@@ -133,6 +227,9 @@ def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
         "mode": mode,
         "prop_mode": prop_mode,
         "trade_permission": allowed,
+        "sentiment_status": fundamental.get("sentiment_status"),
+        "fundamental_risk": fundamental.get("fundamental_risk"),
+        "news_risk": fundamental.get("news_risk"),
     }
 
     for key, value in idea.items():
@@ -218,7 +315,7 @@ def _hit_status(active: dict[str, Any], current_price: float | None) -> tuple[st
         if tp is not None and current_price >= tp:
             return "tp_hit", tp
         if sl is not None and current_price <= sl:
-            return "sl_hit"
+            return "sl_hit", sl
     if action == "SELL":
         if tp is not None and current_price <= tp:
             return "tp_hit", tp
