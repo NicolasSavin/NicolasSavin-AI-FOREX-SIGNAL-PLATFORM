@@ -194,14 +194,56 @@ def _extract_ai_json_payload(ai_text: str) -> dict[str, Any]:
     return {}
 
 
+MT4_HEATMAP_FIELDS = (
+    "heatmap_available",
+    "heatmap_wall_above",
+    "heatmap_wall_below",
+    "heatmap_wall_above_size",
+    "heatmap_wall_below_size",
+    "heatmap_bias",
+)
+
+
+def _mt4_bool_or_none(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value in (None, "", "—"):
+        return None
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "available"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "unavailable"}:
+        return False
+    return None
+
+
+def _extract_mt4_heatmap_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    heatmap: dict[str, Any] = {}
+    available = _mt4_bool_or_none(payload.get("heatmap_available"))
+    if available is not None:
+        heatmap["heatmap_available"] = available
+    for key in ("heatmap_wall_above", "heatmap_wall_below", "heatmap_wall_above_size", "heatmap_wall_below_size"):
+        value = _first_mt4_float(payload, (key,), positive_only=key.endswith(("above", "below")))
+        if value is not None:
+            heatmap[key] = value
+    bias = str(payload.get("heatmap_bias") or "").strip().lower()
+    if bias:
+        heatmap["heatmap_bias"] = bias
+    return heatmap
+
+
 def _compact_candle(candle: dict[str, Any]) -> dict[str, Any]:
-    return {
+    row = {
         "time": int(candle.get("time") or 0),
         "open": float(candle.get("open") or 0.0),
         "high": float(candle.get("high") or 0.0),
         "low": float(candle.get("low") or 0.0),
         "close": float(candle.get("close") or 0.0),
     }
+    row.update(_extract_mt4_heatmap_fields(candle))
+    return row
 
 
 
@@ -274,6 +316,8 @@ def _extract_mt4_rich_fields(payload: dict[str, Any]) -> dict[str, Any]:
     if margin_source:
         rich["margin_source"] = margin_source
 
+    rich.update(_extract_mt4_heatmap_fields(payload))
+
     return rich
 
 
@@ -320,6 +364,7 @@ def _mt4_debug_rich_fields(item: dict[str, Any]) -> dict[str, Any]:
             "cumulative_delta",
             "hft_signal",
             "margin_source",
+            *MT4_HEATMAP_FIELDS,
         )
         if isinstance(item, dict) and item.get(field) is not None
     }
@@ -1309,6 +1354,12 @@ def api_mt4_ingest_get(
     margin_zone_lower: float = 0.0,
     margin_zone_upper: float = 0.0,
     margin_source: str = "",
+    heatmap_available: bool | None = None,
+    heatmap_wall_above: float = 0.0,
+    heatmap_wall_below: float = 0.0,
+    heatmap_wall_above_size: float = 0.0,
+    heatmap_wall_below_size: float = 0.0,
+    heatmap_bias: str = "",
     hft_signal: str = "",
     bars: str = "",
     broker: str = "",
@@ -1326,7 +1377,19 @@ def api_mt4_ingest_get(
 
     store_key = f"{normalized_symbol}:{timeframe}"
     candle_time = int(time or 0)
-    candle_row = _compact_candle({"time": candle_time, "open": open, "high": high, "low": low, "close": close})
+    candle_row = _compact_candle({
+        "time": candle_time,
+        "open": open,
+        "high": high,
+        "low": low,
+        "close": close,
+        "heatmap_available": heatmap_available,
+        "heatmap_wall_above": heatmap_wall_above,
+        "heatmap_wall_below": heatmap_wall_below,
+        "heatmap_wall_above_size": heatmap_wall_above_size,
+        "heatmap_wall_below_size": heatmap_wall_below_size,
+        "heatmap_bias": heatmap_bias,
+    })
     existing = (MT4_CANDLE_STORE.get(store_key) or {}).get("candles") or []
     merged = {int(c.get("time") or 0): c for c in existing if isinstance(c, dict) and int(c.get("time") or 0) > 0}
     if candle_time > 0:
@@ -1350,6 +1413,12 @@ def api_mt4_ingest_get(
         "cumulative_delta": cumulative_delta,
         "hft_signal": hft_signal,
         "margin_source": margin_source,
+        "heatmap_available": heatmap_available,
+        "heatmap_wall_above": heatmap_wall_above,
+        "heatmap_wall_below": heatmap_wall_below,
+        "heatmap_wall_above_size": heatmap_wall_above_size,
+        "heatmap_wall_below_size": heatmap_wall_below_size,
+        "heatmap_bias": heatmap_bias,
     })
     _prune_stale_mt4_store()
     _merge_mt4_store_item(
@@ -1394,6 +1463,7 @@ def api_mt4_ingest_get(
         "margin_zone_upper": rich_fields.get("margin_zone_upper"),
         "margin_source": margin_source or "Future_Volume_v5.00",
         "hft_signal": hft_signal,
+        **rich_fields,
         "bars": bars,
         "broker": broker,
         "account": account,
@@ -2832,6 +2902,12 @@ def build_signal_from_candles(symbol: str, tf: str = "M15") -> dict[str, Any]:
         "last_candle_time": last_candle_time, "available_timeframes": available_timeframes, "source": "mt4_ingest" if available_timeframes else "market_provider",
         "prop_signal_score": {"score": inst.get("confidence", 0), "grade": "A" if inst.get("confidence", 0) >= 74 else "B" if inst.get("confidence", 0) >= 62 else "C", "mode": inst.get("mode", "watchlist")},
     }
+    _, mt4_item = resolve_mt4_candle_item(symbol_norm, tf_norm)
+    heatmap_fields = _mt4_debug_rich_fields(mt4_item or {})
+    for field in MT4_HEATMAP_FIELDS:
+        if field in heatmap_fields:
+            result[field] = heatmap_fields[field]
+            result["prop_signal_score"][field] = heatmap_fields[field]
     return result
 
 

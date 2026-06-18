@@ -1054,6 +1054,93 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+
+def _heatmap_context(idea: dict[str, Any], direction: str, geo: dict[str, Any]) -> dict[str, Any]:
+    source: dict[str, Any] = idea if isinstance(idea, dict) else {}
+    market_context = source.get("market_context") if isinstance(source.get("market_context"), dict) else {}
+    mt4_context = _mt4_store_context(source.get("symbol") or source.get("pair") or source.get("instrument"), source.get("timeframe") or source.get("tf")) or {}
+
+    def pick(key: str) -> Any:
+        for payload in (source, market_context, mt4_context):
+            if isinstance(payload, dict) and payload.get(key) not in (None, "", "—"):
+                return payload.get(key)
+        return None
+
+    raw_available = pick("heatmap_available")
+    available = raw_available if isinstance(raw_available, bool) else str(raw_available).strip().lower() in {"1", "true", "yes", "available"}
+    wall_above = _to_float(pick("heatmap_wall_above"))
+    wall_below = _to_float(pick("heatmap_wall_below"))
+    wall_above_size = _to_float(pick("heatmap_wall_above_size"))
+    wall_below_size = _to_float(pick("heatmap_wall_below_size"))
+    bias = str(pick("heatmap_bias") or "").strip().lower()
+    entry = _to_float(geo.get("entry"))
+    tp = _to_float(geo.get("tp"))
+    symbol = str(geo.get("symbol") or source.get("symbol") or "")
+    pip = _pip_size(symbol, entry)
+    sizes = [value for value in (wall_above_size, wall_below_size) if value is not None and value > 0]
+    large_threshold = max(sizes) * 0.65 if sizes else None
+
+    score_adjustment = 0
+    reasons: list[str] = []
+    if not available and not any(value is not None for value in (wall_above, wall_below)) and not bias:
+        return {
+            "available": False,
+            "heatmap_available": False,
+            "heatmap_score": 0,
+            "score_adjustment": 0,
+            "heatmap_reason_ru": "DOM/Heatmap слой от MT4 bridge недоступен.",
+            "heatmap_bias": bias or None,
+            "heatmap_wall_above": wall_above,
+            "heatmap_wall_below": wall_below,
+            "heatmap_wall_above_size": wall_above_size,
+            "heatmap_wall_below_size": wall_below_size,
+        }
+
+    if direction == "BUY" and bias in {"bullish", "buy", "long"}:
+        score_adjustment += 6
+        reasons.append("heatmap bias совпадает с BUY: +6")
+    elif direction == "SELL" and bias in {"bearish", "sell", "short"}:
+        score_adjustment += 6
+        reasons.append("heatmap bias совпадает с SELL: +6")
+    elif direction == "BUY" and bias in {"bearish", "sell", "short"}:
+        score_adjustment -= 8
+        reasons.append("heatmap bias против BUY: -8")
+    elif direction == "SELL" and bias in {"bullish", "buy", "long"}:
+        score_adjustment -= 8
+        reasons.append("heatmap bias против SELL: -8")
+
+    near_tp_limit = pip * 12
+    support_limit = pip * 18
+    if direction == "BUY":
+        if tp is not None and wall_above is not None and (large_threshold is None or (wall_above_size or 0) >= large_threshold) and entry is not None and entry <= wall_above <= tp and abs(tp - wall_above) <= near_tp_limit:
+            score_adjustment -= 6
+            reasons.append("крупная wall сверху прямо перед/около TP: -6")
+        if entry is not None and wall_below is not None and (large_threshold is None or (wall_below_size or 0) >= large_threshold) and 0 <= entry - wall_below <= support_limit:
+            score_adjustment += 6
+            reasons.append("крупная wall ниже entry как поддержка: +6")
+    elif direction == "SELL":
+        if tp is not None and wall_below is not None and (large_threshold is None or (wall_below_size or 0) >= large_threshold) and entry is not None and tp <= wall_below <= entry and abs(wall_below - tp) <= near_tp_limit:
+            score_adjustment -= 6
+            reasons.append("крупная wall снизу прямо перед/около TP: -6")
+        if entry is not None and wall_above is not None and (large_threshold is None or (wall_above_size or 0) >= large_threshold) and 0 <= wall_above - entry <= support_limit:
+            score_adjustment += 6
+            reasons.append("крупная wall выше entry как сопротивление: +6")
+
+    if not reasons:
+        reasons.append("DOM/Heatmap получен, но без значимого влияния на сделку.")
+    return {
+        "available": True,
+        "heatmap_available": True,
+        "heatmap_score": score_adjustment,
+        "score_adjustment": score_adjustment,
+        "heatmap_reason_ru": "; ".join(reasons),
+        "heatmap_bias": bias or None,
+        "heatmap_wall_above": wall_above,
+        "heatmap_wall_below": wall_below,
+        "heatmap_wall_above_size": wall_above_size,
+        "heatmap_wall_below_size": wall_below_size,
+    }
+
 def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     safe_idea = idea if isinstance(idea, dict) else {}
     rows = _criterion_rows(safe_idea)
@@ -1068,9 +1155,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     dpoc = _dpoc_context(safe_idea, direction)
     margin_zone = _margin_zone_context(safe_idea)
     max_pain = _max_pain_context(safe_idea, direction, external_options)
+    heatmap = _heatmap_context(safe_idea, direction, geo)
     volume_delta_source = volume_delta.get("source")
     hft_signal = volume_delta.get("hft_signal") or _hft_signal_context(safe_idea).get("hft_signal")
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0)))
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0) + int(heatmap.get("score_adjustment") or 0)))
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     external_options_note = ""
@@ -1144,6 +1232,8 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
             "fallback_used": bool(geo.get("fallback_used")),
             "volume_delta_source": volume_delta_source,
             "hft_signal": hft_signal,
+            "heatmap_score": heatmap.get("heatmap_score"),
+            "heatmap_reason_ru": heatmap.get("heatmap_reason_ru"),
         },
         "criteria": rows,
         "blockers": blockers,
@@ -1171,6 +1261,15 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "distance_to_max_pain_pips": max_pain.get("distance_to_max_pain_pips"),
         "max_pain_alignment": max_pain.get("max_pain_alignment"),
         "max_pain_text_ru": max_pain.get("max_pain_text_ru"),
+        "heatmap": heatmap,
+        "heatmap_score": heatmap.get("heatmap_score"),
+        "heatmap_reason_ru": heatmap.get("heatmap_reason_ru"),
+        "heatmap_available": heatmap.get("heatmap_available"),
+        "heatmap_wall_above": heatmap.get("heatmap_wall_above"),
+        "heatmap_wall_below": heatmap.get("heatmap_wall_below"),
+        "heatmap_wall_above_size": heatmap.get("heatmap_wall_above_size"),
+        "heatmap_wall_below_size": heatmap.get("heatmap_wall_below_size"),
+        "heatmap_bias": heatmap.get("heatmap_bias"),
         "real_candle_diagnostics": candle_diag,
         "volume_delta_source": volume_delta_source,
         "hft_signal": hft_signal,
@@ -1327,6 +1426,15 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "distance_to_max_pain_pips": score.get("distance_to_max_pain_pips"),
             "max_pain_alignment": score.get("max_pain_alignment"),
             "max_pain_text_ru": score.get("max_pain_text_ru"),
+            "heatmap": score.get("heatmap"),
+            "heatmap_score": score.get("heatmap_score"),
+            "heatmap_reason_ru": score.get("heatmap_reason_ru"),
+            "heatmap_available": score.get("heatmap_available"),
+            "heatmap_wall_above": score.get("heatmap_wall_above"),
+            "heatmap_wall_below": score.get("heatmap_wall_below"),
+            "heatmap_wall_above_size": score.get("heatmap_wall_above_size"),
+            "heatmap_wall_below_size": score.get("heatmap_wall_below_size"),
+            "heatmap_bias": score.get("heatmap_bias"),
         }
     )
     market_structure = dict(enriched.get("market_structure") or {})
