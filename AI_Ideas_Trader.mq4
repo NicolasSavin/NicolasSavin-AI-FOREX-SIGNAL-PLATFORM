@@ -23,6 +23,10 @@ input bool UseEntryZone = true;
 input bool UseBufferedSL = true;
 input bool SkipIfTpTooClose = true;
 input bool AllowFallbackProviderTrading = false;
+input bool UsePropFilters = true;
+input int MinPropScore = 55;
+input string AllowedPropGrades = "A,B";
+input string AllowedPropModes = "prop_entry,watchlist";
 input string MarkupUrlTemplate = "https://your-domain.onrender.com/api/mt4/markup/{symbol}?tf=M15";
 
 datetime g_lastPoll = 0;
@@ -48,10 +52,11 @@ void PollSignalsAndTrade()
 
    string symbol = "", action = "", comment = "", skipReason = "";
    double entry = 0.0, sl = 0.0, tp = 0.0, entryZoneFrom = 0.0, entryZoneTo = 0.0, entryZoneMid = 0.0, slBuffered = 0.0;
-   int confidence = 0;
+   int confidence = 0, score = 0;
    bool tradePermission = false;
+   string grade = "", mode = "";
 
-   if(!ExtractSignalForCurrentSymbol(response, symbol, action, entry, sl, tp, confidence, tradePermission, comment, entryZoneFrom, entryZoneTo, entryZoneMid, slBuffered, skipReason))
+   if(!ExtractSignalForCurrentSymbol(response, symbol, action, entry, sl, tp, confidence, tradePermission, comment, entryZoneFrom, entryZoneTo, entryZoneMid, slBuffered, skipReason, score, grade, mode))
    {
       Print("No matching tradable signal for ", Symbol());
       DrawMarkupForCurrentSymbol();
@@ -62,13 +67,13 @@ void PollSignalsAndTrade()
 
    if(SkipIfTpTooClose && skipReason == "tp_too_close")
    {
-      Print("Skipped: TP too close according to backend safety");
+      LogBlocked(symbol, "tp_too_close", score, grade, mode);
       return;
    }
 
    if(UseEntryZone && !IsPriceAllowedByEntryZone(action, entryZoneFrom, entryZoneTo))
    {
-      Print("Ждём цену в зоне Entry");
+      LogBlocked(symbol, "price_outside_entry_zone", score, grade, mode);
       return;
    }
 
@@ -78,36 +83,54 @@ void PollSignalsAndTrade()
 
    if(UseConfidenceFilter && confidence < MinConfidence)
    {
-      Print("Skipped: confidence below filter");
+      LogBlocked(symbol, "confidence_below_filter", score, grade, mode);
+      return;
+   }
+
+   if(UsePropFilters && score > 0 && score < MinPropScore)
+   {
+      LogBlocked(symbol, "score_below_filter", score, grade, mode);
+      return;
+   }
+
+   if(UsePropFilters && StringLen(grade) > 0 && !CsvContains(AllowedPropGrades, grade))
+   {
+      LogBlocked(symbol, "grade_not_allowed", score, grade, mode);
+      return;
+   }
+
+   if(UsePropFilters && StringLen(mode) > 0 && !CsvContains(AllowedPropModes, mode))
+   {
+      LogBlocked(symbol, "mode_not_allowed", score, grade, mode);
       return;
    }
 
    if(!IsSpreadAllowed())
    {
-      Print("Skipped: spread too high");
+      LogBlocked(symbol, "spread_too_high", score, grade, mode);
       return;
    }
 
    if(!IsValidLevels(action, entry, sl, tp))
    {
-      Print("Skipped: invalid SL/TP for direction");
+      LogBlocked(symbol, "invalid_sl_tp_for_direction", score, grade, mode);
       return;
    }
 
    if(OneTradePerSymbol && HasOpenTradeForSymbol(Symbol(), MagicNumber))
    {
-      Print("Skipped: duplicate trade exists for symbol + magic");
+      LogBlocked(symbol, "duplicate_trade_exists", score, grade, mode);
       return;
    }
 
    if(action == "BUY" && !AllowBuy)
    {
-      Print("Skipped: BUY disabled by input");
+      LogBlocked(symbol, "buy_disabled_by_input", score, grade, mode);
       return;
    }
    if(action == "SELL" && !AllowSell)
    {
-      Print("Skipped: SELL disabled by input");
+      LogBlocked(symbol, "sell_disabled_by_input", score, grade, mode);
       return;
    }
 
@@ -145,9 +168,10 @@ bool HttpGet(string url, string &response)
    return(true);
 }
 
-bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, double &entry, double &sl, double &tp, int &confidence, bool &tradePermission, string &comment, double &entryZoneFrom, double &entryZoneTo, double &entryZoneMid, double &slBuffered, string &skipReason)
+bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, double &entry, double &sl, double &tp, int &confidence, bool &tradePermission, string &comment, double &entryZoneFrom, double &entryZoneTo, double &entryZoneMid, double &slBuffered, string &skipReason, int &score, string &grade, string &mode)
 {
    int signalsPos = StringFind(json, "\"signals\"");
+   if(signalsPos < 0) signalsPos = StringFind(json, "\"ideas\"");
    if(signalsPos < 0) return(false);
 
    int arrayStart = StringFind(json, "[", signalsPos);
@@ -160,7 +184,7 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
    {
       int objStart = StringFind(arr, "{", pos);
       if(objStart < 0) break;
-      int objEnd = StringFind(arr, "}", objStart);
+      int objEnd = FindObjectEnd(arr, objStart);
       if(objEnd < 0) break;
 
       string obj = StringSubstr(arr, objStart, objEnd - objStart + 1);
@@ -176,8 +200,12 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
       string apiSkipReason = JsonGetString(obj, "skip_reason");
       string apiProvider = StringLower(JsonGetString(obj, "provider"));
       int apiConfidence = (int)JsonGetNumber(obj, "confidence");
-      bool apiTradePermission = JsonGetBool(obj, "trade_permission");
-      bool providerAllowed = (apiProvider == "mt4_bridge") || AllowFallbackProviderTrading;
+      int apiScore = (int)JsonGetNumberAny(obj, "prop_score", "score", "confidence");
+      string apiGrade = JsonGetStringAny(obj, "prop_grade", "grade", "");
+      string apiMode = JsonGetStringAny(obj, "prop_mode", "mode", "analysis_mode");
+      bool apiTradePermission = JsonGetBoolAny(obj, "trade_permission", "advisor_allowed", "allowed");
+      string blockReason = ResolveBlockedReason(obj, apiAction, apiEntry, apiSl, apiTp, apiTradePermission, apiScore, apiGrade, apiMode);
+      bool providerAllowed = (StringLen(apiProvider) == 0) || (apiProvider == "mt4_bridge") || AllowFallbackProviderTrading;
 
       if(SymbolMatches(Symbol(), apiSymbol)
          && (apiAction == "BUY" || apiAction == "SELL")
@@ -196,9 +224,17 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
          entryZoneMid = NormalizeDouble(apiEntryZoneMid, Digits);
          skipReason = apiSkipReason;
          confidence = apiConfidence;
+         score = apiScore;
+         grade = apiGrade;
+         mode = apiMode;
          tradePermission = apiTradePermission;
          comment = JsonGetString(obj, "comment");
          return(true);
+      }
+      if(SymbolMatches(Symbol(), apiSymbol))
+      {
+         if(!providerAllowed) blockReason = "provider_not_allowed";
+         LogBlocked(apiSymbol, blockReason, apiScore, apiGrade, apiMode);
       }
       if(SymbolMatches(Symbol(), apiSymbol) && !providerAllowed)
       {
@@ -209,6 +245,56 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
    }
 
    return(false);
+}
+
+int FindObjectEnd(string text, int objStart)
+{
+   int depth = 0;
+   bool inString = false;
+   for(int i = objStart; i < StringLen(text); i++)
+   {
+      int c = StringGetCharacter(text, i);
+      int prev = (i > 0) ? StringGetCharacter(text, i - 1) : 0;
+      if(c == '"' && prev != '\\') inString = !inString;
+      if(inString) continue;
+      if(c == '{') depth++;
+      if(c == '}')
+      {
+         depth--;
+         if(depth == 0) return(i);
+      }
+   }
+   return(-1);
+}
+
+void LogBlocked(string symbol, string reason, int score, string grade, string mode)
+{
+   Print("BLOCKED ", symbol, " reason=", reason);
+   Print("score=", score);
+   Print("grade=", grade);
+   Print("mode=", mode);
+}
+
+string ResolveBlockedReason(string obj, string action, double entry, double sl, double tp, bool tradePermission, int score, string grade, string mode)
+{
+   string advisorReason = JsonGetString(obj, "reason");
+   if(StringLen(advisorReason) == 0) advisorReason = JsonGetString(obj, "skip_reason");
+   if(!tradePermission) return(StringLen(advisorReason) > 0 ? advisorReason : "trade_permission_false");
+   if(!(action == "BUY" || action == "SELL")) return("action_not_buy_sell");
+   if(entry <= 0 || sl <= 0 || tp <= 0) return("missing_entry_sl_tp");
+   if(UsePropFilters && score > 0 && score < MinPropScore) return("score_below_filter");
+   if(UsePropFilters && StringLen(grade) > 0 && !CsvContains(AllowedPropGrades, grade)) return("grade_not_allowed");
+   if(UsePropFilters && StringLen(mode) > 0 && !CsvContains(AllowedPropModes, mode)) return("mode_not_allowed");
+   return("not_tradable");
+}
+
+bool CsvContains(string csv, string value)
+{
+   string haystack = "," + StringLower(csv) + ",";
+   string needle = "," + StringLower(value) + ",";
+   StringReplace(haystack, " ", "");
+   StringReplace(needle, " ", "");
+   return(StringFind(haystack, needle) >= 0);
 }
 
 bool IsPriceAllowedByEntryZone(string action, double fromPrice, double toPrice)
@@ -327,6 +413,16 @@ string JsonGetString(string obj, string key)
    return(StringSubstr(obj, q1 + 1, q2 - q1 - 1));
 }
 
+string JsonGetStringAny(string obj, string key1, string key2, string key3)
+{
+   string value = JsonGetString(obj, key1);
+   if(StringLen(value) > 0) return(value);
+   value = JsonGetString(obj, key2);
+   if(StringLen(value) > 0) return(value);
+   if(StringLen(key3) <= 0) return("");
+   return(JsonGetString(obj, key3));
+}
+
 double JsonGetNumber(string obj, string key)
 {
    string marker = "\"" + key + "\"";
@@ -347,6 +443,14 @@ double JsonGetNumber(string obj, string key)
    return(StrToDouble(num));
 }
 
+double JsonGetNumberAny(string obj, string key1, string key2, string key3)
+{
+   if(JsonHasKey(obj, key1)) return(JsonGetNumber(obj, key1));
+   if(JsonHasKey(obj, key2)) return(JsonGetNumber(obj, key2));
+   if(StringLen(key3) > 0 && JsonHasKey(obj, key3)) return(JsonGetNumber(obj, key3));
+   return(0.0);
+}
+
 bool JsonGetBool(string obj, string key)
 {
    string marker = "\"" + key + "\"";
@@ -359,4 +463,18 @@ bool JsonGetBool(string obj, string key)
    string rem = StringSubstr(obj, start, 5);
   rem = StringLower(rem);
   return(StringFind(rem, "true") == 0);
+}
+
+bool JsonGetBoolAny(string obj, string key1, string key2, string key3)
+{
+   if(JsonHasKey(obj, key1)) return(JsonGetBool(obj, key1));
+   if(JsonHasKey(obj, key2)) return(JsonGetBool(obj, key2));
+   if(StringLen(key3) > 0 && JsonHasKey(obj, key3)) return(JsonGetBool(obj, key3));
+   return(false);
+}
+
+bool JsonHasKey(string obj, string key)
+{
+   if(StringLen(key) <= 0) return(false);
+   return(StringFind(obj, "\"" + key + "\"") >= 0);
 }
