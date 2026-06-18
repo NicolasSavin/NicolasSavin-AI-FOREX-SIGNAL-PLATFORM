@@ -4,6 +4,9 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable
+from datetime import datetime, timedelta, timezone
+
+import requests
 
 from fastapi import APIRouter
 
@@ -11,6 +14,7 @@ from app.signal_aggregator import SignalAggregator
 from app.services.market_structure_overlay import attach_market_structure_overlays
 from app.services.mt4_options_bridge import get_latest_options_levels
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
+from app.services.prop_desk_filters import PropDeskFilterService
 from app.services.signal_hub import DEFAULT_PAIRS
 from app.services.trade_idea_service import TradeIdeaService
 from backend.market.services.snapshot_service import MarketSnapshotService
@@ -206,6 +210,35 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             contracts.append(contract)
         return contracts
 
+
+    def _safe_news_events() -> list[dict]:
+        base_url = getattr(services.trade_idea_service, "FUNDAMENTAL_BASE_URL", None) or "http://127.0.0.1:8000"
+        try:
+            base_url = __import__("app.services.trade_idea_service", fromlist=["FUNDAMENTAL_BASE_URL"]).FUNDAMENTAL_BASE_URL
+        except Exception:
+            pass
+        try:
+            response = requests.get(f"{str(base_url).rstrip('/')}/calendar/events", timeout=1.5)
+            if not response.ok:
+                return []
+            payload = response.json() if isinstance(response.json(), dict) else {}
+            items = payload.get("events") or payload.get("items") or []
+            return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+        except Exception as exc:
+            logger.warning("ideas_news_events_unavailable reason=%s", exc)
+            return []
+
+    def _apply_prop_desk_filters(ideas: list[dict], *, archive: list[dict] | None = None) -> list[dict]:
+        try:
+            return PropDeskFilterService(services.trade_idea_service.chart_data_service).enrich(
+                ideas,
+                archived_ideas=archive or [],
+                news_events=_safe_news_events(),
+            )
+        except Exception as exc:
+            logger.exception("ideas_prop_desk_filters_failed reason=%s", exc)
+            return ideas
+
     def _safe_fallback_ideas(reason: str) -> list[dict]:
         try:
             return services.trade_idea_service.fallback_ideas(reason=reason)
@@ -237,6 +270,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             payload["archive"] = enrich_ideas_with_prop_scores(payload.get("archive") or [])
             payload["ideas"] = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("ideas") or [])))
             payload["archive"] = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("archive") or [])))
+            payload["ideas"] = _apply_prop_desk_filters(payload.get("ideas") or [], archive=payload.get("archive") or [])
             for idea in payload["ideas"]:
                 if not str(
                     idea.get("description_ru")
@@ -291,6 +325,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
                 ideas = services.trade_idea_service.fallback_ideas(reason=fallback_reason)
             ideas = enrich_ideas_with_prop_scores(ideas)
             ideas = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(ideas)))
+            ideas = _apply_prop_desk_filters(ideas)
             generated_count = sum(1 for idea in ideas if str(idea.get("source")) != "fallback")
             fallback_count = len(ideas) - generated_count
             logger.info(

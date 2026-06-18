@@ -29,6 +29,7 @@ from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
+from app.services.prop_desk_filters import PropDeskFilterService
 from app.services.idea_lifecycle import apply_idea_lifecycle, build_lifecycle_stats
 from app.services.signal_audit_logger import log_signal_audit
 from app.services.timing import timing_log
@@ -116,6 +117,43 @@ ARCHIVE_FILE = Path("archive.json")
 HTF_FILTER = HtfContextFilter()
 
 app = FastAPI(title="AI FOREX SIGNAL PLATFORM", version="htf-context-real-candles-1.0")
+
+from app.services.market_service_registry import get_canonical_market_service
+from app.services.trade_idea_service import TradeIdeaService
+from backend.signal_engine import SignalEngine
+
+canonical_market_service = get_canonical_market_service()
+trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
+
+class _AnalyticsNewsConnector:
+    def _descriptor(self, *, status: str = "unavailable", note_ru: str = "") -> dict[str, str]:
+        return {"status": status, "note_ru": note_ru}
+
+    async def load(self, symbol: str):
+        return [], self._descriptor()
+
+
+class _SignalAnalyticsService:
+    def __init__(self) -> None:
+        self.news_connector = _AnalyticsNewsConnector()
+
+    async def _technical_signal(self, symbol: str):
+        return 0.0, "fallback", {}
+
+    async def build_signal_analytics(self, symbol: str) -> dict[str, Any]:
+        _, _, signal_payload = await self._technical_signal(symbol.upper())
+        return {
+            "symbol": symbol.upper(),
+            "action": signal_payload.get("action", "WAIT"),
+            "confidencePercent": signal_payload.get("confidence_percent", 0),
+            "chartPatterns": signal_payload.get("chart_patterns", []),
+            "patternSummary": signal_payload.get("pattern_summary", {}),
+            "patternSignalImpact": signal_payload.get("pattern_signal_impact", {}),
+            "features": {"patternFeatures": signal_payload.get("pattern_features", {})},
+        }
+
+
+signal_analytics_service = _SignalAnalyticsService()
 
 chat_service = ForexChatService()
 
@@ -337,6 +375,12 @@ def api_external_signals_cme_optionsfx(force_refresh: bool = False) -> dict[str,
 def home():
     return FileResponse(STATIC_DIR / "index.html")
 
+
+
+@app.get("/api/analytics/signals/{symbol}")
+async def api_analytics_signals(symbol: str):
+    response = await signal_analytics_service.build_signal_analytics(symbol)
+    return response.model_dump(mode="json") if hasattr(response, "model_dump") else response
 
 @app.get("/ideas", include_in_schema=False)
 def ideas_page():
@@ -925,6 +969,14 @@ def generate_trade_ideas() -> tuple[list[dict[str, Any]], list[str]]:
     return signals, failed_symbols
 
 
+
+def _apply_prop_desk_execution(ideas: list[dict[str, Any]], archive: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    try:
+        return PropDeskFilterService(trade_idea_service.chart_data_service).enrich(ideas, archived_ideas=archive or [], news_events=[])
+    except Exception:
+        logger.exception("prop_desk_execution_failed")
+        return ideas
+
 def build_market() -> dict[str, Any]:
     with timing_log(logger, "build_market"):
         signals, failed_symbols = generate_trade_ideas()
@@ -932,6 +984,7 @@ def build_market() -> dict[str, Any]:
         if signals:
             enriched_signals = _attach_mt4_optionsfx_display_many(enrich_ideas_with_prop_scores(signals))
             lifecycle = apply_idea_lifecycle(enriched_signals)
+            lifecycle["ideas"] = _apply_prop_desk_execution(lifecycle["ideas"], lifecycle.get("archive") or [])
             return {
                 "signals": lifecycle["ideas"],
                 "ideas": lifecycle["ideas"],
@@ -1036,6 +1089,7 @@ def api_ideas():
     if signals:
         enriched_signals = enrich_ideas_with_prop_scores(signals)
         lifecycle = apply_idea_lifecycle(enriched_signals)
+        lifecycle["ideas"] = _apply_prop_desk_execution(lifecycle["ideas"], lifecycle.get("archive") or [])
         return {
             "signals": lifecycle["ideas"],
             "ideas": lifecycle["ideas"],
