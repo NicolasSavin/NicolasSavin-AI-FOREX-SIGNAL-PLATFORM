@@ -76,51 +76,69 @@ def _mode_label(value: Any) -> str:
 
 
 def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
-    """Expose flat fields expected by older MT4 advisors.
-
-    The web UI can read nested prop_signal_score/advisor_signal, but deployed MT4
-    EAs often filter only top-level score/grade/mode. Keep both contracts.
-    """
+    """Expose flat advisor fields first so MT4's simple parser sees them before candles."""
     if not isinstance(idea, dict):
         return idea
-    out = dict(idea)
-    advisor = out.get("advisor_signal") if isinstance(out.get("advisor_signal"), dict) else {}
-    prop = out.get("prop_signal_score") if isinstance(out.get("prop_signal_score"), dict) else {}
 
-    score = _int_score(out.get("prop_score"))
+    advisor = idea.get("advisor_signal") if isinstance(idea.get("advisor_signal"), dict) else {}
+    prop = idea.get("prop_signal_score") if isinstance(idea.get("prop_signal_score"), dict) else {}
+
+    score = _int_score(idea.get("prop_score"))
     if score is None:
         score = _int_score(advisor.get("score"))
     if score is None:
         score = _int_score(prop.get("score"))
     if score is None:
-        score = _int_score(out.get("confidence"))
+        score = _int_score(idea.get("confidence"))
 
-    grade = str(out.get("prop_grade") or advisor.get("grade") or prop.get("grade") or out.get("grade") or "").upper()
-    raw_mode = out.get("prop_mode") or advisor.get("mode") or prop.get("mode") or out.get("mode")
+    grade = str(idea.get("prop_grade") or advisor.get("grade") or prop.get("grade") or idea.get("grade") or "").upper()
+    raw_mode = idea.get("prop_mode") or advisor.get("mode") or prop.get("mode") or idea.get("mode")
+    prop_mode = str(raw_mode or "").lower().replace(" ", "_") if raw_mode is not None else ""
     mode = _mode_label(raw_mode)
+    allowed = bool(idea.get("advisor_allowed") or advisor.get("allowed") or idea.get("trade_permission"))
 
-    allowed = bool(out.get("advisor_allowed") or advisor.get("allowed") or out.get("trade_permission"))
+    ordered: dict[str, Any] = {}
+    for key in ("id", "symbol", "pair", "timeframe", "tf", "action", "signal", "direction"):
+        if key in idea:
+            ordered[key] = idea.get(key)
 
     if score is not None:
-        out["score"] = score
-        out["confidence"] = score
-        out["prop_score"] = score
-        out["propScore"] = score
-        out["propConfidence"] = score
+        ordered["score"] = score
+        ordered["confidence"] = score
+        ordered["prop_score"] = score
+        ordered["propScore"] = score
+        ordered["propConfidence"] = score
     if grade:
-        out["grade"] = grade
-        out["prop_grade"] = grade
-        out["propGrade"] = grade
+        ordered["grade"] = grade
+        ordered["prop_grade"] = grade
+        ordered["propGrade"] = grade
     if mode:
-        out["mode"] = mode
-        out["prop_mode_label"] = mode
-        out["propModeLabel"] = mode
-    if raw_mode is not None:
-        out["prop_mode"] = str(raw_mode).lower().replace(" ", "_")
-        out["propMode"] = out["prop_mode"]
-    out["trade_permission"] = allowed
-    out["advisor_allowed"] = allowed
-    return out
+        ordered["mode"] = mode
+        ordered["prop_mode_label"] = mode
+        ordered["propModeLabel"] = mode
+    if prop_mode:
+        ordered["prop_mode"] = prop_mode
+        ordered["propMode"] = prop_mode
+
+    ordered["trade_permission"] = allowed
+    ordered["advisor_allowed"] = allowed
+
+    for key in ("entry", "entry_price", "sl", "stop_loss", "tp", "take_profit", "rr", "risk_reward"):
+        if key in idea:
+            ordered[key] = idea.get(key)
+
+    ordered["advisor_filter_debug"] = {
+        "score": score,
+        "grade": grade,
+        "mode": mode,
+        "prop_mode": prop_mode,
+        "trade_permission": allowed,
+    }
+
+    for key, value in idea.items():
+        if key not in ordered:
+            ordered[key] = value
+    return ordered
 
 
 def action_of(idea: dict[str, Any]) -> str:
@@ -200,7 +218,7 @@ def _hit_status(active: dict[str, Any], current_price: float | None) -> tuple[st
         if tp is not None and current_price >= tp:
             return "tp_hit", tp
         if sl is not None and current_price <= sl:
-            return "sl_hit", sl
+            return "sl_hit"
     if action == "SELL":
         if tp is not None and current_price <= tp:
             return "tp_hit", tp
