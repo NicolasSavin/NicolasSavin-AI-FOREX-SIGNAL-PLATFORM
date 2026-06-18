@@ -379,6 +379,62 @@ def _margin_zone_context(idea: dict[str, Any], symbol: str, timeframe: str, cand
     return build_margin_zone_context(None, symbol, current_price, entry_price)
 
 
+
+def _heatmap_context(idea: dict[str, Any], symbol: str, direction: str, entry: float | None, tp: float | None) -> dict[str, Any]:
+    market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else {}
+    mt4_context = None
+    try:
+        module = sys.modules.get("app.main")
+        resolver = getattr(module, "resolve_mt4_candle_item", None) if module else None
+        if callable(resolver):
+            _, mt4_context = resolver(symbol, str(idea.get("timeframe") or idea.get("tf") or "M15"))
+    except Exception:
+        mt4_context = None
+
+    def pick(key: str) -> Any:
+        for payload in (idea, market_context, mt4_context):
+            if isinstance(payload, dict) and payload.get(key) not in (None, "", "—"):
+                return payload.get(key)
+        return None
+
+    raw_available = pick("heatmap_available")
+    available = raw_available if isinstance(raw_available, bool) else str(raw_available).strip().lower() in {"1", "true", "yes", "available"}
+    wall_above = _num(pick("heatmap_wall_above"))
+    wall_below = _num(pick("heatmap_wall_below"))
+    wall_above_size = _num(pick("heatmap_wall_above_size"))
+    wall_below_size = _num(pick("heatmap_wall_below_size"))
+    bias = str(pick("heatmap_bias") or "").strip().lower()
+    if not available and not any(value is not None for value in (wall_above, wall_below)) and not bias:
+        return {"available": False, "heatmap_available": False, "heatmap_score": 0, "score_adjustment": 0, "heatmap_reason_ru": "DOM/Heatmap слой от MT4 bridge недоступен.", "heatmap_bias": bias or None, "heatmap_wall_above": wall_above, "heatmap_wall_below": wall_below, "heatmap_wall_above_size": wall_above_size, "heatmap_wall_below_size": wall_below_size}
+
+    pip = _pip(symbol, entry or tp or 1.0)
+    sizes = [value for value in (wall_above_size, wall_below_size) if value is not None and value > 0]
+    large_threshold = max(sizes) * 0.65 if sizes else None
+    adjustment = 0
+    reasons: list[str] = []
+    if direction == "BUY" and bias in {"bullish", "buy", "long"}:
+        adjustment += 6; reasons.append("heatmap bias совпадает с BUY: +6")
+    elif direction == "SELL" and bias in {"bearish", "sell", "short"}:
+        adjustment += 6; reasons.append("heatmap bias совпадает с SELL: +6")
+    elif direction == "BUY" and bias in {"bearish", "sell", "short"}:
+        adjustment -= 8; reasons.append("heatmap bias против BUY: -8")
+    elif direction == "SELL" and bias in {"bullish", "buy", "long"}:
+        adjustment -= 8; reasons.append("heatmap bias против SELL: -8")
+
+    if direction == "BUY":
+        if tp is not None and wall_above is not None and (large_threshold is None or (wall_above_size or 0) >= large_threshold) and entry is not None and entry <= wall_above <= tp and abs(tp - wall_above) <= pip * 12:
+            adjustment -= 6; reasons.append("крупная wall сверху прямо перед/около TP: -6")
+        if entry is not None and wall_below is not None and (large_threshold is None or (wall_below_size or 0) >= large_threshold) and 0 <= entry - wall_below <= pip * 18:
+            adjustment += 6; reasons.append("крупная wall ниже entry как поддержка: +6")
+    elif direction == "SELL":
+        if tp is not None and wall_below is not None and (large_threshold is None or (wall_below_size or 0) >= large_threshold) and entry is not None and tp <= wall_below <= entry and abs(wall_below - tp) <= pip * 12:
+            adjustment -= 6; reasons.append("крупная wall снизу прямо перед/около TP: -6")
+        if entry is not None and wall_above is not None and (large_threshold is None or (wall_above_size or 0) >= large_threshold) and 0 <= wall_above - entry <= pip * 18:
+            adjustment += 6; reasons.append("крупная wall выше entry как сопротивление: +6")
+    if not reasons:
+        reasons.append("DOM/Heatmap получен, но без значимого влияния на сделку.")
+    return {"available": True, "heatmap_available": True, "heatmap_score": adjustment, "score_adjustment": adjustment, "heatmap_reason_ru": "; ".join(reasons), "heatmap_bias": bias or None, "heatmap_wall_above": wall_above, "heatmap_wall_below": wall_below, "heatmap_wall_above_size": wall_above_size, "heatmap_wall_below_size": wall_below_size}
+
 def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     candles = _candles(idea)
@@ -394,6 +450,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     dpoc = _dpoc_context(idea, symbol, timeframe, direction, candles)
     margin_zone = _margin_zone_context(idea, symbol, timeframe, candles)
     max_pain = _max_pain_context(idea, direction, external_options)
+    heatmap = _heatmap_context(idea, symbol, direction, entry, tp)
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     has_structure = any(_text_has_data(idea.get(k)) for k in ("reason_ru", "summary_ru", "market_structure", "htf_context", "entry_source"))
@@ -414,7 +471,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         _row("sentiment", "Sentiment / новости", 5, int(sentiment.get("score") or 0), str(sentiment.get("text_ru") or "нет sentiment")),
     ]
     base_score = round(sum(r["score"] for r in rows) / max(sum(r["weight"] for r in rows), 1) * 100)
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0)))
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0) + int(heatmap.get("score_adjustment") or 0)))
     allowed = bool(direction in {"BUY", "SELL"} and valid and rr is not None and rr >= 1.1 and score >= 55 and not sentiment_conflict)
     grade = "A" if score >= 70 else "B" if score >= 55 else "C" if score >= 40 else "D"
     mode = "prop_entry" if allowed and score >= 70 else "watchlist" if allowed else "research_only" if score >= 40 else "no_trade"
@@ -430,7 +487,7 @@ def _score_payload(idea: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     if volume_delta.get("delta_divergence"):
         blockers.append("Delta divergence: цена и CumDelta расходятся")
     score_payload = {"score": score, "grade": grade, "mode": mode, "decision_ru": "Рабочая prop-идея." if allowed else "Только наблюдение: условий для автоторговли недостаточно.", "direction": direction, "criteria": rows, "blockers": blockers, "missing_inputs": [r["label_ru"] for r in rows if r["status"] == "missing"], "trade_geometry": {"symbol": symbol, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "has_levels": valid, "valid_geometry": valid, "level_source": level_source, "candles_count": len(candles), "fallback_used": level_source == "atr_fallback"}, "sentiment_filter": sentiment, "sentiment_used": sentiment.get("alignment") != "missing", "external_options_filter": external_options, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "volume_delta": volume_delta, "volume_delta_source": volume_delta.get("source"), "delta_divergence": bool(volume_delta.get("delta_divergence")), "dpoc": dpoc, "dpoc_price": dpoc.get("dpoc_price"), "distance_to_dpoc_pips": dpoc.get("distance_to_dpoc_pips")}
-    score_payload.update({"margin_lower": margin_zone.get("margin_lower"), "margin_upper": margin_zone.get("margin_upper"), "margin_zone_lower": margin_zone.get("margin_zone_lower"), "margin_zone_upper": margin_zone.get("margin_zone_upper"), "margin_source": margin_zone.get("margin_source"), "margin_zone_confluence": margin_zone, "max_pain_context": max_pain, "max_pain_price": max_pain.get("max_pain_price"), "distance_to_max_pain_pips": max_pain.get("distance_to_max_pain_pips"), "max_pain_alignment": max_pain.get("max_pain_alignment"), "max_pain_text_ru": max_pain.get("max_pain_text_ru")})
+    score_payload.update({"margin_lower": margin_zone.get("margin_lower"), "margin_upper": margin_zone.get("margin_upper"), "margin_zone_lower": margin_zone.get("margin_zone_lower"), "margin_zone_upper": margin_zone.get("margin_zone_upper"), "margin_source": margin_zone.get("margin_source"), "margin_zone_confluence": margin_zone, "max_pain_context": max_pain, "max_pain_price": max_pain.get("max_pain_price"), "distance_to_max_pain_pips": max_pain.get("distance_to_max_pain_pips"), "max_pain_alignment": max_pain.get("max_pain_alignment"), "max_pain_text_ru": max_pain.get("max_pain_text_ru"), "heatmap": heatmap, "heatmap_score": heatmap.get("heatmap_score"), "heatmap_reason_ru": heatmap.get("heatmap_reason_ru"), "heatmap_available": heatmap.get("heatmap_available"), "heatmap_wall_above": heatmap.get("heatmap_wall_above"), "heatmap_wall_below": heatmap.get("heatmap_wall_below"), "heatmap_wall_above_size": heatmap.get("heatmap_wall_above_size"), "heatmap_wall_below_size": heatmap.get("heatmap_wall_below_size"), "heatmap_bias": heatmap.get("heatmap_bias")})
     score_payload["external_options_note"] = str(external_options.get("text_ru") or "") if external_options_high_conflict else ""
     advisor = {"allowed": allowed, "reason": "allowed: BUY/SELL + valid levels + RR>=1.10 + sentiment not against" if allowed else "; ".join(blockers) or "score below autotrade threshold", "symbol": symbol, "action": direction, "entry": entry, "sl": sl, "tp": tp, "rr": rr, "score": score, "grade": grade, "mode": mode, "sentiment_filter": sentiment, "external_options_used": bool(external_options.get("used")), "external_options_alignment": external_options.get("alignment") or "neutral", "external_options_source": "CME_OptionsFX", "external_options_filter": external_options, "level_source": level_source}
     return score_payload, advisor
@@ -508,6 +565,15 @@ def install_prop_score_recovery_patch() -> None:
                     enriched["distance_to_max_pain_pips"] = score.get("distance_to_max_pain_pips")
                     enriched["max_pain_alignment"] = score.get("max_pain_alignment")
                     enriched["max_pain_text_ru"] = score.get("max_pain_text_ru")
+                    enriched["heatmap"] = score.get("heatmap")
+                    enriched["heatmap_score"] = score.get("heatmap_score")
+                    enriched["heatmap_reason_ru"] = score.get("heatmap_reason_ru")
+                    enriched["heatmap_available"] = score.get("heatmap_available")
+                    enriched["heatmap_wall_above"] = score.get("heatmap_wall_above")
+                    enriched["heatmap_wall_below"] = score.get("heatmap_wall_below")
+                    enriched["heatmap_wall_above_size"] = score.get("heatmap_wall_above_size")
+                    enriched["heatmap_wall_below_size"] = score.get("heatmap_wall_below_size")
+                    enriched["heatmap_bias"] = score.get("heatmap_bias")
                     market_structure = dict(enriched.get("market_structure") or {})
                     market_structure["dpoc_price"] = score.get("dpoc_price")
                     market_structure["distance_to_dpoc_pips"] = score.get("distance_to_dpoc_pips")

@@ -9,6 +9,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 FAST_CANDLES: dict[str, dict[str, Any]] = {}
+FAST_HEATMAP_FIELDS = (
+    "heatmap_available",
+    "heatmap_wall_above",
+    "heatmap_wall_below",
+    "heatmap_wall_above_size",
+    "heatmap_wall_below_size",
+    "heatmap_bias",
+)
 FAST_OPTIONS: dict[str, dict[str, Any]] = {}
 
 
@@ -55,7 +63,8 @@ def _signal(symbol: str, tf: str) -> dict[str, Any]:
             action = "SELL"; sl = last + span * 0.45; tp = last - span * 0.55
         else:
             action = "WAIT"; sl = 0; tp = 0
-        return {"symbol": symbol, "timeframe": tf, "signal": action, "action": action, "confidence": 55 if action != "WAIT" else 35, "entry": round(last, 5), "stop_loss": round(sl, 5) if sl else 0, "take_profit": round(tp, 5) if tp else 0, "source": "fast_mt4", "updated_at": datetime.now(timezone.utc).isoformat()}
+        extra_fields = {key: row.get(key) for key in FAST_HEATMAP_FIELDS if row.get(key) is not None}
+        return {"symbol": symbol, "timeframe": tf, "signal": action, "action": action, "confidence": 55 if action != "WAIT" else 35, "entry": round(last, 5), "stop_loss": round(sl, 5) if sl else 0, "take_profit": round(tp, 5) if tp else 0, **extra_fields, "source": "fast_mt4", "updated_at": datetime.now(timezone.utc).isoformat()}
     except Exception:
         return {"symbol": symbol, "timeframe": tf, "signal": "WAIT", "action": "WAIT", "confidence": 35, "entry": 0, "stop_loss": 0, "take_profit": 0, "source": "fast_mt4"}
 
@@ -72,7 +81,8 @@ async def push_candles(request) -> dict[str, Any]:
         candles = payload.get("bars") if isinstance(payload, dict) else []
     if not isinstance(candles, list):
         candles = []
-    FAST_CANDLES[f"{symbol}:{tf}"] = {"symbol": symbol, "timeframe": tf, "candles": candles[-600:], "updated_at": datetime.now(timezone.utc).isoformat()}
+    extra_fields = {key: payload.get(key) for key in FAST_HEATMAP_FIELDS if isinstance(payload, dict) and payload.get(key) is not None}
+    FAST_CANDLES[f"{symbol}:{tf}"] = {"symbol": symbol, "timeframe": tf, "candles": candles[-600:], **extra_fields, "updated_at": datetime.now(timezone.utc).isoformat()}
     return {"ok": True, "status": "stored", "symbol": symbol, "tf": tf, "count": len(candles)}
 
 
