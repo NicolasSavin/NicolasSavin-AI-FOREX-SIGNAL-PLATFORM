@@ -31,6 +31,11 @@ input string MarkupUrlTemplate = "https://your-domain.onrender.com/api/mt4/marku
 
 datetime g_lastPoll = 0;
 datetime g_lastMarkupPoll = 0;
+string g_lastBlockedReason = "";
+string g_lastBlockedSymbol = "";
+int g_lastFoundCount = 0;
+int g_lastAllowedCount = 0;
+int g_lastBlockedCount = 0;
 
 int OnInit()
 {
@@ -67,13 +72,13 @@ void PollSignalsAndTrade()
 
    if(SkipIfTpTooClose && skipReason == "tp_too_close")
    {
-      LogBlocked(symbol, "tp_too_close", score, grade, mode);
+      LogBlocked(symbol, "tp_too_close", score, grade, mode, tradePermission);
       return;
    }
 
    if(UseEntryZone && !IsPriceAllowedByEntryZone(action, entryZoneFrom, entryZoneTo))
    {
-      LogBlocked(symbol, "price_outside_entry_zone", score, grade, mode);
+      LogBlocked(symbol, "price_outside_entry_zone", score, grade, mode, tradePermission);
       return;
    }
 
@@ -83,56 +88,59 @@ void PollSignalsAndTrade()
 
    if(UseConfidenceFilter && confidence < MinConfidence)
    {
-      LogBlocked(symbol, "confidence_below_filter", score, grade, mode);
+      LogBlocked(symbol, "confidence_below_filter", score, grade, mode, tradePermission);
       return;
    }
 
    if(UsePropFilters && score > 0 && score < MinPropScore)
    {
-      LogBlocked(symbol, "score_below_filter", score, grade, mode);
+      LogBlocked(symbol, "score_below_filter", score, grade, mode, tradePermission);
       return;
    }
 
    if(UsePropFilters && StringLen(grade) > 0 && !CsvContains(AllowedPropGrades, grade))
    {
-      LogBlocked(symbol, "grade_not_allowed", score, grade, mode);
+      LogBlocked(symbol, "grade_not_allowed", score, grade, mode, tradePermission);
       return;
    }
 
    if(UsePropFilters && StringLen(mode) > 0 && !CsvContains(AllowedPropModes, mode))
    {
-      LogBlocked(symbol, "mode_not_allowed", score, grade, mode);
+      LogBlocked(symbol, "mode_not_allowed", score, grade, mode, tradePermission);
       return;
    }
 
    if(!IsSpreadAllowed())
    {
-      LogBlocked(symbol, "spread_too_high", score, grade, mode);
+      LogBlocked(symbol, "spread_too_high", score, grade, mode, tradePermission);
       return;
    }
 
    if(!IsValidLevels(action, entry, sl, tp))
    {
-      LogBlocked(symbol, "invalid_sl_tp_for_direction", score, grade, mode);
+      LogBlocked(symbol, "invalid_sl_tp_for_direction", score, grade, mode, tradePermission);
       return;
    }
 
    if(OneTradePerSymbol && HasOpenTradeForSymbol(Symbol(), MagicNumber))
    {
-      LogBlocked(symbol, "duplicate_trade_exists", score, grade, mode);
+      LogBlocked(symbol, "duplicate_trade_exists", score, grade, mode, tradePermission);
       return;
    }
 
    if(action == "BUY" && !AllowBuy)
    {
-      LogBlocked(symbol, "buy_disabled_by_input", score, grade, mode);
+      LogBlocked(symbol, "buy_disabled_by_input", score, grade, mode, tradePermission);
       return;
    }
    if(action == "SELL" && !AllowSell)
    {
-      LogBlocked(symbol, "sell_disabled_by_input", score, grade, mode);
+      LogBlocked(symbol, "sell_disabled_by_input", score, grade, mode, tradePermission);
       return;
    }
+
+   g_lastAllowedCount++;
+   LogAllowed(symbol, score, grade, mode, tradePermission);
 
    int type = (action == "BUY") ? OP_BUY : OP_SELL;
    double price = (type == OP_BUY) ? Ask : Bid;
@@ -175,10 +183,14 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
    if(signalsPos < 0) return(false);
 
    int arrayStart = StringFind(json, "[", signalsPos);
-   int arrayEnd = StringFind(json, "]", arrayStart);
+   int arrayEnd = FindArrayEnd(json, arrayStart);
    if(arrayStart < 0 || arrayEnd <= arrayStart) return(false);
 
    string arr = StringSubstr(json, arrayStart + 1, arrayEnd - arrayStart - 1);
+   g_lastFoundCount = 0;
+   g_lastAllowedCount = 0;
+   g_lastBlockedCount = 0;
+
    int pos = 0;
    while(true)
    {
@@ -188,6 +200,7 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
       if(objEnd < 0) break;
 
       string obj = StringSubstr(arr, objStart, objEnd - objStart + 1);
+      g_lastFoundCount++;
       string apiSymbol = JsonGetString(obj, "symbol");
       string apiAction = StringUpper(JsonGetString(obj, "action"));
       double apiEntry = JsonGetNumber(obj, "entry");
@@ -229,12 +242,17 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
          mode = apiMode;
          tradePermission = apiTradePermission;
          comment = JsonGetString(obj, "comment");
+         DrawStatusPanel();
          return(true);
       }
-      if(SymbolMatches(Symbol(), apiSymbol))
+      if(!SymbolMatches(Symbol(), apiSymbol))
+      {
+         LogBlocked(apiSymbol, "symbol_not_current_chart", apiScore, apiGrade, apiMode, apiTradePermission);
+      }
+      else
       {
          if(!providerAllowed) blockReason = "provider_not_allowed";
-         LogBlocked(apiSymbol, blockReason, apiScore, apiGrade, apiMode);
+         LogBlocked(apiSymbol, blockReason, apiScore, apiGrade, apiMode, apiTradePermission);
       }
       if(SymbolMatches(Symbol(), apiSymbol) && !providerAllowed)
       {
@@ -244,7 +262,28 @@ bool ExtractSignalForCurrentSymbol(string json, string &symbol, string &action, 
       pos = objEnd + 1;
    }
 
+   DrawStatusPanel();
    return(false);
+}
+
+int FindArrayEnd(string text, int arrayStart)
+{
+   int depth = 0;
+   bool inString = false;
+   for(int i = arrayStart; i < StringLen(text); i++)
+   {
+      int c = StringGetCharacter(text, i);
+      int prev = (i > 0) ? StringGetCharacter(text, i - 1) : 0;
+      if(c == '"' && prev != '\\') inString = !inString;
+      if(inString) continue;
+      if(c == '[') depth++;
+      if(c == ']')
+      {
+         depth--;
+         if(depth == 0) return(i);
+      }
+   }
+   return(-1);
 }
 
 int FindObjectEnd(string text, int objStart)
@@ -267,12 +306,48 @@ int FindObjectEnd(string text, int objStart)
    return(-1);
 }
 
-void LogBlocked(string symbol, string reason, int score, string grade, string mode)
+void LogBlocked(string symbol, string reason, int score, string grade, string mode, bool permission)
 {
-   Print("BLOCKED ", symbol, " reason=", reason);
-   Print("score=", score);
+   g_lastBlockedCount++;
+   g_lastBlockedSymbol = symbol;
+   g_lastBlockedReason = reason;
+   Print("SIGNAL ", symbol);
    Print("grade=", grade);
+   Print("score=", score);
    Print("mode=", mode);
+   Print("permission=", BoolToText(permission));
+   Print("RESULT=BLOCKED");
+   Print("REASON=", reason);
+   DrawStatusPanel();
+}
+
+void LogAllowed(string symbol, int score, string grade, string mode, bool permission)
+{
+   Print("SIGNAL ", symbol);
+   Print("grade=", grade);
+   Print("score=", score);
+   Print("mode=", mode);
+   Print("permission=", BoolToText(permission));
+   Print("RESULT=ALLOWED");
+   Print("REASON=passed_filters");
+}
+
+string BoolToText(bool value)
+{
+   return(value ? "true" : "false");
+}
+
+void DrawStatusPanel()
+{
+   string reason = g_lastBlockedReason;
+   if(StringLen(reason) == 0) reason = "none";
+   Comment(
+      "AI Ideas Trader\n",
+      "Found: ", g_lastFoundCount, "\n",
+      "Allowed: ", g_lastAllowedCount, "\n",
+      "Blocked: ", g_lastBlockedCount, "\n",
+      "Last blocked: ", g_lastBlockedSymbol, " ", reason
+   );
 }
 
 string ResolveBlockedReason(string obj, string action, double entry, double sl, double tp, bool tradePermission, int score, string grade, string mode)
@@ -290,11 +365,18 @@ string ResolveBlockedReason(string obj, string action, double entry, double sl, 
 
 bool CsvContains(string csv, string value)
 {
-   string haystack = "," + StringLower(csv) + ",";
-   string needle = "," + StringLower(value) + ",";
-   StringReplace(haystack, " ", "");
-   StringReplace(needle, " ", "");
+   string haystack = "," + NormalizeFilterToken(csv) + ",";
+   string needle = "," + NormalizeFilterToken(value) + ",";
    return(StringFind(haystack, needle) >= 0);
+}
+
+string NormalizeFilterToken(string value)
+{
+   string out = StringLower(value);
+   StringReplace(out, " ", "");
+   StringReplace(out, "_", "");
+   StringReplace(out, "-", "");
+   return(out);
 }
 
 bool IsPriceAllowedByEntryZone(string action, double fromPrice, double toPrice)
