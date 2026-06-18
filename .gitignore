@@ -24,7 +24,7 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# Secrets
+# Environment
 .env
 .env.local
 
@@ -34,3 +34,8 @@ signals_data/manual_signals.json
 signals_data/mt4_exports.json
 signals_data/trade_idea_snapshots.json
 signals_data/trade_ideas.json
+signals_data/calendar.json
+signals_data/heatmap.json
+signals_data/market_ideas.json
+signals_data/market_news.json
+signals_data/signals.json
