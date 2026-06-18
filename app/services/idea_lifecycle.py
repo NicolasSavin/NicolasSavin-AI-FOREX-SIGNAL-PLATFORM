@@ -44,6 +44,13 @@ def _num(value: Any) -> float | None:
         return None
 
 
+def _int_score(value: Any) -> int | None:
+    parsed = _num(value)
+    if parsed is None:
+        return None
+    return int(round(parsed))
+
+
 def normalize_symbol(value: Any) -> str:
     symbol = str(value or "").upper().strip().replace("/", "")
     for suffix in (".CS", ".I", ".PRO", ".RAW", ".M", ".ECN"):
@@ -52,6 +59,68 @@ def normalize_symbol(value: Any) -> str:
     if "." in symbol:
         symbol = symbol.split(".", 1)[0]
     return symbol
+
+
+def _mode_label(value: Any) -> str:
+    raw = str(value or "").strip()
+    normalized = raw.lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"prop_entry", "entry", "propentry"}:
+        return "PROP ENTRY"
+    if normalized in {"watchlist", "watch_list"}:
+        return "WATCHLIST"
+    if normalized in {"research_only", "research", "researchonly"}:
+        return "RESEARCH ONLY"
+    if normalized in {"no_trade", "notrade"}:
+        return "NO TRADE"
+    return raw.upper() if raw else ""
+
+
+def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
+    """Expose flat fields expected by older MT4 advisors.
+
+    The web UI can read nested prop_signal_score/advisor_signal, but deployed MT4
+    EAs often filter only top-level score/grade/mode. Keep both contracts.
+    """
+    if not isinstance(idea, dict):
+        return idea
+    out = dict(idea)
+    advisor = out.get("advisor_signal") if isinstance(out.get("advisor_signal"), dict) else {}
+    prop = out.get("prop_signal_score") if isinstance(out.get("prop_signal_score"), dict) else {}
+
+    score = _int_score(out.get("prop_score"))
+    if score is None:
+        score = _int_score(advisor.get("score"))
+    if score is None:
+        score = _int_score(prop.get("score"))
+    if score is None:
+        score = _int_score(out.get("confidence"))
+
+    grade = str(out.get("prop_grade") or advisor.get("grade") or prop.get("grade") or out.get("grade") or "").upper()
+    raw_mode = out.get("prop_mode") or advisor.get("mode") or prop.get("mode") or out.get("mode")
+    mode = _mode_label(raw_mode)
+
+    allowed = bool(out.get("advisor_allowed") or advisor.get("allowed") or out.get("trade_permission"))
+
+    if score is not None:
+        out["score"] = score
+        out["confidence"] = score
+        out["prop_score"] = score
+        out["propScore"] = score
+        out["propConfidence"] = score
+    if grade:
+        out["grade"] = grade
+        out["prop_grade"] = grade
+        out["propGrade"] = grade
+    if mode:
+        out["mode"] = mode
+        out["prop_mode_label"] = mode
+        out["propModeLabel"] = mode
+    if raw_mode is not None:
+        out["prop_mode"] = str(raw_mode).lower().replace(" ", "_")
+        out["propMode"] = out["prop_mode"]
+    out["trade_permission"] = allowed
+    out["advisor_allowed"] = allowed
+    return out
 
 
 def action_of(idea: dict[str, Any]) -> str:
@@ -118,7 +187,7 @@ def _active_view(active: dict[str, Any], live_idea: dict[str, Any] | None = None
         idea["live_price"] = price_of(live_idea)
         idea["live_score"] = live_idea.get("prop_score")
         idea["live_grade"] = live_idea.get("prop_grade")
-    return idea
+    return _with_advisor_compat_fields(idea)
 
 
 def _hit_status(active: dict[str, Any], current_price: float | None) -> tuple[str | None, float | None]:
@@ -185,6 +254,7 @@ def apply_idea_lifecycle(ideas: list[dict[str, Any]]) -> dict[str, Any]:
     for idea in ideas:
         if not isinstance(idea, dict):
             continue
+        idea = _with_advisor_compat_fields(idea)
         symbol = normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
         if not symbol:
             output.append(idea)
@@ -202,7 +272,7 @@ def apply_idea_lifecycle(ideas: list[dict[str, Any]]) -> dict[str, Any]:
         else:
             idea = dict(idea)
             idea["lifecycle_status"] = "candidate"
-            output.append(idea)
+            output.append(_with_advisor_compat_fields(idea))
 
     if changed or True:
         _save(ACTIVE_FILE, active)
