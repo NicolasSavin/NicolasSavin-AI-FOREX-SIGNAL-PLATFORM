@@ -149,6 +149,111 @@ function renderExternalOptionsCompact(idea) {
 }
 
 
+
+function normalizeOptionsLayer(idea) {
+  const containers = [
+    idea,
+    idea?.options_analysis,
+    idea?.options_overlay,
+    idea?.options_layer,
+    idea?.advisor_signal?.external_options_filter,
+    idea?.prop_signal_score?.external_options_filter,
+  ].filter((item) => item && typeof item === "object");
+  const pick = (...keys) => {
+    for (const box of containers) {
+      for (const key of keys) {
+        const value = box[key];
+        if (value !== undefined && value !== null && value !== "") return value;
+      }
+    }
+    return undefined;
+  };
+  const source = firstText(pick("options_source", "source", "optionsSource", "external_options_source"), resolveOptionsSourceLabel(idea));
+  const bias = firstText(pick("options_bias", "bias", "option_bias", "optionsBias", "external_options_bias"), resolveExternalOptionsBias(idea));
+  return {
+    options_source: source,
+    options_bias: bias,
+    prop_bias: pick("prop_bias", "propBias", "prop_direction", "direction"),
+    prop_score: pick("prop_score", "propScore", "score"),
+    key_strikes: pick("key_strikes", "keyStrikes", "key_levels", "keyLevels", "external_options_key_strikes") ?? resolveOptionsKeyStrikes(idea),
+    max_pain: pick("max_pain", "maxPain", "external_options_max_pain") ?? resolveOptionsMaxPain(idea),
+    call_walls: pick("call_walls", "callWalls", "call_wall", "callWall"),
+    put_walls: pick("put_walls", "putWalls", "put_wall", "putWall"),
+    pinning_risk: pick("pinning_risk", "pinningRisk", "pin_risk"),
+    range_risk: pick("range_risk", "rangeRisk"),
+    target_levels: pick("target_levels", "targetLevels", "targets"),
+    hedge_levels: pick("hedge_levels", "hedgeLevels", "hedges"),
+    summary_text: resolveExternalOptionsRu(idea),
+  };
+}
+
+function hasFreshOptionsLayer(layer) {
+  const source = String(layer.options_source || "").toLowerCase();
+  const meaningful = ["options_bias", "key_strikes", "max_pain", "call_walls", "put_walls", "pinning_risk", "range_risk", "target_levels", "hedge_levels"]
+    .some((key) => formatListValue(layer[key]) !== "—" && !/^(neutral|unavailable|нет данных)$/i.test(String(layer[key] || "")));
+  return source.includes("mt4_optionsfx") && meaningful;
+}
+
+function optionsTone(value) {
+  const raw = String(value || "").toLowerCase();
+  if (raw.includes("bull") || raw.includes("buy") || raw.includes("покуп")) return "bullish";
+  if (raw.includes("bear") || raw.includes("sell") || raw.includes("прода")) return "bearish";
+  return "neutral";
+}
+
+function optionsRiskTone(value) {
+  const raw = String(value || "").toLowerCase();
+  if (raw.includes("high") || raw.includes("выс")) return "high";
+  if (raw.includes("medium") || raw.includes("mid") || raw.includes("сред")) return "medium";
+  if (raw.includes("low") || raw.includes("низ")) return "low";
+  return raw || "neutral";
+}
+
+function resolveOptionsAlignment(idea, layer) {
+  const optionTone = optionsTone(layer.options_bias);
+  const directionTone = optionsTone(layer.prop_bias || getIdeaDirectionRaw(idea));
+  if (optionTone === "neutral" || directionTone === "neutral") return "Options neutral";
+  return optionTone === directionTone ? "Options aligned" : "Options conflict";
+}
+
+function renderOptionPill(label, tone) {
+  return `<span class="options-layer-pill options-layer-pill--${escapeHtml(tone)}">${escapeHtml(label)}</span>`;
+}
+
+function renderOptionsLayer(idea, { compact = false } = {}) {
+  const layer = normalizeOptionsLayer(idea);
+  if (!hasFreshOptionsLayer(layer)) {
+    return `<section class="options-layer ${compact ? "options-layer--compact" : ""}"><div class="options-layer__head"><h4>🧩 Options Layer</h4></div><p class="options-layer__empty">Options: no fresh MT4_OptionsFX data</p></section>`;
+  }
+  const biasTone = optionsTone(layer.options_bias);
+  const pinTone = optionsRiskTone(layer.pinning_risk);
+  const rangeTone = optionsRiskTone(layer.range_risk);
+  const fields = [
+    ["Источник", layer.options_source],
+    ["Options bias", layer.options_bias],
+    ["Prop bias", layer.prop_bias],
+    ["Prop score", layer.prop_score],
+    ["Key strikes", layer.key_strikes],
+    ["Max pain", layer.max_pain],
+    ["Call walls", layer.call_walls],
+    ["Put walls", layer.put_walls],
+    ["Pinning risk", layer.pinning_risk],
+    ["Range risk", layer.range_risk],
+    ["Target levels", layer.target_levels],
+    ["Hedge levels", layer.hedge_levels],
+  ].filter(([, value]) => formatListValue(value) !== "—");
+  return `<section class="options-layer ${compact ? "options-layer--compact" : ""}">
+    <div class="options-layer__head"><h4>🧩 Options Layer</h4><strong>${escapeHtml(resolveOptionsAlignment(idea, layer))}</strong></div>
+    <div class="options-layer__pills">
+      ${renderOptionPill(`BIAS ${String(layer.options_bias || "neutral").toUpperCase()}`, biasTone)}
+      ${pinTone === "high" ? renderOptionPill("PINNING HIGH", "warning") : ""}
+      ${layer.range_risk !== undefined ? renderOptionPill(`RANGE ${String(layer.range_risk).toUpperCase()}`, rangeTone) : ""}
+    </div>
+    <div class="options-layer__grid">${fields.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(formatListValue(value))}</strong></div>`).join("")}</div>
+    ${layer.summary_text ? `<p class="options-layer__summary">${escapeHtml(layer.summary_text)}</p>` : ""}
+  </section>`;
+}
+
 function resolveVolumeDelta(idea) {
   const prop = getPropScore(idea);
   const vd = (idea?.volume_delta && typeof idea.volume_delta === "object")
@@ -463,6 +568,25 @@ function injectUiStyles() {
     .idea-card-top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:12px; }
     .idea-title { margin:8px 0 6px; font-size:22px; line-height:1.15; }
     .idea-news-line { color:#b9d6f8; font-size:12px; line-height:1.5; }
+
+    .options-layer { margin:12px 0; padding:13px; border-radius:18px; border:1px solid rgba(69,202,255,.28); background:linear-gradient(135deg, rgba(14,35,62,.82), rgba(3,14,28,.74)); box-shadow:inset 0 1px 0 rgba(255,255,255,.08); }
+    .options-layer__head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+    .options-layer__head h4 { margin:0; color:#e8f3ff; font-size:13px; letter-spacing:.04em; text-transform:none; }
+    .options-layer__head strong { color:#b9f8ff; font-size:12px; white-space:nowrap; }
+    .options-layer__pills { display:flex; flex-wrap:wrap; gap:7px; margin:8px 0 10px; }
+    .options-layer-pill { display:inline-flex; padding:6px 9px; border-radius:999px; border:1px solid rgba(148,163,184,.32); background:rgba(15,23,42,.72); color:#cbd5e1; font-size:10px; font-weight:950; letter-spacing:.05em; }
+    .options-layer-pill--bullish { border-color:rgba(45,212,191,.52); color:#99f6e4; background:rgba(20,184,166,.12); }
+    .options-layer-pill--bearish { border-color:rgba(244,114,182,.52); color:#fbcfe8; background:rgba(190,24,93,.16); }
+    .options-layer-pill--neutral { border-color:rgba(96,165,250,.38); color:#bfdbfe; background:rgba(30,64,175,.15); }
+    .options-layer-pill--warning, .options-layer-pill--high { border-color:rgba(250,204,21,.52); color:#fde68a; background:rgba(120,84,10,.22); }
+    .options-layer-pill--medium { border-color:rgba(251,146,60,.45); color:#fed7aa; background:rgba(154,52,18,.18); }
+    .options-layer-pill--low { border-color:rgba(45,212,191,.38); color:#a7f3d0; background:rgba(6,78,59,.16); }
+    .options-layer__grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    .options-layer__grid div { padding:8px 9px; border:1px solid rgba(95,156,230,.22); border-radius:12px; background:rgba(3,14,28,.58); min-width:0; }
+    .options-layer__grid span { display:block; color:#9bb8d8; font-size:10px; font-weight:950; text-transform:uppercase; margin-bottom:3px; }
+    .options-layer__grid strong { color:#f4f8ff; font-size:12px; overflow-wrap:anywhere; }
+    .options-layer__summary, .options-layer__empty { margin:10px 0 0; color:#b9d6f8; font-size:12px; line-height:1.5; }
+    .options-layer__empty { color:#94a3b8; }
     .volume-delta-pill { margin:10px 0; padding:10px 11px; border-radius:14px; border:1px solid rgba(69,202,255,.24); background:rgba(69,202,255,.08); display:grid; gap:2px; color:#dbeeff; }
     .volume-delta-pill span { color:#9bb8d8; font-size:10px; font-weight:950; text-transform:uppercase; letter-spacing:.06em; }
     .volume-delta-pill strong { color:#f4f8ff; font-size:14px; }
@@ -614,7 +738,7 @@ function renderIdeaCard(idea, index) {
     ${renderStatusPills(idea)}
     ${renderPropCompact(idea)}
     ${renderVolumeDeltaCompact(idea)}
-    ${renderExternalOptionsCompact(idea)}
+    ${renderOptionsLayer(idea, { compact: true })}
     ${renderInstitutionalSections(idea)}
     <div class="idea-summary-compact">${escapeHtml(resolveNarrative(idea))}</div>
   </article>`;
@@ -710,7 +834,7 @@ function openIdeaModal(idea) {
         <div><span>До DPOC</span><strong>${escapeHtml(dpoc.distance)}</strong></div>
       </div>
       <p class="modal-text"><strong>Новости/фундаментал:</strong> ${escapeHtml(resolveNewsContext(idea))}</p>
-      <p class="modal-text"><strong>Options confirmation:</strong> ${escapeHtml(resolveExternalOptionsRu(idea))}<br><strong>Source:</strong> ${escapeHtml(resolveOptionsSourceLabel(idea))}; <strong>Bias:</strong> ${escapeHtml(resolveExternalOptionsBias(idea))}; <strong>Key strikes:</strong> ${escapeHtml(formatListValue(resolveOptionsKeyStrikes(idea)))}; <strong>Max pain:</strong> ${escapeHtml(formatListValue(resolveOptionsMaxPain(idea)))}</p>
+      ${renderOptionsLayer(idea)}
       <p class="modal-text"><strong>CumDelta source:</strong> ${escapeHtml(volumeDeltaSourceLabel(resolveVolumeDelta(idea).source))}; <strong>Delta divergence:</strong> ${resolveVolumeDelta(idea).divergence ? "true" : "false"}; <strong>Price/CumDelta:</strong> ${escapeHtml(resolveVolumeDelta(idea).priceTrend)} / ${escapeHtml(resolveVolumeDelta(idea).cumdeltaTrend)}</p>
       <p class="modal-text"><strong>Источник:</strong> ${escapeHtml(idea.data_provider || idea.provider || "нет данных")}</p>
       <p class="modal-text"><strong>Setup:</strong> ${escapeHtml(idea.setup_type || "—")}; <strong>BOS:</strong> ${escapeHtml(idea.market_structure?.bos || "—")}; <strong>Sweep:</strong> ${escapeHtml(idea.liquidity?.sweep || "—")}; <strong>FVG:</strong> ${escapeHtml(idea.fvg?.type || idea.selected_zone_type || "—")}; <strong>HTF bias:</strong> ${escapeHtml(idea.htf_bias || idea.market_structure?.trend_regime || "—")}</p>
