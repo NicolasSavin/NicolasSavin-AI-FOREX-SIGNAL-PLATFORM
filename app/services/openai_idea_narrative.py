@@ -413,7 +413,7 @@ def _fallback_fields(payload: dict[str, Any]) -> dict[str, Any]:
         summary = f"{symbol} {timeframe}: торговый вход не подтверждён, score {prop_score}, grade {prop_grade}."
         narrative = (
             f"{symbol} сейчас не даёт полноценного prop-entry на {timeframe}.{zone_text} "
-            f"Подтверждённые элементы: {confirmed_text}. Основные пробелы: {missing_text}. "
+            f"Условия с подтверждением: {confirmed_text}. Основные пробелы: {missing_text}. "
             f"Текущий режим — {prop_mode}; уровни entry={entry_text}, SL={sl_text}, TP={tp_text}, RR={rr_text} используются только как ориентиры. "
             f"{options} Решение: сделку не открывать до появления нового подтверждения."
         )

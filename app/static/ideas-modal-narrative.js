@@ -26,34 +26,72 @@
     return rows.map((row) => `${row.label_ru || row.key}: ${row.score}/${row.weight} ${row.status}; ${row.text_ru || ""}`).slice(0, 12);
   }
 
-  function localFallbackArticle(idea) {
-    const prop = idea?.prop_signal_score || {};
+  function firstMeaningfulText(...values) {
+    for (const value of values) {
+      const text = String(value ?? "").trim();
+      if (text) return text;
+    }
+    return "";
+  }
+
+  function formatLevel(value) {
+    const text = String(value ?? "").trim();
+    return text || "не задан";
+  }
+
+  function institutionalFallbackArticle(idea) {
     const symbol = getSymbol(idea);
     const direction = directionRu(idea);
-    const entry = idea?.entry ?? idea?.entry_price ?? "—";
-    const sl = idea?.sl ?? idea?.stop_loss ?? "—";
-    const tp = idea?.tp ?? idea?.take_profit ?? idea?.target ?? "—";
-    const rr = idea?.rr ?? idea?.risk_reward ?? prop?.trade_geometry?.rr ?? "—";
-    const mode = prop?.mode || idea?.prop_mode || "watchlist";
-    const score = prop?.score ?? idea?.prop_score ?? "—";
-    const grade = prop?.grade ?? idea?.prop_grade ?? "—";
-    const blockers = Array.isArray(prop?.blockers) && prop.blockers.length ? ` Главные ограничения: ${prop.blockers.join("; ")}.` : "";
-    const confirmed = Array.isArray(prop?.criteria)
-      ? prop.criteria.filter((row) => row.status === "confirmed").map((row) => row.label_ru || row.key).slice(0, 5).join(", ")
-      : "";
-    const partial = Array.isArray(prop?.criteria)
-      ? prop.criteria.filter((row) => row.status === "partial").map((row) => row.label_ru || row.key).slice(0, 5).join(", ")
-      : "";
-    const statusLine = mode === "prop_entry"
-      ? "Сценарий близок к рабочему входу, но цена всё равно должна подтвердить реакцию в зоне."
-      : mode === "watchlist"
-        ? "Это watchlist-сценарий: идея интересная, но вход нужен только после дополнительного триггера."
-        : "Это исследовательская идея, а не готовый вход. Система пока просит наблюдать, а не торговать.";
-    return `${symbol}: ${direction}. Score ${score}/100, grade ${grade}. ${statusLine} Подтверждённые элементы: ${confirmed || "нет сильного набора подтверждений"}. Частичные элементы: ${partial || "нет"}. Рабочие уровни: entry ${entry}, SL ${sl}, TP ${tp}, R/R ${rr}. ${blockers} Простая логика такая: сначала цена должна показать удержание рабочей зоны и импульс в сторону идеи, затем можно оценивать вход; если цена уходит к SL или ломает структуру, сценарий отменяется.`;
+    const entry = formatLevel(idea?.entry ?? idea?.entry_price);
+    const sl = formatLevel(idea?.sl ?? idea?.stop_loss);
+    const tp = formatLevel(idea?.tp ?? idea?.take_profit ?? idea?.target);
+    const timeframe = String(idea?.timeframe || idea?.tf || "рабочий ТФ").toUpperCase();
+    const liquidity = firstMeaningfulText(
+      idea?.market_structure?.liquidity,
+      idea?.liquidity_context_ru,
+      idea?.prop_signal_score?.liquidity_sweep,
+      idea?.summary_structured?.liquidity
+    );
+    const zone = firstMeaningfulText(
+      idea?.market_structure?.zone,
+      idea?.fvg_context_ru,
+      idea?.order_block_ru,
+      idea?.prop_signal_score?.fvg_ob_context,
+      idea?.summary_structured?.zone
+    );
+    const invalidation = firstMeaningfulText(idea?.invalidation, idea?.risk_note, idea?.risk_logic);
+
+    const sweepText = liquidity
+      ? `Smart Money сначала работает с ликвидностью: ${liquidity}.`
+      : `Smart Money рассматривает ${symbol} на ${timeframe} через снятие ближайшей ликвидности перед движением.`;
+    const inducementText = direction === "покупка"
+      ? "Inducement здесь — попытка заманить продавцов ниже локального диапазона, чтобы собрать встречные ордера перед разворотом вверх."
+      : direction === "продажа"
+        ? "Inducement здесь — попытка заманить покупателей выше локального диапазона, чтобы собрать встречные ордера перед разворотом вниз."
+        : "Inducement здесь — ложное вовлечение участников в очевидный пробой, после которого важна реакция цены у зоны интереса.";
+    const zoneText = zone
+      ? `Дальше внимание на FVG/OB: ${zone}.`
+      : `Дальше внимание на FVG/OB: цена должна оставить дисбаланс или вернуться в ордерблок, где крупный участник может защищать позицию.`;
+    const objectiveText = `Цель крупного игрока — набрать позицию без погони за ценой и направить поток к следующему пулу ликвидности; для сделки ${symbol} ориентир по плану: entry ${entry}, SL ${sl}, TP ${tp}.`;
+    const consequenceText = direction === "покупка"
+      ? "Ожидаемое следствие — удержание зоны спроса, импульсная реакция вверх и постепенный перенос цены к buy-side liquidity."
+      : direction === "продажа"
+        ? "Ожидаемое следствие — удержание зоны предложения, импульсная реакция вниз и постепенный перенос цены к sell-side liquidity."
+        : "Ожидаемое следствие — сначала подтверждение реакции в зоне интереса, затем выбор направления после снятия ликвидности.";
+    const invalidationText = invalidation
+      ? `Invalidation: ${invalidation}.`
+      : `Invalidation: сценарий отменяется, если цена закрепляется за SL ${sl} или ломает структуру, на которой построена идея.`;
+
+    return `${symbol}: ${direction}. ${sweepText} ${inducementText} ${zoneText} ${objectiveText} ${consequenceText} ${invalidationText}`;
   }
 
   async function generateRemoteArticle(idea) {
-    const key = `${getSymbol(idea)}:${idea?.id || idea?.entry || ""}:${idea?.prop_score || ""}:${Date.now()}`;
+    const localArticle = firstMeaningfulText(idea?.idea_article_ru, idea?.article_ru);
+    if (localArticle) return localArticle;
+    const localUnifiedNarrative = firstMeaningfulText(idea?.unified_narrative);
+    if (localUnifiedNarrative) return localUnifiedNarrative;
+
+    const key = `${getSymbol(idea)}:${idea?.id || idea?.idea_id || idea?.entry || ""}:${idea?.prop_score || ""}`;
     if (narrativeCache.has(key)) return narrativeCache.get(key);
     const payload = {
       symbol: getSymbol(idea),
@@ -94,7 +132,7 @@
     } catch (error) {
       // Fallback below keeps modal useful even when AI quota/API is unavailable.
     }
-    return localFallbackArticle(idea);
+    return institutionalFallbackArticle(idea);
   }
 
   function ensureArticleSection(modal) {
