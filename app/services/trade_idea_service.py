@@ -163,6 +163,7 @@ class TradeIdeaService:
                 "stop_reason_ru": "SL будет определён после подтверждения входа.",
                 "take_profit_reason_ru": "TP будет рассчитан после формирования активного сетапа.",
                 "risk_summary_ru": f"Риск ложного входа повышен, confidence {confidence}%.",
+                "institutional_thesis": "Вероятный план крупного участника: дождаться подтверждённого sweep, получить displacement и только после этого доставлять цену к внешней ликвидности.",
             }
 
         is_buy = action == "BUY"
@@ -197,6 +198,7 @@ class TradeIdeaService:
             "stop_reason_ru": f"SL {sl} стоит за зоной invalidation: пробой отменяет сценарий.",
             "take_profit_reason_ru": f"TP {tp} размещён в направлении ожидаемого импульса {impulse} к ближайшей ликвидности.",
             "risk_summary_ru": (f"Текущий риск-профиль: confidence {confidence}%." + (f" Риски: {warning_text}." if warning_text else "")),
+            "institutional_thesis": f"Вероятный план крупного участника: собрать {liq_word}, использовать стопы толпы как встречную ликвидность, защитить зону {entry} и доставить цену к {tp} при сохранении displacement.",
         }
 
     async def generate_or_refresh(self, pairs: list[str] | None = None, *, force: bool = False) -> dict[str, Any]:
@@ -1888,7 +1890,9 @@ class TradeIdeaService:
             "market_structure_structured": narrative_structured.get("market_structure_structured"),
             "narrative_structured": narrative_structured,
             "update_explanation": llm_result.data.get("update_explanation") or rationale,
-            "narrative_source": "fallback" if llm_result.source == "fallback" else "llm",
+            "narrative_source": "fallback" if llm_result.source == "fallback" else "grok",
+            "institutional_thesis": llm_result.data.get("institutional_thesis") or deterministic_narrative.get("institutional_thesis"),
+            "lessons_learned": llm_result.data.get("lessons_learned") or None,
             "narrative_model": llm_result.model or get_openrouter_model(),
             "narrative_error": llm_result.error,
             "narrative_generated_at": llm_result.generated_at or now.isoformat(),
@@ -4680,16 +4684,14 @@ class TradeIdeaService:
     def _resolve_narrative_source_label(value: Any, *, is_fallback: bool = False, combined: bool = False) -> str:
         raw = str(value or "").strip().lower()
         if is_fallback and raw not in {"grok", "llm", "model"}:
-            return "fallback_template"
-        if raw == "grok":
+            return "fallback"
+        if raw in {"grok", "llm", "model", "openrouter", "llm_text"}:
             return "grok"
-        if raw in {"llm", "model"}:
-            return "model"
-        if raw in {"fallback", "template_fallback", "fallback_template"}:
-            return "fallback_template"
+        if raw in {"fallback", "template_fallback", "fallback_template", "local_dynamic", "local_dynamic_fallback", "local_safe"}:
+            return "fallback"
         if combined:
-            return "model"
-        return "model"
+            return "grok"
+        return "fallback"
 
     @classmethod
     def _build_full_text(

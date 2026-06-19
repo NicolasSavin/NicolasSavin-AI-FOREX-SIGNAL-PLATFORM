@@ -56,11 +56,27 @@ function render() {
   }).join('') : '<tr><td colspan="7" class="archive-empty">Для выбранного инструмента идей пока нет.</td></tr>';
   meta.textContent = `Показано: ${visible.length} · Всего: ${items.length}`;
 }
+
+function archiveLessons(item, result) {
+  const saved = value(item, 'lessons_learned', 'lessonsLearned');
+  if (saved) return saved;
+  if (result.code === 'TP') {
+    return 'Lessons Learned: сценарий сработал, потому что после сбора целевой ликвидности рынок подтвердил намерение крупного участника: не вернулся против displacement, удержал рабочую зону и доставил цену к TP. Собранная ликвидность и реакция от зоны показали, что движение было не случайным описанием графика, а доставкой цены к цели.';
+  }
+  if (result.code === 'SL') {
+    return 'Lessons Learned: первоначальная гипотеза оказалась неверной. Крупный участник не защитил исходную зону, появилась новая ликвидность против идеи, а принятие цены за invalidation нарушило логику sweep → mitigation → delivery. Идея потеряла актуальность после смены поведения order flow.';
+  }
+  return 'Lessons Learned появится после закрытия сигнала по TP или SL.';
+}
+
 function openItem(item) {
   const source = idea(item), result = status(item);
   const fullText = value(item, 'unified_narrative', 'full_text', 'description_ru', 'narrative', 'summary_ru') || 'Полный текст идеи не был сохранён.';
   const reason = value(item, 'entry_reason_ru', 'reason_ru', 'entry_reason', 'setup_reason', 'why_entry') || 'Причина входа не указана.';
-  modalBody.innerHTML = `<p class="section-kicker">${esc(value(item, 'symbol', 'pair', 'instrument'))} · ${esc(result.label)}</p><h2 id="archiveModalTitle">Архивная торговая идея</h2><div class="archive-modal__metrics"><div><span>Score</span><strong>${esc(value(item, 'prop_score', 'score'))}</strong></div><div><span>Grade</span><strong>${esc(value(item, 'prop_grade', 'grade'))}</strong></div><div><span>RR</span><strong>${esc(rr(item))}</strong></div><div><span>Итог</span><strong>${esc(result.label)}</strong></div><div><span>Дата открытия</span><strong>${esc(date(value(item, 'created_at_utc', 'created_at')))}</strong></div><div><span>Дата закрытия</span><strong>${esc(date(value(item, 'closed_at_utc', 'closed_at')))}</strong></div></div>${chart(item)}<section class="archive-modal__text"><h3>Полный текст идеи</h3><p>${esc(fullText)}</p><h3>Причина входа</h3><p>${esc(reason)}</p></section>`;
+  const thesis = value(item, 'institutional_thesis', 'institutionalThesis') || 'Institutional Thesis не сохранён.';
+  const sourceLabel = value(item, 'narrative_source') || 'fallback';
+  const lessons = archiveLessons(item, result);
+  modalBody.innerHTML = `<p class="section-kicker">${esc(value(item, 'symbol', 'pair', 'instrument'))} · ${esc(result.label)}</p><h2 id="archiveModalTitle">Архивная торговая идея</h2><div class="archive-modal__metrics"><div><span>Score</span><strong>${esc(value(item, 'prop_score', 'score'))}</strong></div><div><span>Grade</span><strong>${esc(value(item, 'prop_grade', 'grade'))}</strong></div><div><span>RR</span><strong>${esc(rr(item))}</strong></div><div><span>Итог</span><strong>${esc(result.label)}</strong></div><div><span>Дата открытия</span><strong>${esc(date(value(item, 'created_at_utc', 'created_at')))}</strong></div><div><span>Дата закрытия</span><strong>${esc(date(value(item, 'closed_at_utc', 'closed_at')))}</strong></div></div>${chart(item)}<section class="archive-modal__text"><h3>Institutional Thesis</h3><p>${esc(thesis)}</p><h3>Smart Money Narrative</h3><p><strong>narrative_source:</strong> ${esc(sourceLabel)}</p><p>${esc(fullText)}</p><h3>Причина входа</h3><p>${esc(reason)}</p><h3>Lessons Learned</h3><p>${esc(lessons)}</p></section>`;
   modal.hidden = false; document.body.style.overflow = 'hidden';
 }
 filters.addEventListener('click', (event) => { const button = event.target.closest('[data-symbol]'); if (button) { selectedSymbol = button.dataset.symbol; render(); } });
