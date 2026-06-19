@@ -14,6 +14,7 @@
   <script src="/static/ideas-market-closed-fix.js?v=market-closed-fix-1" defer></script>
   <script src="/static/ideas-institutional-engine.js?v=institutional-engine-1" defer></script>
   <script src="/static/ideas-institutional-polish.js?v=polish-1" defer></script>
+  <script src="/static/ai-status.js?v=ai-status-1" defer></script>
   <style>
     .signals-top-nav {
       display: flex;
@@ -121,6 +122,10 @@
         </div>
       </div>
     </header>
+
+    <section class="ai-status-card ideas-ai-status" data-ai-status-root aria-live="polite">
+      <div class="ai-status-card__head"><span class="ai-status-card__dot">⚪</span><div><p class="ai-status-card__kicker">AI Status</p><strong>Проверка статуса...</strong></div></div>
+    </section>
 
     <section class="controls" aria-label="Фильтры сигналов"></section>
 

@@ -11,6 +11,7 @@ import requests
 from openai import AsyncOpenAI
 
 from app.core.env import get_openrouter_api_key, get_openrouter_model
+from app.services.ai_runtime_status import record_ai_request_failure, record_ai_request_start, record_ai_request_success
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +93,12 @@ class AIGateway:
         task: str = "generic",
     ) -> AIGatewayResult:
         if not self.api_key:
+            record_ai_request_failure(error="missing_openrouter_api_key", model=primary_model or get_openrouter_model())
             return AIGatewayResult(ok=False, text="", status="not_configured", error="missing_openrouter_api_key")
         last_error = "unknown"
         models = model_sequence(primary_model)
         for idx, model in enumerate(models):
+            request_started = record_ai_request_start(model=model)
             try:
                 body: dict[str, Any] = {
                     "model": model,
@@ -115,6 +118,7 @@ class AIGateway:
                 data, text = parse_json_or_text(raw)
                 visible = clean_llm_text(data.get("article_ru") or data.get("unified_narrative") or data.get("summary_ru") or data.get("summary") or data.get("full_text") or text)
                 if visible:
+                    record_ai_request_success(model=model, started_at=request_started)
                     return AIGatewayResult(
                         ok=True,
                         text=visible,
@@ -125,8 +129,10 @@ class AIGateway:
                         raw_text=text,
                     )
                 last_error = "empty_response"
+                record_ai_request_failure(error=last_error, model=model, started_at=request_started)
             except Exception as exc:
                 last_error = type(exc).__name__
+                record_ai_request_failure(error=exc, model=model, started_at=request_started)
                 logger.warning("ai_gateway_sync_failed task=%s model=%s error=%s", task, model, last_error)
         return AIGatewayResult(ok=False, text="", model=models[-1] if models else None, status="failed", error=last_error, fallback_used=len(models) > 1)
 
@@ -142,10 +148,12 @@ class AIGateway:
         task: str = "generic",
     ) -> AIGatewayResult:
         if not self.client:
+            record_ai_request_failure(error="missing_openrouter_api_key", model=primary_model or get_openrouter_model())
             return AIGatewayResult(ok=False, text="", status="not_configured", error="missing_openrouter_api_key")
         last_error = "unknown"
         models = model_sequence(primary_model)
         for idx, model in enumerate(models):
+            request_started = record_ai_request_start(model=model)
             try:
                 kwargs: dict[str, Any] = {
                     "model": model,
@@ -160,6 +168,7 @@ class AIGateway:
                 data, text = parse_json_or_text(raw)
                 visible = clean_llm_text(data.get("article_ru") or data.get("unified_narrative") or data.get("summary_ru") or data.get("summary") or data.get("full_text") or text)
                 if visible:
+                    record_ai_request_success(model=model, started_at=request_started)
                     return AIGatewayResult(
                         ok=True,
                         text=visible,
@@ -170,8 +179,10 @@ class AIGateway:
                         raw_text=text,
                     )
                 last_error = "empty_response"
+                record_ai_request_failure(error=last_error, model=model, started_at=request_started)
             except Exception as exc:
                 last_error = type(exc).__name__
+                record_ai_request_failure(error=exc, model=model, started_at=request_started)
                 logger.warning("ai_gateway_async_failed task=%s model=%s error=%s", task, model, last_error)
         return AIGatewayResult(ok=False, text="", model=models[-1] if models else None, status="failed", error=last_error, fallback_used=len(models) > 1)
 
