@@ -39,6 +39,35 @@
     return text || "не задан";
   }
 
+  function extractReplyText(data) {
+    const rawReply = String(data?.reply || "").trim();
+    let parsed = null;
+    if (rawReply) {
+      const cleaned = rawReply.replace(/^```json/i, "").replace(/^```/i, "").replace(/```$/i, "").trim();
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      for (const candidate of [cleaned, match ? match[0] : ""].filter(Boolean)) {
+        try {
+          parsed = JSON.parse(candidate);
+          break;
+        } catch (error) {
+          // Try the next JSON candidate.
+        }
+      }
+    }
+    return firstMeaningfulText(
+      data?.article_ru,
+      data?.idea_article_ru,
+      data?.unified_narrative,
+      data?.full_text,
+      data?.text,
+      parsed?.institutional_narrative,
+      parsed?.unified_narrative,
+      parsed?.full_text,
+      parsed?.summary,
+      rawReply,
+    );
+  }
+
   function institutionalFallbackArticle(idea) {
     const symbol = getSymbol(idea);
     const direction = directionRu(idea);
@@ -88,7 +117,7 @@
   async function generateRemoteArticle(idea) {
     const localArticle = firstMeaningfulText(idea?.idea_article_ru, idea?.article_ru);
     if (localArticle) return localArticle;
-    const localUnifiedNarrative = firstMeaningfulText(idea?.unified_narrative);
+    const localUnifiedNarrative = firstMeaningfulText(idea?.institutional_narrative, idea?.unified_narrative);
     if (localUnifiedNarrative) return localUnifiedNarrative;
 
     const key = `${getSymbol(idea)}:${idea?.id || idea?.idea_id || idea?.entry || ""}:${idea?.prop_score || ""}`;
@@ -98,10 +127,14 @@
       direction: directionRu(idea),
       signal: idea?.signal || idea?.action || idea?.label,
       timeframe: idea?.timeframe || idea?.tf || "M15",
+      status: idea?.status || "ACTIVE",
       entry: idea?.entry ?? idea?.entry_price,
       sl: idea?.sl ?? idea?.stop_loss,
+      stop_loss: idea?.sl ?? idea?.stop_loss,
       tp: idea?.tp ?? idea?.take_profit ?? idea?.target,
+      take_profit: idea?.tp ?? idea?.take_profit ?? idea?.target,
       rr: idea?.rr ?? idea?.risk_reward,
+      confidence: idea?.confidence ?? idea?.prop_score,
       prop_score: idea?.prop_score,
       prop_grade: idea?.prop_grade,
       prop_mode: idea?.prop_mode,
@@ -109,28 +142,32 @@
       prop_decision_ru: idea?.prop_decision_ru,
       criteria: compactCriteria(idea),
       blockers: idea?.prop_signal_score?.blockers || [],
+      liquidity: idea?.market_structure?.liquidity || idea?.liquidity_context_ru || idea?.summary_structured?.liquidity || "",
+      zone: idea?.market_structure?.zone || idea?.fvg_context_ru || idea?.order_block_ru || idea?.summary_structured?.zone || "",
       news: idea?.news_context_ru || idea?.fundamental_context_ru || idea?.sentiment?.summary || "",
       options: idea?.options_summary_ru || idea?.options_analysis?.summary_ru || "",
       margin: idea?.prop_signal_score?.margin_zone_confluence || "",
       delta: idea?.prop_signal_score?.delta_divergence || "",
-      request: "Сгенерируй одну простую понятную статью на русском, 8-12 предложений, без списков и блоков, уникальную для этой пары и текущих данных. Не придумывай уровни."
     };
     try {
-      const response = await fetch("/api/idea-narrative", {
+      const response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          message: `Объясни сигнал ${payload.symbol} как Smart Money institutional narrative: причина, действия крупного участника, ликвидность, inducement/sweep/FVG/OB, цель движения и invalidation. Верни JSON с full_text.`,
+          context: payload,
+        }),
         cache: "no-store",
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      const article = String(data.article_ru || data.unified_narrative || data.text || "").trim();
+      const article = extractReplyText(data);
       if (article) {
         narrativeCache.set(key, article);
         return article;
       }
     } catch (error) {
-      // Fallback below keeps modal useful even when AI quota/API is unavailable.
+      // Fallback below keeps modal useful even when AI/API is unavailable.
     }
     return institutionalFallbackArticle(idea);
   }
@@ -142,7 +179,7 @@
     if (!section) {
       section = document.createElement("section");
       section.className = "modal-section ai-generated-article-section";
-      section.innerHTML = `<h4>Понятное описание идеи</h4><div class="modal-text ai-generated-article">Генерирую уникальное описание идеи...</div>`;
+      section.innerHTML = `<h4>Institutional Narrative</h4><div class="modal-text ai-generated-article">Генерирую institutional narrative...</div>`;
       body.insertBefore(section, body.firstChild);
     }
     return section.querySelector(".ai-generated-article");
@@ -155,7 +192,7 @@
       const modal = document.getElementById("ideasModal");
       const target = ensureArticleSection(modal);
       if (!target) return;
-      target.textContent = "Генерирую уникальное описание идеи...";
+      target.textContent = "Генерирую institutional narrative...";
       generateRemoteArticle(idea).then((article) => {
         target.innerHTML = escapeHtml(article).replace(/\n+/g, "<br><br>");
       });
