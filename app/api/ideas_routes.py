@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 
 from app.signal_aggregator import SignalAggregator
 from app.services.market_structure_overlay import attach_market_structure_overlays
@@ -355,6 +355,43 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
                 "market": market,
                 "diagnostics": {"error": str(exc), "reason": fallback_reason},
             })
+
+
+    @router.post("/api/idea-narrative")
+    async def api_idea_narrative(payload: dict[str, Any] | None = Body(default=None)):
+        facts = payload if isinstance(payload, dict) else {}
+        try:
+            result = services.trade_idea_service.narrative_llm.generate(
+                event_type="idea_modal_narrative",
+                facts=facts,
+            )
+            data = dict(result.data or {})
+            article = str(
+                data.get("idea_article_ru")
+                or data.get("article_ru")
+                or data.get("unified_narrative")
+                or ""
+            ).strip()
+            unified = str(data.get("unified_narrative") or article).strip()
+            return {
+                "ok": True,
+                "article_ru": article,
+                "idea_article_ru": article,
+                "unified_narrative": unified,
+                "narrative_source": data.get("narrative_source") or result.source,
+                "narrative_model": data.get("narrative_model") or result.model,
+                "narrative_error": data.get("narrative_error") or result.error,
+            }
+        except Exception as exc:
+            logger.exception("idea_narrative_endpoint_failed reason=%s", exc)
+            return {
+                "ok": False,
+                "article_ru": "",
+                "idea_article_ru": "",
+                "unified_narrative": "",
+                "narrative_source": "endpoint_error",
+                "narrative_error": f"{type(exc).__name__}: {exc}",
+            }
 
     @router.post("/api/ideas/recover-missing-chart-snapshots")
     async def recover_missing_chart_snapshots():
