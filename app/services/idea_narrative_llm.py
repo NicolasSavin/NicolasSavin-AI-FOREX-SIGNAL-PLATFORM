@@ -35,6 +35,8 @@ TEXT_FIELDS = (
     "divergence_context",
     "options_context",
     "execution_context",
+    "institutional_thesis",
+    "lessons_learned",
 )
 
 STRUCTURED_FIELDS = {
@@ -132,7 +134,7 @@ class IdeaNarrativeLLMService:
             article=self._request_llm_article(payload=payload, event_type=event_type)
             if article:
                 first["idea_article_ru"]=article
-            source = str(first.get("narrative_source") or "llm")
+            source = str(first.get("narrative_source") or "grok")
             warnings = [self._last_article_rejection_reason] if self._last_article_rejection_reason else None
             return NarrativeResult(data=self._attach_narrative_meta(first, source=source, model=self.model, warnings=warnings), source=source, model=self.model, generated_at=generated_at)
 
@@ -141,7 +143,7 @@ class IdeaNarrativeLLMService:
             article=self._request_llm_article(payload=payload, event_type=event_type)
             if article:
                 second["idea_article_ru"]=article
-            source = str(second.get("narrative_source") or "llm")
+            source = str(second.get("narrative_source") or "grok")
             warnings = [self._last_article_rejection_reason] if self._last_article_rejection_reason else None
             return NarrativeResult(data=self._attach_narrative_meta(second, source=source, model=self.model, warnings=warnings), source=source, model=self.model, generated_at=generated_at)
 
@@ -343,7 +345,7 @@ class IdeaNarrativeLLMService:
         signal = str(raw.get("signal") or "").strip().upper()
         result["signal"] = signal if signal in {"BUY", "SELL", "WAIT"} else "WAIT"
         result["risk_note"] = self._clean_visible_text(raw.get("risk_note") or result.get("risk") or "Риск требует ручной проверки.")
-        result["narrative_source"] = "llm"
+        result["narrative_source"] = "grok"
 
         return result
 
@@ -537,70 +539,44 @@ class IdeaNarrativeLLMService:
         )
 
         return f"""
-Ты institutional FX trader (prop desk, SMC/ICT + options + macro).
-
-Задача: объяснить торговую идею как внутренний desk memo.
-
-❗ Строго:
-- без общих слов
-- без "возможно"
-- без обучения
-- только торговая логика
+Ты institutional FX desk analyst. Твоя задача — НЕ описывать график, а расследовать мотив крупного участника рынка через Smart Money / ICT narrative.
 
 ДАННЫЕ:
 {json.dumps(payload, ensure_ascii=False)}
 
-СТРУКТУРА ОТВЕТА:
+Запрещено использовать шаблоны и фразы: "цена тестирует уровень", "возможен рост", "рынок показывает бычий настрой", "выглядит бычьим", "рынок давят продавцы".
+Каждая идея должна быть уникальной: используй uniqueness_seed и конкретные факты payload, не повторяй одинаковые обороты. Если данных по futures/options/volume/cumdelta нет — честно укажи, что слой недоступен, не выдумывай.
 
-1. MARKET CONTEXT
-Что произошло на рынке:
-- ликвидность (buy-side / sell-side)
-- sweep / stop run
-- текущий order flow
+Обязательная логика unified_narrative в этом порядке, но единым русским текстом с явными заголовками:
+СИТУАЦИЯ → ДЕЙСТВИЯ КРУПНОГО ИГРОКА → МЕТОД ВОЗДЕЙСТВИЯ → ЦЕЛЬ → ОЖИДАЕМОЕ СЛЕДСТВИЕ → ТОРГОВЫЙ ВЫВОД.
 
-2. STRUCTURE
-- BOS / CHoCH
-- bias (bullish / bearish)
-- где находится цена (premium / discount)
+Обязательно ответь:
+- почему цена пошла именно туда;
+- кто мог быть инициатором движения;
+- откуда взяли ликвидность;
+- какие стопы использовали;
+- была ли манипуляция, liquidity sweep, inducement, false breakout, displacement, mitigation, order block interaction, FVG rebalance;
+- была ли работа против толпы;
+- что будет дальше, если сценарий верен;
+- что отменит сценарий.
 
-3. EXECUTION
-- точка входа (зона, не просто цена)
-- почему эта зона (OB / FVG / imbalance)
-- подтверждение (что должно произойти)
+Если event_type относится к закрытию/архиву/TP/SL, добавь lessons_learned:
+- для TP: почему сценарий сработал, какая ликвидность была собрана, какие признаки подтвердили намерение, какие действия довели цену до цели;
+- для SL: какая гипотеза оказалась неверной, что изменилось в поведении крупного участника, какая новая ликвидность появилась, почему рынок нарушил исходную логику.
 
-4. RISK
-- invalidation (где сценарий ломается)
-- почему именно там
-- что НЕ должно произойти
-
-5. TARGETS
-- куда идём (liquidity targets)
-- internal → external liquidity
-
-6. OPTIONS / MACRO (если есть)
-- gamma levels
-- OI / strikes
-- влияние новостей
-
-❗ Верни СТРОГО JSON:
-
-{{
-  "unified_narrative": "единый текст как у desk аналитика",
-  "market_context": "...",
-  "structure": "...",
-  "execution": "...",
-  "risk": "...",
-  "targets": "...",
-  "macro_options": "...",
-  "trade_plan": {{
-    "entry": "...",
-    "sl": "...",
-    "tp": "...",
-    "confirmation": "..."
-  }}
-}}{retry_note}
-
-Пиши как трейдер фонда. Коротко, жёстко, по делу.
+Верни СТРОГО JSON без markdown:
+{json.dumps({
+  "narrative_source": "grok",
+  "idea_thesis": "краткая institutional thesis 2-4 предложения",
+  "institutional_thesis": "Вероятный план крупного участника: ...",
+  "unified_narrative": "СИТУАЦИЯ: ... ДЕЙСТВИЯ КРУПНОГО ИГРОКА: ... МЕТОД ВОЗДЕЙСТВИЯ: ... ЦЕЛЬ: ... ОЖИДАЕМОЕ СЛЕДСТВИЕ: ... ТОРГОВЫЙ ВЫВОД: ...",
+  "lessons_learned": "только для закрытого сигнала; иначе пустая строка",
+  "invalidation": "что отменит сценарий",
+  "target_logic": "куда должна доставляться цена и за какой ликвидностью",
+  "risk_note": "главный риск гипотезы",
+  "signal": "BUY|SELL|WAIT"
+}, ensure_ascii=False)}
+{retry_note}
 """.strip()
 
     @staticmethod
@@ -637,43 +613,62 @@ class IdeaNarrativeLLMService:
         invalidation_text = f"инвалидация проходит через {sl}" if sl not in (None, "") else "инвалидация привязана к слому рабочей зоны"
         target_text = f"ближайшая цель {tp}" if tp not in (None, "") else "цель будет связана с ближайшей зоной ликвидности"
 
-        if signal == "WAIT":
-            thesis = (
-                f"{symbol} находится в режиме ожидания: в сценарии WAIT структура ещё не дала подтверждённого входа, поэтому система не переводит сценарий в активную сделку. "
-                f"Цена подошла к зоне интереса, но без подтверждения по ликвидности, импульсу или реакции от OB/FVG вход остаётся преждевременным. "
-                f"{entry_text} рассчитан как ориентир, но не является командой на вход до появления подтверждения. "
-                f"Контекст: {liquidity}; структура: {structure}; объём/дельта: {volume}, {divergence}. "
-                f"Опционный слой: {options}. Риск сценария в том, что движение может остаться коррекционным, поэтому SL/TP не должны трактоваться как активный торговый план до подтверждения."
-            )
-        elif signal == "BUY":
-            thesis = (
-                f"{symbol} формирует покупательский сценарий на {timeframe}: цена забрала ликвидность и пытается закрепиться выше зоны интереса. "
-                f"Причина движения — {liquidity}; подтверждение структуры: {structure}. "
-                f"Если импульс удержится, {entry_text} становится рабочим, а {target_text} — логичным продолжением. "
-                f"Объём и дельта: {volume}; {divergence}. Опционный слой: {options}. "
-                f"Ключевой риск — ложный пробой и возврат под зону, поэтому {invalidation_text}."
-            )
+        if signal == "BUY":
+            liquidity_side = "sell-side liquidity под локальными минимумами"
+            stop_pool = "стопы ранних покупателей и отложенные sell-stop приказы"
+            likely_action = "сначала вытеснил слабых покупателей ниже диапазона, затем использовал полученный поток заявок для набора long-позиции"
+            consequence = "доставка цены к верхней внешней ликвидности и зоне take-profit"
+        elif signal == "SELL":
+            liquidity_side = "buy-side liquidity над локальными максимумами"
+            stop_pool = "стопы продавцов и поздние buy-stop входы толпы"
+            likely_action = "вынес цену выше очевидного пула ликвидности, привлёк поздних покупателей и после получения встречного объёма начал распределение"
+            consequence = "возврат в диапазон и доставка к нижней ликвидности"
         else:
-            thesis = (
-                f"{symbol} развивает продавецкий сценарий на {timeframe}: после теста ликвидности рынок давит вниз от рабочей области. "
-                f"Причина движения — {liquidity}; подтверждение структуры: {structure}. "
-                f"При сохранении давления {entry_text} становится актуальным, а {target_text} — базовой целью. "
-                f"Объём/дельта: {volume}; {divergence}. Опционный слой: {options}. "
-                f"Ключевой риск — агрессивный выкуп и возврат в диапазон, поэтому {invalidation_text}."
-            )
+            liquidity_side = "внутридневные пулы buy-side и sell-side liquidity ещё не дали подтверждённого перевеса"
+            stop_pool = "стопы по обе стороны диапазона остаются потенциальным топливом"
+            likely_action = "оставил рынок в фазе inducement: участники видят очевидные уровни, но подтверждённого displacement пока нет"
+            consequence = "ожидание sweep с последующим displacement и реакцией от OB/FVG"
+
+        thesis = (
+            f"СИТУАЦИЯ: {symbol} {timeframe} находится в режиме ожидания внутри {side} гипотезы, но решение строится не на описании свечей, а на поиске мотива крупного участника. "
+            f"ДЕЙСТВИЯ КРУПНОГО ИГРОКА: вероятно, он {likely_action}; ликвидность бралась из {liquidity_side}, а рабочим топливом выступали {stop_pool}. "
+            f"МЕТОД ВОЗДЕЙСТВИЯ: сценарий допускает манипуляцию через liquidity sweep/inducement; false breakout, displacement, mitigation, order block interaction и FVG rebalance требуют подтверждения фактами: {structure}. "
+            f"ЦЕЛЬ: {target_text}; {entry_text} используется как область проверки, а не как самостоятельное доказательство. "
+            f"ОЖИДАЕМОЕ СЛЕДСТВИЕ: если гипотеза верна, ожидается {consequence}; объём/CumDelta: {volume}; дивергенция: {divergence}; options/futures/OI: {options}. "
+            f"ТОРГОВЫЙ ВЫВОД: сценарий активен только пока крупный участник защищает исходную зону; отмена наступает, если {invalidation_text} и рынок принимает цену за зоной вместо возврата в рабочий диапазон."
+        )
+
+        institutional_thesis = (
+            f"Вероятный план крупного участника: собрать {liquidity_side}, использовать {stop_pool} как встречную ликвидность, "
+            f"перевести позицию в {'накопление' if signal == 'BUY' else 'распределение' if signal == 'SELL' else 'ожидание подтверждения'} и доставить цену к области {tp if tp not in (None, '') else 'следующей внешней ликвидности'}."
+        )
+        lessons = ""
+        if str(event_type).lower() in {"archived", "tp_hit", "sl_hit", "closed"} or status in {"tp_hit", "sl_hit", "archived"}:
+            if status == "sl_hit" or str(facts.get("result") or "").upper() == "SL":
+                lessons = (
+                    "Lessons Learned: первоначальная гипотеза о контроле крупного участника не подтвердилась: рынок принял цену за зоной инвалидации, "
+                    "сформировал новый пул ликвидности против исходного направления и нарушил причинно-следственную логику sweep → displacement → delivery."
+                )
+            else:
+                lessons = (
+                    "Lessons Learned: сценарий сработал, потому что после сбора целевой ликвидности рынок не вернулся против displacement; "
+                    "реакция от рабочей зоны подтвердила намерение крупного участника доставить цену к заявленной цели."
+                )
 
         return {
             "idea_thesis": thesis,
             "headline": f"{symbol} {timeframe}: сценарий верифицируется по фактам рынка",
             "summary": thesis,
-            "short_text": f"{symbol}: сценарий удерживается в ожидании подтверждения структуры и ликвидности.",
+            "short_text": f"{symbol}: расследование Smart Money сфокусировано на ликвидности, стопах и подтверждении displacement.",
             "full_text": thesis,
             "unified_narrative": thesis,
+            "institutional_thesis": institutional_thesis,
+            "lessons_learned": lessons,
             "cause": "Причина: LLM-анализ не был получен или не прошёл валидацию качества.",
             "confirmation": "Подтверждение: требуется валидный ответ Grok/OpenRouter по ликвидности, OB/FVG, breaker block и структуре.",
             "risk": f"Риск контролируется уровнем SL {sl}; без подтверждения сценарий нельзя считать полноценной идеей.",
             "invalidation": f"Инвалидация: пробой или закрепление за SL {sl}, либо отсутствие подтверждения структуры.",
-            "target_logic": f"TP {tp} используется только как переданный уровень, без дополнительной выдуманной логики.",
+            "target_logic": f"TP {tp} рассматривается как зона доставки к ликвидности, если sweep и displacement подтвердятся.",
             "update_explanation": f"Событие {event_type}; delta={json.dumps(delta or {}, ensure_ascii=False)}.",
             "signal": signal,
             "risk_note": f"Без валидного Grok-анализа идея считается технической и требует ручной проверки.",
