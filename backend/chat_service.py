@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from app.core.env import get_openrouter_api_key, get_openrouter_model
+from app.services.ai_runtime_status import record_ai_request_failure, record_ai_request_start, record_ai_request_success
 
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,7 @@ class ForexChatService:
                 sorted(list(payload.context.keys())) if isinstance(payload.context, dict) else [],
             )
 
+            request_started = record_ai_request_start(model=self.model)
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -243,10 +245,13 @@ class ForexChatService:
             text = (response.choices[0].message.content or "").strip() if response.choices else ""
             if not text:
                 logger.warning("chat_openrouter_empty_response model=%s", self.model)
+                record_ai_request_failure(error="empty_model_response", model=self.model, started_at=request_started)
                 return self._fallback(self._build_mock_analysis(message), warnings=["empty_model_response"])
+            record_ai_request_success(model=self.model, started_at=request_started)
             logger.info("chat_openrouter_success model=%s response_len=%s", self.model, len(text))
             return ChatResponse(reply=text, source="openrouter", dataStatus="live", warnings=[])
         except Exception as exc:
+            record_ai_request_failure(error=exc, model=self.model, started_at=locals().get("request_started"))
             logger.exception("chat_openrouter_request_failed model=%s error=%s", self.model, type(exc).__name__)
             return self._fallback(self._build_mock_analysis(message), warnings=["openrouter_request_failed"])
 

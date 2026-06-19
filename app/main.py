@@ -33,6 +33,7 @@ from app.services.prop_desk_filters import PropDeskFilterService
 from app.services.idea_lifecycle import apply_idea_lifecycle, build_lifecycle_stats, enrich_ideas_with_news_calendar
 from app.services.signal_audit_logger import log_signal_audit
 from app.services.timing import timing_log
+from app.services.ai_runtime_status import get_ai_status, record_ai_request_failure, record_ai_request_start, record_ai_request_success, run_ai_test_request, startup_ai_healthcheck
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -390,6 +391,7 @@ if STATIC_DIR.exists():
 @app.on_event("startup")
 def startup() -> None:
     twelvedata_ws_service.start()
+    asyncio.create_task(startup_ai_healthcheck())
     _queue_market_ideas_refresh()
 
 
@@ -455,6 +457,16 @@ def stats_page():
 @app.get("/archive", include_in_schema=False)
 def archive_page():
     return FileResponse(STATIC_DIR / "archive.html")
+
+
+@app.get("/api/ai/status")
+def api_ai_status() -> dict[str, Any]:
+    return get_ai_status()
+
+
+@app.get("/api/ai/test")
+async def api_ai_test() -> dict[str, Any]:
+    return await run_ai_test_request()
 
 
 @app.post("/api/chat")
@@ -627,24 +639,31 @@ async def _build_mt4_chat_analytics_response(pair: str, use_fundamental: bool = 
             if use_fundamental:
                 request_kwargs["max_tokens"] = 280
                 request_kwargs["tools"] = tools
+            request_started = record_ai_request_start(model=model_name)
             try:
                 response = await chat_service.client.chat.completions.create(**request_kwargs)
-            except Exception:
+            except Exception as first_exc:
+                record_ai_request_failure(error=first_exc, model=model_name, started_at=request_started)
                 if use_fundamental:
                     try:
                         retry_kwargs = dict(request_kwargs)
                         retry_kwargs.pop("tools", None)
+                        request_started = record_ai_request_start(model=model_name)
                         response = await chat_service.client.chat.completions.create(**retry_kwargs)
-                    except Exception:
+                    except Exception as retry_exc:
+                        record_ai_request_failure(error=retry_exc, model=model_name, started_at=request_started)
                         continue
                 else:
                     continue
             ai_text = (response.choices[0].message.content or "").strip() if response.choices else ""
             if not ai_text:
+                record_ai_request_failure(error="empty_model_response", model=model_name, started_at=request_started)
                 continue
             ai_json = _extract_ai_json_payload(ai_text)
             if not ai_json:
+                record_ai_request_failure(error="invalid_json_response", model=model_name, started_at=request_started)
                 continue
+            record_ai_request_success(model=model_name, started_at=request_started)
             ai_model_used = model_name
             ai_fallback_used = idx > 0
             ai_status = "ok" if not ai_fallback_used else "ok_fallback_model"

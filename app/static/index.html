@@ -43,6 +43,9 @@
       </section>
 
       <main class="content-stack">
+        <section class="panel ai-status-card" data-ai-status-root aria-live="polite">
+          <div class="ai-status-card__head"><span class="ai-status-card__dot">⚪</span><div><p class="ai-status-card__kicker">AI Status</p><strong>Проверка статуса...</strong></div></div>
+        </section>
         <section class="panel today-signal-summary" aria-label="Результаты сигналов сегодня">
           <div><p class="section-kicker">Сигналы</p><h2>Сегодня:</h2></div>
           <div class="today-signal-summary__metric"><span>TP</span><strong id="homeTodayTp">—</strong></div>
@@ -93,6 +96,7 @@
 
     <script src="/static/landing.js"></script>
     <script src="/static/home-stats.js"></script>
+    <script src="/static/ai-status.js"></script>
     <script src="/static/nav.js"></script>
     <div class="app-version-block">
       <div class="app-version-line">
