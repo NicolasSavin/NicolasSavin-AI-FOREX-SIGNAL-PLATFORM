@@ -65,33 +65,32 @@ CHAT_SYSTEM_PROMPT = """
 """.strip()
 
 IDEA_EXPLANATION_SYSTEM_PROMPT = """
-Ты — аналитик торговых идей для forex/derivatives платформы.
-Твоя задача — НЕ придумывать сигнал, а ОБЪЯСНЯТЬ уже рассчитанную backend-логикой идею.
+Ты — institutional Smart Money / ICT аналитик для forex/derivatives платформы.
 
-Критически важно:
+Твоя задача — НЕ описывать свечи, НЕ делать техническую сводку и НЕ пересказывать support/resistance. Твоя задача — объяснить уже рассчитанную торговую идею как расследование действий крупного участника рынка.
+
+Жёсткие правила:
 1) Не меняй direction, entry, stop loss, take profit, status, confidence.
-2) Не выдумывай факты, которых нет во входных данных.
-3) Если подтверждения слабые или данных мало — скажи это прямо.
-4) Пиши по-русски короткими плотными абзацами, без маркетинга и шаблонной воды.
-5) Приоритет объяснения: SMC/ICT -> объёмы и cum delta -> дивергенции -> паттерны -> фундамент.
-6) Строй логику: причина -> подтверждение -> следствие -> риск.
-7) Если данные по блоку отсутствуют, прямо фиксируй отсутствие данных.
-8) Если объём/дельта противоречат идее, обязательно отмечай это как ослабление.
-9) Если status=WAITING, объясни почему не активирована; ACTIVE — что подтвердилось; TP_HIT/SL_HIT — почему исход реализовался; ARCHIVED — почему идея в архиве.
-10) Верни СТРОГО JSON-объект без markdown и без текста вне JSON.
+2) Не выдумывай отсутствующие факты: если нет CME/futures/options/cumdelta/news, не перечисляй их отдельным техническим блоком, а коротко укажи ограничение внутри логики.
+3) Запрещены технические шаблоны: "торгуется в сценарии", "последние 30 свечей", "support", "resistance", "подтверждены", "частично подтверждены", "вход допустим", "план строится от уровней", "рынок показывает", "цена тестирует".
+4) Не начинай с OHLC/диапазона свечей. Начинай с поведения ликвидности и вероятного мотива крупного игрока.
+5) Обязательно объясни причинно-следственную цепочку: что сделал крупный игрок → какую ликвидность взял → каким методом воздействовал на толпу → какую цель преследует → к чему это может привести.
+6) Обязательно упоминай, где логически находится buy-side или sell-side liquidity, какие стопы могли использоваться, был ли inducement / liquidity sweep / false breakout / displacement / FVG или OB interaction, если это следует из входных данных.
+7) Если подтверждений мало, не пиши сухой отказ. Сформулируй гипотезу с оговоркой: "если это действительно был sweep...".
+8) Для TP_HIT/SL_HIT/ARCHIVED объясняй причину результата: почему TP был достигнут или какая гипотеза сломалась на SL.
+9) Верни СТРОГО JSON-объект без markdown и без текста вне JSON.
+10) Пиши живым русским языком, 3–5 связных абзацев, как аналитик prop desk, а не как индикатор.
 """.strip()
 
 IDEA_EXPLANATION_RESPONSE_SHAPE = {
-    "headline": "краткий заголовок идеи",
-    "summary": "2-4 предложения, внятное резюме",
-    "cause": "ключевая причина через SMC/ICT",
-    "confirmation": "что подтверждает или ослабляет идею",
-    "risk": "главный риск идеи",
-    "invalidation": "что отменяет сценарий",
-    "target_logic": "почему TP расположен именно там",
-    "update_explanation": "что изменилось с прошлого обновления; если обновления нет, пустая строка",
-    "short_text": "очень краткая версия для карточки",
-    "full_text": "полное связное объяснение",
+    "headline": "краткий заголовок через действие крупного игрока",
+    "institutional_thesis": "вероятный план крупного участника: собрать ликвидность, распределить/накопить позицию, доставить цену к цели",
+    "liquidity_objective": "какая buy-side/sell-side liquidity является целью",
+    "invalidation_logic": "что покажет, что гипотеза о действиях крупного игрока неверна",
+    "cause_effect_chain": "причина -> действие крупного участника -> следствие",
+    "lessons_learned": "для TP/SL/ARCHIVED; иначе пустая строка",
+    "short_text": "1-2 предложения для карточки",
+    "full_text": "3-5 абзацев institutional narrative без технического шаблона",
 }
 
 SMC_ANALYSIS_RESPONSE_SHAPE = {
@@ -222,7 +221,7 @@ class ForexChatService:
                 if smc_analysis_mode
                 else CHAT_SYSTEM_PROMPT
             )
-            temperature = 0.2 if smc_analysis_mode or explanation_mode else 0.1
+            temperature = 0.35 if explanation_mode else 0.2 if smc_analysis_mode else 0.1
             logger.info(
                 "chat_openrouter_request model=%s temperature=%s explanation_mode=%s smc_mode=%s msg_len=%s ctx_keys=%s",
                 self.model,
@@ -260,7 +259,7 @@ class ForexChatService:
         text = message.lower()
         keywords = [
             "forex", "fx", "eurusd", "gbpusd", "usdjpy", "usdchf", "audusd", "nzdusd", "usdcad", "eur/jpy",
-            "risk", "риск", "сигнал", "трейд", "сделк", "аналит", "таймфрейм", "платформ",
+            "risk", "риск", "сигнал", "трейд", "сделк", "аналит", "таймфрейм", "платформ", "ликвид", "smart money", "fvg", "order block",
         ]
         return any(token in text for token in keywords)
 
@@ -300,14 +299,23 @@ class ForexChatService:
     def _build_trade_idea_explanation_prompt(*, message: str, context: dict[str, Any]) -> str:
         safe_context = context if isinstance(context, dict) else {}
         payload = {
-            "task": "explain_precalculated_trade_idea",
+            "task": "write_institutional_smart_money_narrative_for_precalculated_trade_idea",
             "user_message": message,
             "input_idea": safe_context,
             "response_format": IDEA_EXPLANATION_RESPONSE_SHAPE,
+            "narrative_must_answer": [
+                "Что вероятно сделал крупный игрок?",
+                "Где была ликвидность и чьи стопы использованы?",
+                "Каким методом воздействовали на толпу: inducement, sweep, false breakout, displacement, FVG/OB reaction?",
+                "Зачем это делалось и к какой ликвидности цена может доставляться?",
+                "Что отменит гипотезу?",
+            ],
             "hard_rules": [
                 "Не менять числовые значения direction/entry/stop loss/take profit/status/confidence.",
-                "Не придумывать отсутствующие факты.",
-                "При нехватке данных явно указывать ограниченность подтверждений.",
+                "Не придумывать отсутствующие факты; недоступные данные упоминать коротко и только как ограничение.",
+                "Не писать техническую сводку OHLC, последние 30 свечей, support/resistance и tick volume как основной текст.",
+                "Запрещены фразы: торгуется в сценарии, подтверждены, частично подтверждены, вход допустим, план строится от уровней.",
+                "full_text должен быть 3-5 абзацев и начинаться с крупного участника/ликвидности, а не с диапазона свечей.",
             ],
         }
         return json.dumps(payload, ensure_ascii=False)
