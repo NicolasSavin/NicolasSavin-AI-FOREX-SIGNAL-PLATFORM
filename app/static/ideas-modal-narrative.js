@@ -34,6 +34,33 @@
     return "";
   }
 
+  function isTemplateNarrative(value) {
+    const text = String(value || "").toLowerCase();
+    if (!text) return false;
+    const banned = [
+      "торгуется в сценарии",
+      "подтверждены:",
+      "частично подтверждены:",
+      "вход допустим только",
+      "план строится от уровней",
+      "подтверждённые элементы",
+      "рабочие уровни",
+      "простая логика",
+      "сценарий близок к рабочему входу",
+    ];
+    return banned.some((marker) => text.includes(marker));
+  }
+
+  function useOnlyIfInstitutional(value) {
+    const text = String(value ?? "").trim();
+    if (!text || isTemplateNarrative(text)) return "";
+    const lowered = text.toLowerCase();
+    const hasInstitutionalTerms = [
+      "крупн", "smart money", "ликвид", "inducement", "sweep", "fvg", "order block", "ордерблок", "дисбаланс", "распредел", "накоплен",
+    ].some((token) => lowered.includes(token));
+    return hasInstitutionalTerms ? text : "";
+  }
+
   function formatLevel(value) {
     const text = String(value ?? "").trim();
     return text || "не задан";
@@ -54,9 +81,10 @@
         }
       }
     }
-    return firstMeaningfulText(
+    return useOnlyIfInstitutional(firstMeaningfulText(
       data?.article_ru,
       data?.idea_article_ru,
+      data?.institutional_narrative,
       data?.unified_narrative,
       data?.full_text,
       data?.text,
@@ -65,7 +93,7 @@
       parsed?.full_text,
       parsed?.summary,
       rawReply,
-    );
+    ));
   }
 
   function institutionalFallbackArticle(idea) {
@@ -86,38 +114,38 @@
       idea?.fvg_context_ru,
       idea?.order_block_ru,
       idea?.prop_signal_score?.fvg_ob_context,
-      idea?.summary_structured?.zone
+      idea?.summary_structured?.zone,
+      idea?.selected_zone_type
     );
     const invalidation = firstMeaningfulText(idea?.invalidation, idea?.risk_note, idea?.risk_logic);
 
-    const sweepText = liquidity
-      ? `Smart Money сначала работает с ликвидностью: ${liquidity}.`
-      : `Smart Money рассматривает ${symbol} на ${timeframe} через снятие ближайшей ликвидности перед движением.`;
-    const inducementText = direction === "покупка"
-      ? "Inducement здесь — попытка заманить продавцов ниже локального диапазона, чтобы собрать встречные ордера перед разворотом вверх."
+    const liquiditySide = direction === "покупка" ? "sell-side liquidity под локальными минимумами" : direction === "продажа" ? "buy-side liquidity над локальными максимумами" : "оба внешних пула ликвидности";
+    const stopPool = direction === "покупка" ? "стопы ранних покупателей и sell-stop приказы продавцов" : direction === "продажа" ? "стопы продавцов и buy-stop входы поздних покупателей" : "стопы участников по обе стороны диапазона";
+    const actionText = direction === "покупка"
+      ? "Крупный участник мог сначала продавить цену ниже очевидной поддержки, получить встречный поток заявок и затем использовать его для накопления long-позиции."
       : direction === "продажа"
-        ? "Inducement здесь — попытка заманить покупателей выше локального диапазона, чтобы собрать встречные ордера перед разворотом вниз."
-        : "Inducement здесь — ложное вовлечение участников в очевидный пробой, после которого важна реакция цены у зоны интереса.";
+        ? "Крупный участник мог сначала вытянуть цену выше очевидного сопротивления, активировать стопы продавцов и заявки покупателей на пробой, а затем использовать эту ликвидность для распределения short-позиции."
+        : "Крупный участник, вероятно, держит рынок в фазе inducement: толпа видит очевидный пробой, но подтверждённого displacement ещё нет.";
     const zoneText = zone
-      ? `Дальше внимание на FVG/OB: ${zone}.`
-      : `Дальше внимание на FVG/OB: цена должна оставить дисбаланс или вернуться в ордерблок, где крупный участник может защищать позицию.`;
-    const objectiveText = `Цель крупного игрока — набрать позицию без погони за ценой и направить поток к следующему пулу ликвидности; для сделки ${symbol} ориентир по плану: entry ${entry}, SL ${sl}, TP ${tp}.`;
+      ? `Рабочая зона ${zone} важна не сама по себе, а как место, где после sweep должна появиться защита позиции через FVG/OB или резкий отказ цены идти дальше.`
+      : "Рабочая зона важна как потенциальный FVG/OB: там должен появиться отказ цены продолжать ложное движение и первая попытка доставки к противоположной ликвидности.";
+    const objectiveText = `Цель такого поведения — не красивый вход по уровню, а получение ликвидности из ${liquidity || liquiditySide} и доставка цены к следующему пулу заявок; текущий план использует entry ${entry}, SL ${sl}, TP ${tp}.`;
     const consequenceText = direction === "покупка"
-      ? "Ожидаемое следствие — удержание зоны спроса, импульсная реакция вверх и постепенный перенос цены к buy-side liquidity."
+      ? "Если гипотеза верна, рынок должен удержать discount-зону, показать displacement вверх и начать доставку к buy-side liquidity."
       : direction === "продажа"
-        ? "Ожидаемое следствие — удержание зоны предложения, импульсная реакция вниз и постепенный перенос цены к sell-side liquidity."
-        : "Ожидаемое следствие — сначала подтверждение реакции в зоне интереса, затем выбор направления после снятия ликвидности.";
+        ? "Если гипотеза верна, рынок должен удержать premium-зону, показать displacement вниз и начать доставку к sell-side liquidity."
+        : "Если гипотеза верна, следующим подтверждением будет sweep одной стороны диапазона и импульсное принятие цены в обратном направлении.";
     const invalidationText = invalidation
-      ? `Invalidation: ${invalidation}.`
-      : `Invalidation: сценарий отменяется, если цена закрепляется за SL ${sl} или ломает структуру, на которой построена идея.`;
+      ? `Отмена сценария: ${invalidation}.`
+      : `Отмена сценария наступит, если цена закрепится за SL ${sl} и вместо возврата в диапазон примет цену за зоной манипуляции.`;
 
-    return `${symbol}: ${direction}. ${sweepText} ${inducementText} ${zoneText} ${objectiveText} ${consequenceText} ${invalidationText}`;
+    return `${symbol} ${timeframe}: ${direction}. ${actionText} Рабочее топливо движения — ${stopPool}; именно поэтому важно смотреть не на сам факт касания уровня, а на то, появилась ли после него агрессивная реакция крупного участника. ${zoneText} ${objectiveText} ${consequenceText} ${invalidationText}`;
   }
 
   async function generateRemoteArticle(idea) {
-    const localArticle = firstMeaningfulText(idea?.idea_article_ru, idea?.article_ru);
+    const localArticle = useOnlyIfInstitutional(firstMeaningfulText(idea?.idea_article_ru, idea?.article_ru));
     if (localArticle) return localArticle;
-    const localUnifiedNarrative = firstMeaningfulText(idea?.institutional_narrative, idea?.unified_narrative);
+    const localUnifiedNarrative = useOnlyIfInstitutional(firstMeaningfulText(idea?.institutional_narrative, idea?.unified_narrative));
     if (localUnifiedNarrative) return localUnifiedNarrative;
 
     const key = `${getSymbol(idea)}:${idea?.id || idea?.idea_id || idea?.entry || ""}:${idea?.prop_score || ""}`;
@@ -143,7 +171,7 @@
       criteria: compactCriteria(idea),
       blockers: idea?.prop_signal_score?.blockers || [],
       liquidity: idea?.market_structure?.liquidity || idea?.liquidity_context_ru || idea?.summary_structured?.liquidity || "",
-      zone: idea?.market_structure?.zone || idea?.fvg_context_ru || idea?.order_block_ru || idea?.summary_structured?.zone || "",
+      zone: idea?.market_structure?.zone || idea?.fvg_context_ru || idea?.order_block_ru || idea?.summary_structured?.zone || idea?.selected_zone_type || "",
       news: idea?.news_context_ru || idea?.fundamental_context_ru || idea?.sentiment?.summary || "",
       options: idea?.options_summary_ru || idea?.options_analysis?.summary_ru || "",
       margin: idea?.prop_signal_score?.margin_zone_confluence || "",
@@ -154,7 +182,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
-          message: `Объясни сигнал ${payload.symbol} как Smart Money institutional narrative: причина, действия крупного участника, ликвидность, inducement/sweep/FVG/OB, цель движения и invalidation. Верни JSON с full_text.`,
+          message: `Объясни сигнал ${payload.symbol} как Smart Money institutional narrative. Обязательно раскрой: что делал крупный участник, где была ликвидность, какой inducement/sweep/FVG/OB мог использоваться, зачем это делалось, к какой ликвидности доставляется цена и что отменяет гипотезу. Запрещены фразы: торгуется в сценарии, подтверждены, частично подтверждены, вход допустим. Верни JSON с full_text на русском в 3-5 абзацах.`,
           context: payload,
         }),
         cache: "no-store",
