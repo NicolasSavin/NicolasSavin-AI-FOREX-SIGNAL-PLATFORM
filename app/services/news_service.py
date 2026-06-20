@@ -461,10 +461,14 @@ def _local_writer_payload(title: str, summary: str, markets: list[str], tone: st
             full_text = "\n\n".join(paragraphs[:8])
             if len(paragraphs) >= 8:
                 break
-    what_happened = paragraphs[0]
+    what_happened = "\n\n".join(paragraphs[:3])
     why_it_matters = paragraphs[2] if len(paragraphs) > 2 else paragraphs[1]
-    market_impact = paragraphs[3] if len(paragraphs) > 3 else paragraphs[-1]
-    humor = "Лёгкий рыночный юмор встроен в основной текст без отдельного блока."
+    market_impact = "\n\n".join([
+        paragraphs[2] if len(paragraphs) > 2 else paragraphs[-1],
+        paragraphs[3] if len(paragraphs) > 3 else "Доходности облигаций и риск-аппетит задают тон доллару, защитным валютам и золоту.",
+        "Для forex это означает повышенное внимание к EURUSD, GBPUSD, USDJPY, USDCAD, AUDUSD, NZDUSD, USDCHF и XAUUSD: пары могут реагировать не одинаково, потому что долларовая нога, сырьевые валюты и защитные активы зависят от разных каналов — ставок, доходностей, нефти, золота и общего спроса на риск.",
+    ])
+    humor = "Рынок снова проверяет, кто читает контекст, а не только заголовки."
     return {
         "title_ru": clean_title,
         "preview_ru": f"{clean_title}. {clean_summary[:130]}",
@@ -581,21 +585,24 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
         return cached.get("payload")
 
     user_content = (
-        "Верни строго валидный JSON на русском:\n"
-        "- title_ru\n"
-        "- summary_ru\n"
-        "- market_impact_ru\n"
-        "- affected_assets\n"
-        "- article_ru\n"
-        "- sentiment\n"
-        "- humor_ru\n\n"
-        "Используй только переданные данные, без новых фактов.\n"
-        "Обязательно объясни причинно-следственную связь влияния на рынок.\n"
-        "Юмор — короткий и лёгкий.\n\n"
+        "Верни строго валидный JSON на русском без markdown и без служебных фраз. Поля:\n"
+        "- title_ru: короткий аналитический заголовок, не копируй дословно исходный заголовок;\n"
+        "- summary_ru: 1 предложение-превью до 35 слов;\n"
+        "- article_ru: секция 'Что произошло' — 1–2 абзаца, 80–150 слов;\n"
+        "- market_impact_ru: секция 'Влияние на рынок' — 1–2 абзаца, 80–150 слов;\n"
+        "- affected_assets: массив релевантных активов из списка EURUSD, GBPUSD, USDJPY, USDCAD, AUDUSD, NZDUSD, USDCHF, XAUUSD, USD;\n"
+        "- sentiment: bullish | bearish | neutral | mixed;\n"
+        "- humor_ru: ровно 1 короткое профессиональное предложение в стиле Grok, без токсичности и клоунады.\n\n"
+        "Задача: сделать короткую аналитическую заметку для forex-трейдера.\n"
+        "В 'Что произошло' объясни событие человеческим языком: контекст, возможные причины, участников рынка. Не повторяй заголовок.\n"
+        "В 'Влияние на рынок' объясни влияние на валюты, доходности облигаций, risk appetite и возможную реакцию релевантных пар: EURUSD, GBPUSD, USDJPY, USDCAD, AUDUSD, NZDUSD, USDCHF, XAUUSD.\n"
+        "Используй только переданные данные и осторожные формулировки; не добавляй неподтверждённые факты, цены или прогнозы.\n"
+        "Итоговая длина article_ru + market_impact_ru + humor_ru должна быть не меньше 150 слов.\n"
+        "Не используй заглушки про недоступную оценку, ожидание апдейта, отсутствие данных, ошибки обработки или любые служебные сообщения.\n\n"
         f"title: {strip_html(title)}\n"
         f"source: {strip_html(source)}\n"
         f"published_at: {published_at or 'unknown'}\n"
-        f"content: {strip_html(summary)[:1200]}\n"
+        f"content: {strip_html(summary)[:1800]}\n"
     )
     models = [XAI_MODEL]
     if XAI_FALLBACK_MODEL and XAI_FALLBACK_MODEL not in models:
@@ -613,13 +620,13 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
                 },
                 json={
                     "model": model_name,
-                    "temperature": 0.4,
-                    "max_tokens": 250,
+                    "temperature": 0.35,
+                    "max_tokens": 1100,
                     "messages": [
                         {
                             "role": "system",
-                            "content": "Ты русскоязычный аналитик forex-новостей. Кратко объясни: что произошло, почему важно и какие активы могут реагировать. "
-                            "Юмор: короткий, лёгкий, в стиле трейдера, не оскорбительный. Никаких новых фактов, только входной текст.",
+                            "content": "Ты Grok в роли русскоязычного forex-аналитика. Пиши как короткую профессиональную заметку: ясно, полезно, без воды. "
+                            "Сохраняй аккуратный фирменный юмор максимум в одном коротком предложении. Не используй заглушки и служебные фразы. Никаких новых фактов, только входной текст.",
                         },
                         {"role": "user", "content": user_content},
                     ],
@@ -653,9 +660,9 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
             article_ru = strip_html(str(parsed.get("article_ru") or "")).strip()
             cleaned = {
                 "title_ru": strip_html(str(parsed.get("title_ru") or "")).strip() or strip_html(title),
-                "summary_ru": summary_ru or plain_text_summary or "Не удалось обработать новость через Grok.",
-                "article_ru": article_ru or summary_ru or plain_text_summary,
-                "market_impact_ru": impact_ru or "Трактовка по влиянию ограничена: модель вернула свободный текст.",
+                "summary_ru": summary_ru or plain_text_summary or strip_html(title),
+                "article_ru": article_ru or summary_ru or plain_text_summary or strip_html(summary)[:1200] or strip_html(title),
+                "market_impact_ru": impact_ru or build_market_explanation(title=title, summary=summary).get("impact", "Новость меняет краткосрочный фон: трейдеры оценивают ставки, доходности облигаций и аппетит к риску."),
                 "affected_assets": parsed.get("affected_assets") if isinstance(parsed.get("affected_assets"), list) else markets[:4],
                 "sentiment": strip_html(str(parsed.get("sentiment") or "neutral")).strip().lower()[:20] or "neutral",
                 "humor_ru": strip_html(str(parsed.get("humor_ru") or "")).strip() or "Рынок шутит свечами, но без перегиба.",
@@ -677,12 +684,12 @@ def rewrite_news_with_xai(title: str, summary: str, source: str, published_at: s
         "ts": time(),
         "payload": {
             "title_ru": strip_html(title),
-            "summary_ru": "Не удалось обработать новость через Grok.",
-            "market_impact_ru": "Оценка влияния временно недоступна.",
+            "summary_ru": strip_html(title),
+            "market_impact_ru": build_market_explanation(title=title, summary=summary).get("impact", "Новость меняет краткосрочный фон: трейдеры оценивают ставки, доходности облигаций и аппетит к риску."),
             "article_ru": strip_html(summary)[:1200] or strip_html(title),
             "affected_assets": markets[:4],
             "sentiment": "neutral",
-            "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
+            "humor_ru": "Рынок снова проверяет, кто читает контекст, а не только заголовки.",
             "ai_model_used": models[-1],
             "ai_fallback_used": len(models) > 1,
             "ai_status": f"failed:{last_error}",
@@ -830,15 +837,24 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                         markets=enriched["markets"],
                     )
 
-                story = rewrite or {
-                    "title_ru": strip_html(title),
-                    "summary_ru": "Новость получена, но AI-обработка временно недоступна.",
-                    "market_impact_ru": "Оценка влияния будет доступна после восстановления AI-обработки.",
-                    "article_ru": summary_original or strip_html(title),
-                    "affected_assets": enriched["markets"],
-                    "sentiment": "neutral",
-                    "humor_ru": "Сегодня без фирменной шутки Grok — ждём следующий апдейт.",
-                }
+                if rewrite:
+                    story = rewrite
+                else:
+                    local_story = _local_writer_payload(
+                        title=title,
+                        summary=article_original or summary_original,
+                        markets=enriched["markets"],
+                        tone=enriched["tone"],
+                    )
+                    story = {
+                        "title_ru": local_story.get("title_ru") or strip_html(title),
+                        "summary_ru": local_story.get("preview_ru") or enriched["summary"],
+                        "article_ru": local_story.get("what_happened_ru") or local_story.get("full_text_ru") or enriched["summary"],
+                        "market_impact_ru": local_story.get("market_impact_ru") or enriched["impact"],
+                        "humor_ru": local_story.get("humor_ru") or "Рынок снова проверяет, кто читает контекст, а не только заголовки.",
+                        "affected_assets": enriched["markets"],
+                        "sentiment": "neutral",
+                    }
                 if rewrite:
                     diagnostics["grok_used_count"] += 1
                     grok_processed += 1
@@ -864,8 +880,8 @@ def fetch_public_news(limit: int = 12) -> dict[str, Any]:
                     "summary_original": summary_original,
                     "article_original": article_original,
                     "article_ru": story.get("article_ru") or story.get("summary_ru") or summary_original,
-                    "summary_ru": story.get("summary_ru") or "Новость получена, но AI-обработка временно недоступна.",
-                    "market_impact_ru": story.get("market_impact_ru") or "Оценка влияния будет доступна после восстановления AI-обработки.",
+                    "summary_ru": story.get("summary_ru") or enriched["summary"],
+                    "market_impact_ru": story.get("market_impact_ru") or enriched["impact"],
                     "humor_ru": story.get("humor_ru") or "",
                     "sentiment": story.get("sentiment") or "neutral",
                     "is_real_source": True,
