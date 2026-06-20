@@ -23,45 +23,16 @@ OPENROUTER_APP_TITLE = (os.getenv("OPENROUTER_APP_TITLE") or "NicolasSavin AI FO
 CHAT_SYSTEM_PROMPT = """
 Ты AI forex assistant платформы NicolasSavin.
 
-Правила:
-- отвечай только про forex, торговые сигналы, риск, аналитику и саму платформу;
-- отвечай только на русском языке;
-- стиль: профессиональный desk-аналитик, без воды и общих фраз;
-- не обещай прибыль и не давай гарантий;
-- не выдумывай рыночные данные, цены, новости, уровни или результаты;
-- если live-данные/новости/опционы/индикаторы недоступны — прямо и явно указывай это;
-- если use_fundamental=true, используй web search данные из предоставленного контекста; если их нет, пиши: "Актуальных фундаментальных драйверов не обнаружено";
-- никогда не имитируй поиск в интернете, если во входе не переданы результаты/источники;
-- всегда давай конкретные ценовые уровни там, где запрошены уровни, вход, TP, SL;
-- не используй расплывчатые формулировки без условия и уровня.
+Отвечай только по forex, торговым сценариям, рискам, аналитике и самой платформе. Всегда пиши по-русски.
 
-Обязательный формат ответа: одна структурированная статья с разделами и в этом порядке:
-1. ТЕКУЩАЯ СИТУАЦИЯ
-2. ПРИЧИНА ДВИЖЕНИЯ
-3. КЛЮЧЕВЫЕ УРОВНИ
-4. ФУНДАМЕНТАЛ (ONLY IF ENABLED)
-5. ОПЦИОНЫ
-6. ОБЪЕМЫ
-7. ДИВЕРГЕНЦИЯ
-8. ВОЛНЫ
-9. ТОРГОВЫЙ СЦЕНАРИЙ (САМОЕ ВАЖНОЕ)
-10. РИСК
+Стиль: institutional Smart Money / ICT desk analyst. Не делай сухие технические сводки OHLC, не начинай ответ с диапазона свечей, не пересказывай support/resistance как основной смысл.
 
-Требования к разделам:
-- В "ТЕКУЩАЯ СИТУАЦИЯ": направление (рост/падение/флэт), текущая цена, последние high/low, что делает цена сейчас.
-- В "ПРИЧИНА ДВИЖЕНИЯ": причина, структура (BOS/CHoCH), ликвидность (где сняли стопы), зона premium/discount.
-- В "КЛЮЧЕВЫЕ УРОВНИ": ближайшее сопротивление, поддержка, зона ликвидности, FVG/imbalance (если есть).
-- В "ФУНДАМЕНТАЛ": только если use_fundamental=true; перечисляй конкретные драйверы (CPI/ставки/геополитика) и влияние.
-- В "ОПЦИОНЫ": если данных нет, пиши строго: "Опционный слой недоступен".
-- В "ОБЪЕМЫ": если есть только MT4 tick volume, пиши строго: "Объемы ограничены MT4 tick данными".
-- В "ДИВЕРГЕНЦИЯ": если нет RSI/MACD, пиши строго: "Дивергенция не может быть подтверждена без индикаторов".
-- В "ВОЛНЫ": укажи текущую фазу (импульс/коррекция), без точной нумерации при слабой ясности.
-- В "ТОРГОВЫЙ СЦЕНАРИЙ": обязательно ОСНОВНОЙ (направление, вход-диапазон, TP, SL), АЛЬТЕРНАТИВНЫЙ, ИНВАЛИДАЦИЯ.
+Вместо этого объясняй рынок через причинно-следственную цепочку:
+крупный участник → ликвидность → stop run / inducement / sweep → FVG/OB/displacement → цель доставки цены → invalidation.
 
-Жесткие ограничения:
-- Никаких markdown-таблиц и дисклеймеров вне структуры.
-- Ответ читается как торговый план: причина -> уровни -> сценарий -> риск.
-- Максимум 400 токенов.
+Не обещай прибыль, не давай гарантий, не выдумывай новости, объёмы, опционы или уровни. Если данные недоступны — упоминай это коротко как ограничение, а не как отдельный длинный технический блок.
+
+Запрещённые шаблоны: "ТЕКУЩАЯ СИТУАЦИЯ", "КЛЮЧЕВЫЕ УРОВНИ", "Основной сценарий", "Альтернативный сценарий", "Риск-менеджмент", "последние 30 свечей", "support/resistance".
 """.strip()
 
 IDEA_EXPLANATION_SYSTEM_PROMPT = """
@@ -72,7 +43,7 @@ IDEA_EXPLANATION_SYSTEM_PROMPT = """
 Жёсткие правила:
 1) Не меняй direction, entry, stop loss, take profit, status, confidence.
 2) Не выдумывай отсутствующие факты: если нет CME/futures/options/cumdelta/news, не перечисляй их отдельным техническим блоком, а коротко укажи ограничение внутри логики.
-3) Запрещены технические шаблоны: "торгуется в сценарии", "последние 30 свечей", "support", "resistance", "подтверждены", "частично подтверждены", "вход допустим", "план строится от уровней", "рынок показывает", "цена тестирует".
+3) Запрещены технические шаблоны: "торгуется в сценарии", "последние 30 свечей", "support", "resistance", "подтверждены", "частично подтверждены", "вход допустим", "план строится от уровней", "рынок показывает", "цена тестирует", "Текущая ситуация", "Основной сценарий", "Альтернативный сценарий", "Риск-менеджмент".
 4) Не начинай с OHLC/диапазона свечей. Начинай с поведения ликвидности и вероятного мотива крупного игрока.
 5) Обязательно объясни причинно-следственную цепочку: что сделал крупный игрок → какую ликвидность взял → каким методом воздействовал на толпу → какую цель преследует → к чему это может привести.
 6) Обязательно упоминай, где логически находится buy-side или sell-side liquidity, какие стопы могли использоваться, был ли inducement / liquidity sweep / false breakout / displacement / FVG или OB interaction, если это следует из входных данных.
@@ -206,7 +177,7 @@ class ForexChatService:
         try:
             context_text = self._context_to_text(payload.context)
             explanation_mode = self._is_trade_idea_explanation_request(message=message, context=payload.context)
-            smc_analysis_mode = self._is_smc_overlay_request(message=message, context=payload.context)
+            smc_analysis_mode = False if explanation_mode else self._is_smc_overlay_request(message=message, context=payload.context)
             prompt = (
                 self._build_trade_idea_explanation_prompt(message=message, context=payload.context)
                 if explanation_mode
@@ -259,7 +230,7 @@ class ForexChatService:
         text = message.lower()
         keywords = [
             "forex", "fx", "eurusd", "gbpusd", "usdjpy", "usdchf", "audusd", "nzdusd", "usdcad", "eur/jpy",
-            "risk", "риск", "сигнал", "трейд", "сделк", "аналит", "таймфрейм", "платформ", "ликвид", "smart money", "fvg", "order block",
+            "risk", "риск", "сигнал", "трейд", "сделк", "аналит", "таймфрейм", "платформ", "ликвид", "smart money", "fvg", "order block", "institutional",
         ]
         return any(token in text for token in keywords)
 
@@ -274,17 +245,26 @@ class ForexChatService:
 
     @staticmethod
     def _is_trade_idea_explanation_request(*, message: str, context: dict[str, Any]) -> bool:
-        if not isinstance(context, dict) or not context:
-            return False
-        required = {"direction", "entry", "status"}
-        has_required_context = required.issubset(set(context.keys()))
-        if has_required_context:
-            return True
         lowered = message.lower()
-        return "объясн" in lowered and "иде" in lowered and "signal" in lowered
+        if isinstance(context, dict):
+            if context.get("force_institutional_narrative") is True:
+                return True
+            required = {"symbol", "entry", "sl", "tp"}
+            if required.issubset(set(context.keys())):
+                return True
+            legacy_required = {"direction", "entry", "status"}
+            if legacy_required.issubset(set(context.keys())):
+                return True
+        return (
+            ("institutional" in lowered and "narrative" in lowered)
+            or ("smart money" in lowered and "сигнал" in lowered)
+            or ("объясн" in lowered and ("иде" in lowered or "signal" in lowered))
+        )
 
     @staticmethod
     def _is_smc_overlay_request(*, message: str, context: dict[str, Any]) -> bool:
+        if isinstance(context, dict) and context.get("force_institutional_narrative") is True:
+            return False
         lowered = message.lower()
         has_keywords = any(
             token in lowered for token in ("smc", "ict", "свеч", "candles", "order block", "ликвид", "fvg", "имбаланс", "structure_levels", "patterns", "json")
@@ -314,7 +294,7 @@ class ForexChatService:
                 "Не менять числовые значения direction/entry/stop loss/take profit/status/confidence.",
                 "Не придумывать отсутствующие факты; недоступные данные упоминать коротко и только как ограничение.",
                 "Не писать техническую сводку OHLC, последние 30 свечей, support/resistance и tick volume как основной текст.",
-                "Запрещены фразы: торгуется в сценарии, подтверждены, частично подтверждены, вход допустим, план строится от уровней.",
+                "Запрещены фразы: торгуется в сценарии, подтверждены, частично подтверждены, вход допустим, план строится от уровней, текущая ситуация, основной сценарий, альтернативный сценарий, риск-менеджмент.",
                 "full_text должен быть 3-5 абзацев и начинаться с крупного участника/ликвидности, а не с диапазона свечей.",
             ],
         }
