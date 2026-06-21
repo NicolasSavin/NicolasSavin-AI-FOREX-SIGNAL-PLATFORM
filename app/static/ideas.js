@@ -698,6 +698,40 @@ function renderStatusPills(idea) {
   return `<div class="status-pill-row">${pills.map(([label, cls]) => `<span class="status-pill ${cls}">${escapeHtml(label)}</span>`).join("")}</div>`;
 }
 
+function resolveHftLayer(idea) {
+  const layer = idea && typeof idea.hft_layer === "object" && idea.hft_layer ? idea.hft_layer : {};
+  return {
+    available: Boolean(layer.available ?? idea?.hft_object_available),
+    bias: String(layer.bias || idea?.hft_bias || "neutral"),
+    strength: layer.strength ?? idea?.hft_strength ?? 0,
+    side: String(layer.side || idea?.hft_point_side || ""),
+    price: layer.price ?? idea?.hft_point_price,
+    distance: layer.distance_points ?? idea?.hft_distance_points,
+    adjustment: layer.score_adjustment ?? idea?.hft_score_adjustment ?? 0,
+    summary: layer.summary_ru || idea?.hft_summary_ru || "HFT Stop Hunt недоступен; слой не влияет на сигнал.",
+  };
+}
+
+function renderHftLayer(idea, { compact = false } = {}) {
+  const hft = resolveHftLayer(idea);
+  if (!hft.available) return compact ? "" : `<section class="modal-section hft-layer"><h4>HFT Stop Hunt</h4><p class="modal-text">${escapeHtml(hft.summary)}</p></section>`;
+  const biasLabel = hft.bias ? hft.bias.charAt(0).toUpperCase() + hft.bias.slice(1) : "Neutral";
+  const text = `${hft.summary} Цена HFT: ${formatNumber(hft.price)} · дистанция ${formatNumber(hft.distance)} пунктов · влияние score ${Number(hft.adjustment) >= 0 ? "+" : ""}${hft.adjustment}.`;
+  if (compact) {
+    return `<section class="institutional-section hft-layer"><h4>HFT Stop Hunt</h4><p>Bias: ${escapeHtml(biasLabel)} · Strength: ${escapeHtml(hft.strength)}/10<br>${escapeHtml(hft.summary)}</p></section>`;
+  }
+  return `<section class="modal-section hft-layer" style="margin-top:16px;">
+    <h4>HFT Stop Hunt</h4>
+    <div class="modal-meta">
+      <div><span>Bias</span><strong>${escapeHtml(biasLabel)}</strong></div>
+      <div><span>Strength</span><strong>${escapeHtml(hft.strength)}/10</strong></div>
+      <div><span>Side</span><strong>${escapeHtml(hft.side || "—")}</strong></div>
+      <div><span>Score</span><strong>${Number(hft.adjustment) >= 0 ? "+" : ""}${escapeHtml(hft.adjustment)}</strong></div>
+    </div>
+    <p class="modal-text">${escapeHtml(text)}</p>
+  </section>`;
+}
+
 function renderInstitutionalSections(idea) {
   const vd = resolveVolumeDelta(idea);
   const newsEvent = valueOrDash(idea.news_event, resolveNewsContext(idea));
@@ -711,6 +745,7 @@ function renderInstitutionalSections(idea) {
     <section class="institutional-section"><h4>Orderflow</h4><p>⚡ DOM ${escapeHtml(valueOrDash(idea.dom_bias))} · Absorption ${escapeHtml(valueOrDash(idea.absorption))} · CVD div ${escapeHtml(valueOrDash(idea.cvd_divergence, vd.divergence))}<br>${escapeHtml(heatmap)}</p></section>
     <section class="institutional-section"><h4>Options</h4><p>🧩 Bias ${escapeHtml(resolveExternalOptionsBias(idea))} · Max Pain ${escapeHtml(formatListValue(resolveOptionsMaxPain(idea)))} · Strikes ${escapeHtml(formatListValue(resolveOptionsKeyStrikes(idea)))}</p></section>
     <section class="institutional-section"><h4>News/Fundamental</h4><p>📰 ${escapeHtml(newsEvent)} · Impact ${escapeHtml(newsImpact)} · до события ${escapeHtml(minutes)} мин.</p></section>
+    ${renderHftLayer(idea, { compact: true })}
     <section class="institutional-section"><h4>Risk/Execution</h4><p>🛡️ Execution ${escapeHtml(valueOrDash(idea.execution_score))} · Final ${escapeHtml(valueOrDash(idea.final_score, idea.score))} · Risk ${escapeHtml(valueOrDash(idea.risk_per_trade_pct, idea.recommended_risk_percent))}%</p></section>
   </div>`;
 }
@@ -831,6 +866,7 @@ function openIdeaModal(idea) {
       <div>
         ${renderPropDetails(idea)}
         ${renderExecutionAnalysis(idea)}
+        ${renderHftLayer(idea)}
         <section class="modal-section" style="margin-top:16px;">
           <h4>Smart Money Narrative</h4>
           <p class="modal-text"><strong>narrative_source:</strong> ${escapeHtml(idea.narrative_source || aiSource.label)}</p>

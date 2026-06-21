@@ -463,6 +463,12 @@ def _with_advisor_compat_fields(idea: dict[str, Any], archive: list[dict[str, An
         "news_impact": idea.get("news_impact"),
         "minutes_to_event": idea.get("minutes_to_event"),
         "fundamental_score_adjustment": score_adjustment,
+        "hft_object_available": idea.get("hft_object_available") or (idea.get("hft_layer") or {}).get("available") if isinstance(idea.get("hft_layer"), dict) else idea.get("hft_object_available"),
+        "hft_point_type": idea.get("hft_point_type") or (idea.get("hft_layer") or {}).get("type") if isinstance(idea.get("hft_layer"), dict) else idea.get("hft_point_type"),
+        "hft_point_side": idea.get("hft_point_side") or (idea.get("hft_layer") or {}).get("side") if isinstance(idea.get("hft_layer"), dict) else idea.get("hft_point_side"),
+        "hft_point_price": idea.get("hft_point_price") or (idea.get("hft_layer") or {}).get("price") if isinstance(idea.get("hft_layer"), dict) else idea.get("hft_point_price"),
+        "distance_points": idea.get("hft_distance_points") or (idea.get("hft_layer") or {}).get("distance_points") if isinstance(idea.get("hft_layer"), dict) else idea.get("hft_distance_points"),
+        "hft_score_adjustment": idea.get("hft_score_adjustment") or (idea.get("hft_layer") or {}).get("score_adjustment") if isinstance(idea.get("hft_layer"), dict) else idea.get("hft_score_adjustment"),
     }
 
     for key, value in idea.items():
@@ -553,6 +559,12 @@ def _learning_snapshot(idea: dict[str, Any], *, created_at_utc: str) -> dict[str
         "mode": idea.get("mode") or idea.get("prop_mode") or advisor.get("mode") or prop.get("mode"),
         "market_structure_bias": idea.get("market_structure_bias") or idea.get("structure_bias") or idea.get("marketStructureBias"),
         "options_bias": idea.get("options_bias") or idea.get("optionsBias") or idea.get("external_options_bias"),
+        "hft_available": idea.get("hft_object_available") or prop.get("hft_object_available") or ((idea.get("hft_layer") or {}).get("available") if isinstance(idea.get("hft_layer"), dict) else None),
+        "hft_type": idea.get("hft_point_type") or prop.get("hft_point_type") or ((idea.get("hft_layer") or {}).get("type") if isinstance(idea.get("hft_layer"), dict) else None),
+        "hft_side": idea.get("hft_point_side") or prop.get("hft_point_side") or ((idea.get("hft_layer") or {}).get("side") if isinstance(idea.get("hft_layer"), dict) else None),
+        "hft_distance": idea.get("hft_distance_points") or prop.get("hft_distance_points") or ((idea.get("hft_layer") or {}).get("distance_points") if isinstance(idea.get("hft_layer"), dict) else None),
+        "hft_bias": idea.get("hft_bias") or prop.get("hft_bias") or ((idea.get("hft_layer") or {}).get("bias") if isinstance(idea.get("hft_layer"), dict) else None),
+        "hft_score_adjustment": idea.get("hft_score_adjustment") or prop.get("hft_score_adjustment") or ((idea.get("hft_layer") or {}).get("score_adjustment") if isinstance(idea.get("hft_layer"), dict) else None),
         "news_risk": idea.get("news_risk"),
         "fundamental_status": idea.get("fundamental_status"),
         "sentiment_alignment": idea.get("sentiment_alignment"),
