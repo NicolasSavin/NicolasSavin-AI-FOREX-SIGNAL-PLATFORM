@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.learning_adjustment import apply_learning_adjustment
 from app.services.news_calendar import nearest_news_for_symbol
 
 ACTIVE_FILE = Path("active_ideas.json")
@@ -184,9 +185,10 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
     if has_news_event and not news_lock_active:
         impact_level = news_impact.lower()
         if "high" in impact_level:
-            event_penalty = 5
+            event_penalty = 8 if alignment == "missing" else 5
             fundamental_impact = "high"
-            news_risk = "elevated" if news_risk == "low" else news_risk
+            fundamental_risk = "high"
+            news_risk = "high"
         elif "medium" in impact_level:
             event_penalty = 3
             fundamental_impact = "medium" if fundamental_impact == "low" else fundamental_impact
@@ -362,7 +364,7 @@ def enrich_ideas_with_news_calendar(ideas: list[dict[str, Any]]) -> list[dict[st
             enriched.append(_with_advisor_compat_fields(enrich_idea_with_news_calendar(dict(idea))))
     return enriched
 
-def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
+def _with_advisor_compat_fields(idea: dict[str, Any], archive: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Expose flat advisor fields first so MT4's simple parser sees them before candles."""
     if not isinstance(idea, dict):
         return idea
@@ -402,6 +404,19 @@ def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
             advisor["score"] = score
         if isinstance(prop, dict):
             prop["score"] = score
+
+    idea = apply_learning_adjustment(idea, archive)
+    advisor = idea.get("advisor_signal") if isinstance(idea.get("advisor_signal"), dict) else {}
+    prop = idea.get("prop_signal_score") if isinstance(idea.get("prop_signal_score"), dict) else {}
+    score = _int_score(idea.get("prop_score"))
+    if score is None:
+        score = _int_score(idea.get("score"))
+    if score is None:
+        score = _int_score(advisor.get("score"))
+    if score is None:
+        score = _int_score(prop.get("score"))
+    if score is None:
+        score = _int_score(idea.get("confidence"))
 
     ordered: dict[str, Any] = {}
     for key in ("id", "symbol", "pair", "timeframe", "tf", "action", "signal", "direction"):
@@ -507,7 +522,7 @@ def _idea_id(idea: dict[str, Any]) -> str:
     return f"{symbol}-{action}-{round(entry or 0, 5)}-{round(sl or 0, 5)}-{round(tp or 0, 5)}-{uuid.uuid4().hex[:8]}"
 
 
-def _active_view(active: dict[str, Any], live_idea: dict[str, Any] | None = None) -> dict[str, Any]:
+def _active_view(active: dict[str, Any], live_idea: dict[str, Any] | None = None, archive: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     idea = dict(active.get("idea") or {})
     idea["idea_id"] = active.get("idea_id")
     idea["lifecycle_status"] = "active"
@@ -520,7 +535,44 @@ def _active_view(active: dict[str, Any], live_idea: dict[str, Any] | None = None
         idea["live_price"] = price_of(live_idea)
         idea["live_score"] = live_idea.get("prop_score")
         idea["live_grade"] = live_idea.get("prop_grade")
-    return _with_advisor_compat_fields(enrich_idea_with_news_calendar(idea))
+    return _with_advisor_compat_fields(enrich_idea_with_news_calendar(idea), archive=archive)
+
+
+def _learning_snapshot(idea: dict[str, Any], *, created_at_utc: str) -> dict[str, Any]:
+    advisor = idea.get("advisor_signal") if isinstance(idea.get("advisor_signal"), dict) else {}
+    prop = idea.get("prop_signal_score") if isinstance(idea.get("prop_signal_score"), dict) else {}
+    entry, sl, tp = _get_levels(idea)
+    return {
+        "symbol": normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument")),
+        "timeframe": idea.get("timeframe") or idea.get("tf"),
+        "action": action_of(idea),
+        "setup_type": idea.get("setup_type") or idea.get("strategy") or idea.get("pattern"),
+        "score": idea.get("score") or idea.get("confidence") or advisor.get("score"),
+        "prop_score": idea.get("prop_score") or idea.get("propScore") or prop.get("score"),
+        "grade": idea.get("grade") or idea.get("prop_grade") or advisor.get("grade") or prop.get("grade"),
+        "mode": idea.get("mode") or idea.get("prop_mode") or advisor.get("mode") or prop.get("mode"),
+        "market_structure_bias": idea.get("market_structure_bias") or idea.get("structure_bias") or idea.get("marketStructureBias"),
+        "options_bias": idea.get("options_bias") or idea.get("optionsBias") or idea.get("external_options_bias"),
+        "news_risk": idea.get("news_risk"),
+        "fundamental_status": idea.get("fundamental_status"),
+        "sentiment_alignment": idea.get("sentiment_alignment"),
+        "narrative_source": idea.get("narrative_source") or idea.get("ai_source") or idea.get("ai_status"),
+        "fallback_active": bool(idea.get("fallback_active") or idea.get("is_fallback") or str(idea.get("source") or "").lower() == "fallback"),
+        "entry": entry,
+        "sl": sl,
+        "tp": tp,
+        "rr": idea.get("rr") or idea.get("risk_reward"),
+        "created_at_utc": created_at_utc,
+    }
+
+
+def _duration_minutes(start: Any, end: Any) -> int | None:
+    try:
+        start_dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+        return max(0, int((end_dt - start_dt).total_seconds() // 60))
+    except Exception:
+        return None
 
 
 def _hit_status(active: dict[str, Any], current_price: float | None) -> tuple[str | None, float | None]:
@@ -575,8 +627,19 @@ def apply_idea_lifecycle(ideas: list[dict[str, Any]]) -> dict[str, Any]:
             result_r = None
             if risk and reward is not None:
                 result_r = round((1 if status == "tp_hit" else -1) * reward / risk, 2)
+            closed_at = now_utc()
             archived = dict(item)
-            archived.update({"status": status, "closed_at_utc": now_utc(), "close_price": close_price or current_price, "result": "TP" if status == "tp_hit" else "SL", "result_r": result_r, "final_action": action, "final_tp": tp, "final_sl": sl})
+            archived.update({
+                "status": status,
+                "closed_at_utc": closed_at,
+                "close_price": close_price or current_price,
+                "result": "TP" if status == "tp_hit" else "SL",
+                "result_r": result_r,
+                "duration_minutes": _duration_minutes(item.get("created_at_utc"), closed_at),
+                "final_action": action,
+                "final_tp": tp,
+                "final_sl": sl,
+            })
             archive.insert(0, archived)
             active.pop(symbol, None)
             changed = True
@@ -587,25 +650,38 @@ def apply_idea_lifecycle(ideas: list[dict[str, Any]]) -> dict[str, Any]:
     for idea in ideas:
         if not isinstance(idea, dict):
             continue
-        idea = _with_advisor_compat_fields(enrich_idea_with_news_calendar(dict(idea)))
+        idea = _with_advisor_compat_fields(enrich_idea_with_news_calendar(dict(idea)), archive=archive)
         symbol = normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
         if not symbol:
             output.append(idea)
             continue
         if symbol in active:
-            output.append(_active_view(active[symbol], idea))
+            output.append(_active_view(active[symbol], idea, archive=archive))
             continue
         if _is_tradable_idea(idea):
             entry, sl, tp = _get_levels(idea)
             action = action_of(idea)
-            item = {"idea_id": _idea_id(idea), "symbol": symbol, "action": action, "entry": entry, "sl": sl, "tp": tp, "created_at_utc": now_utc(), "last_checked_at_utc": now_utc(), "status": "active", "idea": dict(idea)}
+            created_at = now_utc()
+            item = {
+                "idea_id": _idea_id(idea),
+                "symbol": symbol,
+                "action": action,
+                "entry": entry,
+                "sl": sl,
+                "tp": tp,
+                "created_at_utc": created_at,
+                "last_checked_at_utc": now_utc(),
+                "status": "active",
+                "idea": dict(idea),
+                "learning_snapshot": _learning_snapshot(idea, created_at_utc=created_at),
+            }
             active[symbol] = item
-            output.append(_active_view(item, idea))
+            output.append(_active_view(item, idea, archive=archive))
             changed = True
         else:
             idea = dict(idea)
             idea["lifecycle_status"] = "candidate"
-            output.append(_with_advisor_compat_fields(idea))
+            output.append(_with_advisor_compat_fields(idea, archive=archive))
 
     if changed or True:
         _save(ACTIVE_FILE, active)
