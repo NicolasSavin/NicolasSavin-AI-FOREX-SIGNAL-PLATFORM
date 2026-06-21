@@ -244,6 +244,9 @@ def _compact_candle(candle: dict[str, Any]) -> dict[str, Any]:
         "close": float(candle.get("close") or 0.0),
     }
     row.update(_extract_mt4_heatmap_fields(candle))
+    for field, value in _extract_mt4_rich_fields(candle).items():
+        if field.startswith("hft_") and value not in (None, ""):
+            row[field] = value
     return row
 
 
@@ -313,6 +316,22 @@ def _extract_mt4_rich_fields(payload: dict[str, Any]) -> dict[str, Any]:
     if hft_signal:
         rich["hft_signal"] = hft_signal
 
+    hft_available = _mt4_bool_or_none(payload.get("hft_object_available"))
+    if hft_available is not None:
+        rich["hft_object_available"] = hft_available
+    hft_point_price = _first_mt4_float(payload, ("hft_point_price",), positive_only=True)
+    if hft_point_price is not None:
+        rich["hft_point_price"] = hft_point_price
+    hft_point_type = str(payload.get("hft_point_type") or "").strip()
+    if hft_point_type:
+        rich["hft_point_type"] = hft_point_type
+    hft_point_side = str(payload.get("hft_point_side") or "").strip()
+    if hft_point_side:
+        rich["hft_point_side"] = hft_point_side
+    hft_point_strength = _first_mt4_float(payload, ("hft_point_strength",))
+    if hft_point_strength is not None:
+        rich["hft_point_strength"] = hft_point_strength
+
     margin_source = str(payload.get("margin_source") or "").strip()
     if margin_source:
         rich["margin_source"] = margin_source
@@ -364,6 +383,11 @@ def _mt4_debug_rich_fields(item: dict[str, Any]) -> dict[str, Any]:
             "future_delta",
             "cumulative_delta",
             "hft_signal",
+            "hft_object_available",
+            "hft_point_price",
+            "hft_point_type",
+            "hft_point_side",
+            "hft_point_strength",
             "margin_source",
             *MT4_HEATMAP_FIELDS,
         )
@@ -1380,6 +1404,11 @@ def api_mt4_ingest_get(
     heatmap_wall_below_size: float = 0.0,
     heatmap_bias: str = "",
     hft_signal: str = "",
+    hft_object_available: bool | None = None,
+    hft_point_price: float = 0.0,
+    hft_point_type: str = "",
+    hft_point_side: str = "",
+    hft_point_strength: float = 0.0,
     bars: str = "",
     broker: str = "",
     account: str = "",
@@ -1408,6 +1437,11 @@ def api_mt4_ingest_get(
         "heatmap_wall_above_size": heatmap_wall_above_size,
         "heatmap_wall_below_size": heatmap_wall_below_size,
         "heatmap_bias": heatmap_bias,
+        "hft_object_available": hft_object_available,
+        "hft_point_price": hft_point_price,
+        "hft_point_type": hft_point_type,
+        "hft_point_side": hft_point_side,
+        "hft_point_strength": hft_point_strength,
     })
     existing = (MT4_CANDLE_STORE.get(store_key) or {}).get("candles") or []
     merged = {int(c.get("time") or 0): c for c in existing if isinstance(c, dict) and int(c.get("time") or 0) > 0}
@@ -1431,6 +1465,11 @@ def api_mt4_ingest_get(
         "future_delta": future_delta,
         "cumulative_delta": cumulative_delta,
         "hft_signal": hft_signal,
+        "hft_object_available": hft_object_available,
+        "hft_point_price": hft_point_price,
+        "hft_point_type": hft_point_type,
+        "hft_point_side": hft_point_side,
+        "hft_point_strength": hft_point_strength,
         "margin_source": margin_source,
         "heatmap_available": heatmap_available,
         "heatmap_wall_above": heatmap_wall_above,
@@ -1482,6 +1521,11 @@ def api_mt4_ingest_get(
         "margin_zone_upper": rich_fields.get("margin_zone_upper"),
         "margin_source": margin_source or "Future_Volume_v5.00",
         "hft_signal": hft_signal,
+        "hft_object_available": rich_fields.get("hft_object_available"),
+        "hft_point_price": rich_fields.get("hft_point_price"),
+        "hft_point_type": rich_fields.get("hft_point_type"),
+        "hft_point_side": rich_fields.get("hft_point_side"),
+        "hft_point_strength": rich_fields.get("hft_point_strength"),
         **rich_fields,
         "bars": bars,
         "broker": broker,

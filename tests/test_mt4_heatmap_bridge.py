@@ -50,6 +50,34 @@ def test_mt4_ingest_get_stores_and_debug_exposes_heatmap_fields():
     assert debug["candles"][-1]["heatmap_bias"] == "bullish"
 
 
+def test_mt4_ingest_get_stores_hft_rich_fields():
+    stamp = int(datetime.now(timezone.utc).timestamp())
+    response = api_mt4_ingest_get(
+        symbol="XAUUSD",
+        tf="M15",
+        time=stamp,
+        open=4200.0,
+        high=4205.0,
+        low=4190.0,
+        close=4199.6,
+        hft_object_available=True,
+        hft_point_price=4213.8,
+        hft_point_type="hft",
+        hft_point_side="above_price",
+        hft_point_strength=8.0,
+    )
+
+    item = main.MT4_CANDLE_STORE["XAUUSD:M15"]
+
+    assert response["ok"] is True
+    assert item["hft_object_available"] is True
+    assert item["hft_point_price"] == 4213.8
+    assert item["hft_point_type"] == "hft"
+    assert item["hft_point_side"] == "above_price"
+    assert item["hft_point_strength"] == 8.0
+    assert item["candles"][-1]["hft_point_price"] == 4213.8
+
+
 def test_build_signal_from_candles_adds_heatmap_fields(monkeypatch):
     rows = [
         {"time": i + 1, "open": 1.1000, "high": 1.1010, "low": 1.0990, "close": 1.1000 + i * 0.00001}
