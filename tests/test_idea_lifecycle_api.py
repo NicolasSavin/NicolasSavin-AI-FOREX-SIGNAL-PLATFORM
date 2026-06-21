@@ -191,3 +191,110 @@ def test_upcoming_high_impact_news_updates_fundamental_summary_and_score(tmp_pat
     assert idea["propConfidence"] == 75
     assert idea["advisor_filter_debug"]["news_event"] == "CPI"
     assert idea["advisor_filter_debug"]["fundamental_score_adjustment"] == -8
+
+
+def test_learning_snapshot_result_and_rule_based_adjustment(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(idea_lifecycle, "ACTIVE_FILE", tmp_path / "active_ideas.json")
+    monkeypatch.setattr(idea_lifecycle, "ARCHIVE_FILE", tmp_path / "archive.json")
+    monkeypatch.setattr(
+        idea_lifecycle,
+        "nearest_news_for_symbol",
+        lambda symbol: {
+            "news_available": True,
+            "news_event": None,
+            "news_currency": None,
+            "news_impact": None,
+            "news_time_utc": None,
+            "minutes_to_event": None,
+            "news_lock_active": False,
+            "news_source": "test_calendar",
+        },
+    )
+
+    archive_rows = []
+    for idx in range(30):
+        archive_rows.append(
+            {
+                "symbol": "EURUSD",
+                "result": "TP",
+                "learning_snapshot": {
+                    "symbol": "EURUSD",
+                    "setup_type": "breakout",
+                    "narrative_source": "rule_engine",
+                    "news_risk": "low",
+                    "sentiment_alignment": "aligned",
+                    "options_bias": "bullish",
+                    "score": 82,
+                    "fallback_active": False,
+                },
+            }
+        )
+    for idx in range(30):
+        archive_rows.append(
+            {
+                "symbol": "GBPUSD",
+                "result": "SL",
+                "learning_snapshot": {
+                    "symbol": "GBPUSD",
+                    "setup_type": "mean_reversion",
+                    "narrative_source": "rule_engine",
+                    "news_risk": "low",
+                    "sentiment_alignment": "neutral",
+                    "options_bias": "bearish",
+                    "score": 55,
+                    "fallback_active": False,
+                },
+            }
+        )
+    (tmp_path / "archive.json").write_text(__import__("json").dumps(archive_rows), encoding="utf-8")
+
+    payload = idea_lifecycle.apply_idea_lifecycle(
+        [
+            {
+                "symbol": "EURUSD",
+                "timeframe": "M15",
+                "signal": "BUY",
+                "setup_type": "breakout",
+                "current_price": 1.10,
+                "entry": 1.10,
+                "sl": 1.09,
+                "tp": 1.12,
+                "rr": 2,
+                "advisor_allowed": True,
+                "prop_mode": "prop_entry",
+                "prop_grade": "A",
+                "prop_score": 82,
+                "market_structure_bias": "bullish",
+                "options_bias": "bullish",
+                "sentiment_filter": {"alignment": "aligned"},
+                "narrative_source": "rule_engine",
+                "advisor_signal": {"allowed": True, "mode": "prop_entry", "grade": "A", "score": 82},
+            }
+        ]
+    )
+
+    idea = payload["ideas"][0]
+    assert idea["learning_adjustment"] == 8
+    assert idea["score"] == 93
+    assert idea["confidence"] == 93
+    assert idea["prop_score"] == 93
+    assert idea["propScore"] == 93
+    assert idea["propConfidence"] == 93
+    assert idea["learning_sample_size"] >= 30
+
+    active = payload["active"][0]
+    snapshot = active["learning_snapshot"]
+    assert snapshot["symbol"] == "EURUSD"
+    assert snapshot["timeframe"] == "M15"
+    assert snapshot["action"] == "BUY"
+    assert snapshot["setup_type"] == "breakout"
+    assert snapshot["score"] == 93
+    assert snapshot["prop_score"] == 93
+    assert snapshot["fallback_active"] is False
+
+    closed = idea_lifecycle.apply_idea_lifecycle([{**idea, "current_price": 1.12}])
+    result = closed["archive"][0]
+    assert result["result"] == "TP"
+    assert result["result_r"] == 2.0
+    assert isinstance(result["duration_minutes"], int)
+    assert result["learning_snapshot"]["setup_type"] == "breakout"
