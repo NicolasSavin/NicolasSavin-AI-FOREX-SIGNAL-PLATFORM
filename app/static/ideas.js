@@ -376,14 +376,27 @@ function resolveNarrative(idea) {
 }
 
 function resolveNewsContext(idea) {
-  return firstText(
-    idea.news_title,
-    idea.fundamental_context_ru,
-    idea.fundamental_ru,
-    idea.news_context_ru,
-    idea.why_moves_ru,
-    idea.market_impact_ru,
-  ) || "нет данных";
+  const fundamentalSummary = firstText(
+    idea.fundamental_summary_ru,
+    idea.fundamentalSummaryRu,
+  );
+  if (fundamentalSummary) return fundamentalSummary;
+
+  const newsFundamental = firstText(
+    idea.news_fundamental_ru,
+    idea.newsFundamentalRu,
+  );
+  if (newsFundamental) return newsFundamental;
+
+  const newsEvent = firstText(idea.news_event, idea.newsEvent);
+  if (newsEvent) {
+    const newsCurrency = firstText(idea.news_currency, idea.newsCurrency) || "—";
+    const newsImpact = firstText(idea.news_impact, idea.newsImpact) || "—";
+    const minutesToEvent = idea.minutes_to_event ?? idea.minutesToEvent ?? "—";
+    return `${newsCurrency} ${newsEvent}, impact ${newsImpact}, до события ${minutesToEvent} мин`;
+  }
+
+  return "свежих релевантных событий не найдено";
 }
 
 function normalizeChartImageUrl(url) {
