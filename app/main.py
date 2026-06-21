@@ -423,6 +423,10 @@ def home():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/favicon.svg", include_in_schema=False)
+def favicon():
+    return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
+
 
 @app.get("/api/analytics/signals/{symbol}")
 async def api_analytics_signals(symbol: str):

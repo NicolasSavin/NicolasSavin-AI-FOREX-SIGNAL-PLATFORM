@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AI Forex Signal Platform">
+  <rect width="64" height="64" rx="14" fill="#07111f"/>
+  <path d="M10 43h44" stroke="#1f3b5c" stroke-width="2" stroke-linecap="round"/>
+  <path d="M13 39l9-11 8 7 11-16 10 12" fill="none" stroke="#4cc9f0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="22" cy="28" r="3" fill="#86efac"/>
+  <circle cx="41" cy="19" r="3" fill="#86efac"/>
+  <path d="M16 49h32" stroke="#8b5cf6" stroke-width="3" stroke-linecap="round"/>
+</svg>
