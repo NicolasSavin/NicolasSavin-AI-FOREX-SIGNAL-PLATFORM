@@ -43,6 +43,8 @@ logging.getLogger().setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+PUBLIC_DIR = BASE_DIR.parent / "public"
+FAVICON_FILE = PUBLIC_DIR / "favicon.svg"
 
 DEFAULT_IDEA_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
 IDEA_SYMBOLS = os.getenv("IDEA_SYMBOLS", "EURUSD,GBPUSD,USDJPY,XAUUSD")
@@ -416,6 +418,11 @@ def health(request: Request):
 @app.get("/api/external-signals/cme-optionsfx")
 def api_external_signals_cme_optionsfx(force_refresh: bool = False) -> dict[str, Any]:
     return get_cme_optionsfx_signals(force_refresh=force_refresh)
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+def favicon():
+    return FileResponse(FAVICON_FILE, media_type="image/svg+xml")
 
 
 @app.get("/", include_in_schema=False)
