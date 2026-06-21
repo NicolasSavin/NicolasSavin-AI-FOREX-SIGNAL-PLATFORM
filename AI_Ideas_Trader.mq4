@@ -36,6 +36,14 @@ string g_lastBlockedSymbol = "";
 int g_lastFoundCount = 0;
 int g_lastAllowedCount = 0;
 int g_lastBlockedCount = 0;
+bool g_hftObjectFound = false;
+string g_hftObjectName = "";
+string g_hftObjectKind = "none";
+int g_hftObjectMt4Type = -1;
+double g_hftObjectPrice = 0.0;
+double g_hftObjectDistance = 0.0;
+double g_hftObjectStrength = 0.0;
+int g_hftObjectsTotal = 0;
 
 int OnInit()
 {
@@ -45,6 +53,7 @@ int OnInit()
 
 void OnTick()
 {
+   ScanHftObjects();
    if(TimeCurrent() - g_lastPoll < RefreshSeconds) return;
    g_lastPoll = TimeCurrent();
    PollSignalsAndTrade();
@@ -339,6 +348,7 @@ string BoolToText(bool value)
 
 void DrawStatusPanel()
 {
+   ScanHftObjects();
    string reason = g_lastBlockedReason;
    if(StringLen(reason) == 0) reason = "none";
    Comment(
@@ -346,8 +356,83 @@ void DrawStatusPanel()
       "Found: ", g_lastFoundCount, "\n",
       "Allowed: ", g_lastAllowedCount, "\n",
       "Blocked: ", g_lastBlockedCount, "\n",
-      "Last blocked: ", g_lastBlockedSymbol, " ", reason
+      "Last blocked: ", g_lastBlockedSymbol, " ", reason, "\n",
+      "HFT object: ", (g_hftObjectFound ? "yes" : "no"), "\n",
+      "type=", g_hftObjectKind, "\n",
+      "price=", DoubleToString(g_hftObjectPrice, Digits), "\n",
+      "distance=", DoubleToString(g_hftObjectDistance, Digits), "\n",
+      "strength=", DoubleToString(g_hftObjectStrength, 1)
    );
+}
+
+void ScanHftObjects()
+{
+   int total = ObjectsTotal();
+   g_hftObjectsTotal = total;
+   g_hftObjectFound = false;
+   g_hftObjectName = "";
+   g_hftObjectKind = "none";
+   g_hftObjectMt4Type = -1;
+   g_hftObjectPrice = 0.0;
+   g_hftObjectDistance = 0.0;
+   g_hftObjectStrength = 0.0;
+
+   double currentPrice = (Bid > 0 && Ask > 0) ? ((Bid + Ask) / 2.0) : Close[0];
+   double bestDistance = 0.0;
+   Print("HFT scanner: ObjectsTotal()=", total);
+
+   for(int i = total - 1; i >= 0; i--)
+   {
+      string name = ObjectName(i);
+      string kind = "";
+      if(StringFind(name, "fut_hft_point_") >= 0) kind = "hft";
+      if(StringFind(name, "fut_ice_point_") >= 0) kind = "ice";
+      if(StringLen(kind) == 0) continue;
+
+      int mt4Type = ObjectType(name);
+      double price = ObjectGet(name, OBJPROP_PRICE1);
+      if(price <= 0.0) price = ObjectGet(name, OBJPROP_PRICE2);
+      if(price <= 0.0)
+      {
+         Print("HFT scanner: found name=", name, " type=", mt4Type, " price=0 skipped");
+         continue;
+      }
+
+      double distance = MathAbs(currentPrice - price);
+      double strength = ObjectGet(name, OBJPROP_WIDTH);
+      if(strength <= 0.0) strength = 1.0;
+      Print("HFT scanner: found name=", name, " type=", mt4Type, " kind=", kind, " price=", DoubleToString(price, Digits), " distance=", DoubleToString(distance, Digits), " strength=", DoubleToString(strength, 1));
+
+      if(!g_hftObjectFound || distance < bestDistance)
+      {
+         g_hftObjectFound = true;
+         g_hftObjectName = name;
+         g_hftObjectKind = kind;
+         g_hftObjectMt4Type = mt4Type;
+         g_hftObjectPrice = NormalizeDouble(price, Digits);
+         g_hftObjectDistance = NormalizeDouble(distance, Digits);
+         g_hftObjectStrength = strength;
+         bestDistance = distance;
+      }
+   }
+
+   if(g_hftObjectFound)
+   {
+      Print("HFT scanner: nearest name=", g_hftObjectName, " type=", g_hftObjectMt4Type, " kind=", g_hftObjectKind, " price=", DoubleToString(g_hftObjectPrice, Digits), " distance=", DoubleToString(g_hftObjectDistance, Digits), " strength=", DoubleToString(g_hftObjectStrength, 1));
+   }
+   else
+   {
+      Print("HFT scanner: nearest not found type=none price=0");
+   }
+}
+
+string BuildHftObjectJson()
+{
+   if(!g_hftObjectFound)
+   {
+      return("{\"available\":false,\"type\":\"none\",\"price\":0,\"distance\":0,\"strength\":0}");
+   }
+   return("{\"available\":true,\"name\":\"" + g_hftObjectName + "\",\"type\":\"" + g_hftObjectKind + "\",\"mt4_type\":" + IntegerToString(g_hftObjectMt4Type) + ",\"price\":" + DoubleToString(g_hftObjectPrice, Digits) + ",\"distance\":" + DoubleToString(g_hftObjectDistance, Digits) + ",\"strength\":" + DoubleToString(g_hftObjectStrength, 1) + "}");
 }
 
 string ResolveBlockedReason(string obj, string action, double entry, double sl, double tp, bool tradePermission, int score, string grade, string mode)
