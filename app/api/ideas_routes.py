@@ -240,6 +240,78 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             logger.exception("ideas_prop_desk_filters_failed reason=%s", exc)
             return ideas
 
+
+    def _idea_pipeline_marker(idea: dict) -> str:
+        if not isinstance(idea, dict):
+            return "invalid"
+        if bool(idea.get("is_fallback")) or str(idea.get("source") or "").lower() == "fallback":
+            return "fallback"
+        if str(idea.get("source") or "").lower() == "contextual_wait":
+            return "contextual_wait"
+        return str(idea.get("source") or idea.get("data_provider") or "analysis_pipeline")
+
+    def _ideas_need_primary_generation(ideas: Any) -> tuple[bool, str]:
+        if not isinstance(ideas, list) or not ideas:
+            return True, "empty_ideas"
+        markers = [_idea_pipeline_marker(item) for item in ideas if isinstance(item, dict)]
+        if markers and all(marker in {"fallback", "contextual_wait"} for marker in markers):
+            return True, "only_" + "_".join(sorted(set(markers)))
+        return False, "primary_payload_available"
+
+    def _log_ideas_pipeline_sources(ideas: Any, *, stage: str, fallback_reason: str = "") -> None:
+        items = ideas if isinstance(ideas, list) else []
+        if not items:
+            logger.info(
+                "ideas_pipeline_source stage=%s ideas_pipeline_source=empty ideas_narrative_source=empty ideas_news_source=empty ideas_fallback_reason=%s",
+                stage,
+                fallback_reason or "empty_ideas",
+            )
+            return
+        for idea in items[:12]:
+            if not isinstance(idea, dict):
+                continue
+            meta = idea.get("meta") if isinstance(idea.get("meta"), dict) else {}
+            logger.info(
+                "ideas_pipeline_source stage=%s symbol=%s timeframe=%s ideas_pipeline_source=%s ideas_narrative_source=%s ideas_news_source=%s ideas_fallback_reason=%s",
+                stage,
+                idea.get("symbol") or idea.get("pair"),
+                idea.get("timeframe") or idea.get("tf"),
+                _idea_pipeline_marker(idea),
+                idea.get("narrative_source") or idea.get("ai_source") or idea.get("ai_status") or "missing",
+                idea.get("news_source") or ("calendar" if idea.get("news_event") else "unavailable"),
+                fallback_reason or meta.get("fallback_reason") or idea.get("fallback_reason") or "",
+            )
+
+
+    def _ensure_idea_response_diagnostics(ideas: Any) -> list[dict]:
+        normalized: list[dict] = []
+        for raw in ideas if isinstance(ideas, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            idea = dict(raw)
+            meta = idea.get("meta") if isinstance(idea.get("meta"), dict) else {}
+            pipeline_source = _idea_pipeline_marker(idea)
+            fallback_reason = str(meta.get("fallback_reason") or idea.get("fallback_reason") or "")
+            fundamental_summary = str(
+                idea.get("fundamental_summary_ru")
+                or idea.get("news_fundamental_ru")
+                or idea.get("newsFundamentalRu")
+                or idea.get("fundamental_context_ru")
+                or idea.get("fundamental_ru")
+                or "Календарь новостей временно недоступен; фундаментальный слой не блокирует сделку."
+            )
+            idea["fundamental_summary_ru"] = fundamental_summary
+            idea["news_fundamental_ru"] = str(idea.get("news_fundamental_ru") or fundamental_summary)
+            idea["newsFundamentalRu"] = str(idea.get("newsFundamentalRu") or fundamental_summary)
+            try:
+                idea["fundamental_score_adjustment"] = int(idea.get("fundamental_score_adjustment") or 0)
+            except Exception:
+                idea["fundamental_score_adjustment"] = 0
+            idea["ideas_pipeline_source"] = str(idea.get("ideas_pipeline_source") or pipeline_source)
+            idea["ideas_fallback_reason"] = str(idea.get("ideas_fallback_reason") or fallback_reason)
+            normalized.append(idea)
+        return normalized
+
     def _safe_fallback_ideas(reason: str) -> list[dict]:
         try:
             return services.trade_idea_service.fallback_ideas(reason=reason)
@@ -257,13 +329,16 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
                 logger.warning("ideas_market_invalid_payload_type type=%s", type(payload).__name__)
                 payload = {"ideas": [], "archive": []}
 
-            if not payload.get("ideas"):
-                logger.info("ideas_market_empty_after_refresh force_generate=true")
+            needs_generation, generation_reason = _ideas_need_primary_generation(payload.get("ideas"))
+            _log_ideas_pipeline_sources(payload.get("ideas"), stage="after_refresh", fallback_reason=generation_reason if needs_generation else "")
+            if needs_generation:
+                logger.warning("ideas_market_primary_pipeline_unavailable reason=%s force_generate=true", generation_reason)
                 await services.trade_idea_service.generate_or_refresh(DEFAULT_PAIRS)
                 payload = services.trade_idea_service.refresh_market_ideas()
                 if not isinstance(payload, dict):
                     logger.warning("ideas_market_invalid_payload_type_after_generation type=%s", type(payload).__name__)
                     payload = {"ideas": [], "archive": []}
+                _log_ideas_pipeline_sources(payload.get("ideas"), stage="after_force_generation", fallback_reason=generation_reason)
 
             payload["ideas"] = _safe_attach_live_market_contracts(payload.get("ideas") or [], field="ideas")
             payload["archive"] = _safe_attach_live_market_contracts(payload.get("archive") or [], field="archive")
@@ -272,7 +347,8 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             payload["ideas"] = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("ideas") or [])))
             payload["archive"] = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("archive") or [])))
             payload["ideas"] = _apply_prop_desk_filters(payload.get("ideas") or [], archive=payload.get("archive") or [])
-            payload["ideas"] = enrich_ideas_with_news_calendar(payload.get("ideas") or [])
+            payload["ideas"] = _ensure_idea_response_diagnostics(enrich_ideas_with_news_calendar(payload.get("ideas") or []))
+            _log_ideas_pipeline_sources(payload.get("ideas"), stage="api_response")
             for idea in payload["ideas"]:
                 if not str(
                     idea.get("description_ru")
@@ -290,7 +366,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
                 SignalAggregator.enrich_many(attach_market_structure_overlays(_safe_fallback_ideas(reason=fallback_reason)))
             )
             return _localize_output_layer({
-                "ideas": enrich_ideas_with_news_calendar(fallback_ideas),
+                "ideas": _ensure_idea_response_diagnostics(enrich_ideas_with_news_calendar(fallback_ideas)),
                 "archive": [],
                 "market": _safe_market_contracts(list(DEFAULT_PAIRS)),
                 "ok": False,
