@@ -1135,6 +1135,8 @@ class TradeIdeaService:
                         ],
                         "current_reasoning": current_reasoning,
                         "source": "fallback",
+                        "ai_source": "fallback",
+                        "narrative_source": "fallback",
                         "is_fallback": True,
                         "meta": {"fallback_reason": reason},
                     }
@@ -1202,6 +1204,8 @@ class TradeIdeaService:
                             "Рыночные данные получены, но подтверждение входа не сформировано: ждём синхронизацию структуры и импульса."
                         ),
                         "source": "contextual_wait",
+                        "ai_source": "rule_engine",
+                        "narrative_source": "local_dynamic",
                         "is_fallback": False,
                         "data_status": data_status,
                         "fallback_to_candles": True,
@@ -4674,6 +4678,14 @@ class TradeIdeaService:
             if isinstance(market_context.get("optionsAnalysis"), dict)
             else options_analysis
         )
+        narrative_source = self._resolve_narrative_source_label(
+            card.get("narrative_source") or card.get("ai_source") or card.get("ai_status"),
+            is_fallback=bool(card.get("is_fallback")),
+            combined=bool(card.get("combined")),
+        )
+        card["narrative_source"] = narrative_source
+        card["ai_source"] = card.get("ai_source") or ("fallback" if narrative_source == "fallback" else narrative_source)
+        card["ai_status"] = card.get("ai_status") or card["ai_source"]
         card["market_context"] = market_context
         card["debug_options_source_selected"] = str(card.get("debug_options_source_selected") or options_source)
         card["debug_options_available"] = bool(card.get("debug_options_available"))
@@ -4687,7 +4699,9 @@ class TradeIdeaService:
             return "fallback"
         if raw in {"grok", "llm", "model", "openrouter", "llm_text"}:
             return "grok"
-        if raw in {"fallback", "template_fallback", "fallback_template", "local_dynamic", "local_dynamic_fallback", "local_safe"}:
+        if raw in {"local_dynamic", "rule_engine"} and not is_fallback:
+            return "rule_engine"
+        if raw in {"fallback", "template_fallback", "fallback_template", "local_dynamic_fallback", "local_safe"}:
             return "fallback"
         if combined:
             return "grok"

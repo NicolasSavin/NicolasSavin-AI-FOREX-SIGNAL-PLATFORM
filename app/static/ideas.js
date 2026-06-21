@@ -377,13 +377,15 @@ function resolveNarrative(idea) {
 
 function resolveNewsContext(idea) {
   return firstText(
-    idea.news_title,
+    idea.fundamental_summary_ru,
+    idea.news_fundamental_ru,
+    idea.newsFundamentalRu,
     idea.fundamental_context_ru,
     idea.fundamental_ru,
     idea.news_context_ru,
     idea.why_moves_ru,
     idea.market_impact_ru,
-  ) || "нет данных";
+  ) || "Календарь новостей временно недоступен; фундаментальный слой не блокирует сделку.";
 }
 
 function normalizeChartImageUrl(url) {
