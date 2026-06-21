@@ -313,6 +313,33 @@ def _extract_mt4_rich_fields(payload: dict[str, Any]) -> dict[str, Any]:
     if hft_signal:
         rich["hft_signal"] = hft_signal
 
+    hft_object = payload.get("hft_object") if isinstance(payload.get("hft_object"), dict) else {}
+    hft_object_type = str(
+        payload.get("hft_object_type")
+        or payload.get("hftObjectType")
+        or hft_object.get("type")
+        or ""
+    ).strip().lower()
+    if hft_object_type in {"hft", "ice"}:
+        rich["hft_object_found"] = True
+        rich["hft_object_type"] = hft_object_type
+        name = str(payload.get("hft_object_name") or payload.get("hftObjectName") or hft_object.get("name") or "").strip()
+        if name:
+            rich["hft_object_name"] = name
+        for source_key, out_key in (
+            ("hft_object_price", "hft_object_price"),
+            ("hft_object_distance", "hft_object_distance"),
+            ("hft_object_strength", "hft_object_strength"),
+        ):
+            value = _first_mt4_float(payload, (source_key,))
+            if value is None:
+                value = _mt4_float_or_none(hft_object.get(source_key.replace("hft_object_", "")))
+            if value is not None:
+                rich[out_key] = value
+    elif payload.get("hft_object_found") is not None or hft_object:
+        rich["hft_object_found"] = False
+        rich["hft_object_type"] = "none"
+
     margin_source = str(payload.get("margin_source") or "").strip()
     if margin_source:
         rich["margin_source"] = margin_source
@@ -364,6 +391,12 @@ def _mt4_debug_rich_fields(item: dict[str, Any]) -> dict[str, Any]:
             "future_delta",
             "cumulative_delta",
             "hft_signal",
+            "hft_object_found",
+            "hft_object_name",
+            "hft_object_type",
+            "hft_object_price",
+            "hft_object_distance",
+            "hft_object_strength",
             "margin_source",
             *MT4_HEATMAP_FIELDS,
         )
@@ -1380,6 +1413,12 @@ def api_mt4_ingest_get(
     heatmap_wall_below_size: float = 0.0,
     heatmap_bias: str = "",
     hft_signal: str = "",
+    hft_object_found: bool | None = None,
+    hft_object_name: str = "",
+    hft_object_type: str = "",
+    hft_object_price: float = 0.0,
+    hft_object_distance: float = 0.0,
+    hft_object_strength: float = 0.0,
     bars: str = "",
     broker: str = "",
     account: str = "",
@@ -1431,6 +1470,12 @@ def api_mt4_ingest_get(
         "future_delta": future_delta,
         "cumulative_delta": cumulative_delta,
         "hft_signal": hft_signal,
+        "hft_object_found": hft_object_found,
+        "hft_object_name": hft_object_name,
+        "hft_object_type": hft_object_type,
+        "hft_object_price": hft_object_price,
+        "hft_object_distance": hft_object_distance,
+        "hft_object_strength": hft_object_strength,
         "margin_source": margin_source,
         "heatmap_available": heatmap_available,
         "heatmap_wall_above": heatmap_wall_above,
@@ -1482,6 +1527,12 @@ def api_mt4_ingest_get(
         "margin_zone_upper": rich_fields.get("margin_zone_upper"),
         "margin_source": margin_source or "Future_Volume_v5.00",
         "hft_signal": hft_signal,
+        "hft_object_found": rich_fields.get("hft_object_found"),
+        "hft_object_name": rich_fields.get("hft_object_name"),
+        "hft_object_type": rich_fields.get("hft_object_type"),
+        "hft_object_price": rich_fields.get("hft_object_price"),
+        "hft_object_distance": rich_fields.get("hft_object_distance"),
+        "hft_object_strength": rich_fields.get("hft_object_strength"),
         **rich_fields,
         "bars": bars,
         "broker": broker,
