@@ -139,3 +139,55 @@ def test_news_lock_adds_calendar_fields_and_blocks_trade(tmp_path: Path, monkeyp
     assert idea["grade"] == "C"
     assert idea["score"] == 54
     assert idea["lifecycle_status"] == "candidate"
+
+
+def test_upcoming_high_impact_news_updates_fundamental_summary_and_score(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(idea_lifecycle, "ACTIVE_FILE", tmp_path / "active_ideas.json")
+    monkeypatch.setattr(idea_lifecycle, "ARCHIVE_FILE", tmp_path / "archive.json")
+    monkeypatch.setattr(
+        idea_lifecycle,
+        "nearest_news_for_symbol",
+        lambda symbol: {
+            "news_available": True,
+            "news_event": "CPI",
+            "news_currency": "USD",
+            "news_impact": "High",
+            "news_time_utc": "2026-06-18T12:30:00+00:00",
+            "minutes_to_event": 42.0,
+            "news_lock_active": False,
+            "news_source": "forexfactory_faireconomy_xml",
+        },
+    )
+
+    payload = idea_lifecycle.apply_idea_lifecycle(
+        [
+            {
+                "symbol": "EURUSD",
+                "signal": "BUY",
+                "entry": 1.1,
+                "sl": 1.09,
+                "tp": 1.12,
+                "advisor_allowed": True,
+                "prop_mode": "watchlist",
+                "prop_grade": "B",
+                "prop_score": 83,
+                "advisor_signal": {"allowed": True, "mode": "watchlist", "grade": "B", "score": 83},
+            }
+        ]
+    )
+
+    idea = payload["ideas"][0]
+    assert "Ближайшее событие: USD CPI" in idea["fundamental_summary_ru"]
+    assert "нет данных" not in idea["fundamental_summary_ru"].lower()
+    assert idea["fundamental_bias"] == "neutral"
+    assert idea["fundamental_impact"] == "high"
+    assert idea["fundamental_score_adjustment"] == -8
+    assert idea["fundamental_risk"] == "high"
+    assert idea["news_risk"] == "high"
+    assert idea["score"] == 75
+    assert idea["confidence"] == 75
+    assert idea["prop_score"] == 75
+    assert idea["propScore"] == 75
+    assert idea["propConfidence"] == 75
+    assert idea["advisor_filter_debug"]["news_event"] == "CPI"
+    assert idea["advisor_filter_debug"]["fundamental_score_adjustment"] == -8
