@@ -180,15 +180,24 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
         news_risk = "elevated" if high_impact else "low"
         decision = "neutral_filter"
 
-    if upcoming_news and news_is_high_impact:
-        minutes_abs = abs(minutes_to_event or 0)
-        news_penalty = 8 if minutes_abs <= 60 else 6 if minutes_abs <= 6 * 60 else 3
-        fundamental_score_adjustment -= news_penalty
+    if has_news_event and not news_lock_active:
+        impact_level = news_impact.lower()
+        if "high" in impact_level:
+            event_penalty = 5
+            fundamental_impact = "high"
+            news_risk = "elevated" if news_risk == "low" else news_risk
+        elif "medium" in impact_level:
+            event_penalty = 3
+            fundamental_impact = "medium" if fundamental_impact == "low" else fundamental_impact
+            news_risk = "elevated" if news_risk == "low" else news_risk
+        elif "low" in impact_level:
+            event_penalty = 1
+        else:
+            event_penalty = 1
+        fundamental_score_adjustment -= event_penalty
         fundamental_status = "warning" if fundamental_status in {"missing", "neutral", "aligned"} else fundamental_status
-        fundamental_risk = "high" if minutes_abs <= 60 else "elevated"
-        news_risk = "high" if minutes_abs <= 60 else "elevated"
-        fundamental_impact = "high"
-        decision = "news_risk_score_reduction"
+        fundamental_risk = "elevated" if fundamental_risk == "low" else fundamental_risk
+        decision = "news_event_score_reduction"
 
     if news_lock_active:
         fundamental_status = "blocked"
@@ -200,17 +209,13 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
 
     fundamental_score_adjustment = max(-8, min(8, int(fundamental_score_adjustment)))
     if has_news_event:
-        minutes_label = "время уточняется" if minutes_to_event is None else f"до выхода {int(round(minutes_to_event))} мин."
-        symbol_label = symbol or "инструмента"
-        caution = "Рынок может устроить небольшую встряску — без геройства."
+        minutes_label = "время уточняется" if minutes_to_event is None else f"{int(round(minutes_to_event))} мин."
         summary = (
-            f"Ближайшее событие: {news_currency} {news_event}, impact {news_impact or 'n/a'}, {minutes_label} "
-            f"Для {symbol_label} это повышает фундаментальный риск; сделка требует осторожности. {caution}"
+            f"Ближайшее событие: {news_currency} {news_event}, impact {news_impact or 'n/a'}, "
+            f"до события {minutes_label} Для пары это повышает фундаментальный риск."
         )
-    elif news_available:
-        summary = "Свежих релевантных событий по паре не найдено."
     else:
-        summary = "Свежих релевантных событий по паре не найдено; календарь сейчас недоступен или пуст."
+        summary = "Свежих релевантных событий по паре не найдено."
 
     return {
         "sentiment_status": sentiment_status,
@@ -222,7 +227,7 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
         "news_risk": news_risk,
         "high_impact_news": high_impact,
         "fundamental_decision": decision,
-        "fundamental_summary_ru": summary if has_news_event or news_available or news_source else sentiment_text,
+        "fundamental_summary_ru": summary,
         "fundamental_bias": fundamental_bias,
         "fundamental_impact": fundamental_impact,
         "fundamental_score_adjustment": fundamental_score_adjustment,
