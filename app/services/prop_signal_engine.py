@@ -635,6 +635,114 @@ def _hft_signal_context(idea: dict[str, Any]) -> dict[str, Any]:
     return {"hft_signal": "", "hft_signal_source": "unavailable"}
 
 
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").lower().strip() in {"1", "true", "yes", "y", "on"}
+
+
+def _current_price_for_hft(idea: dict[str, Any], candles: list[dict[str, Any]] | None = None) -> float | None:
+    current_price = _to_float(idea.get("current_price") or idea.get("price") or idea.get("last") or idea.get("close"))
+    if current_price is not None:
+        return current_price
+    rows = candles if candles is not None else _candles(idea)
+    if rows:
+        current_price = _to_float(rows[-1].get("close"))
+        if current_price is not None:
+            return current_price
+    return _to_float(idea.get("entry") or idea.get("entry_price"))
+
+
+def _hft_layer_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
+    symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    timeframe = str(idea.get("timeframe") or idea.get("tf") or "").upper().strip() or None
+    sources: list[tuple[str, dict[str, Any] | None]] = [
+        ("idea", idea),
+        ("analysis", idea.get("analysis") if isinstance(idea.get("analysis"), dict) else None),
+        ("market_context", idea.get("market_context") if isinstance(idea.get("market_context"), dict) else None),
+        ("market_structure", idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None),
+    ]
+    if symbol:
+        sources.append(("mt4_candle_store", _mt4_store_context(symbol, timeframe)))
+        sources.append(("mt4_volume_cluster", get_latest_volume_cluster(symbol, timeframe)))
+
+    raw: dict[str, Any] | None = None
+    source = "unavailable"
+    for source_name, payload in sources:
+        if not isinstance(payload, dict):
+            continue
+        nested = payload.get("hft_layer") if isinstance(payload.get("hft_layer"), dict) else payload
+        available = _bool_value(nested.get("hft_object_available") if "hft_object_available" in nested else nested.get("available"))
+        point_price = _to_float(nested.get("hft_point_price") if "hft_point_price" in nested else nested.get("price"))
+        if available and point_price is not None:
+            raw = nested
+            source = source_name
+            break
+
+    unavailable = {
+        "available": False,
+        "type": None,
+        "side": None,
+        "price": None,
+        "distance_points": None,
+        "bias": "neutral",
+        "strength": 0,
+        "score_adjustment": 0,
+        "source": source,
+        "summary_ru": "HFT Stop Hunt недоступен; слой не создаёт сигнал и не влияет на score.",
+    }
+    if raw is None:
+        return unavailable
+
+    current_price = _current_price_for_hft(idea)
+    point_price = _to_float(raw.get("hft_point_price") if "hft_point_price" in raw else raw.get("price"))
+    side = str(raw.get("hft_point_side") or raw.get("side") or "").lower().strip()
+    point_type = str(raw.get("hft_point_type") or raw.get("type") or "hft").lower().strip() or "hft"
+    if point_price is None:
+        return unavailable
+    if side not in {"above", "below"} and current_price is not None:
+        side = "above" if point_price > current_price else "below" if point_price < current_price else "near"
+    distance = abs(current_price - point_price) if current_price is not None else None
+    bias = "bearish" if side == "above" else "bullish" if side == "below" else "neutral"
+
+    if distance is None or distance > 300:
+        strength, adjustment = 0, 0
+    elif distance <= 50:
+        strength = 7
+        adjustment = 6
+    elif distance <= 150:
+        strength = 5
+        adjustment = 4
+    else:
+        strength = 3
+        adjustment = 3
+
+    aligned = (direction == "SELL" and bias == "bearish") or (direction == "BUY" and bias == "bullish")
+    if direction not in {"BUY", "SELL"} or adjustment == 0:
+        score_adjustment = 0
+    elif aligned:
+        score_adjustment = adjustment
+    else:
+        score_adjustment = -min(8, adjustment + 2)
+
+    location_ru = "выше" if side == "above" else "ниже" if side == "below" else "рядом с"
+    support_ru = "поддерживает текущую продажу" if direction == "SELL" and aligned else "поддерживает текущую покупку" if direction == "BUY" and aligned else "ослабляет текущий сценарий" if direction in {"BUY", "SELL"} and not aligned and score_adjustment < 0 else "не влияет на текущий сценарий"
+    return {
+        "available": True,
+        "type": point_type,
+        "side": side,
+        "price": point_price,
+        "distance_points": round(distance, 1) if distance is not None else None,
+        "bias": bias,
+        "strength": strength,
+        "score_adjustment": max(-8, min(8, int(score_adjustment))),
+        "source": source,
+        "summary_ru": f"Ликвидность находится {location_ru} рынка. Сценарий {support_ru}.",
+    }
+
 def _dpoc_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     timeframe = str(idea.get("timeframe") or idea.get("tf") or "").upper().strip() or None
@@ -1156,9 +1264,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     margin_zone = _margin_zone_context(safe_idea)
     max_pain = _max_pain_context(safe_idea, direction, external_options)
     heatmap = _heatmap_context(safe_idea, direction, geo)
+    hft_layer = _hft_layer_context(safe_idea, direction)
     volume_delta_source = volume_delta.get("source")
     hft_signal = volume_delta.get("hft_signal") or _hft_signal_context(safe_idea).get("hft_signal")
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0) + int(heatmap.get("score_adjustment") or 0)))
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0) + int(heatmap.get("score_adjustment") or 0) + int(hft_layer.get("score_adjustment") or 0)))
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     external_options_note = ""
@@ -1234,6 +1343,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
             "hft_signal": hft_signal,
             "heatmap_score": heatmap.get("heatmap_score"),
             "heatmap_reason_ru": heatmap.get("heatmap_reason_ru"),
+            "hft_score_adjustment": hft_layer.get("score_adjustment"),
         },
         "criteria": rows,
         "blockers": blockers,
@@ -1270,6 +1380,14 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "heatmap_wall_above_size": heatmap.get("heatmap_wall_above_size"),
         "heatmap_wall_below_size": heatmap.get("heatmap_wall_below_size"),
         "heatmap_bias": heatmap.get("heatmap_bias"),
+        "hft_layer": hft_layer,
+        "hft_object_available": hft_layer.get("available"),
+        "hft_point_type": hft_layer.get("type"),
+        "hft_point_side": hft_layer.get("side"),
+        "hft_point_price": hft_layer.get("price"),
+        "hft_distance_points": hft_layer.get("distance_points"),
+        "hft_bias": hft_layer.get("bias"),
+        "hft_score_adjustment": hft_layer.get("score_adjustment"),
         "real_candle_diagnostics": candle_diag,
         "volume_delta_source": volume_delta_source,
         "hft_signal": hft_signal,
@@ -1342,6 +1460,7 @@ def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> di
         "diagnostics": score.get("diagnostics"),
         "volume_delta_source": score.get("volume_delta_source"),
         "hft_signal": score.get("hft_signal"),
+        "hft_layer": score.get("hft_layer"),
     }
 
 
@@ -1357,6 +1476,16 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
         market_context.get("margin_upper"),
     )
     score = build_prop_signal_score(idea)
+    if not isinstance(score.get("hft_layer"), dict):
+        hft_layer = _hft_layer_context(idea, str(score.get("direction") or _direction(idea)).upper())
+        score["hft_layer"] = hft_layer
+        score["hft_object_available"] = hft_layer.get("available")
+        score["hft_point_type"] = hft_layer.get("type")
+        score["hft_point_side"] = hft_layer.get("side")
+        score["hft_point_price"] = hft_layer.get("price")
+        score["hft_distance_points"] = hft_layer.get("distance_points")
+        score["hft_bias"] = hft_layer.get("bias")
+        score["hft_score_adjustment"] = hft_layer.get("score_adjustment")
     advisor_signal = _advisor_signal_from_idea(idea, score)
     enriched = dict(idea)
     action = str(advisor_signal.get("action") or score.get("direction") or "WAIT").upper()
@@ -1390,6 +1519,10 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
         {
             "prop_signal_score": score,
             "prop_score": score["score"],
+            "propScore": score["score"],
+            "confidence": score["score"],
+            "propConfidence": score["score"],
+            "score": score["score"],
             "prop_grade": score["grade"],
             "prop_mode": score["mode"],
             "prop_decision_ru": score["decision_ru"],
@@ -1411,6 +1544,14 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "volume_delta": score.get("volume_delta"),
             "volume_delta_source": score.get("volume_delta_source"),
             "hft_signal": score.get("hft_signal"),
+            "hft_layer": score.get("hft_layer"),
+            "hft_object_available": score.get("hft_object_available"),
+            "hft_point_type": score.get("hft_point_type"),
+            "hft_point_side": score.get("hft_point_side"),
+            "hft_point_price": score.get("hft_point_price"),
+            "hft_distance_points": score.get("hft_distance_points"),
+            "hft_bias": score.get("hft_bias"),
+            "hft_score_adjustment": score.get("hft_score_adjustment"),
             "delta_divergence": score.get("delta_divergence"),
             "dpoc": score.get("dpoc"),
             "dpoc_price": score.get("dpoc_price"),

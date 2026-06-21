@@ -3,6 +3,8 @@
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
 ## Что обновлено в версии 3.9
+- Интегрирован HFT Stop Hunt layer в `/api/ideas` и `/ideas/market`: поля MT4 Bridge v4 `hft_object_available`, `hft_point_type`, `hft_point_side`, `hft_point_price` теперь формируют `hft_layer`, расстояние до точки, bias, strength и ограниченную корректировку Score ±8 без создания самостоятельного сигнала.
+- HFT-диагностика добавлена в `learning_snapshot`, `advisor_filter_debug` и карточку `/ideas`; старые слои MZ, Heatmap, DPOC, CumDelta, Future Volume/Delta, Options, News/Fundamental и Lifecycle сохранены.
 - Добавлен prop-desk execution layer для `/api/ideas/market` и `/api/ideas` без удаления legacy MT4-полей: killzone, ATR(14), RVOL, VWAP, news lock, correlation risk, cooldown after losses, dynamic risk и market regime.
 - Новые поля включают `base_score`, `execution_score`, `final_score`, `killzone_status`, `atr_pips`, `rvol`, `vwap_alignment`, `news_lock_active`, `correlation_block`, `cooldown_active`, `risk_per_trade_pct`, `recommended_lot`, `market_regime`.
 - Старые поля `entry`, `sl`, `tp`, `signal`, `action`, `trade_permission`, `advisor_allowed`, `score`, `grade`, `mode` сохранены; при блокировках исполнения выставляется `mode=NO TRADE`.
