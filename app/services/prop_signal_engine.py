@@ -659,6 +659,11 @@ def _current_price_for_hft(idea: dict[str, Any], candles: list[dict[str, Any]] |
 def _hft_layer_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     timeframe = str(idea.get("timeframe") or idea.get("tf") or "").upper().strip() or None
+    mt4_store_payload = _mt4_store_context(symbol, timeframe) if symbol else None
+    latest_mt4_candle = None
+    if isinstance(mt4_store_payload, dict):
+        mt4_candles = [row for row in mt4_store_payload.get("candles") or [] if isinstance(row, dict)]
+        latest_mt4_candle = mt4_candles[-1] if mt4_candles else None
     sources: list[tuple[str, dict[str, Any] | None]] = [
         ("idea", idea),
         ("analysis", idea.get("analysis") if isinstance(idea.get("analysis"), dict) else None),
@@ -666,21 +671,36 @@ def _hft_layer_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
         ("market_structure", idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else None),
     ]
     if symbol:
-        sources.append(("mt4_candle_store", _mt4_store_context(symbol, timeframe)))
+        sources.append(("mt4_candle_store", mt4_store_payload))
+        sources.append(("mt4_latest_candle", latest_mt4_candle))
         sources.append(("mt4_volume_cluster", get_latest_volume_cluster(symbol, timeframe)))
 
     raw: dict[str, Any] | None = None
     source = "unavailable"
+    received_from_ingest = False
+    stored_in_mt4_store = False
     for source_name, payload in sources:
         if not isinstance(payload, dict):
             continue
         nested = payload.get("hft_layer") if isinstance(payload.get("hft_layer"), dict) else payload
         available = _bool_value(nested.get("hft_object_available") if "hft_object_available" in nested else nested.get("available"))
         point_price = _to_float(nested.get("hft_point_price") if "hft_point_price" in nested else nested.get("price"))
-        if available and point_price is not None:
+        if available is not None or point_price is not None:
+            received_from_ingest = received_from_ingest or source_name in {"mt4_candle_store", "mt4_latest_candle", "mt4_volume_cluster"}
+            stored_in_mt4_store = stored_in_mt4_store or source_name in {"mt4_candle_store", "mt4_latest_candle"}
+        if available and point_price is not None and point_price > 0:
             raw = nested
             source = source_name
             break
+
+    debug = {
+        "received_from_ingest": received_from_ingest,
+        "stored_in_mt4_store": stored_in_mt4_store,
+        "attached_to_idea": raw is not None,
+        "hft_point_price": _to_float(raw.get("hft_point_price") if "hft_point_price" in raw else raw.get("price")) if isinstance(raw, dict) else None,
+        "hft_point_type": (raw.get("hft_point_type") or raw.get("type")) if isinstance(raw, dict) else None,
+        "hft_point_side": (raw.get("hft_point_side") or raw.get("side")) if isinstance(raw, dict) else None,
+    }
 
     unavailable = {
         "available": False,
@@ -692,6 +712,7 @@ def _hft_layer_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
         "strength": 0,
         "score_adjustment": 0,
         "source": source,
+        "hft_debug": debug,
         "summary_ru": "HFT Stop Hunt недоступен; слой не создаёт сигнал и не влияет на score.",
     }
     if raw is None:
@@ -699,7 +720,11 @@ def _hft_layer_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
 
     current_price = _current_price_for_hft(idea)
     point_price = _to_float(raw.get("hft_point_price") if "hft_point_price" in raw else raw.get("price"))
-    side = str(raw.get("hft_point_side") or raw.get("side") or "").lower().strip()
+    side = str(raw.get("hft_point_side") or raw.get("side") or "").lower().strip().replace("-", "_")
+    if side in {"above_price", "aboveprice", "above_market"}:
+        side = "above"
+    elif side in {"below_price", "belowprice", "below_market"}:
+        side = "below"
     point_type = str(raw.get("hft_point_type") or raw.get("type") or "hft").lower().strip() or "hft"
     if point_price is None:
         return unavailable
@@ -719,6 +744,9 @@ def _hft_layer_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
     else:
         strength = 3
         adjustment = 3
+    explicit_strength = _to_float(raw.get("hft_point_strength") or raw.get("strength"))
+    if explicit_strength is not None and explicit_strength > 0:
+        strength = max(0, min(10, int(round(explicit_strength))))
 
     aligned = (direction == "SELL" and bias == "bearish") or (direction == "BUY" and bias == "bullish")
     if direction not in {"BUY", "SELL"} or adjustment == 0:
@@ -740,6 +768,13 @@ def _hft_layer_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
         "strength": strength,
         "score_adjustment": max(-8, min(8, int(score_adjustment))),
         "source": source,
+        "hft_debug": {
+            **debug,
+            "attached_to_idea": True,
+            "hft_point_price": point_price,
+            "hft_point_type": point_type,
+            "hft_point_side": side,
+        },
         "summary_ru": f"Ликвидность находится {location_ru} рынка. Сценарий {support_ru}.",
     }
 
@@ -1388,6 +1423,7 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
         "hft_distance_points": hft_layer.get("distance_points"),
         "hft_bias": hft_layer.get("bias"),
         "hft_score_adjustment": hft_layer.get("score_adjustment"),
+        "hft_debug": hft_layer.get("hft_debug"),
         "real_candle_diagnostics": candle_diag,
         "volume_delta_source": volume_delta_source,
         "hft_signal": hft_signal,
@@ -1486,6 +1522,7 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
         score["hft_distance_points"] = hft_layer.get("distance_points")
         score["hft_bias"] = hft_layer.get("bias")
         score["hft_score_adjustment"] = hft_layer.get("score_adjustment")
+        score["hft_debug"] = hft_layer.get("hft_debug")
     advisor_signal = _advisor_signal_from_idea(idea, score)
     enriched = dict(idea)
     action = str(advisor_signal.get("action") or score.get("direction") or "WAIT").upper()
@@ -1552,6 +1589,7 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "hft_distance_points": score.get("hft_distance_points"),
             "hft_bias": score.get("hft_bias"),
             "hft_score_adjustment": score.get("hft_score_adjustment"),
+            "hft_debug": score.get("hft_debug") or ((score.get("hft_layer") or {}).get("hft_debug") if isinstance(score.get("hft_layer"), dict) else None),
             "delta_divergence": score.get("delta_divergence"),
             "dpoc": score.get("dpoc"),
             "dpoc_price": score.get("dpoc_price"),
