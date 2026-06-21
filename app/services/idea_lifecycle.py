@@ -95,6 +95,15 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
     implied_action = str(sentiment_filter.get("implied_action") or "neutral").upper()
     sentiment_text = str(sentiment_filter.get("text_ru") or "нет свежего sentiment/news слоя")
     impact = str(sentiment_filter.get("impact") or "").lower()
+    symbol = normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
+    action = action_of(idea)
+    news_event = _text(idea.get("news_event"))
+    news_currency = _text(idea.get("news_currency")).upper()
+    news_impact = _text(idea.get("news_impact"))
+    minutes_to_event = _num(idea.get("minutes_to_event"))
+    news_available = bool(idea.get("news_available"))
+    news_source = _text(idea.get("news_source"))
+    news_lock_active = bool(idea.get("news_lock_active"))
 
     raw_text = " ".join(
         _text(idea.get(key))
@@ -109,7 +118,8 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
         )
     ).lower()
 
-    has_data = alignment != "missing" or bool(raw_text.strip())
+    has_news_event = bool(news_event)
+    has_data = alignment != "missing" or bool(raw_text.strip()) or has_news_event or news_available
     high_impact_markers = (
         "high impact",
         "high-impact",
@@ -128,7 +138,12 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
         "interest rate",
         "inflation",
     )
-    high_impact = impact == "high" or any(marker in raw_text for marker in high_impact_markers)
+    news_is_high_impact = "high" in news_impact.lower() or any(marker in f"{news_event} {news_impact}".lower() for marker in high_impact_markers)
+    upcoming_news = has_news_event and minutes_to_event is not None and -15 <= minutes_to_event <= 24 * 60
+    high_impact = impact == "high" or any(marker in raw_text for marker in high_impact_markers) or (upcoming_news and news_is_high_impact)
+    fundamental_score_adjustment = 0
+    fundamental_bias = "neutral"
+    fundamental_impact = "high" if high_impact else "medium" if has_data else "low"
 
     if not has_data:
         sentiment_status = "missing"
@@ -142,18 +157,60 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
         fundamental_risk = "high" if high_impact else "medium"
         news_risk = "high" if high_impact else "medium"
         decision = "blocking_or_score_reduction"
+        fundamental_score_adjustment -= 7 if high_impact else 5
+        if action == "BUY":
+            fundamental_bias = "bearish"
+        elif action == "SELL":
+            fundamental_bias = "bullish"
     elif alignment == "aligned":
         sentiment_status = "aligned"
         fundamental_status = "aligned"
         fundamental_risk = "low"
         news_risk = "elevated" if high_impact else "low"
         decision = "confirmation"
+        fundamental_score_adjustment += 3
+        if action == "BUY":
+            fundamental_bias = "bullish"
+        elif action == "SELL":
+            fundamental_bias = "bearish"
     else:
         sentiment_status = "neutral"
         fundamental_status = "neutral"
         fundamental_risk = "medium" if high_impact else "low"
         news_risk = "elevated" if high_impact else "low"
         decision = "neutral_filter"
+
+    if upcoming_news and news_is_high_impact:
+        minutes_abs = abs(minutes_to_event or 0)
+        news_penalty = 8 if minutes_abs <= 60 else 6 if minutes_abs <= 6 * 60 else 3
+        fundamental_score_adjustment -= news_penalty
+        fundamental_status = "warning" if fundamental_status in {"missing", "neutral", "aligned"} else fundamental_status
+        fundamental_risk = "high" if minutes_abs <= 60 else "elevated"
+        news_risk = "high" if minutes_abs <= 60 else "elevated"
+        fundamental_impact = "high"
+        decision = "news_risk_score_reduction"
+
+    if news_lock_active:
+        fundamental_status = "blocked"
+        fundamental_risk = "high"
+        news_risk = "high"
+        fundamental_impact = "high"
+        decision = "news_lock_cap_54"
+        fundamental_score_adjustment = 0
+
+    fundamental_score_adjustment = max(-8, min(8, int(fundamental_score_adjustment)))
+    if has_news_event:
+        minutes_label = "время уточняется" if minutes_to_event is None else f"до выхода {int(round(minutes_to_event))} мин."
+        symbol_label = symbol or "инструмента"
+        caution = "Рынок может устроить небольшую встряску — без геройства."
+        summary = (
+            f"Ближайшее событие: {news_currency} {news_event}, impact {news_impact or 'n/a'}, {minutes_label} "
+            f"Для {symbol_label} это повышает фундаментальный риск; сделка требует осторожности. {caution}"
+        )
+    elif news_available:
+        summary = "Свежих релевантных событий по паре не найдено."
+    else:
+        summary = "Свежих релевантных событий по паре не найдено; календарь сейчас недоступен или пуст."
 
     return {
         "sentiment_status": sentiment_status,
@@ -165,7 +222,10 @@ def _sentiment_and_fundamental_fields(idea: dict[str, Any]) -> dict[str, Any]:
         "news_risk": news_risk,
         "high_impact_news": high_impact,
         "fundamental_decision": decision,
-        "fundamental_summary_ru": sentiment_text if has_data else "Фундаментал/сентимент: свежих данных нет; слой не блокирует сделку.",
+        "fundamental_summary_ru": summary if has_news_event or news_available or news_source else sentiment_text,
+        "fundamental_bias": fundamental_bias,
+        "fundamental_impact": fundamental_impact,
+        "fundamental_score_adjustment": fundamental_score_adjustment,
     }
 
 
@@ -193,6 +253,7 @@ def enrich_idea_with_news_calendar(idea: dict[str, Any]) -> dict[str, Any]:
         "news_impact",
         "news_time_utc",
         "minutes_to_event",
+        "news_available",
         "news_lock_active",
         "news_source",
     ):
@@ -267,6 +328,22 @@ def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
     mode = _mode_label(raw_mode)
     allowed = bool(idea.get("advisor_allowed") or advisor.get("allowed") or idea.get("trade_permission"))
     fundamental = _sentiment_and_fundamental_fields(idea)
+    score_adjustment = int(fundamental.get("fundamental_score_adjustment") or 0)
+    if score is not None and not bool(idea.get("news_lock_active")):
+        base_score = _int_score(idea.get("fundamental_score_base"))
+        if base_score is None:
+            base_score = score
+        score = max(0, min(100, base_score + score_adjustment))
+        idea["fundamental_score_base"] = base_score
+        idea["score"] = score
+        idea["confidence"] = score
+        idea["prop_score"] = score
+        idea["propScore"] = score
+        idea["propConfidence"] = score
+        if isinstance(advisor, dict):
+            advisor["score"] = score
+        if isinstance(prop, dict):
+            prop["score"] = score
 
     ordered: dict[str, Any] = {}
     for key in ("id", "symbol", "pair", "timeframe", "tf", "action", "signal", "direction"):
@@ -308,6 +385,11 @@ def _with_advisor_compat_fields(idea: dict[str, Any]) -> dict[str, Any]:
         "sentiment_status": fundamental.get("sentiment_status"),
         "fundamental_risk": fundamental.get("fundamental_risk"),
         "news_risk": fundamental.get("news_risk"),
+        "news_event": idea.get("news_event"),
+        "news_currency": idea.get("news_currency"),
+        "news_impact": idea.get("news_impact"),
+        "minutes_to_event": idea.get("minutes_to_event"),
+        "fundamental_score_adjustment": score_adjustment,
     }
 
     for key, value in idea.items():
