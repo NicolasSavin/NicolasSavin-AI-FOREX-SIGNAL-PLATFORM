@@ -397,16 +397,20 @@ h1 {
 .ai-source-chip--fallback { background: linear-gradient(180deg, #ffd166, #fbbf24); border-color: rgba(251,191,36,.82); }
 .ai-source-chip--rule { background: linear-gradient(180deg, #ff8a8a, #ef4444); border-color: rgba(239,68,68,.82); color:#fff; }
 .ai-generated-line { color:#cfe7ff; border-radius: 14px; font-size:12px; }
+.controls {
+  margin: 0 0 18px;
+}
 .analysis-mode-row,
 .view-mode-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px;
-  border: 1px solid rgba(95,156,230,.30);
+  padding: 12px;
+  border: 1px solid rgba(95, 156, 230, 0.24);
   border-radius: 20px;
-  background: rgba(3,14,28,.72);
+  background: rgba(3, 14, 28, 0.62);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
 }
 .view-mode-title {
   color: #e8f3ff;
@@ -415,12 +419,14 @@ h1 {
   letter-spacing: .12em;
   text-transform: uppercase;
 }
-.view-mode-toggle { display: flex; flex-wrap: wrap; gap: 8px; }
+.view-mode-toggle { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: min(100%, 390px); }
 .view-mode-btn {
   border: 1px solid rgba(95,156,230,.42);
   background: rgba(8,25,48,.86);
   color: #dbeeff;
   border-radius: 999px;
+  min-height: 38px;
+  width: 100%;
   padding: 9px 14px;
   font-size: 13px;
   font-weight: 900;
@@ -452,4 +458,4 @@ h1 {
 }
 .analysis-details summary { cursor: pointer; color:#e8f3ff; font-weight:900; }
 .risk-list { display:grid; gap:8px; margin-top:10px; }
-@media(max-width:720px){ .analysis-mode-row,.view-mode-row{align-items:stretch;flex-direction:column;} }
+@media(max-width:720px){ .analysis-mode-row,.view-mode-row{align-items:stretch;flex-direction:column;} .view-mode-toggle{min-width:0;width:100%;} }

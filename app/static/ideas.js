@@ -1,5 +1,6 @@
 const ideasContainer = document.getElementById("ideasContainer");
 const ideasUpdatedAt = document.getElementById("ideasUpdatedAt");
+const ideasControls = document.querySelector(".controls");
 
 const VOICE_STORAGE_KEY = "voice_notifications_enabled";
 const VOICE_REPEAT_WINDOW_MS = 60000;
@@ -743,16 +744,20 @@ function injectUiStyles() {
     .criterion.partial { border-color:rgba(250,204,21,.32); }
     .criterion.missing { border-color:rgba(248,113,113,.28); opacity:.82; }
     .blocker { padding:10px; border-radius:12px; border:1px solid rgba(248,113,113,.25); background:rgba(127,29,29,.22); color:#fecdd3; }
+.controls {
+  margin: 0 0 18px;
+}
 .analysis-mode-row,
 .view-mode-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px;
-  border: 1px solid rgba(95,156,230,.30);
+  padding: 12px;
+  border: 1px solid rgba(95, 156, 230, 0.24);
   border-radius: 20px;
-  background: rgba(3,14,28,.72);
+  background: rgba(3, 14, 28, 0.62);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
 }
 .view-mode-title {
   color: #e8f3ff;
@@ -761,12 +766,14 @@ function injectUiStyles() {
   letter-spacing: .12em;
   text-transform: uppercase;
 }
-.view-mode-toggle { display: flex; flex-wrap: wrap; gap: 8px; }
+.view-mode-toggle { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: min(100%, 390px); }
 .view-mode-btn {
   border: 1px solid rgba(95,156,230,.42);
   background: rgba(8,25,48,.86);
   color: #dbeeff;
   border-radius: 999px;
+  min-height: 38px;
+  width: 100%;
   padding: 9px 14px;
   font-size: 13px;
   font-weight: 900;
@@ -798,7 +805,7 @@ function injectUiStyles() {
 }
 .analysis-details summary { cursor: pointer; color:#e8f3ff; font-weight:900; }
 .risk-list { display:grid; gap:8px; margin-top:10px; }
-@media(max-width:720px){ .analysis-mode-row,.view-mode-row{align-items:stretch;flex-direction:column;} }
+@media(max-width:720px){ .analysis-mode-row,.view-mode-row{align-items:stretch;flex-direction:column;} .view-mode-toggle{min-width:0;width:100%;} }
 
     @media(max-width:1100px){ .ideas-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .modal-grid{grid-template-columns:1fr;} .modal-meta{grid-template-columns:repeat(2,minmax(0,1fr));} }
     @media(max-width:720px){ .page{padding:16px 12px 42px;} .ideas-page-header{padding:20px;} .ideas-grid{grid-template-columns:1fr;} .compact-levels,.criteria-grid,.modal-meta,.institutional-sections{grid-template-columns:1fr;} .idea-card-top{flex-direction:column;} .badge{white-space:normal;} .chart-area,#ideaModalChart{height:390px;min-height:390px;} }
@@ -953,7 +960,26 @@ function renderAiInterpretation(idea) {
 
 function renderModeToggle() {
   const modes = [["brief", "Кратко"], ["hybrid", "Гибрид"], ["expert", "Эксперт"]];
-  return `<div class="analysis-mode-row" aria-label="Уровень анализа"><div><div class="view-mode-title">УРОВЕНЬ АНАЛИЗА</div><div class="idea-news-line">Выбор меняет отображение карточек без повторного запроса API.</div></div><div class="view-mode-toggle">${modes.map(([key, label]) => `<button class="view-mode-btn ${currentIdeaViewMode === key ? "active" : ""}" data-view-mode="${key}">${label}</button>`).join("")}</div></div>`;
+  return `<div class="analysis-mode-row" aria-label="Уровень анализа"><div class="view-mode-title">УРОВЕНЬ АНАЛИЗА</div><div class="view-mode-toggle" role="group" aria-label="Уровень анализа">${modes.map(([key, label]) => `<button type="button" class="view-mode-btn ${currentIdeaViewMode === key ? "active" : ""}" data-view-mode="${key}" aria-pressed="${currentIdeaViewMode === key ? "true" : "false"}">${label}</button>`).join("")}</div></div>`;
+}
+
+function bindModeToggle(root) {
+  if (!root) return;
+  root.querySelectorAll("[data-view-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const nextMode = btn.getAttribute("data-view-mode") || "hybrid";
+      currentIdeaViewMode = ANALYSIS_MODES.has(nextMode) ? nextMode : "hybrid";
+      localStorage.setItem(IDEAS_VIEW_MODE_KEY, currentIdeaViewMode);
+      renderAnalysisModeControl();
+      if (lastPayload) renderIdeas(lastPayload);
+    });
+  });
+}
+
+function renderAnalysisModeControl() {
+  if (!ideasControls) return;
+  ideasControls.innerHTML = renderModeToggle();
+  bindModeToggle(ideasControls);
 }
 
 function renderBriefCardBody(idea) {
@@ -1384,15 +1410,8 @@ function renderIdeas(payload) {
     ideasContainer.innerHTML = `<div class="ideas-loading">Идеи пока недоступны.</div>`;
     return;
   }
-  ideasContainer.innerHTML = renderModeToggle() + renderPropFilters() + (ideas.length ? `<div class="ideas-grid">${ideas.map(renderIdeaCard).join("")}</div>` : `<div class="ideas-loading">Нет идей под выбранный фильтр.</div>`);
-  ideasContainer.querySelectorAll("[data-view-mode]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const nextMode = btn.getAttribute("data-view-mode") || "hybrid";
-      currentIdeaViewMode = ANALYSIS_MODES.has(nextMode) ? nextMode : "hybrid";
-      localStorage.setItem(IDEAS_VIEW_MODE_KEY, currentIdeaViewMode);
-      renderIdeas(lastPayload);
-    });
-  });
+  renderAnalysisModeControl();
+  ideasContainer.innerHTML = renderPropFilters() + (ideas.length ? `<div class="ideas-grid">${ideas.map(renderIdeaCard).join("")}</div>` : `<div class="ideas-loading">Нет идей под выбранный фильтр.</div>`);
   ideasContainer.querySelectorAll("[data-prop-filter]").forEach((btn) => {
     btn.addEventListener("click", () => {
       currentPropFilter = btn.getAttribute("data-prop-filter") || "all";
@@ -1431,6 +1450,7 @@ function startIdeasPage() {
   injectUiStyles();
   initVoiceToggle();
   createIdeasModal();
+  renderAnalysisModeControl();
   loadIdeas();
   if (ideasPollTimer) clearInterval(ideasPollTimer);
   ideasPollTimer = setInterval(loadIdeas, 60000);
