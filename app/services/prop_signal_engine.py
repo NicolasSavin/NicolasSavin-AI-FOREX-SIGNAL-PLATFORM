@@ -134,7 +134,7 @@ def _direction_from_candles_with_reason(candles: list[dict[str, Any]]) -> tuple[
         if closes[-1] < closes[-3]:
             return "SELL", f"short_candle_fallback: свечей меньше 12, close[-1]={closes[-1]:.6f} < close[-3]={closes[-3]:.6f}; closes={count}"
         return "WAIT", f"short_candle_fallback_flat: свечей меньше 12, close[-1]=close[-3]; closes={count}"
-    return "WAIT", f"candle_direction_unavailable: нужно минимум 3 close для short fallback, получено {count}"
+    return "WAIT", f"candle_direction_unavailable: нужно >=12 свечей для short fallback, получено {count}"
 
 
 def _direction_from_candles(candles: list[dict[str, Any]]) -> str:
@@ -566,7 +566,7 @@ def _candle_diagnostics(idea: dict[str, Any], candles: list[dict[str, Any]] | No
     elif count >= 3:
         reason = f"real_candles_limited: {count} реальных OHLC свечей, source={source}; достаточно для short direction fallback, но для полного балла нужно >=80"
     else:
-        reason = f"real_candles_missing: нужно минимум 3 валидные OHLC свечи для short fallback, получено {count}; source={source}; MT4/fetch fallback не вернул достаточную историю"
+        reason = f"real_candles_missing: нужно >=12 свечей для short fallback, получено {count}; source={source}; MT4/fetch fallback не вернул достаточную историю"
     return {"count": count, "source": source, "reason": reason}
 
 
@@ -962,27 +962,27 @@ def _trade_geometry(idea: dict[str, Any]) -> dict[str, Any]:
                 if direction == "BUY":
                     generated_sl = min(recent_low, entry - atr_risk)
                     risk = max(abs(entry - generated_sl), risk_floor)
-                    generated_tp = entry + risk * 1.45
+                    generated_tp = entry + risk * 1.46
                 else:
                     generated_sl = max(recent_high, entry + atr_risk)
                     risk = max(abs(generated_sl - entry), risk_floor)
-                    generated_tp = entry - risk * 1.45
+                    generated_tp = entry - risk * 1.46
                 level_source = "atr_fallback"
                 fallback_reason = f"atr_fallback_generated_from_{len(candles)}_candles"
-                sl_reason_generated = f"sl_from_atr_fallback: ATR={atr:.6f}, lookback={lookback}, RR target=1.45"
-                tp_reason_generated = f"tp_from_atr_fallback: risk={risk:.6f}, RR target=1.45"
+                sl_reason_generated = f"sl_from_atr_fallback: ATR={atr:.6f}, lookback={lookback}, RR target=1.46"
+                tp_reason_generated = f"tp_from_atr_fallback: risk={risk:.6f}, RR target=1.46"
             else:
                 risk = risk_floor
                 if direction == "BUY":
                     generated_sl = entry - risk
-                    generated_tp = entry + risk * 1.45
+                    generated_tp = entry + risk * 1.46
                 else:
                     generated_sl = entry + risk
-                    generated_tp = entry - risk * 1.45
+                    generated_tp = entry - risk * 1.46
                 level_source = "fixed_risk_fallback"
-                fallback_reason = f"fixed_risk_fallback_generated: свечей={len(candles)}, pip_size={pip}, risk={risk:.6f}, RR target=1.45"
+                fallback_reason = f"fixed_risk_fallback_generated: свечей={len(candles)}, pip_size={pip}, risk={risk:.6f}, RR target=1.46"
                 sl_reason_generated = f"sl_from_fixed_risk_fallback: pip_size={pip}, risk={risk:.6f}"
-                tp_reason_generated = f"tp_from_fixed_risk_fallback: risk={risk:.6f}, RR target=1.45"
+                tp_reason_generated = f"tp_from_fixed_risk_fallback: risk={risk:.6f}, RR target=1.46"
 
             if original_sl is None:
                 sl = generated_sl
@@ -1177,8 +1177,8 @@ def _criterion_rows(idea: dict[str, Any]) -> list[dict[str, Any]]:
     elif volume_delta.get("available"):
         volume_score = round(weights["volume"] * 0.55)
     else:
-        volume_score = weights["volume"] if volume_text else 1 if candles else 0
-    rows.append(_row("volume", volume_score, weights["volume"], str(volume_delta.get("text_ru") or volume_text or "только OHLC/tick proxy")))
+        volume_score = weights["volume"]
+    rows.append(_row("volume", volume_score, weights["volume"], str(volume_delta.get("text_ru") or volume_text or "OrderFlow provider недоступен; слой не штрафует score")))
 
     external_options = _external_options_alignment(idea, direction)
     external_text = str(external_options.get("text_ru") or "")
@@ -1302,7 +1302,10 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     hft_layer = _hft_layer_context(safe_idea, direction)
     volume_delta_source = volume_delta.get("source")
     hft_signal = volume_delta.get("hft_signal") or _hft_signal_context(safe_idea).get("hft_signal")
-    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + int(volume_delta.get("score_adjustment") or 0) + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0) + int(heatmap.get("score_adjustment") or 0) + int(hft_layer.get("score_adjustment") or 0)))
+    orderflow_available = bool(volume_delta.get("available"))
+    orderflow_adjustment = int(volume_delta.get("score_adjustment") or 0) if orderflow_available else 0
+    score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + orderflow_adjustment + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0) + int(heatmap.get("score_adjustment") or 0) + int(hft_layer.get("score_adjustment") or 0)))
+    score_weights = {"market_structure": 25, "liquidity": 20, "options": 20, "heatmap": 15, "news": 10, "hft": 10, "orderflow": 0 if not orderflow_available else 5}
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     external_options_note = ""
@@ -1379,8 +1382,16 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
             "heatmap_score": heatmap.get("heatmap_score"),
             "heatmap_reason_ru": heatmap.get("heatmap_reason_ru"),
             "hft_score_adjustment": hft_layer.get("score_adjustment"),
+            "score_weights": score_weights,
+            "orderflow_available": orderflow_available,
+            "options_weight": score_weights["options"],
+            "ai_view_mode": "frontend_localStorage",
         },
         "criteria": rows,
+        "score_weights": score_weights,
+        "orderflow_available": orderflow_available,
+        "options_weight": score_weights["options"],
+        "ai_view_mode": "frontend_localStorage",
         "blockers": blockers,
         "missing_inputs": missing,
         "trade_geometry": geo,
@@ -1580,6 +1591,10 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "external_options_source": "CME_OptionsFX",
             "volume_delta": score.get("volume_delta"),
             "volume_delta_source": score.get("volume_delta_source"),
+            "score_weights": score.get("score_weights"),
+            "orderflow_available": score.get("orderflow_available"),
+            "options_weight": score.get("options_weight"),
+            "ai_view_mode": score.get("ai_view_mode"),
             "hft_signal": score.get("hft_signal"),
             "hft_layer": score.get("hft_layer"),
             "hft_object_available": score.get("hft_object_available"),

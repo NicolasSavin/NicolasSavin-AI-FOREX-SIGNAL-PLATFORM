@@ -15,6 +15,8 @@ let lastPayload = null;
 let ideasPollTimer = null;
 let isIdeasLoading = false;
 let currentPropFilter = "all";
+const IDEAS_VIEW_MODE_KEY = "fxpilot_ideas_view_mode";
+let currentIdeaViewMode = localStorage.getItem(IDEAS_VIEW_MODE_KEY) === "ai" ? "ai" : "pro";
 let modalChart = null;
 let modalOverlayCanvas = null;
 let modalOverlayContext = null;
@@ -220,6 +222,12 @@ function renderOptionPill(label, tone) {
   return `<span class="options-layer-pill options-layer-pill--${escapeHtml(tone)}">${escapeHtml(label)}</span>`;
 }
 
+function pickFirstOptionsValue(idea, ...keys) {
+  const boxes = [idea, idea?.options_analysis, idea?.options_overlay, idea?.options_layer, idea?.prop_signal_score?.external_options_filter?.signal].filter(Boolean);
+  for (const box of boxes) for (const key of keys) if (box[key] !== undefined && box[key] !== null && box[key] !== "") return box[key];
+  return undefined;
+}
+
 function renderOptionsLayer(idea, { compact = false } = {}) {
   const layer = normalizeOptionsLayer(idea);
   if (!hasFreshOptionsLayer(layer)) {
@@ -235,12 +243,13 @@ function renderOptionsLayer(idea, { compact = false } = {}) {
     ["Prop score", layer.prop_score],
     ["Key strikes", layer.key_strikes],
     ["Max pain", layer.max_pain],
-    ["Call walls", layer.call_walls],
-    ["Put walls", layer.put_walls],
-    ["Pinning risk", layer.pinning_risk],
+    ["Call Wall", layer.call_walls],
+    ["Put Wall", layer.put_walls],
+    ["Pin Risk", layer.pinning_risk],
     ["Range risk", layer.range_risk],
     ["Target levels", layer.target_levels],
     ["Hedge levels", layer.hedge_levels],
+    ["Dealer/Gamma bias", pickFirstOptionsValue(idea, "dealer_bias", "gamma_bias", "dealerGammaBias")],
   ].filter(([, value]) => formatListValue(value) !== "—");
   return `<section class="options-layer ${compact ? "options-layer--compact" : ""}">
     <div class="options-layer__head"><h4>🧩 Options Layer</h4><strong>${escapeHtml(resolveOptionsAlignment(idea, layer))}</strong></div>
@@ -553,6 +562,12 @@ function injectUiStyles() {
     .prop-filter-row { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 18px; }
     .prop-filter-btn { border:1px solid rgba(95,156,230,.46); background:rgba(3,14,28,.72); color:#dbeeff; border-radius:999px; padding:9px 13px; font-size:12px; font-weight:900; cursor:pointer; }
     .prop-filter-btn.active { background:rgba(69,202,255,.2); border-color:rgba(69,202,255,.72); }
+    .view-mode-row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:0 0 16px; padding:12px; border:1px solid rgba(95,156,230,.25); border-radius:18px; background:rgba(3,14,28,.58); }
+    .view-mode-title { color:#dbeeff; font-size:13px; font-weight:950; letter-spacing:.04em; text-transform:uppercase; }
+    .view-mode-toggle { display:flex; gap:8px; padding:4px; border:1px solid rgba(95,156,230,.28); border-radius:999px; background:rgba(6,17,31,.82); }
+    .view-mode-btn { border:0; background:transparent; color:#b9d6f8; border-radius:999px; padding:8px 14px; font-size:12px; font-weight:950; cursor:pointer; }
+    .view-mode-btn.active { color:#06111f; background:linear-gradient(180deg,#54ffb5,#31f59d); }
+    .score-debug-box { margin-top:10px; padding:10px; border-radius:12px; border:1px dashed rgba(148,163,184,.35); color:#b9d6f8; background:rgba(15,23,42,.5); font-size:11px; line-height:1.5; }
     .market-status-row { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
     .health-pill { display:inline-flex; align-items:center; gap:7px; padding:8px 11px; border-radius:999px; border:1px solid rgba(95,156,230,.28); background:rgba(3,14,28,.68); color:#cfe7ff; font-size:12px; font-weight:850; }
     .health-pill.good { border-color:rgba(52,211,153,.36); box-shadow:0 0 22px rgba(52,211,153,.08); }
@@ -758,6 +773,48 @@ function getAiSourceMeta(idea) {
   return { label: "fallback", tone: "rule", line: "narrative_source = fallback" };
 }
 
+
+function isOrderflowAvailable(idea) {
+  const vd = resolveVolumeDelta(idea);
+  return Boolean(idea.orderflow_available ?? idea.prop_signal_score?.orderflow_available ?? (vd.source && vd.source !== "unavailable" && (vd.delta !== undefined || vd.cumdelta !== undefined)));
+}
+
+function renderOrderflowUnavailable(mode) {
+  return `<section class="institutional-section"><h4>OrderFlow</h4><p>${mode === "ai" ? "Объёмный слой временно не участвует в оценке" : "OrderFlow provider недоступен"}</p></section>`;
+}
+
+function renderScoreDebug(idea) {
+  const prop = getPropScore(idea);
+  const debug = prop.debug || idea.score_debug || {};
+  const weights = prop.score_weights || idea.score_weights || debug.score_weights || { market_structure: 25, liquidity: 20, options: 20, heatmap: 15, news: 10, hft: 10, orderflow: 0 };
+  return `<div class="score-debug-box"><strong>Score debug</strong><br>score_weights=${escapeHtml(JSON.stringify(weights))}<br>orderflow_available=${isOrderflowAvailable(idea)} · options_weight=${escapeHtml(weights.options ?? 20)} · ai_view_mode=${escapeHtml(currentIdeaViewMode)}</div>`;
+}
+
+function renderAiInterpretation(idea) {
+  const prop = getPropScore(idea);
+  const score = Number(prop.score || idea.score || 0);
+  const continuation = Math.max(5, Math.min(90, Math.round(score * 0.82)));
+  const reversal = Math.max(5, Math.min(80, 100 - continuation));
+  const liquidity = firstText(idea.liquidity?.summary_ru, idea.selected_zone_type, idea.heatmap_reason_ru) || "Ликвидность оценивается по структуре, heatmap и ближайшим рабочим зонам.";
+  const pressure = isOrderflowAvailable(idea) ? `Delta/CumDelta: ${formatNumber(resolveVolumeDelta(idea).delta)} / ${formatNumber(resolveVolumeDelta(idea).cumdelta)}` : "Объёмный слой временно не участвует в оценке";
+  const summary = firstText(idea.ai_summary_ru, idea.summary_ru, resolveNarrative(idea));
+  return `<div class="institutional-sections">
+    <section class="institutional-section"><h4>Market State</h4><p>${escapeHtml(idea.market_structure?.trend_regime || idea.htf_bias || idea.direction || "смешанный режим")}</p></section>
+    <section class="institutional-section"><h4>Buying/Selling Pressure</h4><p>${escapeHtml(pressure)}</p></section>
+    <section class="institutional-section"><h4>Liquidity</h4><p>${escapeHtml(liquidity)}</p></section>
+    <section class="institutional-section"><h4>Continuation Probability</h4><p>${continuation}%</p></section>
+    <section class="institutional-section"><h4>Reversal Probability</h4><p>${reversal}%</p></section>
+    <section class="institutional-section"><h4>Trap Risk</h4><p>${escapeHtml(idea.trap_risk_ru || (idea.delta_divergence ? "Повышен из-за divergence." : "Умеренный, подтверждать вход по реакции цены."))}</p></section>
+    <section class="institutional-section"><h4>Execution Quality</h4><p>${escapeHtml(propModeLabel(prop.mode))} · score ${escapeHtml(score)}</p></section>
+    ${isOrderflowAvailable(idea) ? "" : renderOrderflowUnavailable("ai")}
+    <section class="institutional-section"><h4>Summary</h4><p>${escapeHtml(summary)}</p></section>
+  </div>`;
+}
+
+function renderModeToggle() {
+  return `<div class="view-mode-row"><div><div class="view-mode-title">FXPilot 1.5 · режим отображения</div><div class="idea-news-line">Проф. показывает технические слои, AI — интерпретацию сценария.</div></div><div class="view-mode-toggle"><button class="view-mode-btn ${currentIdeaViewMode === "pro" ? "active" : ""}" data-view-mode="pro">Проф.</button><button class="view-mode-btn ${currentIdeaViewMode === "ai" ? "active" : ""}" data-view-mode="ai">AI</button></div></div>`;
+}
+
 function renderIdeaCard(idea, index) {
   const symbol = getIdeaSymbol(idea);
   const action = idea.action || idea.signal || idea.label || "WAIT";
@@ -788,9 +845,7 @@ function renderIdeaCard(idea, index) {
       <span class="ai-generated-line">${escapeHtml(aiSource.line)}</span>
     </div>
     ${renderPropCompact(idea)}
-    ${renderVolumeDeltaCompact(idea)}
-    ${renderOptionsLayer(idea, { compact: true })}
-    ${renderInstitutionalSections(idea)}
+    ${currentIdeaViewMode === "pro" ? (isOrderflowAvailable(idea) ? renderVolumeDeltaCompact(idea) : renderOrderflowUnavailable("pro")) + renderOptionsLayer(idea, { compact: true }) + renderInstitutionalSections(idea) + renderScoreDebug(idea) : renderAiInterpretation(idea)}
     ${idea.institutional_thesis ? `<div class="idea-news-line"><strong>Institutional Thesis:</strong> ${escapeHtml(idea.institutional_thesis)}</div>` : ""}
     <div class="idea-summary-compact">${escapeHtml(resolveNarrative(idea))}</div>
   </article>`;
@@ -1162,7 +1217,14 @@ function renderIdeas(payload) {
     ideasContainer.innerHTML = `<div class="ideas-loading">Идеи пока недоступны.</div>`;
     return;
   }
-  ideasContainer.innerHTML = renderPropFilters() + (ideas.length ? `<div class="ideas-grid">${ideas.map(renderIdeaCard).join("")}</div>` : `<div class="ideas-loading">Нет идей под выбранный фильтр.</div>`);
+  ideasContainer.innerHTML = renderModeToggle() + renderPropFilters() + (ideas.length ? `<div class="ideas-grid">${ideas.map(renderIdeaCard).join("")}</div>` : `<div class="ideas-loading">Нет идей под выбранный фильтр.</div>`);
+  ideasContainer.querySelectorAll("[data-view-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      currentIdeaViewMode = btn.getAttribute("data-view-mode") === "ai" ? "ai" : "pro";
+      localStorage.setItem(IDEAS_VIEW_MODE_KEY, currentIdeaViewMode);
+      renderIdeas(lastPayload);
+    });
+  });
   ideasContainer.querySelectorAll("[data-prop-filter]").forEach((btn) => {
     btn.addEventListener("click", () => {
       currentPropFilter = btn.getAttribute("data-prop-filter") || "all";

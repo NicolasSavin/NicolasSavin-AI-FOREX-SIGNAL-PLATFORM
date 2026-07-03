@@ -326,6 +326,19 @@ class TradeIdeaService:
         if source in {"mt4", "mt4_options"}:
             source = "mt4_optionsfx"
         summary_ru = str(analysis.get("summary_ru") or "").strip()
+        if not summary_ru:
+            max_pain = analysis.get("max_pain") or analysis.get("maxPain") or analysis.get("max_pain_price")
+            call_wall = analysis.get("call_wall") or analysis.get("callWall") or analysis.get("call_walls") or analysis.get("callWalls")
+            put_wall = analysis.get("put_wall") or analysis.get("putWall") or analysis.get("put_walls") or analysis.get("putWalls")
+            key_strikes = analysis.get("key_strikes") or analysis.get("keyStrikes") or []
+            pin_risk = analysis.get("pin_risk") or analysis.get("pinRisk") or analysis.get("pinning_risk")
+            range_risk = analysis.get("range_risk") or analysis.get("rangeRisk")
+            gamma_bias = analysis.get("gamma_bias") or analysis.get("dealer_bias") or analysis.get("dealerGammaBias")
+            summary_ru = (
+                f"Опционный слой: Max Pain {max_pain or '—'}, Call Wall {call_wall or '—'}, Put Wall {put_wall or '—'}, "
+                f"ключевые страйки {key_strikes or '—'}. Pin Risk {pin_risk or '—'}, Range Risk {range_risk or '—'}. "
+                f"Dealer/Gamma bias: {gamma_bias or 'нет данных'}."
+            )
         market_context = hydrated.get("market_context") if isinstance(hydrated.get("market_context"), dict) else {}
         hydrated["options_analysis"] = analysis
         hydrated["options_source"] = source
