@@ -397,3 +397,59 @@ h1 {
 .ai-source-chip--fallback { background: linear-gradient(180deg, #ffd166, #fbbf24); border-color: rgba(251,191,36,.82); }
 .ai-source-chip--rule { background: linear-gradient(180deg, #ff8a8a, #ef4444); border-color: rgba(239,68,68,.82); color:#fff; }
 .ai-generated-line { color:#cfe7ff; border-radius: 14px; font-size:12px; }
+.analysis-mode-row,
+.view-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(95,156,230,.30);
+  border-radius: 20px;
+  background: rgba(3,14,28,.72);
+}
+.view-mode-title {
+  color: #e8f3ff;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.view-mode-toggle { display: flex; flex-wrap: wrap; gap: 8px; }
+.view-mode-btn {
+  border: 1px solid rgba(95,156,230,.42);
+  background: rgba(8,25,48,.86);
+  color: #dbeeff;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.view-mode-btn.active {
+  border-color: rgba(84,255,181,.88);
+  background: linear-gradient(180deg,#54ffb5,#31f59d);
+  color: #06111f;
+}
+.analysis-card-body { display: grid; gap: 14px; margin-top: 16px; }
+.factor-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 10px; }
+.factor-item {
+  padding: 11px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(95,156,230,.25);
+  background: rgba(8,25,48,.72);
+}
+.factor-item span { display:block; color:#9bb8d8; font-size:12px; }
+.factor-item strong { display:block; margin-top:4px; color:#fff; }
+.factor-подтверждает { border-color: rgba(49,245,157,.45); }
+.factor-противоречит { border-color: rgba(255,95,122,.52); }
+.factor-недоступно, .factor-в-разработке { opacity: .78; }
+.analysis-details {
+  border: 1px solid rgba(95,156,230,.24);
+  border-radius: 16px;
+  background: rgba(3,14,28,.52);
+  padding: 12px;
+}
+.analysis-details summary { cursor: pointer; color:#e8f3ff; font-weight:900; }
+.risk-list { display:grid; gap:8px; margin-top:10px; }
+@media(max-width:720px){ .analysis-mode-row,.view-mode-row{align-items:stretch;flex-direction:column;} }

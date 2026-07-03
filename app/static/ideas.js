@@ -15,8 +15,9 @@ let lastPayload = null;
 let ideasPollTimer = null;
 let isIdeasLoading = false;
 let currentPropFilter = "all";
-const IDEAS_VIEW_MODE_KEY = "fxpilot_ideas_view_mode";
-let currentIdeaViewMode = localStorage.getItem(IDEAS_VIEW_MODE_KEY) === "ai" ? "ai" : "pro";
+const IDEAS_VIEW_MODE_KEY = "fxpilot-analysis-mode";
+const ANALYSIS_MODES = new Set(["brief", "hybrid", "expert"]);
+let currentIdeaViewMode = ANALYSIS_MODES.has(localStorage.getItem(IDEAS_VIEW_MODE_KEY)) ? localStorage.getItem(IDEAS_VIEW_MODE_KEY) : "hybrid";
 let modalChart = null;
 let modalOverlayCanvas = null;
 let modalOverlayContext = null;
@@ -101,15 +102,15 @@ function collectOverlayRanges(raw) {
 }
 
 function formatNumber(value) {
-  if (value === undefined || value === null || value === "") return "—";
+  if (value === undefined || value === null || value === "") return "Данные временно недоступны.";
   const num = Number(value);
   if (!Number.isFinite(num)) return escapeHtml(value);
   return String(num);
 }
 
 function formatListValue(value) {
-  if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
-  if (value === undefined || value === null || value === "") return "—";
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "Данные временно недоступны.";
+  if (value === undefined || value === null || value === "") return "Данные временно недоступны.";
   return String(value);
 }
 
@@ -335,7 +336,7 @@ function getActionIcon(idea) {
   const raw = getIdeaDirectionRaw(idea);
   if (raw.includes("BUY") || raw.includes("ПОКУП")) return "🟢";
   if (raw.includes("SELL") || raw.includes("ПРОДА")) return "🔴";
-  return "⛔";
+  return "🟡";
 }
 
 function getPropScore(idea) {
@@ -351,7 +352,89 @@ function getPropScore(idea) {
       criteria: [],
     };
   }
-  return { score: 0, grade: "D", mode: "no_trade", decision_ru: "Prop Score недоступен.", blockers: [], criteria: [] };
+  return { score: 0, grade: "D", mode: "no_trade", decision_ru: "Оценка недоступна.", blockers: [], criteria: [] };
+}
+
+
+function isBlankUiValue(value) {
+  if (value === undefined || value === null) return true;
+  const text = String(value).trim();
+  return !text || /^(—|-|n\/a|na|null|undefined|none|nan)$/i.test(text);
+}
+
+function uiText(value, fallback = "Данные временно недоступны.") {
+  return isBlankUiValue(value) ? fallback : String(value);
+}
+
+function renderField(label, value, fallback = "Данные временно недоступны.") {
+  if (isBlankUiValue(value)) return "";
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(uiText(value, fallback))}</strong></div>`;
+}
+
+function ideaConfidenceValue(idea) {
+  const prop = getPropScore(idea);
+  const candidates = [idea?.score, idea?.prop_score, prop?.score, idea?.confidence, prop?.confidence, idea?.final_score];
+  for (const raw of candidates) {
+    const num = Number(raw);
+    if (!Number.isFinite(num)) continue;
+    if (num >= 0 && num <= 1 && (raw === idea?.confidence || raw === prop?.confidence)) return Math.round(num * 100);
+    if (num >= 0 && num <= 100) return Math.round(num);
+  }
+  return null;
+}
+
+function renderIdeaConfidence(idea) {
+  const value = ideaConfidenceValue(idea);
+  return value === null ? "Оценка недоступна." : `${value}%`;
+}
+
+function getTradeLevels(idea) {
+  return [
+    ["Entry", idea.entry ?? idea.entry_price],
+    ["Stop", idea.sl ?? idea.stop_loss],
+    ["Take Profit", idea.tp ?? idea.take_profit ?? idea.target],
+  ].filter(([, value]) => !isBlankUiValue(value));
+}
+
+function resolveMarketSummary(idea) {
+  return firstText(idea.market_summary_ru, idea.ai_summary_ru, idea.summary_ru, idea.confluence_summary_ru, idea.reason_ru, resolveNarrative(idea)) || "Данные временно недоступны.";
+}
+
+function resolveMainRisk(idea) {
+  const risks = collectIdeaRisks(idea);
+  return risks[0] || firstText(idea.main_risk_ru, idea.risk_summary_ru, idea.trap_risk_ru) || "Критичных рисков не обнаружено.";
+}
+
+function collectIdeaRisks(idea) {
+  const prop = getPropScore(idea);
+  const values = [
+    ...asArray(prop.blockers), ...asArray(idea.blockers), ...asArray(idea.risks),
+    idea.news_risk, idea.news_risk_ru, idea.volatility_risk, idea.volatility_risk_ru,
+    idea.execution_risk, idea.execution_risk_ru, idea.trap_risk_ru,
+  ];
+  return values.map((v) => typeof v === "object" ? (v.label_ru || v.text_ru || v.message || JSON.stringify(v)) : v).map(sanitizeText).filter((v) => !isBlankUiValue(v));
+}
+
+function factorStatus(status) {
+  const raw = String(status || "").toLowerCase();
+  if (/develop|roadmap|todo|в разработ/.test(raw)) return "в разработке";
+  if (/unavail|missing|нет|недоступ|disabled/.test(raw)) return "недоступно";
+  if (/conflict|against|bear.*buy|bull.*sell|против|block/.test(raw)) return "противоречит";
+  if (/confirm|aligned|pass|true|подтверж|ok|allow/.test(raw)) return "подтверждает";
+  return "нейтрально";
+}
+
+function getIdeaFactors(idea) {
+  return [
+    ["Структура рынка", factorStatus(idea.market_structure?.status || idea.market_structure?.bias || idea.htf_bias || idea.trend)],
+    ["Ликвидность", factorStatus(idea.liquidity?.status || idea.liquidity?.sweep || idea.heatmap_bias)],
+    ["Опционы", factorStatus(resolveExternalOptionsBias(idea))],
+    ["Heatmap", factorStatus(idea.heatmap_available ? (idea.heatmap_bias || "подтверждает") : "недоступно")],
+    ["HFT", factorStatus(resolveHftLayer(idea).available ? (resolveHftLayer(idea).bias || "нейтрально") : "недоступно")],
+    ["Новости", factorStatus(idea.news_lock_active ? "противоречит" : (idea.news_impact || "нейтрально"))],
+    ["Исполнение", factorStatus(idea.trade_permission === false ? "противоречит" : (idea.execution_quality || idea.execution_score || "нейтрально"))],
+    ["Order Flow", factorStatus(isOrderflowAvailable(idea) ? "подтверждает" : "недоступно")],
+  ];
 }
 
 function propModeLabel(mode) {
@@ -660,6 +743,63 @@ function injectUiStyles() {
     .criterion.partial { border-color:rgba(250,204,21,.32); }
     .criterion.missing { border-color:rgba(248,113,113,.28); opacity:.82; }
     .blocker { padding:10px; border-radius:12px; border:1px solid rgba(248,113,113,.25); background:rgba(127,29,29,.22); color:#fecdd3; }
+.analysis-mode-row,
+.view-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(95,156,230,.30);
+  border-radius: 20px;
+  background: rgba(3,14,28,.72);
+}
+.view-mode-title {
+  color: #e8f3ff;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.view-mode-toggle { display: flex; flex-wrap: wrap; gap: 8px; }
+.view-mode-btn {
+  border: 1px solid rgba(95,156,230,.42);
+  background: rgba(8,25,48,.86);
+  color: #dbeeff;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.view-mode-btn.active {
+  border-color: rgba(84,255,181,.88);
+  background: linear-gradient(180deg,#54ffb5,#31f59d);
+  color: #06111f;
+}
+.analysis-card-body { display: grid; gap: 14px; margin-top: 16px; }
+.factor-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 10px; }
+.factor-item {
+  padding: 11px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(95,156,230,.25);
+  background: rgba(8,25,48,.72);
+}
+.factor-item span { display:block; color:#9bb8d8; font-size:12px; }
+.factor-item strong { display:block; margin-top:4px; color:#fff; }
+.factor-подтверждает { border-color: rgba(49,245,157,.45); }
+.factor-противоречит { border-color: rgba(255,95,122,.52); }
+.factor-недоступно, .factor-в-разработке { opacity: .78; }
+.analysis-details {
+  border: 1px solid rgba(95,156,230,.24);
+  border-radius: 16px;
+  background: rgba(3,14,28,.52);
+  padding: 12px;
+}
+.analysis-details summary { cursor: pointer; color:#e8f3ff; font-weight:900; }
+.risk-list { display:grid; gap:8px; margin-top:10px; }
+@media(max-width:720px){ .analysis-mode-row,.view-mode-row{align-items:stretch;flex-direction:column;} }
+
     @media(max-width:1100px){ .ideas-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .modal-grid{grid-template-columns:1fr;} .modal-meta{grid-template-columns:repeat(2,minmax(0,1fr));} }
     @media(max-width:720px){ .page{padding:16px 12px 42px;} .ideas-page-header{padding:20px;} .ideas-grid{grid-template-columns:1fr;} .compact-levels,.criteria-grid,.modal-meta,.institutional-sections{grid-template-columns:1fr;} .idea-card-top{flex-direction:column;} .badge{white-space:normal;} .chart-area,#ideaModalChart{height:390px;min-height:390px;} }
   `;
@@ -672,7 +812,7 @@ function renderPropCompact(idea) {
   const grade = String(prop.grade || "D").toUpperCase();
   return `<div class="compact-score">
     <div class="compact-score-head">
-      <div><span class="idea-news-line">PROP DECISION ENGINE</span><br><strong>Score ${escapeHtml(score)} / 100 · ${escapeHtml(propModeLabel(prop.mode))}</strong></div>
+      <div><span class="idea-news-line">PROP DECISION ENGINE</span><br><strong>Уверенность идеи ${escapeHtml(score)}% · ${escapeHtml(propModeLabel(prop.mode))}</strong></div>
       <div class="prop-grade-badge ${propGradeClass(grade)}">${escapeHtml(grade)}</div>
     </div>
     <div class="score-meter"><div class="score-fill" style="width:${score}%"></div></div>
@@ -683,8 +823,8 @@ function resolveDpoc(idea) {
   const dpocPrice = pickFirstFiniteNumber(idea.dpoc_price, idea.market_structure?.dpoc_price, idea.dpoc?.dpoc_price);
   const distance = pickFirstFiniteNumber(idea.distance_to_dpoc_pips, idea.market_structure?.distance_to_dpoc_pips, idea.dpoc?.distance_to_dpoc_pips);
   return {
-    price: dpocPrice !== null && dpocPrice > 0 ? formatNumber(dpocPrice) : "—",
-    distance: distance !== null ? `${distance > 0 ? "+" : ""}${distance.toFixed(1)} пипс` : "—",
+    price: dpocPrice !== null && dpocPrice > 0 ? formatNumber(dpocPrice) : "Данные временно недоступны.",
+    distance: distance !== null ? `${distance > 0 ? "+" : ""}${distance.toFixed(1)} пипс` : "Данные временно недоступны.",
   };
 }
 
@@ -692,7 +832,7 @@ function valueOrDash(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== "") return value;
   }
-  return "—";
+  return "Данные временно недоступны.";
 }
 
 function renderStatusPills(idea) {
@@ -741,7 +881,7 @@ function renderHftLayer(idea, { compact = false } = {}) {
       <div><span>Bias</span><strong>${escapeHtml(biasLabel)}</strong></div>
       <div><span>Strength</span><strong>${escapeHtml(hft.strength)}/10</strong></div>
       <div><span>Side</span><strong>${escapeHtml(hft.side || "—")}</strong></div>
-      <div><span>Score</span><strong>${Number(hft.adjustment) >= 0 ? "+" : ""}${escapeHtml(hft.adjustment)}</strong></div>
+      <div><span>Уверенность идеи</span><strong>${Number(hft.adjustment) >= 0 ? "+" : ""}${escapeHtml(hft.adjustment)}</strong></div>
     </div>
     <p class="modal-text">${escapeHtml(text)}</p>
   </section>`;
@@ -761,7 +901,7 @@ function renderInstitutionalSections(idea) {
     <section class="institutional-section"><h4>Options</h4><p>🧩 Bias ${escapeHtml(resolveExternalOptionsBias(idea))} · Max Pain ${escapeHtml(formatListValue(resolveOptionsMaxPain(idea)))} · Strikes ${escapeHtml(formatListValue(resolveOptionsKeyStrikes(idea)))}</p></section>
     <section class="institutional-section"><h4>News/Fundamental</h4><p>📰 ${escapeHtml(newsEvent)} · Impact ${escapeHtml(newsImpact)} · до события ${escapeHtml(minutes)} мин.</p></section>
     ${renderHftLayer(idea, { compact: true })}
-    <section class="institutional-section"><h4>Risk/Execution</h4><p>🛡️ Execution ${escapeHtml(valueOrDash(idea.execution_score))} · Final ${escapeHtml(valueOrDash(idea.final_score, idea.score))} · Risk ${escapeHtml(valueOrDash(idea.risk_per_trade_pct, idea.recommended_risk_percent))}%</p></section>
+    <section class="institutional-section"><h4>Риск / Исполнение</h4><p>🛡️ Исполнение ${escapeHtml(valueOrDash(idea.execution_score))} · Уверенность идеи ${escapeHtml(valueOrDash(idea.final_score, idea.score))} · Риск ${escapeHtml(valueOrDash(idea.risk_per_trade_pct, idea.recommended_risk_percent))}%</p></section>
   </div>`;
 }
 
@@ -780,14 +920,14 @@ function isOrderflowAvailable(idea) {
 }
 
 function renderOrderflowUnavailable(mode) {
-  return `<section class="institutional-section"><h4>OrderFlow</h4><p>${mode === "ai" ? "Объёмный слой временно не участвует в оценке" : "OrderFlow provider недоступен"}</p></section>`;
+  return `<section class="institutional-section"><h4>OrderFlow</h4><p>${mode === "ai" ? "Объёмный слой временно не участвует в оценке" : "Order Flow provider недоступен"}</p></section>`;
 }
 
 function renderScoreDebug(idea) {
   const prop = getPropScore(idea);
   const debug = prop.debug || idea.score_debug || {};
   const weights = prop.score_weights || idea.score_weights || debug.score_weights || { market_structure: 25, liquidity: 20, options: 20, heatmap: 15, news: 10, hft: 10, orderflow: 0 };
-  return `<div class="score-debug-box"><strong>Score debug</strong><br>score_weights=${escapeHtml(JSON.stringify(weights))}<br>orderflow_available=${isOrderflowAvailable(idea)} · options_weight=${escapeHtml(weights.options ?? 20)} · ai_view_mode=${escapeHtml(currentIdeaViewMode)}</div>`;
+  return `<div class="score-debug-box"><strong>Отладка оценки</strong><br>веса уверенности=${escapeHtml(JSON.stringify(weights))}<br>orderflow_available=${isOrderflowAvailable(idea)} · options_weight=${escapeHtml(weights.options ?? 20)} · analysis_mode=${escapeHtml(currentIdeaViewMode)}</div>`;
 }
 
 function renderAiInterpretation(idea) {
@@ -805,49 +945,76 @@ function renderAiInterpretation(idea) {
     <section class="institutional-section"><h4>Continuation Probability</h4><p>${continuation}%</p></section>
     <section class="institutional-section"><h4>Reversal Probability</h4><p>${reversal}%</p></section>
     <section class="institutional-section"><h4>Trap Risk</h4><p>${escapeHtml(idea.trap_risk_ru || (idea.delta_divergence ? "Повышен из-за divergence." : "Умеренный, подтверждать вход по реакции цены."))}</p></section>
-    <section class="institutional-section"><h4>Execution Quality</h4><p>${escapeHtml(propModeLabel(prop.mode))} · score ${escapeHtml(score)}</p></section>
+    <section class="institutional-section"><h4>Качество исполнения</h4><p>${escapeHtml(propModeLabel(prop.mode))} · уверенность ${escapeHtml(score)}%</p></section>
     ${isOrderflowAvailable(idea) ? "" : renderOrderflowUnavailable("ai")}
     <section class="institutional-section"><h4>Summary</h4><p>${escapeHtml(summary)}</p></section>
   </div>`;
 }
 
 function renderModeToggle() {
-  return `<div class="view-mode-row"><div><div class="view-mode-title">FXPilot 1.5 · режим отображения</div><div class="idea-news-line">Проф. показывает технические слои, AI — интерпретацию сценария.</div></div><div class="view-mode-toggle"><button class="view-mode-btn ${currentIdeaViewMode === "pro" ? "active" : ""}" data-view-mode="pro">Проф.</button><button class="view-mode-btn ${currentIdeaViewMode === "ai" ? "active" : ""}" data-view-mode="ai">AI</button></div></div>`;
+  const modes = [["brief", "Кратко"], ["hybrid", "Гибрид"], ["expert", "Эксперт"]];
+  return `<div class="analysis-mode-row" aria-label="Уровень анализа"><div><div class="view-mode-title">УРОВЕНЬ АНАЛИЗА</div><div class="idea-news-line">Выбор меняет отображение карточек без повторного запроса API.</div></div><div class="view-mode-toggle">${modes.map(([key, label]) => `<button class="view-mode-btn ${currentIdeaViewMode === key ? "active" : ""}" data-view-mode="${key}">${label}</button>`).join("")}</div></div>`;
+}
+
+function renderBriefCardBody(idea) {
+  const levels = getTradeLevels(idea);
+  return `<div class="analysis-card-body analysis-card-brief">
+    <div class="compact-levels">
+      <div><span>Уверенность идеи</span><strong>${escapeHtml(renderIdeaConfidence(idea))}</strong></div>
+      ${levels.map(([label, value]) => renderField(label, formatNumber(value))).join("")}
+    </div>
+    <section class="institutional-section"><h4>Что говорит рынок</h4><p>${escapeHtml(resolveMarketSummary(idea))}</p></section>
+    <section class="institutional-section"><h4>Главный риск</h4><p>${escapeHtml(resolveMainRisk(idea))}</p></section>
+  </div>`;
+}
+
+function renderHybridCardBody(idea) {
+  const factors = getIdeaFactors(idea);
+  const risks = collectIdeaRisks(idea);
+  const why = [
+    ["Структура рынка", idea.market_structure?.score ? "★".repeat(Math.max(1, Math.min(5, Math.round(Number(idea.market_structure.score) / 20)))) : uiText(idea.htf_bias || idea.market_structure?.trend_regime)],
+    ["Ликвидность", firstText(idea.liquidity?.summary_ru, idea.selected_zone_type, idea.heatmap_reason_ru)],
+    ["Опционы", resolveExternalOptionsRu(idea)],
+    ["Heatmap", idea.heatmap_available ? firstText(idea.heatmap_bias, idea.heatmap_reason_ru) : "Источник данных недоступен."],
+    ["Новости", resolveNewsContext(idea)],
+    ["Исполнение", firstText(idea.execution_quality, idea.killzone_status, idea.session) || "Слой временно не участвует в оценке."],
+    ["Order Flow", isOrderflowAvailable(idea) ? `Delta ${formatNumber(resolveVolumeDelta(idea).delta)}, CumDelta ${formatNumber(resolveVolumeDelta(idea).cumdelta)}` : "Order Flow provider недоступен. Слой временно не участвует в оценке."],
+  ];
+  return `<div class="analysis-card-body analysis-card-hybrid">
+    <div class="compact-levels"><div><span>Уверенность идеи</span><strong>${escapeHtml(renderIdeaConfidence(idea))}</strong></div>${getTradeLevels(idea).map(([l,v])=>renderField(l, formatNumber(v))).join("")}</div>
+    <section class="institutional-section"><h4>Что говорит рынок</h4><p>${escapeHtml(resolveMarketSummary(idea))}</p></section>
+    <div class="factor-grid">${factors.map(([label,status]) => `<div class="factor-item factor-${status.replaceAll(" ", "-")}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(status)}</strong></div>`).join("")}</div>
+    <details class="analysis-details"><summary>Почему ИИ так считает</summary><div class="criteria-grid">${why.map(([l,v])=>`<div class="criterion"><strong>${escapeHtml(l)}</strong><br>${escapeHtml(uiText(v, "Слой временно не участвует в оценке."))}</div>`).join("")}</div></details>
+    <details class="analysis-details"><summary>Возможные риски</summary><div class="risk-list">${risks.length ? risks.map((r)=>`<div class="blocker">${escapeHtml(r)}</div>`).join("") : `<p class="modal-text">Критичных рисков не обнаружено.</p>`}</div></details>
+  </div>`;
+}
+
+function renderExpertCardBody(idea) {
+  const vd = resolveVolumeDelta(idea), hft = resolveHftLayer(idea), opt = normalizeOptionsLayer(idea), dpoc = resolveDpoc(idea);
+  return `<div class="analysis-card-body analysis-card-expert">
+    <div class="compact-levels"><div><span>Уверенность идеи</span><strong>${escapeHtml(renderIdeaConfidence(idea))}</strong></div>${getTradeLevels(idea).map(([l,v])=>renderField(l, formatNumber(v))).join("")}</div>
+    <div class="institutional-sections">
+      <section class="institutional-section"><h4>1. Структура рынка</h4><p>Trend: ${escapeHtml(uiText(idea.trend || idea.market_structure?.trend_regime))}<br>BOS: ${escapeHtml(uiText(idea.market_structure?.bos))}<br>CHoCH: ${escapeHtml(uiText(idea.choch || idea.market_structure?.choch))}<br>FVG: ${escapeHtml(uiText(idea.fvg?.type || idea.selected_zone_type))}<br>Liquidity: ${escapeHtml(uiText(idea.liquidity?.sweep || idea.selected_zone_type))}<br>HTF bias: ${escapeHtml(uiText(idea.htf_bias || idea.market_structure?.htf_bias))}</p></section>
+      <section class="institutional-section"><h4>2. Order Flow</h4><p>${isOrderflowAvailable(idea) ? `Delta: ${escapeHtml(formatNumber(vd.delta))}<br>CumDelta: ${escapeHtml(formatNumber(vd.cumdelta))}<br>DPOC / POC: ${escapeHtml(dpoc.price)}<br>Distance to POC: ${escapeHtml(dpoc.distance)}<br>RVOL: ${escapeHtml(formatNumber(idea.rvol))}<br>VWAP: ${escapeHtml(formatNumber(idea.vwap))}<br>VAH / VAL: ${escapeHtml(uiText(idea.vah))} / ${escapeHtml(uiText(idea.val))}<br>DOM / imbalance: ${escapeHtml(uiText(idea.dom_bias || idea.imbalance))}` : "Order Flow provider недоступен. Слой временно не участвует в оценке."}</p></section>
+      <section class="institutional-section"><h4>3. Опционы</h4><p>Options source: ${escapeHtml(uiText(opt.options_source, "Источник данных недоступен."))}<br>Bias: ${escapeHtml(uiText(opt.options_bias))}<br>Key strikes: ${escapeHtml(formatListValue(opt.key_strikes))}<br>Max Pain: ${escapeHtml(formatListValue(opt.max_pain))}<br>Call Wall: ${escapeHtml(formatListValue(opt.call_walls))}<br>Put Wall: ${escapeHtml(formatListValue(opt.put_walls))}<br>Pin Risk: ${escapeHtml(formatListValue(opt.pinning_risk))}<br>Range Risk: ${escapeHtml(formatListValue(opt.range_risk))}<br>Summary: ${escapeHtml(uiText(opt.summary_text))}</p></section>
+      <section class="institutional-section"><h4>4. Heatmap / DOM</h4><p>Wall Above: ${escapeHtml(uiText(idea.heatmap_wall_above))}<br>Wall Below: ${escapeHtml(uiText(idea.heatmap_wall_below))}<br>Sizes: ${escapeHtml(uiText(idea.heatmap_sizes || idea.wall_sizes))}<br>Bias: ${escapeHtml(uiText(idea.heatmap_bias))}<br>Source: ${escapeHtml(uiText(idea.heatmap_source || idea.dom_source, "Источник данных недоступен."))}</p></section>
+      <section class="institutional-section"><h4>5. HFT</h4><p>available: ${hft.available ? "доступен" : "недоступен"}<br>type: ${escapeHtml(uiText(idea.hft_type || hft.bias))}<br>side: ${escapeHtml(uiText(hft.side))}<br>price: ${escapeHtml(formatNumber(hft.price))}<br>summary: ${escapeHtml(uiText(hft.summary))}</p></section>
+      <section class="institutional-section"><h4>6. Новости</h4><p>calendar event: ${escapeHtml(uiText(idea.news_event))}<br>impact: ${escapeHtml(uiText(idea.news_impact || idea.impact))}<br>lock status: ${idea.news_lock_active ? "активен" : "нет блокировки"}<br>summary_ru: ${escapeHtml(resolveNewsContext(idea))}</p></section>
+      <section class="institutional-section"><h4>7. Исполнение</h4><p>spread: ${escapeHtml(formatNumber(idea.spread))}<br>ATR: ${escapeHtml(formatNumber(idea.atr_pips))}<br>RR: ${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}<br>session: ${escapeHtml(uiText(idea.session))}<br>killzone: ${escapeHtml(uiText(idea.killzone_status))}<br>execution quality: ${escapeHtml(uiText(idea.execution_quality || idea.execution_score))}</p></section>
+      <section class="institutional-section"><h4>8. Отладка</h4><p>исходная уверенность: ${escapeHtml(uiText(idea.score ?? idea.prop_score ?? idea.confidence, "Оценка недоступна."))}<br>веса оценки: ${escapeHtml(uiText(JSON.stringify(getPropScore(idea).score_weights || idea.score_weights || {})))}<br>статус провайдера: ${escapeHtml(uiText(idea.provider_status || idea.data_provider || idea.provider, "Источник данных недоступен."))}<br>источник нарратива: ${escapeHtml(uiText(idea.narrative_source || getAiSourceMeta(idea).label))}<br>mt4_debug: ${escapeHtml(uiText(idea.mt4_debug ? JSON.stringify(idea.mt4_debug) : ""))}</p></section>
+    </div>
+  </div>`;
 }
 
 function renderIdeaCard(idea, index) {
   const symbol = getIdeaSymbol(idea);
-  const action = idea.action || idea.signal || idea.label || "WAIT";
-  const dpoc = resolveDpoc(idea);
-  const aiSource = getAiSourceMeta(idea);
+  const body = currentIdeaViewMode === "brief" ? renderBriefCardBody(idea) : currentIdeaViewMode === "expert" ? renderExpertCardBody(idea) : renderHybridCardBody(idea);
   return `<article class="idea-card ${getCardDirectionClass(idea)}" data-idea-index="${index}" tabindex="0" role="button" aria-label="Открыть идею ${escapeHtml(symbol)}">
     <div class="idea-card-top">
-      <div>
-        <div class="idea-instrument">${escapeHtml(symbol)}</div>
-        <h3 class="idea-title">${escapeHtml(symbol)} · AI-идея</h3>
-        <div class="idea-news-line">Новости/фундаментал: ${escapeHtml(resolveNewsContext(idea))}</div>
-        <div class="idea-news-line">Статус: <strong>${escapeHtml(idea.trade_permission === false ? "ожидание" : idea.status || "активно")}</strong></div>
-      </div>
-      <div class="badge ${getActionBadgeClass(idea)}">${getActionIcon(idea)} ${escapeHtml(action)}</div>
+      <div><div class="idea-instrument">${escapeHtml(symbol)}</div><h3 class="idea-title">${escapeHtml(symbol)} · Идея</h3></div>
+      <div class="badge ${getActionBadgeClass(idea)}">${getActionIcon(idea)} ${escapeHtml(getIdeaDirection(idea))}</div>
     </div>
-    <div class="compact-levels">
-      <div><span>Setup</span><strong>${escapeHtml(idea.setup_type || "—")}</strong></div>
-      <div><span>Entry</span><strong>${escapeHtml(formatNumber(idea.entry ?? idea.entry_price))}</strong></div>
-      <div><span>SL</span><strong>${escapeHtml(formatNumber(idea.sl ?? idea.stop_loss))}</strong></div>
-      <div><span>TP</span><strong>${escapeHtml(formatNumber(idea.tp ?? idea.take_profit ?? idea.target))}</strong></div>
-      <div><span>R/R</span><strong>${escapeHtml(formatNumber(idea.rr ?? idea.risk_reward))}</strong></div>
-      <div><span>DPOC / дистанция</span><strong>${escapeHtml(dpoc.price)} · ${escapeHtml(dpoc.distance)}</strong></div>
-    </div>
-    ${renderStatusPills(idea)}
-    <div class="ai-source-row">
-      <span>AI Source:</span>
-      <span class="ai-source-chip ai-source-chip-${escapeHtml(aiSource.tone)}">${escapeHtml(aiSource.label)}</span>
-      <span class="ai-generated-line">${escapeHtml(aiSource.line)}</span>
-    </div>
-    ${renderPropCompact(idea)}
-    ${currentIdeaViewMode === "pro" ? (isOrderflowAvailable(idea) ? renderVolumeDeltaCompact(idea) : renderOrderflowUnavailable("pro")) + renderOptionsLayer(idea, { compact: true }) + renderInstitutionalSections(idea) + renderScoreDebug(idea) : renderAiInterpretation(idea)}
-    ${idea.institutional_thesis ? `<div class="idea-news-line"><strong>Institutional Thesis:</strong> ${escapeHtml(idea.institutional_thesis)}</div>` : ""}
-    <div class="idea-summary-compact">${escapeHtml(resolveNarrative(idea))}</div>
+    ${body}
   </article>`;
 }
 
@@ -860,15 +1027,15 @@ function renderExecutionAnalysis(idea) {
     ["VWAP", formatNumber(idea.vwap), idea.vwap_alignment === true ? "Согласован с направлением" : idea.vwap_alignment === false ? "Против направления" : "—"],
     ["News Lock", idea.news_lock_active ? "ACTIVE" : "OFF", idea.news_minutes_to_event ?? "—"],
     ["Correlation", idea.correlation_block ? "BLOCK" : "OK", `USD exposure: ${idea.usd_exposure_count ?? "—"}`],
-    ["Regime", idea.market_regime || "—", `Score: ${idea.regime_score ?? "—"}`],
+    ["Regime", idea.market_regime || "—", `Уверенность: ${idea.regime_score ?? "—"}`],
     ["Dynamic Risk", `${idea.risk_per_trade_pct ?? idea.recommended_risk_percent ?? "—"}%`, `Lot: ${idea.recommended_lot ?? "—"}`],
   ];
   return `<section class="modal-section execution-analysis" style="margin-top:16px;">
-    <h4>Execution Analysis</h4>
+    <h4>Исполнение</h4>
     <div class="modal-meta">
-      <div><span>Base score</span><strong>${escapeHtml(idea.base_score ?? "—")}</strong></div>
-      <div><span>Execution score</span><strong>${escapeHtml(idea.execution_score ?? "—")}</strong></div>
-      <div><span>Final score</span><strong>${escapeHtml(idea.final_score ?? idea.score ?? "—")}</strong></div>
+      <div><span>Базовая уверенность</span><strong>${escapeHtml(idea.base_score ?? "—")}</strong></div>
+      <div><span>Качество исполнения</span><strong>${escapeHtml(idea.execution_score ?? "—")}</strong></div>
+      <div><span>Уверенность идеи</span><strong>${escapeHtml(idea.final_score ?? idea.score ?? "—")}</strong></div>
       <div><span>Mode</span><strong>${escapeHtml(idea.mode || "—")}</strong></div>
     </div>
     <div class="criteria-grid">${rows.map(([label, value, note]) => `<div class="criterion"><strong>${escapeHtml(label)}</strong><br>${escapeHtml(value)} · ${escapeHtml(note)}</div>`).join("")}</div>
@@ -882,23 +1049,23 @@ function renderPropDetails(idea) {
   const criteria = asArray(prop.criteria);
   const blockers = asArray(prop.blockers).filter(Boolean);
   return `<section class="modal-section">
-    <h4>Prop Decision Engine</h4>
+    <h4>Prop Решение Engine</h4>
     <div class="compact-score" style="margin:0 0 12px;">
       <div class="compact-score-head">
-        <div><strong>Score ${escapeHtml(score)} / 100 · ${escapeHtml(propModeLabel(prop.mode))}</strong></div>
+        <div><strong>Уверенность идеи ${escapeHtml(score)}% · ${escapeHtml(propModeLabel(prop.mode))}</strong></div>
         <div class="prop-grade-badge ${propGradeClass(grade)}">${escapeHtml(grade)}</div>
       </div>
       <div class="score-meter"><div class="score-fill" style="width:${score}%"></div></div>
     </div>
     <div class="modal-meta">
-      <div><span>Decision</span><strong>${escapeHtml(propModeLabel(prop.mode))}</strong></div>
-      <div><span>Direction</span><strong>${escapeHtml(prop.direction || getIdeaDirectionRaw(idea))}</strong></div>
-      <div><span>Grade</span><strong>${escapeHtml(grade)}</strong></div>
-      <div><span>Advisor</span><strong>${idea.advisor_allowed ? "ALLOWED" : "BLOCKED"}</strong></div>
+      <div><span>Решение</span><strong>${escapeHtml(propModeLabel(prop.mode))}</strong></div>
+      <div><span>Направление</span><strong>${escapeHtml(prop.direction || getIdeaDirectionRaw(idea))}</strong></div>
+      <div><span>Класс</span><strong>${escapeHtml(grade)}</strong></div>
+      <div><span>Советник</span><strong>${idea.advisor_allowed ? "ALLOWED" : "BLOCKED"}</strong></div>
     </div>
     <p class="modal-text">${escapeHtml(prop.decision_ru || idea.prop_decision_ru || "Решение недоступно.")}</p>
-    ${blockers.length ? `<h4>Blockers</h4><div class="criteria-grid">${blockers.map((b) => `<div class="blocker">❌ ${escapeHtml(b)}</div>`).join("")}</div>` : ""}
-    ${criteria.length ? `<h4>Критерии score</h4><div class="criteria-grid">${criteria.map((item) => `<div class="criterion ${escapeHtml(item.status || "missing")}"><strong>${escapeHtml(item.label_ru || item.key)}</strong><br>${escapeHtml(item.score ?? 0)} / ${escapeHtml(item.weight ?? "—")} · ${escapeHtml(item.status || "—")}</div>`).join("")}</div>` : ""}
+    ${blockers.length ? `<h4>Блокирующие факторы</h4><div class="criteria-grid">${blockers.map((b) => `<div class="blocker">❌ ${escapeHtml(b)}</div>`).join("")}</div>` : ""}
+    ${criteria.length ? `<h4>Критерии уверенности</h4><div class="criteria-grid">${criteria.map((item) => `<div class="criterion ${escapeHtml(item.status || "missing")}"><strong>${escapeHtml(item.label_ru || item.key)}</strong><br>${escapeHtml(item.score ?? 0)} / ${escapeHtml(item.weight ?? "—")} · ${escapeHtml(item.status || "—")}</div>`).join("")}</div>` : ""}
   </section>`;
 }
 
@@ -924,7 +1091,7 @@ function openIdeaModal(idea) {
         ${renderHftLayer(idea)}
         <section class="modal-section" style="margin-top:16px;">
           <h4>Smart Money Narrative</h4>
-          <p class="modal-text"><strong>narrative_source:</strong> ${escapeHtml(idea.narrative_source || aiSource.label)}</p>
+          <p class="modal-text"><strong>Источник нарратива:</strong> ${escapeHtml(idea.narrative_source || aiSource.label)}</p>
           ${idea.institutional_thesis ? `<p class="modal-text"><strong>Institutional Thesis:</strong> ${escapeHtml(idea.institutional_thesis)}</p>` : ""}
           <div class="modal-text">${escapeHtml(resolveNarrative(idea))}</div>
         </section>
@@ -1085,7 +1252,7 @@ function mountOverlayControls(container) {
     { key: "ob", label: "OB" },
     { key: "liquidity", label: "Ликвидность" },
     { key: "structure", label: "Структура" },
-    { key: "signals", label: "Сигналы" },
+    { key: "signals", label: "Идеи" },
   ];
   items.forEach(({ key, label }) => {
     const btn = document.createElement("button");
@@ -1220,7 +1387,8 @@ function renderIdeas(payload) {
   ideasContainer.innerHTML = renderModeToggle() + renderPropFilters() + (ideas.length ? `<div class="ideas-grid">${ideas.map(renderIdeaCard).join("")}</div>` : `<div class="ideas-loading">Нет идей под выбранный фильтр.</div>`);
   ideasContainer.querySelectorAll("[data-view-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      currentIdeaViewMode = btn.getAttribute("data-view-mode") === "ai" ? "ai" : "pro";
+      const nextMode = btn.getAttribute("data-view-mode") || "hybrid";
+      currentIdeaViewMode = ANALYSIS_MODES.has(nextMode) ? nextMode : "hybrid";
       localStorage.setItem(IDEAS_VIEW_MODE_KEY, currentIdeaViewMode);
       renderIdeas(lastPayload);
     });
