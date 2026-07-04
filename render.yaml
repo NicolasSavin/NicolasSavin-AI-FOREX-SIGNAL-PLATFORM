@@ -5,6 +5,12 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.11
+      - key: ORDERFLOW_ENABLED
+        value: true
+      - key: ORDERFLOW_URL
+        value: https://fxpilot-orderflow-engine.onrender.com
+      - key: ORDERFLOW_TIMEOUT_SECONDS
+        value: 2
     buildCommand: pip install -r requirements.txt
     startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
     plan: free

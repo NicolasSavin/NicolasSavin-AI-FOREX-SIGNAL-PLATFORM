@@ -12,13 +12,16 @@ logger = logging.getLogger(__name__)
 ORDERFLOW_FIELDS = (
     "delta",
     "cumdelta",
+    "volume",
+    "rvol",
+    "vwap",
     "poc",
     "vah",
     "val",
-    "vwap",
-    "rvol",
     "dom_pressure",
+    "imbalance",
     "absorption",
+    "exhaustion",
     "market_state",
     "orderflow_bias",
     "continuation_probability",
@@ -34,12 +37,19 @@ UNAVAILABLE_SNAPSHOT: dict[str, Any] = {
 
 
 def is_orderflow_engine_enabled() -> bool:
-    value = str(get_env("ORDERFLOW_ENGINE_ENABLED", "false") or "false").strip().lower()
+    value = str(get_env("ORDERFLOW_ENABLED", get_env("ORDERFLOW_ENGINE_ENABLED", "false")) or "false").strip().lower()
     return value in {"1", "true", "yes", "on"}
 
 
 def _engine_url() -> str:
-    return str(get_env("ORDERFLOW_ENGINE_URL", "http://localhost:8010") or "http://localhost:8010").rstrip("/")
+    return str(get_env("ORDERFLOW_URL", get_env("ORDERFLOW_ENGINE_URL", "https://fxpilot-orderflow-engine.onrender.com")) or "https://fxpilot-orderflow-engine.onrender.com").rstrip("/")
+
+
+def _timeout_seconds() -> float:
+    try:
+        return float(get_env("ORDERFLOW_TIMEOUT_SECONDS", "2") or 2)
+    except (TypeError, ValueError):
+        return 2.0
 
 
 def _normalize_snapshot(payload: Any) -> dict[str, Any]:
@@ -71,7 +81,7 @@ def get_orderflow_snapshot(symbol: str) -> dict[str, Any]:
         response = requests.get(
             f"{_engine_url()}/api/orderflow/latest",
             params={"symbol": normalized_symbol},
-            timeout=2,
+            timeout=_timeout_seconds(),
         )
         response.raise_for_status()
         return _normalize_snapshot(response.json())

@@ -57,7 +57,7 @@ def test_json_render_enrichment_never_calls_external_llm(monkeypatch) -> None:
 
 
 def test_build_market_attaches_orderflow_when_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("ORDERFLOW_ENGINE_ENABLED", "true")
+    monkeypatch.setenv("ORDERFLOW_ENABLED", "true")
     monkeypatch.setattr(main, "generate_trade_ideas", lambda: ([{"symbol": "EURUSD", "signal": "WAIT", "confidence": 50}], []))
     monkeypatch.setattr(main, "enrich_ideas_with_prop_scores", lambda ideas: ideas)
     monkeypatch.setattr(main, "_attach_mt4_optionsfx_display_many", lambda ideas: ideas)
@@ -75,7 +75,7 @@ def test_build_market_attaches_orderflow_when_enabled(monkeypatch) -> None:
 
 
 def test_build_market_marks_orderflow_disabled_without_engine_call(monkeypatch) -> None:
-    monkeypatch.setenv("ORDERFLOW_ENGINE_ENABLED", "false")
+    monkeypatch.setenv("ORDERFLOW_ENABLED", "false")
     monkeypatch.setattr(main, "generate_trade_ideas", lambda: ([{"symbol": "EURUSD", "signal": "BUY", "confidence": 60}], []))
     monkeypatch.setattr(main, "enrich_ideas_with_prop_scores", lambda ideas: ideas)
     monkeypatch.setattr(main, "_attach_mt4_optionsfx_display_many", lambda ideas: ideas)
