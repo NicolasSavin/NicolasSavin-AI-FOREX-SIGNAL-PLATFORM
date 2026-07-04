@@ -136,9 +136,12 @@
     const absorption = dash(idea.absorption, idea.absorption_signal, idea.orderflow?.absorption);
     const domBias = dash(idea.dom_bias, idea.orderflow?.dom_bias);
     const reason = dash(idea.orderflow_reason_ru, idea.heatmap_reason_ru, idea.dom_reason_ru, "—");
+    const src = typeof normalizeOrderflowSource === "function" ? normalizeOrderflowSource(idea) : { icon: "⚪", label: "Unknown Source", compact: "Unknown", descriptor: "Unknown Source", qualityStars: "☆☆☆☆☆" };
     return `<section class="institutional-section pro-layer pro-layer--orderflow">
-      <div class="pro-layer-head"><h4>⚡ Orderflow</h4><div class="mini-chip-row">${renderChip(`DOM ${domBias}`, asLower(domBias).includes("bear") ? "bad" : asLower(domBias).includes("bull") ? "good" : "neutral")}${renderChip(`CVD ${cvd}`, String(cvd) === "false" ? "neutral" : "warn")}</div></div>
+      <div class="pro-layer-head"><h4>⚡ Orderflow</h4><div class="mini-chip-row">${renderChip(`${src.icon} ${src.compact}`, src.kind === "unavailable" ? "bad" : src.kind === "cache" ? "warn" : "good")}${renderChip(`DOM ${domBias}`, asLower(domBias).includes("bear") ? "bad" : asLower(domBias).includes("bull") ? "good" : "neutral")}${renderChip(`CVD ${cvd}`, String(cvd) === "false" ? "neutral" : "warn")}</div></div>
       <div class="pro-layer-grid compact">
+        ${renderMetric("Source", `${src.label} · ${src.descriptor}`)}
+        ${renderMetric("Quality", src.qualityStars)}
         ${renderMetric("Delta", dash(idea.delta, vd.delta))}
         ${renderMetric("CumDelta", dash(idea.cum_delta, idea.cumulative_delta, vd.cumdelta))}
         ${renderMetric("Absorption", absorption)}

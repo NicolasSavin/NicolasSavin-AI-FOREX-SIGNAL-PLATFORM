@@ -19,7 +19,20 @@
     return `${Math.floor(hours / 24)} дн назад`;
   }
 
-  function renderAiStatus(root, status) {
+  function normalizeOrderflowSource(payload) {
+    const idea = Array.isArray(payload?.ideas) ? payload.ideas.find((item) => item && typeof item === "object") : (Array.isArray(payload) ? payload.find((item) => item && typeof item === "object") : payload);
+    const label = idea?.data_source_label || idea?.orderflow_source_label || "Unknown Source";
+    const raw = String(idea?.data_source || idea?.orderflow_provider || label || "").toLowerCase();
+    const status = String(idea?.data_source_status || idea?.orderflow_status || "").toLowerCase();
+    const unavailable = status.includes("unavailable") || status.includes("offline") || raw === "unavailable";
+    if (/databento|cme/.test(raw) || /databento|cme/i.test(label)) return { icon: "🟢", label: label === "Unknown Source" ? "Databento CME" : label };
+    if (/mt4|bridge|broker/.test(raw) || /mt4|bridge/i.test(label)) return { icon: "🟡", label: label === "Unknown Source" ? "MT4 Bridge" : label };
+    if (/cache|histor/.test(raw) || /cache|histor/i.test(label)) return { icon: "🟠", label: label === "Unknown Source" ? "Cache" : label };
+    if (unavailable) return { icon: "🔴", label: label === "Unknown Source" ? "Offline" : label };
+    return { icon: "⚪", label };
+  }
+
+  function renderAiStatus(root, status, orderflowSource) {
     const active = Boolean(status?.llm_available);
     const error = status?.last_error || (!status?.api_key_configured ? "OPENROUTER_API_KEY не настроен" : "LLM недоступна");
     root.classList.toggle("ai-status-card--active", active);
@@ -36,6 +49,7 @@
         <span>Provider: <b>${escapeHtml(status?.provider || PROVIDER_LABEL)}</b></span>
         <span>Model: <b>${escapeHtml(MODEL_LABEL)}</b></span>
         <span>${active ? "Last Success" : "Last Error"}: <b>${active ? escapeHtml(timeAgo(status?.last_success_time)) : escapeHtml(error)}</b></span>
+        <span>OrderFlow: <b>${escapeHtml(orderflowSource ? `${orderflowSource.icon} ${orderflowSource.label}` : "Unknown Source")}</b></span>
       </div>
     `;
   }
@@ -47,9 +61,14 @@
       const response = await fetch("/api/ai/status", { cache: "no-store" });
       if (!response.ok) throw new Error(`status_${response.status}`);
       const status = await response.json();
-      roots.forEach((root) => renderAiStatus(root, status));
+      let orderflowSource = null;
+      try {
+        const ideasResponse = await fetch("/api/ideas/market", { cache: "no-store" });
+        if (ideasResponse.ok) orderflowSource = normalizeOrderflowSource(await ideasResponse.json());
+      } catch (_) {}
+      roots.forEach((root) => renderAiStatus(root, status, orderflowSource));
     } catch (error) {
-      roots.forEach((root) => renderAiStatus(root, { llm_available: false, provider: PROVIDER_LABEL, last_error: error.message }));
+      roots.forEach((root) => renderAiStatus(root, { llm_available: false, provider: PROVIDER_LABEL, last_error: error.message }, null));
     }
   }
 

@@ -9,6 +9,15 @@ from app.core.env import get_env
 
 logger = logging.getLogger(__name__)
 
+ORDERFLOW_METADATA_FIELDS = (
+    "data_source",
+    "data_source_label",
+    "data_source_quality",
+    "data_source_status",
+    "data_source_age_seconds",
+    "data_source_reason",
+)
+
 ORDERFLOW_FIELDS = (
     "delta",
     "cumdelta",
@@ -32,6 +41,12 @@ UNAVAILABLE_SNAPSHOT: dict[str, Any] = {
     "orderflow_available": False,
     "orderflow_provider": "unavailable",
     "orderflow_status": "engine_unavailable",
+    "data_source": None,
+    "data_source_label": "Unknown Source",
+    "data_source_quality": None,
+    "data_source_status": "unavailable",
+    "data_source_age_seconds": None,
+    "data_source_reason": "OrderFlow Engine unavailable",
     **{field: None for field in ORDERFLOW_FIELDS},
 }
 
@@ -67,6 +82,12 @@ def _normalize_snapshot(payload: Any) -> dict[str, Any]:
         "orderflow_provider": source.get("orderflow_provider") or source.get("provider") or "fxpilot_orderflow_engine",
         "orderflow_status": source.get("orderflow_status") or source.get("status") or ("ok" if available else "engine_unavailable"),
     }
+    for field in ORDERFLOW_METADATA_FIELDS:
+        normalized[field] = source.get(field)
+    if not normalized.get("data_source_label"):
+        normalized["data_source_label"] = "Unknown Source"
+    if not normalized.get("data_source_status"):
+        normalized["data_source_status"] = "ok" if available else "unavailable"
     for field in ORDERFLOW_FIELDS:
         normalized[field] = source.get(field)
     return normalized

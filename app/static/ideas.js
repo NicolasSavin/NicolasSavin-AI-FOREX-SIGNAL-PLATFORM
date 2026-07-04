@@ -921,13 +921,57 @@ function getAiSourceMeta(idea) {
 }
 
 
+function normalizeOrderflowSource(idea) {
+  const raw = String(idea?.data_source || idea?.orderflow_data_source || idea?.orderflow_provider || "").toLowerCase();
+  const label = firstText(idea?.data_source_label, idea?.orderflow_source_label) || "Unknown Source";
+  const status = String(idea?.data_source_status || idea?.orderflow_status || "").toLowerCase();
+  const unavailable = status.includes("unavailable") || status.includes("offline") || raw === "unavailable" || raw === "offline";
+  let kind = "unknown";
+  if (/databento|cme/.test(raw) || /databento|cme/i.test(label)) kind = "databento";
+  else if (/mt4|bridge|broker/.test(raw) || /mt4|bridge/i.test(label)) kind = "mt4";
+  else if (/cache|histor/.test(raw) || /cache|histor/i.test(label)) kind = "cache";
+  else if (unavailable) kind = "unavailable";
+  const meta = {
+    databento: { icon: "🟢", label: label === "Unknown Source" ? "Databento CME" : label, compact: "Databento", descriptor: "CME Order Flow" },
+    mt4: { icon: "🟡", label: label === "Unknown Source" ? "MT4 Bridge" : label, compact: "MT4", descriptor: "Live broker ticks" },
+    cache: { icon: "🟠", label: label === "Unknown Source" ? "Historical Cache" : label, compact: "Cache", descriptor: "Historical snapshot" },
+    unavailable: { icon: "🔴", label: label === "Unknown Source" ? "Unavailable" : label, compact: "Offline", descriptor: "Unknown Source" },
+    unknown: { icon: "⚪", label, compact: "Unknown", descriptor: "Unknown Source" },
+  }[kind];
+  const q = Number(idea?.data_source_quality ?? idea?.orderflow_source_quality);
+  const quality = Number.isFinite(q) ? Math.max(1, Math.min(5, Math.round(q))) : 0;
+  return { kind, ...meta, qualityStars: quality ? `${"★".repeat(quality)}${"☆".repeat(5 - quality)}` : "☆☆☆☆☆", age: idea?.data_source_age_seconds ?? idea?.orderflow_source_age_seconds, reason: firstText(idea?.data_source_reason, idea?.orderflow_source_reason) };
+}
+
+function renderOrderflowSourceBadge(idea) {
+  const src = normalizeOrderflowSource(idea);
+  return `${src.icon} ${src.compact}`;
+}
+
+function renderOrderflowSourceHybrid(idea) {
+  const src = normalizeOrderflowSource(idea);
+  return `OrderFlow / ${src.label} / ${src.qualityStars}`;
+}
+
+function renderOrderflowSourceHybridBlock(idea) {
+  const src = normalizeOrderflowSource(idea);
+  return `<section class="institutional-section orderflow-source-compact"><h4>OrderFlow</h4><p>${escapeHtml(src.label)}<br>${escapeHtml(src.qualityStars)}</p></section>`;
+}
+
+function renderOrderflowSourceBlock(idea) {
+  const src = normalizeOrderflowSource(idea);
+  const age = src.age === null || src.age === undefined || src.age === "" ? "—" : `${Math.max(0, Math.round(Number(src.age) || 0))} seconds ago`;
+  const reason = src.kind === "unavailable" && src.reason ? `<br>Reason: ${escapeHtml(src.reason)}` : "";
+  return `<section class="institutional-section orderflow-source-block"><h4>OrderFlow Source</h4><p><strong>${escapeHtml(`${src.icon} ${src.label}`)}</strong><br>${escapeHtml(src.descriptor)}<br>Quality: ${escapeHtml(src.qualityStars)}<br>Last update: ${escapeHtml(age)}${reason}</p></section>`;
+}
+
 function isOrderflowAvailable(idea) {
   const vd = resolveVolumeDelta(idea);
   return Boolean(idea.orderflow_available ?? idea.prop_signal_score?.orderflow_available ?? (vd.source && vd.source !== "unavailable" && (vd.delta !== undefined || vd.cumdelta !== undefined)));
 }
 
 function renderOrderflowStatusLine(idea) {
-  return `Order Flow: ${isOrderflowAvailable(idea) ? "доступен" : "недоступен"}`;
+  return `Order Flow: ${isOrderflowAvailable(idea) ? "доступен" : "недоступен"} · ${renderOrderflowSourceBadge(idea)}`;
 }
 
 function renderOrderflowUnavailable(mode) {
@@ -936,11 +980,12 @@ function renderOrderflowUnavailable(mode) {
 
 function renderOrderflowEngineBlock(idea) {
   if (!isOrderflowAvailable(idea)) {
-    return `<section class="institutional-section"><h4>2. Order Flow Engine</h4><p>Order Flow Engine недоступен. Слой временно не участвует в оценке.</p></section>`;
+    return `${renderOrderflowSourceBlock(idea)}<section class="institutional-section"><h4>2. Order Flow Engine</h4><p>Order Flow Engine недоступен. Слой временно не участвует в оценке.</p></section>`;
   }
   const rows = [
     ["Provider", idea.orderflow_provider],
     ["Status", idea.orderflow_status],
+    ["Source Detail", normalizeOrderflowSource(idea).descriptor],
     ["Delta", idea.delta],
     ["CumDelta", idea.cumdelta],
     ["Volume", idea.volume],
@@ -958,7 +1003,7 @@ function renderOrderflowEngineBlock(idea) {
     ["Continuation Probability", idea.continuation_probability],
     ["Reversal Probability", idea.reversal_probability],
   ];
-  return `<section class="institutional-section"><h4>2. Order Flow Engine</h4><p>${rows.map(([label, value]) => `${escapeHtml(label)}: ${escapeHtml(formatListValue(value))}`).join("<br>")}</p></section>`;
+  return `${renderOrderflowSourceBlock(idea)}<section class="institutional-section"><h4>2. Order Flow Engine</h4><p>${rows.map(([label, value]) => `${escapeHtml(label)}: ${escapeHtml(formatListValue(value))}`).join("<br>")}</p></section>`;
 }
 
 function renderScoreDebug(idea) {
@@ -1036,11 +1081,12 @@ function renderHybridCardBody(idea) {
     ["Heatmap", idea.heatmap_available ? firstText(idea.heatmap_bias, idea.heatmap_reason_ru) : "Источник данных недоступен."],
     ["Новости", resolveNewsContext(idea)],
     ["Исполнение", firstText(idea.execution_quality, idea.killzone_status, idea.session) || "Слой временно не участвует в оценке."],
-    ["Order Flow", renderOrderflowStatusLine(idea)],
+    ["Order Flow", renderOrderflowSourceHybrid(idea)],
   ];
   return `<div class="analysis-card-body analysis-card-hybrid">
     <div class="compact-levels"><div><span>Уверенность идеи</span><strong>${escapeHtml(renderIdeaConfidence(idea))}</strong></div>${getTradeLevels(idea).map(([l,v])=>renderField(l, formatNumber(v))).join("")}</div>
     <section class="institutional-section"><h4>Что говорит рынок</h4><p>${escapeHtml(resolveMarketSummary(idea))}</p></section>
+    ${renderOrderflowSourceHybridBlock(idea)}
     <div class="factor-grid">${factors.map(([label,status]) => `<div class="factor-item factor-${status.replaceAll(" ", "-")}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(status)}</strong></div>`).join("")}</div>
     <details class="analysis-details"><summary>Почему ИИ так считает</summary><div class="criteria-grid">${why.map(([l,v])=>`<div class="criterion"><strong>${escapeHtml(l)}</strong><br>${escapeHtml(uiText(v, "Слой временно не участвует в оценке."))}</div>`).join("")}</div></details>
     <details class="analysis-details"><summary>Возможные риски</summary><div class="risk-list">${risks.length ? risks.map((r)=>`<div class="blocker">${escapeHtml(r)}</div>`).join("") : `<p class="modal-text">Критичных рисков не обнаружено.</p>`}</div></details>
