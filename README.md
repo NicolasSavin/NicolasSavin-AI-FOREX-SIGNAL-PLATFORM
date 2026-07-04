@@ -447,3 +447,15 @@ Backend сохраняет реальный уровень индикатора 
 - Debug endpoint `GET /api/ai/test` отправляет короткий запрос `Reply with OK` в текущую модель OpenRouter и возвращает `success`, `provider`, `model`, `response`, `latency_ms` и, при ошибке, текст причины.
 - При старте FastAPI выполняется неблокирующий health-check OpenRouter. Если ключ отсутствует или провайдер недоступен, приложение не падает: причина сохраняется в runtime status, а существующая fallback-логика продолжает работать.
 - Каждый интегрированный LLM-вызов логирует модель, время запроса, latency, успех или ошибку. UI на главной странице и `/ideas` показывает блок `AI Status`, а карточки идей отображают источник: `Grok`, `Fallback Engine` или `Rule Engine`.
+
+## FXPilot Orderflow Engine
+
+Добавлена отдельная модульная заготовка `fxpilot-orderflow-engine/` для будущего orderflow-движка:
+
+- `app/` — модели и сервисный слой;
+- `providers/databento/` — Databento provider skeleton без synthetic fallback;
+- `calculators/` — расчёт delta/imbalance bias;
+- `api/` — router `/api/orderflow/{symbol}`;
+- `config/`, `tests/`, `docker/`, `docs/` — настройки, тесты, контейнерная и документационная база.
+
+Важно: если реальные Databento данные недоступны, модуль возвращает `data_status=unavailable` и не формирует торговый сигнал по выдуманным значениям.
