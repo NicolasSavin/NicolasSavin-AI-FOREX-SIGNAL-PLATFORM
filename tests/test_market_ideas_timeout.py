@@ -54,3 +54,39 @@ def test_json_render_enrichment_never_calls_external_llm(monkeypatch) -> None:
 
     assert enriched["narrative_source"] == "local_safe"
     assert enriched["unified_narrative"]
+
+
+def test_build_market_attaches_orderflow_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("ORDERFLOW_ENGINE_ENABLED", "true")
+    monkeypatch.setattr(main, "generate_trade_ideas", lambda: ([{"symbol": "EURUSD", "signal": "WAIT", "confidence": 50}], []))
+    monkeypatch.setattr(main, "enrich_ideas_with_prop_scores", lambda ideas: ideas)
+    monkeypatch.setattr(main, "_attach_mt4_optionsfx_display_many", lambda ideas: ideas)
+    monkeypatch.setattr(main, "apply_idea_lifecycle", lambda ideas: {"ideas": ideas, "archive": [], "statistics": {"total": len(ideas)}})
+    monkeypatch.setattr(main, "_apply_prop_desk_execution", lambda ideas, archive=None: ideas)
+    monkeypatch.setattr(main, "enrich_ideas_with_news_calendar", lambda ideas: ideas)
+    monkeypatch.setattr(main, "get_orderflow_snapshot", lambda symbol: {"orderflow_available": True, "orderflow_provider": "fxpilot", "delta": 11})
+
+    payload = main.build_market()
+
+    assert payload["ideas"][0]["orderflow_available"] is True
+    assert payload["ideas"][0]["orderflow_provider"] == "fxpilot"
+    assert payload["ideas"][0]["delta"] == 11
+    assert payload["ideas"][0]["signal"] == "WAIT"
+
+
+def test_build_market_marks_orderflow_disabled_without_engine_call(monkeypatch) -> None:
+    monkeypatch.setenv("ORDERFLOW_ENGINE_ENABLED", "false")
+    monkeypatch.setattr(main, "generate_trade_ideas", lambda: ([{"symbol": "EURUSD", "signal": "BUY", "confidence": 60}], []))
+    monkeypatch.setattr(main, "enrich_ideas_with_prop_scores", lambda ideas: ideas)
+    monkeypatch.setattr(main, "_attach_mt4_optionsfx_display_many", lambda ideas: ideas)
+    monkeypatch.setattr(main, "apply_idea_lifecycle", lambda ideas: {"ideas": ideas, "archive": [], "statistics": {"total": len(ideas)}})
+    monkeypatch.setattr(main, "_apply_prop_desk_execution", lambda ideas, archive=None: ideas)
+    monkeypatch.setattr(main, "enrich_ideas_with_news_calendar", lambda ideas: ideas)
+    monkeypatch.setattr(main, "get_orderflow_snapshot", lambda symbol: (_ for _ in ()).throw(AssertionError("engine call")))
+
+    payload = main.build_market()
+
+    assert payload["ideas"][0]["orderflow_available"] is False
+    assert payload["ideas"][0]["orderflow_provider"] == "unavailable"
+    assert payload["ideas"][0]["orderflow_status"] == "engine_disabled"
+    assert payload["ideas"][0]["signal"] == "BUY"
