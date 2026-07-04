@@ -37,6 +37,12 @@ def test_get_orderflow_snapshot_uses_engine_url_symbol_and_timeout(monkeypatch) 
                 "exhaustion": False,
                 "market_state": "trend",
                 "orderflow_bias": "bullish",
+                "data_source": "databento",
+                "data_source_label": "Databento CME",
+                "data_source_quality": 5,
+                "data_source_status": "ok",
+                "data_source_age_seconds": 3,
+                "data_source_reason": None,
                 "continuation_probability": 62,
                 "reversal_probability": 28,
             }
@@ -62,6 +68,10 @@ def test_get_orderflow_snapshot_uses_engine_url_symbol_and_timeout(monkeypatch) 
     assert snapshot["imbalance"] == "buy"
     assert snapshot["exhaustion"] is False
     assert snapshot["orderflow_bias"] == "bullish"
+    assert snapshot["data_source"] == "databento"
+    assert snapshot["data_source_label"] == "Databento CME"
+    assert snapshot["data_source_quality"] == 5
+    assert snapshot["data_source_age_seconds"] == 3
 
 
 def test_get_orderflow_snapshot_returns_unavailable_on_error(monkeypatch) -> None:
@@ -75,4 +85,6 @@ def test_get_orderflow_snapshot_returns_unavailable_on_error(monkeypatch) -> Non
     assert snapshot["orderflow_available"] is False
     assert snapshot["orderflow_provider"] == "unavailable"
     assert snapshot["orderflow_status"] == "engine_unavailable"
+    assert snapshot["data_source_label"] == "Unknown Source"
+    assert snapshot["data_source_status"] == "unavailable"
     assert snapshot["delta"] is None
