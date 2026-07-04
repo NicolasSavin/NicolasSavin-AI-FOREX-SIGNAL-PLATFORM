@@ -927,7 +927,30 @@ function isOrderflowAvailable(idea) {
 }
 
 function renderOrderflowUnavailable(mode) {
-  return `<section class="institutional-section"><h4>OrderFlow</h4><p>${mode === "ai" ? "Объёмный слой временно не участвует в оценке" : "Order Flow provider недоступен"}</p></section>`;
+  return `<section class="institutional-section"><h4>Order Flow Engine</h4><p>${mode === "ai" ? "Объёмный слой временно не участвует в оценке" : "Order Flow Engine недоступен. Слой временно не участвует в оценке."}</p></section>`;
+}
+
+function renderOrderflowEngineBlock(idea) {
+  if (!isOrderflowAvailable(idea)) {
+    return `<section class="institutional-section"><h4>2. Order Flow Engine</h4><p>Order Flow Engine недоступен. Слой временно не участвует в оценке.</p></section>`;
+  }
+  const rows = [
+    ["Provider", idea.orderflow_provider],
+    ["Status", idea.orderflow_status],
+    ["Delta", idea.delta],
+    ["CumDelta", idea.cumdelta],
+    ["POC", idea.poc],
+    ["VAH / VAL", `${uiText(idea.vah)} / ${uiText(idea.val)}`],
+    ["VWAP", idea.vwap],
+    ["RVOL", idea.rvol],
+    ["DOM Pressure", idea.dom_pressure],
+    ["Absorption", idea.absorption],
+    ["Market State", idea.market_state],
+    ["Orderflow Bias", idea.orderflow_bias],
+    ["Continuation Probability", idea.continuation_probability],
+    ["Reversal Probability", idea.reversal_probability],
+  ];
+  return `<section class="institutional-section"><h4>2. Order Flow Engine</h4><p>${rows.map(([label, value]) => `${escapeHtml(label)}: ${escapeHtml(formatListValue(value))}`).join("<br>")}</p></section>`;
 }
 
 function renderScoreDebug(idea) {
@@ -1016,12 +1039,12 @@ function renderHybridCardBody(idea) {
 }
 
 function renderExpertCardBody(idea) {
-  const vd = resolveVolumeDelta(idea), hft = resolveHftLayer(idea), opt = normalizeOptionsLayer(idea), dpoc = resolveDpoc(idea);
+  const hft = resolveHftLayer(idea), opt = normalizeOptionsLayer(idea);
   return `<div class="analysis-card-body analysis-card-expert">
     <div class="compact-levels"><div><span>Уверенность идеи</span><strong>${escapeHtml(renderIdeaConfidence(idea))}</strong></div>${getTradeLevels(idea).map(([l,v])=>renderField(l, formatNumber(v))).join("")}</div>
     <div class="institutional-sections">
       <section class="institutional-section"><h4>1. Структура рынка</h4><p>Trend: ${escapeHtml(uiText(idea.trend || idea.market_structure?.trend_regime))}<br>BOS: ${escapeHtml(uiText(idea.market_structure?.bos))}<br>CHoCH: ${escapeHtml(uiText(idea.choch || idea.market_structure?.choch))}<br>FVG: ${escapeHtml(uiText(idea.fvg?.type || idea.selected_zone_type))}<br>Liquidity: ${escapeHtml(uiText(idea.liquidity?.sweep || idea.selected_zone_type))}<br>HTF bias: ${escapeHtml(uiText(idea.htf_bias || idea.market_structure?.htf_bias))}</p></section>
-      <section class="institutional-section"><h4>2. Order Flow</h4><p>${isOrderflowAvailable(idea) ? `Delta: ${escapeHtml(formatNumber(vd.delta))}<br>CumDelta: ${escapeHtml(formatNumber(vd.cumdelta))}<br>DPOC / POC: ${escapeHtml(dpoc.price)}<br>Distance to POC: ${escapeHtml(dpoc.distance)}<br>RVOL: ${escapeHtml(formatNumber(idea.rvol))}<br>VWAP: ${escapeHtml(formatNumber(idea.vwap))}<br>VAH / VAL: ${escapeHtml(uiText(idea.vah))} / ${escapeHtml(uiText(idea.val))}<br>DOM / imbalance: ${escapeHtml(uiText(idea.dom_bias || idea.imbalance))}` : "Order Flow provider недоступен. Слой временно не участвует в оценке."}</p></section>
+      ${renderOrderflowEngineBlock(idea)}
       <section class="institutional-section"><h4>3. Опционы</h4><p>Options source: ${escapeHtml(uiText(opt.options_source, "Источник данных недоступен."))}<br>Bias: ${escapeHtml(uiText(opt.options_bias))}<br>Key strikes: ${escapeHtml(formatListValue(opt.key_strikes))}<br>Max Pain: ${escapeHtml(formatListValue(opt.max_pain))}<br>Call Wall: ${escapeHtml(formatListValue(opt.call_walls))}<br>Put Wall: ${escapeHtml(formatListValue(opt.put_walls))}<br>Pin Risk: ${escapeHtml(formatListValue(opt.pinning_risk))}<br>Range Risk: ${escapeHtml(formatListValue(opt.range_risk))}<br>Summary: ${escapeHtml(uiText(opt.summary_text))}</p></section>
       <section class="institutional-section"><h4>4. Heatmap / DOM</h4><p>Wall Above: ${escapeHtml(uiText(idea.heatmap_wall_above))}<br>Wall Below: ${escapeHtml(uiText(idea.heatmap_wall_below))}<br>Sizes: ${escapeHtml(uiText(idea.heatmap_sizes || idea.wall_sizes))}<br>Bias: ${escapeHtml(uiText(idea.heatmap_bias))}<br>Source: ${escapeHtml(uiText(idea.heatmap_source || idea.dom_source, "Источник данных недоступен."))}</p></section>
       <section class="institutional-section"><h4>5. HFT</h4><p>available: ${hft.available ? "доступен" : "недоступен"}<br>type: ${escapeHtml(uiText(idea.hft_type || hft.bias))}<br>side: ${escapeHtml(uiText(hft.side))}<br>price: ${escapeHtml(formatNumber(hft.price))}<br>summary: ${escapeHtml(uiText(hft.summary))}</p></section>

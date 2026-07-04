@@ -13,6 +13,11 @@ from fastapi import APIRouter, Body
 from app.signal_aggregator import SignalAggregator
 from app.services.market_structure_overlay import attach_market_structure_overlays
 from app.services.mt4_options_bridge import get_latest_options_levels
+from app.services.orderflow_client import (
+    UNAVAILABLE_SNAPSHOT,
+    get_orderflow_snapshot,
+    is_orderflow_engine_enabled,
+)
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.prop_desk_filters import PropDeskFilterService
 from app.services.signal_hub import DEFAULT_PAIRS
@@ -164,6 +169,25 @@ def _attach_mt4_optionsfx_to_ideas(ideas: Any) -> list[dict]:
     if not isinstance(ideas, list):
         return []
     return [_attach_mt4_optionsfx_to_idea(idea) for idea in ideas if isinstance(idea, dict)]
+
+
+def _attach_orderflow_snapshot_to_idea(idea: dict) -> dict:
+    if not isinstance(idea, dict):
+        return idea
+    enriched = dict(idea)
+    symbol = str(enriched.get("symbol") or enriched.get("pair") or enriched.get("instrument") or "").upper().strip()
+    snapshot = get_orderflow_snapshot(symbol) if is_orderflow_engine_enabled() else {
+        **UNAVAILABLE_SNAPSHOT,
+        "orderflow_status": "engine_disabled",
+    }
+    enriched.update(snapshot)
+    return enriched
+
+
+def _attach_orderflow_snapshots_to_ideas(ideas: Any) -> list[dict]:
+    if not isinstance(ideas, list):
+        return []
+    return [_attach_orderflow_snapshot_to_idea(idea) for idea in ideas if isinstance(idea, dict)]
 
 
 @dataclass
@@ -348,6 +372,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
             payload["archive"] = _attach_mt4_optionsfx_to_ideas(SignalAggregator.enrich_many(attach_market_structure_overlays(payload.get("archive") or [])))
             payload["ideas"] = _apply_prop_desk_filters(payload.get("ideas") or [], archive=payload.get("archive") or [])
             payload["ideas"] = _ensure_idea_response_diagnostics(enrich_ideas_with_news_calendar(payload.get("ideas") or []))
+            payload["ideas"] = _attach_orderflow_snapshots_to_ideas(payload.get("ideas") or [])
             _log_ideas_pipeline_sources(payload.get("ideas"), stage="api_response")
             for idea in payload["ideas"]:
                 if not str(
@@ -366,7 +391,7 @@ def build_ideas_router(services: IdeasRouteServices) -> APIRouter:
                 SignalAggregator.enrich_many(attach_market_structure_overlays(_safe_fallback_ideas(reason=fallback_reason)))
             )
             return _localize_output_layer({
-                "ideas": _ensure_idea_response_diagnostics(enrich_ideas_with_news_calendar(fallback_ideas)),
+                "ideas": _attach_orderflow_snapshots_to_ideas(_ensure_idea_response_diagnostics(enrich_ideas_with_news_calendar(fallback_ideas))),
                 "archive": [],
                 "market": _safe_market_contracts(list(DEFAULT_PAIRS)),
                 "ok": False,
