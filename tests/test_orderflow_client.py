@@ -25,13 +25,16 @@ def test_get_orderflow_snapshot_uses_engine_url_symbol_and_timeout(monkeypatch) 
                 "available": True,
                 "delta": 12,
                 "cumdelta": 34,
+                "volume": 1200,
                 "poc": 1.085,
                 "vah": 1.087,
                 "val": 1.083,
                 "vwap": 1.086,
                 "rvol": 1.4,
                 "dom_pressure": "buy",
+                "imbalance": "buy",
                 "absorption": "none",
+                "exhaustion": False,
                 "market_state": "trend",
                 "orderflow_bias": "bullish",
                 "continuation_probability": 62,
@@ -39,7 +42,8 @@ def test_get_orderflow_snapshot_uses_engine_url_symbol_and_timeout(monkeypatch) 
             }
         )
 
-    monkeypatch.setenv("ORDERFLOW_ENGINE_URL", "http://engine.local/")
+    monkeypatch.setenv("ORDERFLOW_URL", "http://engine.local/")
+    monkeypatch.setenv("ORDERFLOW_TIMEOUT_SECONDS", "2")
     monkeypatch.setattr(orderflow_client.requests, "get", fake_get)
 
     snapshot = orderflow_client.get_orderflow_snapshot("eurusd")
@@ -54,6 +58,9 @@ def test_get_orderflow_snapshot_uses_engine_url_symbol_and_timeout(monkeypatch) 
     assert snapshot["orderflow_available"] is True
     assert snapshot["orderflow_provider"] == "fxpilot"
     assert snapshot["delta"] == 12
+    assert snapshot["volume"] == 1200
+    assert snapshot["imbalance"] == "buy"
+    assert snapshot["exhaustion"] is False
     assert snapshot["orderflow_bias"] == "bullish"
 
 

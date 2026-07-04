@@ -3,7 +3,7 @@
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
 ## Что обновлено в версии 3.9
-- Добавлен optional provider FXPilot OrderFlow Engine для `/api/ideas/market`: при `ORDERFLOW_ENGINE_ENABLED=true` backend запрашивает `ORDERFLOW_ENGINE_URL/api/orderflow/latest?symbol=...` с timeout 2 секунды и отдаёт отдельные поля отображения Order Flow без изменения scoring, BUY/SELL-логики, MT4 bridge и советника.
+- Добавлен optional provider FXPilot OrderFlow Engine для `/api/ideas/market`: при `ORDERFLOW_ENABLED=true` backend запрашивает `ORDERFLOW_URL/api/orderflow/latest?symbol=...` с timeout 2 секунды и отдаёт отдельные поля отображения Order Flow без изменения scoring, BUY/SELL-логики, MT4 bridge и советника.
 - Интегрирован HFT Stop Hunt layer в `/api/ideas` и `/ideas/market`: поля MT4 Bridge v4 `hft_object_available`, `hft_point_type`, `hft_point_side`, `hft_point_price` теперь формируют `hft_layer`, расстояние до точки, bias, strength и ограниченную корректировку Score ±8 без создания самостоятельного сигнала.
 - HFT-диагностика добавлена в `learning_snapshot`, `advisor_filter_debug` и карточку `/ideas`; старые слои MZ, Heatmap, DPOC, CumDelta, Future Volume/Delta, Options, News/Fundamental и Lifecycle сохранены.
 - Добавлен prop-desk execution layer для `/api/ideas/market` и `/api/ideas` без удаления legacy MT4-полей: killzone, ATR(14), RVOL, VWAP, news lock, correlation risk, cooldown after losses, dynamic risk и market regime.

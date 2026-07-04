@@ -1074,7 +1074,7 @@ def _attach_orderflow_snapshot(signal: dict[str, Any]) -> dict[str, Any]:
         if is_orderflow_engine_enabled()
         else {**UNAVAILABLE_SNAPSHOT, "orderflow_status": "engine_disabled"}
     )
-    normalized.update(snapshot)
+    normalized.update({**UNAVAILABLE_SNAPSHOT, **snapshot})
     return normalized
 
 

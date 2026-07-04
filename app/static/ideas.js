@@ -926,6 +926,10 @@ function isOrderflowAvailable(idea) {
   return Boolean(idea.orderflow_available ?? idea.prop_signal_score?.orderflow_available ?? (vd.source && vd.source !== "unavailable" && (vd.delta !== undefined || vd.cumdelta !== undefined)));
 }
 
+function renderOrderflowStatusLine(idea) {
+  return `Order Flow: ${isOrderflowAvailable(idea) ? "доступен" : "недоступен"}`;
+}
+
 function renderOrderflowUnavailable(mode) {
   return `<section class="institutional-section"><h4>Order Flow Engine</h4><p>${mode === "ai" ? "Объёмный слой временно не участвует в оценке" : "Order Flow Engine недоступен. Слой временно не участвует в оценке."}</p></section>`;
 }
@@ -939,14 +943,18 @@ function renderOrderflowEngineBlock(idea) {
     ["Status", idea.orderflow_status],
     ["Delta", idea.delta],
     ["CumDelta", idea.cumdelta],
-    ["POC", idea.poc],
-    ["VAH / VAL", `${uiText(idea.vah)} / ${uiText(idea.val)}`],
-    ["VWAP", idea.vwap],
+    ["Volume", idea.volume],
     ["RVOL", idea.rvol],
+    ["VWAP", idea.vwap],
+    ["POC", idea.poc],
+    ["VAH", idea.vah],
+    ["VAL", idea.val],
     ["DOM Pressure", idea.dom_pressure],
+    ["Imbalance", idea.imbalance],
     ["Absorption", idea.absorption],
+    ["Exhaustion", idea.exhaustion],
     ["Market State", idea.market_state],
-    ["Orderflow Bias", idea.orderflow_bias],
+    ["Bias", idea.orderflow_bias],
     ["Continuation Probability", idea.continuation_probability],
     ["Reversal Probability", idea.reversal_probability],
   ];
@@ -1013,6 +1021,7 @@ function renderBriefCardBody(idea) {
       ${levels.map(([label, value]) => renderField(label, formatNumber(value))).join("")}
     </div>
     <section class="institutional-section"><h4>Что говорит рынок</h4><p>${escapeHtml(resolveMarketSummary(idea))}</p></section>
+    <section class="institutional-section"><h4>Order Flow</h4><p>${escapeHtml(renderOrderflowStatusLine(idea))}</p></section>
     <section class="institutional-section"><h4>Главный риск</h4><p>${escapeHtml(resolveMainRisk(idea))}</p></section>
   </div>`;
 }
@@ -1027,7 +1036,7 @@ function renderHybridCardBody(idea) {
     ["Heatmap", idea.heatmap_available ? firstText(idea.heatmap_bias, idea.heatmap_reason_ru) : "Источник данных недоступен."],
     ["Новости", resolveNewsContext(idea)],
     ["Исполнение", firstText(idea.execution_quality, idea.killzone_status, idea.session) || "Слой временно не участвует в оценке."],
-    ["Order Flow", isOrderflowAvailable(idea) ? `Delta ${formatNumber(resolveVolumeDelta(idea).delta)}, CumDelta ${formatNumber(resolveVolumeDelta(idea).cumdelta)}` : "Order Flow provider недоступен. Слой временно не участвует в оценке."],
+    ["Order Flow", renderOrderflowStatusLine(idea)],
   ];
   return `<div class="analysis-card-body analysis-card-hybrid">
     <div class="compact-levels"><div><span>Уверенность идеи</span><strong>${escapeHtml(renderIdeaConfidence(idea))}</strong></div>${getTradeLevels(idea).map(([l,v])=>renderField(l, formatNumber(v))).join("")}</div>
