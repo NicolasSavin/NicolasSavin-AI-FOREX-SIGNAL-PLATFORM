@@ -28,6 +28,7 @@ from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
+from app.services.orderflow_client import UNAVAILABLE_SNAPSHOT, get_orderflow_snapshot, is_orderflow_engine_enabled
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.prop_desk_filters import PropDeskFilterService
 from app.services.idea_lifecycle import apply_idea_lifecycle, build_lifecycle_stats, enrich_ideas_with_news_calendar
@@ -1062,6 +1063,24 @@ def generate_trade_ideas() -> tuple[list[dict[str, Any]], list[str]]:
 
 
 
+
+def _attach_orderflow_snapshot(signal: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(signal, dict):
+        return signal
+    normalized = dict(signal)
+    symbol = normalize_symbol(str(normalized.get("symbol") or normalized.get("pair") or normalized.get("instrument") or ""))
+    snapshot = (
+        get_orderflow_snapshot(symbol)
+        if is_orderflow_engine_enabled()
+        else {**UNAVAILABLE_SNAPSHOT, "orderflow_status": "engine_disabled"}
+    )
+    normalized.update(snapshot)
+    return normalized
+
+
+def _attach_orderflow_snapshots(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_attach_orderflow_snapshot(signal) for signal in signals if isinstance(signal, dict)]
+
 def _apply_prop_desk_execution(ideas: list[dict[str, Any]], archive: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     try:
         return PropDeskFilterService(trade_idea_service.chart_data_service).enrich(ideas, archived_ideas=archive or [], news_events=[])
@@ -1078,6 +1097,7 @@ def build_market() -> dict[str, Any]:
             lifecycle = apply_idea_lifecycle(enriched_signals)
             lifecycle["ideas"] = _apply_prop_desk_execution(lifecycle["ideas"], lifecycle.get("archive") or [])
             lifecycle["ideas"] = enrich_ideas_with_news_calendar(lifecycle["ideas"])
+            lifecycle["ideas"] = _attach_orderflow_snapshots(lifecycle["ideas"])
             return {
                 "signals": lifecycle["ideas"],
                 "ideas": lifecycle["ideas"],
