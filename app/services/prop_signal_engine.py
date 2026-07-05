@@ -825,19 +825,48 @@ def _margin_zone_context(idea: dict[str, Any]) -> dict[str, Any]:
     return build_margin_zone_context(None, symbol, current_price, entry_price)
 
 
+def _orderflow_mode_from_idea(idea: dict[str, Any]) -> str:
+    source = str(idea.get("data_source") or idea.get("orderflow_data_source") or "").strip().lower()
+    if source == "databento":
+        return "institutional"
+    if source == "mt4_live":
+        return "proxy"
+    if source == "cache":
+        return "cache"
+    return "unavailable"
+
+
+def _orderflow_mode_explanation(mode: str) -> str:
+    if mode == "institutional":
+        return "OrderFlow работает в institutional-режиме: Databento/CME даёт полноценное подтверждение."
+    if mode == "proxy":
+        return "OrderFlow работает в MT4 proxy-режиме: используются live ticks брокера, без полноценного CME DOM."
+    if mode == "cache":
+        return "OrderFlow работает из cache: это контекст, а не свежий сигнал входа."
+    return "OrderFlow недоступен: подтверждающий слой не участвует в оценке."
+
+
 def _volume_delta_context(idea: dict[str, Any], direction: str) -> dict[str, Any]:
     candles = _candles(idea)
     symbol = _normalize_symbol(idea.get("symbol") or idea.get("pair") or idea.get("instrument"))
     timeframe = str(idea.get("timeframe") or idea.get("tf") or "").upper().strip() or None
+    orderflow_mode = _orderflow_mode_from_idea(idea)
     volume_delta = _extract_volume_delta_from_payload(idea)
     if volume_delta is None:
         volume_delta = _extract_volume_delta_from_payload(idea.get("analysis") if isinstance(idea.get("analysis"), dict) else None)
     if volume_delta is None and symbol:
         volume_delta = _extract_volume_delta_from_payload(get_latest_volume_cluster(symbol, timeframe))
+    if volume_delta is not None and orderflow_mode == "unavailable":
+        source_name = str(volume_delta.get("source") or "").strip().lower()
+        if source_name == "futuredelta":
+            orderflow_mode = "institutional"
+        elif source_name in {"futurevolume", "tickvolume", "mt4", "mt4_live", "broker_ticks"}:
+            orderflow_mode = "proxy"
     if volume_delta is None:
         return {
             "available": False,
             "source": "unavailable",
+            "orderflow_mode": orderflow_mode,
             "delta": None,
             "cumdelta": None,
             "is_proxy": True,
@@ -872,6 +901,11 @@ def _volume_delta_context(idea: dict[str, Any], direction: str) -> dict[str, Any
         elif direction == "SELL" and price_trend == "rising" and cumdelta_trend == "rising":
             adjustment = -3
 
+    if confirmed:
+        adjustment = {"institutional": 5, "proxy": 3, "cache": 1}.get(orderflow_mode, 0)
+    elif divergence and orderflow_mode in {"proxy", "cache"}:
+        adjustment = max(adjustment, -2 if orderflow_mode == "proxy" else 0)
+
     source_label = volume_delta.get("source") or "unavailable"
     proxy_label = "proxy" if volume_delta.get("is_proxy") else "real"
     text = (
@@ -879,12 +913,17 @@ def _volume_delta_context(idea: dict[str, Any], direction: str) -> dict[str, Any
         f"delta={volume_delta.get('delta')}, cumdelta={volume_delta.get('cumdelta')}, "
         f"price={price_trend}, cumdelta_trend={cumdelta_trend}"
     )
+    text += f"; orderflow_mode={orderflow_mode}"
+    if orderflow_mode == "proxy":
+        text += "; MT4 proxy: DOM pressure/absorption/imbalance/iceberg footprint не дают institutional boost"
     if divergence:
         text += "; delta_divergence=true"
     elif confirmed:
         text += "; delta подтверждает направление"
     return {
         **volume_delta,
+        "orderflow_mode": orderflow_mode,
+        "orderflow_mode_explanation": _orderflow_mode_explanation(orderflow_mode),
         "price_delta": price_delta,
         "price_trend": price_trend,
         "cumdelta_trend": cumdelta_trend,
@@ -1302,10 +1341,11 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     hft_layer = _hft_layer_context(safe_idea, direction)
     volume_delta_source = volume_delta.get("source")
     hft_signal = volume_delta.get("hft_signal") or _hft_signal_context(safe_idea).get("hft_signal")
-    orderflow_available = bool(volume_delta.get("available"))
+    orderflow_mode = str(volume_delta.get("orderflow_mode") or _orderflow_mode_from_idea(safe_idea))
+    orderflow_available = bool(volume_delta.get("available")) and orderflow_mode != "unavailable"
     orderflow_adjustment = int(volume_delta.get("score_adjustment") or 0) if orderflow_available else 0
     score = max(0, min(100, base_score + int(external_options.get("score_adjustment") or 0) + orderflow_adjustment + int(dpoc.get("score_adjustment") or 0) + int(margin_zone.get("score_adjustment") or 0) + int(max_pain.get("score_adjustment") or 0) + int(heatmap.get("score_adjustment") or 0) + int(hft_layer.get("score_adjustment") or 0)))
-    score_weights = {"market_structure": 25, "liquidity": 20, "options": 20, "heatmap": 15, "news": 10, "hft": 10, "orderflow": 0 if not orderflow_available else 5}
+    score_weights = {"market_structure": 25, "liquidity": 20, "options": 20, "heatmap": 15, "news": 10, "hft": 10, "orderflow": {"institutional": 5, "proxy": 3, "cache": 1}.get(orderflow_mode, 0) if orderflow_available else 0}
     sentiment_conflict = sentiment.get("alignment") == "conflict"
     external_options_high_conflict = bool(external_options.get("alignment") == "conflict" and external_options.get("high_confidence_conflict"))
     external_options_note = ""
@@ -1384,12 +1424,16 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
             "hft_score_adjustment": hft_layer.get("score_adjustment"),
             "score_weights": score_weights,
             "orderflow_available": orderflow_available,
+            "orderflow_mode": orderflow_mode,
+            "orderflow_mode_explanation": volume_delta.get("orderflow_mode_explanation") or _orderflow_mode_explanation(orderflow_mode),
             "options_weight": score_weights["options"],
             "ai_view_mode": "frontend_localStorage",
         },
         "criteria": rows,
         "score_weights": score_weights,
         "orderflow_available": orderflow_available,
+        "orderflow_mode": orderflow_mode,
+        "orderflow_mode_explanation": volume_delta.get("orderflow_mode_explanation") or _orderflow_mode_explanation(orderflow_mode),
         "options_weight": score_weights["options"],
         "ai_view_mode": "frontend_localStorage",
         "blockers": blockers,

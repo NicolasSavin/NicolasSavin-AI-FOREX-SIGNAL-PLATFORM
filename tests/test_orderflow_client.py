@@ -72,6 +72,8 @@ def test_get_orderflow_snapshot_uses_engine_url_symbol_and_timeout(monkeypatch) 
     assert snapshot["data_source_label"] == "Databento CME"
     assert snapshot["data_source_quality"] == 5
     assert snapshot["data_source_age_seconds"] == 3
+    assert snapshot["orderflow_mode"] == "institutional"
+    assert snapshot["orderflow_mode_label"] == "Institutional"
 
 
 def test_get_orderflow_snapshot_returns_unavailable_on_error(monkeypatch) -> None:
@@ -88,3 +90,33 @@ def test_get_orderflow_snapshot_returns_unavailable_on_error(monkeypatch) -> Non
     assert snapshot["data_source_label"] == "Unknown Source"
     assert snapshot["data_source_status"] == "unavailable"
     assert snapshot["delta"] is None
+
+
+def test_mt4_live_snapshot_is_proxy_mode(monkeypatch) -> None:
+    def fake_get(*args, **kwargs):
+        return _Response({
+            "available": True,
+            "data_source": "mt4_live",
+            "data_source_label": "MT4 Live",
+            "data_source_quality": 75,
+            "delta": 10,
+            "cumdelta": 20,
+        })
+
+    monkeypatch.setattr(orderflow_client.requests, "get", fake_get)
+
+    snapshot = orderflow_client.get_orderflow_snapshot("EURUSD")
+
+    assert snapshot["orderflow_available"] is True
+    assert snapshot["orderflow_mode"] == "proxy"
+    assert snapshot["orderflow_mode_label"] == "Proxy"
+    assert "MT4 proxy-режиме" in snapshot["orderflow_mode_explanation"]
+
+
+def test_cache_snapshot_is_cache_mode(monkeypatch) -> None:
+    def fake_get(*args, **kwargs):
+        return _Response({"available": True, "data_source": "cache", "delta": 1, "cumdelta": 2})
+
+    monkeypatch.setattr(orderflow_client.requests, "get", fake_get)
+
+    assert orderflow_client.get_orderflow_snapshot("EURUSD")["orderflow_mode"] == "cache"
