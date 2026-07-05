@@ -40,6 +40,7 @@ from app.services.idea_lifecycle import apply_idea_lifecycle, build_lifecycle_st
 from app.services.signal_audit_logger import log_signal_audit
 from app.services.timing import timing_log
 from app.services.ai_runtime_status import get_ai_status, record_ai_request_failure, record_ai_request_start, record_ai_request_success, run_ai_test_request, startup_ai_healthcheck
+from app.services.visitor_counter import get_visit_stats, increment_visit
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -491,6 +492,20 @@ def stats_page():
 @app.get("/archive", include_in_schema=False)
 def archive_page():
     return FileResponse(STATIC_DIR / "archive.html")
+
+
+@app.get("/api/visits")
+def api_visits(request: Request, response: Response, increment: bool = False) -> dict[str, Any]:
+    if increment and request.cookies.get("fxpilot_visit_counted") != "1":
+        payload = increment_visit()
+        response.set_cookie(
+            "fxpilot_visit_counted",
+            "1",
+            httponly=False,
+            samesite="lax",
+        )
+        return payload
+    return get_visit_stats()
 
 
 @app.get("/api/ai/status")
