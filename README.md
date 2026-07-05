@@ -447,3 +447,9 @@ Backend сохраняет реальный уровень индикатора 
 - Debug endpoint `GET /api/ai/test` отправляет короткий запрос `Reply with OK` в текущую модель OpenRouter и возвращает `success`, `provider`, `model`, `response`, `latency_ms` и, при ошибке, текст причины.
 - При старте FastAPI выполняется неблокирующий health-check OpenRouter. Если ключ отсутствует или провайдер недоступен, приложение не падает: причина сохраняется в runtime status, а существующая fallback-логика продолжает работать.
 - Каждый интегрированный LLM-вызов логирует модель, время запроса, latency, успех или ошибку. UI на главной странице и `/ideas` показывает блок `AI Status`, а карточки идей отображают источник: `Grok`, `Fallback Engine` или `Rule Engine`.
+
+## FXPilot 2.0
+
+FXPilot 2.0 starts with the **FXPilot Intelligence** philosophy: not just signals, but market understanding backed by facts. The homepage now states this direction, and the public navigation includes the new **FXPilot TV** foundation at `/tv`.
+
+FXPilot TV is currently a premium UX/UI foundation only. It intentionally does not implement YouTube ingestion, backend video processing, or AI video analysis yet. The page describes the future roadmap for video cataloging, AI summaries, FXPilot comparison, Reality Check, Trust Score, Market Memory, and AI Mentor.
