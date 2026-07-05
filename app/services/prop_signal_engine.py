@@ -1487,6 +1487,95 @@ def build_prop_signal_score(idea: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _pick_layer_value(*sources: Any, keys: tuple[str, ...]) -> Any:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            current: Any = source
+            for part in key.split("."):
+                if not isinstance(current, dict):
+                    current = None
+                    break
+                current = current.get(part)
+            if current not in (None, "", "—"):
+                return current
+    return None
+
+
+def _fmt_layer_value(value: Any, default: str = "нет данных") -> str:
+    if value in (None, "", "—"):
+        return default
+    if isinstance(value, bool):
+        return "да" if value else "нет"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(_fmt_layer_value(item, default="") for item in value[:6] if item not in (None, "", "—")) or default
+    if isinstance(value, dict):
+        text = _text(value)
+        return text or default
+    return str(value)
+
+
+def _build_institutional_narrative(idea: dict[str, Any], score: dict[str, Any], advisor: dict[str, Any]) -> dict[str, Any]:
+    market_context = idea.get("market_context") if isinstance(idea.get("market_context"), dict) else {}
+    ms = idea.get("market_structure") if isinstance(idea.get("market_structure"), dict) else {}
+    liq = idea.get("liquidity") if isinstance(idea.get("liquidity"), dict) else {}
+    options = idea.get("options_analysis") if isinstance(idea.get("options_analysis"), dict) else {}
+    vd = score.get("volume_delta") if isinstance(score.get("volume_delta"), dict) else {}
+    ext = score.get("external_options_filter") if isinstance(score.get("external_options_filter"), dict) else {}
+    ext_signal = ext.get("signal") if isinstance(ext.get("signal"), dict) else {}
+    geo = score.get("trade_geometry") if isinstance(score.get("trade_geometry"), dict) else {}
+    direction = str(score.get("direction") or idea.get("direction") or "WAIT").upper()
+    allowed = bool(advisor.get("allowed"))
+
+    data_source = _pick_layer_value(idea, market_context, vd, keys=("data_source", "orderflow_data_source", "source")) or "unavailable"
+    orderflow_mode = str(score.get("orderflow_mode") or vd.get("orderflow_mode") or _orderflow_mode_from_idea(idea))
+    ds_note = " Это proxy OrderFlow на live ticks брокера, не полный CME DOM." if str(data_source).lower() == "mt4_live" else ""
+    cont = _pick_layer_value(idea, market_context, keys=("continuation_probability", "continuation_prob")) or (score.get("score") if direction in {"BUY", "SELL"} else None)
+    rev = _pick_layer_value(idea, market_context, keys=("reversal_probability", "reversal_prob"))
+    if rev is None and isinstance(cont, (int, float)):
+        rev = max(0, 100 - int(cont))
+
+    layers = {
+        "orderflow": {
+            "title_ru": "OrderFlow",
+            "available": bool(score.get("orderflow_available")),
+            "summary_ru": f"Источник: {_fmt_layer_value(data_source)} / {_fmt_layer_value(_pick_layer_value(idea, market_context, keys=('data_source_label','orderflow_source_label')))}; quality={_fmt_layer_value(_pick_layer_value(idea, market_context, keys=('data_source_quality','orderflow_source_quality')))}; mode={orderflow_mode}; delta={_fmt_layer_value(vd.get('delta'))}; cumdelta={_fmt_layer_value(vd.get('cumdelta'))}; VWAP={_fmt_layer_value(_pick_layer_value(idea, market_context, keys=('vwap','vwap_price')))}; RVOL={_fmt_layer_value(_pick_layer_value(idea, market_context, keys=('rvol','relative_volume')))}; market_state={_fmt_layer_value(_pick_layer_value(idea, market_context, keys=('market_state','market_regime')))}; bias={_fmt_layer_value(_pick_layer_value(idea, vd, keys=('orderflow_bias','bias')))}; continuation={_fmt_layer_value(cont)}; reversal={_fmt_layer_value(rev)}.{ds_note}",
+        },
+        "options": {
+            "title_ru": "Options",
+            "available": bool(_pick_layer_value(idea, market_context, options, keys=("options_available", "available"))),
+            "summary_ru": f"options_available={_fmt_layer_value(_pick_layer_value(idea, market_context, options, keys=('options_available','available')))}; source={_fmt_layer_value(_pick_layer_value(idea, options, ext, keys=('options_source','source')))}; bias={_fmt_layer_value(_pick_layer_value(idea, options, ext_signal, ext, keys=('options_bias','option_bias','bias')))}; max_pain={_fmt_layer_value(_pick_layer_value(idea, options, ext_signal, keys=('max_pain','maxPain')) or score.get('max_pain_price'))}; call_wall={_fmt_layer_value(_pick_layer_value(idea, options, ext_signal, keys=('call_wall','call_walls','callWall')))}; put_wall={_fmt_layer_value(_pick_layer_value(idea, options, ext_signal, keys=('put_wall','put_walls','putWall')))}; pin_risk={_fmt_layer_value(_pick_layer_value(idea, options, ext_signal, keys=('pin_risk','pinning_risk')))}; gamma/strike={_fmt_layer_value(_pick_layer_value(idea, options, ext_signal, keys=('gamma_context','dealer_gamma','key_strikes','key_levels')))}; external_filter={_fmt_layer_value(ext.get('text_ru'))}; alignment={_fmt_layer_value(score.get('external_options_alignment'))}." + (" Опционные данные недоступны и не считаются подтверждением." if not bool(_pick_layer_value(idea, market_context, options, keys=("options_available", "available"))) else ""),
+        },
+        "structure": {"title_ru": "Structure", "available": bool(ms or _first_text(idea, "trend_regime", "market_structure")), "summary_ru": f"trend_regime={_fmt_layer_value(_pick_layer_value(idea, ms, keys=('trend_regime','trend')))}; market_structure={_fmt_layer_value(ms)}; BOS={_fmt_layer_value(_pick_layer_value(idea, ms, keys=('bos',)))}; CHoCH={_fmt_layer_value(_pick_layer_value(idea, ms, keys=('choch',)))}; swing_high={_fmt_layer_value(_pick_layer_value(idea, ms, keys=('swing_high',)))}; swing_low={_fmt_layer_value(_pick_layer_value(idea, ms, keys=('swing_low',)))}; support/resistance={_fmt_layer_value(_pick_layer_value(idea, ms, keys=('support_resistance','support','resistance','levels')))}; killzone_status={_fmt_layer_value(_pick_layer_value(idea, keys=('killzone_status',)))}."},
+        "liquidity": {"title_ru": "Liquidity", "available": bool(liq or _first_text(idea, "liquidity", "selected_zone_type")), "summary_ru": f"buy_side_liquidity={_fmt_layer_value(_pick_layer_value(idea, liq, keys=('buy_side_liquidity','bsl')))}; sell_side_liquidity={_fmt_layer_value(_pick_layer_value(idea, liq, keys=('sell_side_liquidity','ssl')))}; sweep={_fmt_layer_value(_pick_layer_value(idea, liq, keys=('sweep','liquidity_sweep')))}; stop_hunt={_fmt_layer_value(_pick_layer_value(idea, liq, keys=('stop_hunt',)))}; inducement={_fmt_layer_value(_pick_layer_value(idea, liq, keys=('inducement',)))}; order_blocks={_fmt_layer_value(_pick_layer_value(idea, liq, keys=('order_blocks','order_block')))}; liquidity_score={_fmt_layer_value(_pick_layer_value(idea, liq, keys=('liquidity_score','score')))}."},
+        "news": {"title_ru": "News", "available": bool(_first_text(idea, "sentiment_status", "news_risk", "fundamental_summary_ru", "news_event")), "summary_ru": f"sentiment_status={_fmt_layer_value(_pick_layer_value(idea, keys=('sentiment_status',)))}; news_risk={_fmt_layer_value(_pick_layer_value(idea, keys=('news_risk','news_impact','impact')))}; high_impact_news={_fmt_layer_value(_pick_layer_value(idea, keys=('high_impact_news','news_event')))}; fundamental_status={_fmt_layer_value(_pick_layer_value(idea, keys=('fundamental_status',)))}; summary={_fmt_layer_value(_pick_layer_value(idea, keys=('fundamental_summary_ru','news_summary_ru','summary_ru')))}."},
+        "execution": {"title_ru": "Execution", "available": bool(geo.get("valid_geometry")), "summary_ru": f"spread={_fmt_layer_value(_pick_layer_value(idea, market_context, keys=('spread',)))}; ATR={_fmt_layer_value(_pick_layer_value(idea, market_context, keys=('atr','atr_pips')))}; RR={_fmt_layer_value(geo.get('rr') or idea.get('rr') or idea.get('risk_reward'))}; session={_fmt_layer_value(_pick_layer_value(idea, keys=('session',)))}; killzone={_fmt_layer_value(_pick_layer_value(idea, keys=('killzone','killzone_status')))}; execution_quality={_fmt_layer_value(_pick_layer_value(idea, keys=('execution_quality','execution_score')))}; recommended_risk_percent={_fmt_layer_value(_pick_layer_value(idea, keys=('recommended_risk_percent',)))}; risk_per_trade_pct={_fmt_layer_value(_pick_layer_value(idea, keys=('risk_per_trade_pct',)))}."},
+    }
+    confirmations = [v["title_ru"] for v in layers.values() if v.get("available")]
+    missing_layers = [v["title_ru"] for v in layers.values() if not v.get("available")]
+    warnings = list(score.get("blockers") or [])
+    if not layers["options"]["available"]:
+        warnings.append("Options недоступны: слой не используется как подтверждение.")
+    if str(data_source).lower() == "mt4_live":
+        warnings.append("OrderFlow proxy: MT4 live ticks не являются полным CME DOM.")
+    final = (
+        f"Идея {'разрешена' if allowed else 'заблокирована'}: {advisor.get('reason') or score.get('decision_ru')}. "
+        f"Подтверждают слои: {', '.join(confirmations) if confirmations else 'нет устойчивых подтверждений'}. "
+        f"Нейтральны/отсутствуют: {', '.join(missing_layers) if missing_layers else 'критичных пробелов нет'}. "
+        f"Инвалидация: пробой SL/рабочей зоны или слом локальной структуры против {direction}. "
+        "Уверенность улучшится при согласовании OrderFlow, структуры, ликвидности, новостей и доступного options-контекста."
+    )
+    layers["final_view"] = {"title_ru": "Final view", "available": allowed, "summary_ru": final}
+    return {
+        "institutional_narrative_ru": final,
+        "institutional_layers_summary": layers,
+        "institutional_confirmations": confirmations,
+        "institutional_warnings": warnings,
+        "institutional_missing_layers": missing_layers,
+    }
+
+
 def _advisor_signal_from_idea(idea: dict[str, Any], score: dict[str, Any]) -> dict[str, Any]:
     geo = score.get("trade_geometry") if isinstance(score.get("trade_geometry"), dict) else _trade_geometry(idea)
     action = str(score.get("direction") or _direction(idea)).upper()
@@ -1579,6 +1668,7 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
         score["hft_score_adjustment"] = hft_layer.get("score_adjustment")
         score["hft_debug"] = hft_layer.get("hft_debug")
     advisor_signal = _advisor_signal_from_idea(idea, score)
+    institutional_context = _build_institutional_narrative(idea, score, advisor_signal)
     enriched = dict(idea)
     action = str(advisor_signal.get("action") or score.get("direction") or "WAIT").upper()
     if action in {"BUY", "SELL"}:
@@ -1673,6 +1763,11 @@ def enrich_idea_with_prop_score(idea: dict[str, Any]) -> dict[str, Any]:
             "heatmap_wall_above_size": score.get("heatmap_wall_above_size"),
             "heatmap_wall_below_size": score.get("heatmap_wall_below_size"),
             "heatmap_bias": score.get("heatmap_bias"),
+            "institutional_narrative_ru": institutional_context.get("institutional_narrative_ru"),
+            "institutional_layers_summary": institutional_context.get("institutional_layers_summary"),
+            "institutional_confirmations": institutional_context.get("institutional_confirmations"),
+            "institutional_warnings": institutional_context.get("institutional_warnings"),
+            "institutional_missing_layers": institutional_context.get("institutional_missing_layers"),
         }
     )
     market_structure = dict(enriched.get("market_structure") or {})

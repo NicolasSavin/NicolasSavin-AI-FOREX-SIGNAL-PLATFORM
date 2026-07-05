@@ -722,6 +722,10 @@ function injectUiStyles() {
     .institutional-section { padding:10px; border-radius:14px; border:1px solid rgba(95,156,230,.22); background:rgba(3,14,28,.58); min-width:0; }
     .institutional-section h4 { margin:0 0 6px; color:#b9d6f8; font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
     .institutional-section p { margin:0; color:#e8f3ff; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
+    .institutional-narrative-block { margin-top:12px; padding:12px; border:1px solid rgba(124,184,255,.32); border-radius:18px; background:rgba(2,10,22,.46); }
+    .institutional-narrative-block > h4 { margin:0 0 10px; color:#f4f8ff; font-size:13px; text-transform:uppercase; letter-spacing:.08em; }
+    .institutional-sections--narrative { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .institutional-sections--narrative .institutional-section:last-child { grid-column:1 / -1; }
     .idea-summary-compact { margin-top:12px; color:#dbeeff; font-size:13px; line-height:1.55; max-height:62px; overflow:hidden; }
     .ideas-modal-backdrop { position:fixed; inset:0; z-index:9999; display:none; align-items:center; justify-content:center; padding:20px; background:rgba(0,0,0,.78); backdrop-filter:blur(10px); }
     .ideas-modal-backdrop.open { display:flex; }
@@ -1137,10 +1141,37 @@ function renderHybridCardBody(idea) {
   </div>`;
 }
 
+function renderInstitutionalNarrativeBlock(idea) {
+  const layers = idea?.institutional_layers_summary && typeof idea.institutional_layers_summary === "object" ? idea.institutional_layers_summary : {};
+  const fallback = {
+    orderflow: renderOrderflowStatusLine(idea),
+    options: resolveExternalOptionsRu(idea),
+    structure: `Trend: ${uiText(idea.trend || idea.market_structure?.trend_regime)}; BOS: ${uiText(idea.market_structure?.bos)}; CHoCH: ${uiText(idea.choch || idea.market_structure?.choch)}`,
+    liquidity: firstText(idea.liquidity?.summary_ru, idea.selected_zone_type, idea.heatmap_reason_ru) || "Ликвидностный слой не выделен отдельно.",
+    news: resolveNewsContext(idea),
+    execution: `spread=${formatNumber(idea.spread)}; ATR=${formatNumber(idea.atr ?? idea.atr_pips)}; RR=${formatNumber(idea.rr ?? idea.risk_reward)}; session=${uiText(idea.session)}; killzone=${uiText(idea.killzone || idea.killzone_status)}`,
+    final_view: idea.institutional_narrative_ru || resolveNarrative(idea),
+  };
+  const rows = [
+    ["orderflow", "OrderFlow"],
+    ["options", "Options"],
+    ["structure", "Structure"],
+    ["liquidity", "Liquidity"],
+    ["news", "News"],
+    ["execution", "Execution"],
+    ["final_view", "Final view"],
+  ];
+  return `<section class="institutional-narrative-block"><h4>Институциональный нарратив</h4><div class="institutional-sections institutional-sections--narrative">${rows.map(([key, label]) => {
+    const layer = layers[key] && typeof layers[key] === "object" ? layers[key] : {};
+    return `<section class="institutional-section"><h4>${escapeHtml(label)}</h4><p>${escapeHtml(layer.summary_ru || fallback[key] || "Данные временно недоступны.")}</p></section>`;
+  }).join("")}</div></section>`;
+}
+
 function renderExpertCardBody(idea) {
   const hft = resolveHftLayer(idea), opt = normalizeOptionsLayer(idea);
   return `<div class="analysis-card-body analysis-card-expert">
     <div class="compact-levels"><div><span>Уверенность идеи</span><strong>${escapeHtml(renderIdeaConfidence(idea))}</strong></div>${getTradeLevels(idea).map(([l,v])=>renderField(l, formatNumber(v))).join("")}</div>
+    ${renderInstitutionalNarrativeBlock(idea)}
     <div class="institutional-sections">
       <section class="institutional-section"><h4>1. Структура рынка</h4><p>Trend: ${escapeHtml(uiText(idea.trend || idea.market_structure?.trend_regime))}<br>BOS: ${escapeHtml(uiText(idea.market_structure?.bos))}<br>CHoCH: ${escapeHtml(uiText(idea.choch || idea.market_structure?.choch))}<br>FVG: ${escapeHtml(uiText(idea.fvg?.type || idea.selected_zone_type))}<br>Liquidity: ${escapeHtml(uiText(idea.liquidity?.sweep || idea.selected_zone_type))}<br>HTF bias: ${escapeHtml(uiText(idea.htf_bias || idea.market_structure?.htf_bias))}</p></section>
       ${renderOrderflowEngineBlock(idea)}
