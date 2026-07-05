@@ -2,9 +2,11 @@
 
 Building software that helps traders understand the market.
 
-Every pull request and every new feature should follow these principles. They are the rulebook for how FXPilot is designed, built, reviewed, and improved.
+This document defines the engineering and product principles of FXPilot.
 
-If a feature violates these principles, it should be reconsidered.
+It is not documentation. It is the rulebook for every future feature.
+
+Every pull request and every new feature should follow these principles. If a feature violates them, it should be reconsidered.
 
 ## 1. Understanding before signals
 
@@ -16,33 +18,43 @@ Every feature should increase market understanding.
 
 Every trading idea should be supported by data.
 
-Opinions may guide exploration, but facts must guide decisions.
+Opinions may start a discussion. Facts must support the decision.
 
 ## 3. Explain every AI decision
 
 Never produce a conclusion without explanation.
 
-AI output must show the reasoning, the evidence, and the uncertainty behind it.
+AI must show why it reached a view, what evidence supports it, and where uncertainty remains.
 
 ## 4. Multiple confirmations
 
-No single perspective is enough.
+Market structure.
 
-Market structure, OrderFlow, options, news, and risk should complement each other.
+OrderFlow.
 
-Strong ideas come from aligned evidence, not isolated indicators.
+Options.
+
+News.
+
+Risk.
+
+These should complement each other.
+
+No single signal should stand alone when better context is available.
 
 ## 5. Teach instead of replacing
 
 FXPilot should educate users.
 
-The product should help traders become sharper, more disciplined, and more aware of market context.
+The product should help traders become more informed, disciplined, and independent.
 
 ## 6. Transparency
 
 Unknown means unknown.
 
-Never hide uncertainty. Never present missing, delayed, proxy, or incomplete data as certainty.
+Never hide uncertainty.
+
+Missing, delayed, proxy, or incomplete data must be clearly identified.
 
 ## 7. Quality before quantity
 
@@ -54,19 +66,27 @@ Depth, clarity, reliability, and usefulness matter more than surface area.
 
 Predictions must later be verified.
 
-Reality Check is a core philosophy. Every idea should be measured against what actually happened.
+Reality Check is a core philosophy.
+
+Every trading idea should be compared with what actually happened.
 
 ## 9. Continuous evolution
 
 FXPilot constantly improves.
 
-The market changes. The platform learns. The product must evolve with discipline and evidence.
+The market changes.
+
+The platform learns.
+
+Evolution must be guided by evidence, not noise.
 
 ## 10. Respect the trader
 
 FXPilot supports decisions.
 
-The trader always remains responsible. The platform should inform, clarify, and challenge — never command.
+The trader always remains responsible.
+
+The platform should inform, clarify, and challenge — never command.
 
 ---
 
