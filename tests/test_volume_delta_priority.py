@@ -131,3 +131,47 @@ def test_orderflow_scoring_modes_scale_confirmation_boost():
     assert cache["volume_delta"]["score_adjustment"] == 1
     assert proxy["score_weights"]["orderflow"] == 3
     assert "MT4 proxy-режиме" in proxy["orderflow_mode_explanation"]
+
+
+def test_institutional_narrative_contains_required_layers_and_proxy_warning():
+    idea = {
+        "symbol": "EURUSD",
+        "signal": "BUY",
+        "entry": 1.1028,
+        "sl": 1.0980,
+        "tp": 1.1100,
+        "candles": _candles(up=True),
+        "data_source": "mt4_live",
+        "data_source_label": "MT4 Live",
+        "data_source_quality": 72,
+        "orderflow_bias": "buy",
+        "vwap": 1.1010,
+        "rvol": 1.4,
+        "market_state": "trend",
+        "continuation_probability": 64,
+        "reversal_probability": 36,
+        "volume_delta": {"source": "FutureVolume", "delta": 180, "cumdelta": 1200, "is_proxy": True, "priority_used": 2},
+        "options_available": False,
+        "market_structure": {"trend_regime": "bullish", "bos": "up", "choch": "none", "swing_high": 1.105, "swing_low": 1.098},
+        "liquidity": {"sweep": "sell_side", "buy_side_liquidity": 1.108, "sell_side_liquidity": 1.098, "score": 70},
+        "sentiment_status": "neutral",
+        "news_risk": "low",
+        "fundamental_summary_ru": "Фундаментальный фон нейтрален.",
+        "spread": 1.2,
+        "atr_pips": 18,
+        "session": "London",
+        "killzone_status": "active",
+        "execution_quality": "good",
+        "recommended_risk_percent": 0.5,
+        "risk_per_trade_pct": 0.5,
+    }
+
+    enriched = enrich_idea_with_prop_score(idea)
+    layers = enriched["institutional_layers_summary"]
+
+    assert enriched["institutional_narrative_ru"]
+    assert set(["orderflow", "options", "structure", "liquidity", "news", "execution", "final_view"]).issubset(layers)
+    assert "proxy OrderFlow" in layers["orderflow"]["summary_ru"]
+    assert "Опционные данные недоступны" in layers["options"]["summary_ru"]
+    assert "Options" in enriched["institutional_missing_layers"]
+    assert any("MT4 live ticks" in warning for warning in enriched["institutional_warnings"])
