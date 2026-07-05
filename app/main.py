@@ -469,6 +469,11 @@ def ideas_page():
     return FileResponse(STATIC_DIR / "ideas.html")
 
 
+@app.get("/tv", include_in_schema=False)
+def tv_page():
+    return FileResponse(STATIC_DIR / "tv.html")
+
+
 @app.get("/news", include_in_schema=False)
 def news_page():
     return FileResponse(STATIC_DIR / "news.html")
