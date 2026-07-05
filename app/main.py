@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -474,8 +474,12 @@ def tv_page():
     return FileResponse(STATIC_DIR / "tv.html")
 
 
-@app.get("/api/tv/videos")
-def api_tv_videos() -> list[dict[str, Any]]:
+@app.get("/tv/review/{video_id}", include_in_schema=False)
+def tv_review_page(video_id: str):
+    return FileResponse(STATIC_DIR / "tv-review.html")
+
+
+def _load_tv_video_catalog() -> list[dict[str, Any]]:
     catalog_path = BASE_DIR.parent / "data" / "tv_videos.json"
     try:
         with catalog_path.open("r", encoding="utf-8") as catalog_file:
@@ -489,6 +493,37 @@ def api_tv_videos() -> list[dict[str, Any]]:
         return []
 
     return [item for item in payload if isinstance(item, dict)]
+
+
+def _build_tv_review_payload(video: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "video": video,
+        "review": {
+            "ai_summary": "AI-резюме будет подключено позже. Сейчас страница показывает рабочую структуру будущего разбора видео.",
+            "fxpilot_opinion": "Мнение FXPilot будет сформировано после подключения отдельного AI review-сервиса.",
+            "agreement_score": 72,
+            "main_conclusions": [
+                "Ключевые тезисы автора будут извлекаться из видео автоматически.",
+                "Сценарии будут сопоставляться с логикой FXPilot без изменения интерфейса.",
+                "Разделы Reality Check и Trust Score готовы к будущему API-рендерингу.",
+            ],
+            "reality_check": {"status": "coming_soon", "label": "Coming Soon"},
+            "trust_score": {"status": "coming_soon", "label": "Coming Soon"},
+        },
+    }
+
+
+@app.get("/api/tv/videos")
+def api_tv_videos() -> list[dict[str, Any]]:
+    return _load_tv_video_catalog()
+
+
+@app.get("/api/tv/review/{video_id}")
+def api_tv_review(video_id: str) -> dict[str, Any]:
+    for video in _load_tv_video_catalog():
+        if video.get("id") == video_id:
+            return _build_tv_review_payload(video)
+    raise HTTPException(status_code=404, detail="TV video not found")
 
 
 @app.get("/news", include_in_schema=False)
