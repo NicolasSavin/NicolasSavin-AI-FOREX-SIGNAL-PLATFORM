@@ -17,6 +17,7 @@ from app.services.orderflow_client import (
     UNAVAILABLE_SNAPSHOT,
     get_orderflow_snapshot,
     is_orderflow_engine_enabled,
+    market_idea_orderflow_metadata,
 )
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.prop_desk_filters import PropDeskFilterService
@@ -180,7 +181,7 @@ def _attach_orderflow_snapshot_to_idea(idea: dict) -> dict:
         **UNAVAILABLE_SNAPSHOT,
         "orderflow_status": "engine_disabled",
     }
-    enriched.update(snapshot)
+    enriched.update(market_idea_orderflow_metadata(snapshot))
     return enriched
 
 

@@ -18,6 +18,21 @@ ORDERFLOW_METADATA_FIELDS = (
     "data_source_reason",
 )
 
+ORDERFLOW_COMPATIBILITY_FIELDS = (
+    "orderflow_provider",
+    "provider_status",
+    "provider_debug",
+)
+
+ORDERFLOW_MARKET_IDEA_FALLBACK: dict[str, Any] = {
+    "orderflow_available": False,
+    "data_source": "unavailable",
+    "data_source_label": "Unavailable",
+    "data_source_quality": 0,
+    "data_source_status": "unavailable",
+    "data_source_reason": "orderflow_snapshot_missing",
+}
+
 ORDERFLOW_FIELDS = (
     "delta",
     "cumdelta",
@@ -91,6 +106,33 @@ def _normalize_snapshot(payload: Any) -> dict[str, Any]:
     for field in ORDERFLOW_FIELDS:
         normalized[field] = source.get(field)
     return normalized
+
+
+def market_idea_orderflow_metadata(snapshot: Any) -> dict[str, Any]:
+    """Return the OrderFlow metadata contract exposed on every market idea."""
+    if not isinstance(snapshot, dict) or not snapshot:
+        return dict(ORDERFLOW_MARKET_IDEA_FALLBACK)
+
+    metadata = dict(snapshot)
+    for field, value in ORDERFLOW_MARKET_IDEA_FALLBACK.items():
+        if metadata.get(field) is None or (
+            field == "data_source_label"
+            and not snapshot.get("data_source")
+            and metadata.get(field) == UNAVAILABLE_SNAPSHOT["data_source_label"]
+        ) or (
+            field == "data_source_quality"
+            and not snapshot.get("data_source")
+        ) or (
+            field == "data_source_reason"
+            and not snapshot.get("data_source")
+        ):
+            metadata[field] = value
+    for field in ("orderflow_available", *ORDERFLOW_METADATA_FIELDS, *ORDERFLOW_COMPATIBILITY_FIELDS):
+        if field in ORDERFLOW_MARKET_IDEA_FALLBACK and not snapshot.get("data_source"):
+            continue
+        if snapshot.get(field) is not None:
+            metadata[field] = snapshot[field]
+    return metadata
 
 
 def get_orderflow_snapshot(symbol: str) -> dict[str, Any]:

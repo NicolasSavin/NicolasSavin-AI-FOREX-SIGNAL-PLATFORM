@@ -64,14 +64,68 @@ def test_build_market_attaches_orderflow_when_enabled(monkeypatch) -> None:
     monkeypatch.setattr(main, "apply_idea_lifecycle", lambda ideas: {"ideas": ideas, "archive": [], "statistics": {"total": len(ideas)}})
     monkeypatch.setattr(main, "_apply_prop_desk_execution", lambda ideas, archive=None: ideas)
     monkeypatch.setattr(main, "enrich_ideas_with_news_calendar", lambda ideas: ideas)
-    monkeypatch.setattr(main, "get_orderflow_snapshot", lambda symbol: {"orderflow_available": True, "orderflow_provider": "fxpilot", "delta": 11})
+    monkeypatch.setattr(
+        main,
+        "get_orderflow_snapshot",
+        lambda symbol: {
+            "orderflow_available": True,
+            "orderflow_provider": "fxpilot",
+            "provider_status": "ok",
+            "provider_debug": {"source": "test"},
+            "data_source": "mt4_live",
+            "data_source_label": "MT4 Live",
+            "data_source_quality": 75,
+            "data_source_status": "ok",
+            "data_source_reason": "databento_unusable_mt4_live_fresh",
+            "data_source_age_seconds": 4,
+            "delta": 11,
+        },
+    )
 
     payload = main.build_market()
 
     assert payload["ideas"][0]["orderflow_available"] is True
     assert payload["ideas"][0]["orderflow_provider"] == "fxpilot"
+    assert payload["ideas"][0]["provider_status"] == "ok"
+    assert payload["ideas"][0]["provider_debug"] == {"source": "test"}
+    assert payload["ideas"][0]["data_source"] == "mt4_live"
+    assert payload["ideas"][0]["data_source_label"] == "MT4 Live"
+    assert payload["ideas"][0]["data_source_quality"] == 75
+    assert payload["ideas"][0]["data_source_status"] == "ok"
+    assert payload["ideas"][0]["data_source_reason"] == "databento_unusable_mt4_live_fresh"
+    assert payload["ideas"][0]["data_source_age_seconds"] == 4
     assert payload["ideas"][0]["delta"] == 11
     assert payload["ideas"][0]["signal"] == "WAIT"
+
+
+def test_api_ideas_market_returns_orderflow_source_metadata_from_cache(monkeypatch) -> None:
+    payload = {
+        "ideas": [
+            {
+                "symbol": "EURUSD",
+                "signal": "WAIT",
+                "orderflow_available": True,
+                "data_source": "mt4_live",
+                "data_source_label": "MT4 Live",
+                "data_source_quality": 75,
+                "data_source_status": "ok",
+            }
+        ],
+        "archive": [],
+    }
+    monkeypatch.setattr(main, "_queue_market_ideas_refresh", lambda: True)
+    monkeypatch.setitem(main.MARKET_IDEAS_CACHE, "payload", payload)
+    monkeypatch.setitem(main.MARKET_IDEAS_CACHE, "updated_at_epoch", main.time.time())
+
+    response = TestClient(main.app).get("/api/ideas/market")
+
+    assert response.status_code == 200
+    idea = response.json()["ideas"][0]
+    assert idea["orderflow_available"] is True
+    assert idea["data_source"] == "mt4_live"
+    assert idea["data_source_label"] == "MT4 Live"
+    assert idea["data_source_quality"] == 75
+    assert idea["data_source_status"] == "ok"
 
 
 def test_build_market_marks_orderflow_disabled_without_engine_call(monkeypatch) -> None:
@@ -89,4 +143,9 @@ def test_build_market_marks_orderflow_disabled_without_engine_call(monkeypatch) 
     assert payload["ideas"][0]["orderflow_available"] is False
     assert payload["ideas"][0]["orderflow_provider"] == "unavailable"
     assert payload["ideas"][0]["orderflow_status"] == "engine_disabled"
+    assert payload["ideas"][0]["data_source"] == "unavailable"
+    assert payload["ideas"][0]["data_source_label"] == "Unavailable"
+    assert payload["ideas"][0]["data_source_quality"] == 0
+    assert payload["ideas"][0]["data_source_status"] == "unavailable"
+    assert payload["ideas"][0]["data_source_reason"] == "orderflow_snapshot_missing"
     assert payload["ideas"][0]["signal"] == "BUY"
