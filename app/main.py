@@ -28,7 +28,12 @@ from app.services.news_service import fetch_public_news
 from app.services.twelvedata_ws_service import twelvedata_ws_service
 from app.services.mt4_volume_cluster_bridge import save_volume_cluster_payload
 from app.services.mt4_options_bridge import get_latest_options_levels, save_options_levels
-from app.services.orderflow_client import UNAVAILABLE_SNAPSHOT, get_orderflow_snapshot, is_orderflow_engine_enabled
+from app.services.orderflow_client import (
+    UNAVAILABLE_SNAPSHOT,
+    get_orderflow_snapshot,
+    is_orderflow_engine_enabled,
+    market_idea_orderflow_metadata,
+)
 from app.services.prop_signal_engine import enrich_ideas_with_prop_scores
 from app.services.prop_desk_filters import PropDeskFilterService
 from app.services.idea_lifecycle import apply_idea_lifecycle, build_lifecycle_stats, enrich_ideas_with_news_calendar
@@ -1074,7 +1079,7 @@ def _attach_orderflow_snapshot(signal: dict[str, Any]) -> dict[str, Any]:
         if is_orderflow_engine_enabled()
         else {**UNAVAILABLE_SNAPSHOT, "orderflow_status": "engine_disabled"}
     )
-    normalized.update({**UNAVAILABLE_SNAPSHOT, **snapshot})
+    normalized.update(market_idea_orderflow_metadata(snapshot))
     return normalized
 
 
