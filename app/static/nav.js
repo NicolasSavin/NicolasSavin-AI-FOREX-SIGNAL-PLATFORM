@@ -22,3 +22,41 @@
     else link.removeAttribute('aria-current');
   });
 })();
+
+(function initVisitorCounter() {
+  const shell = document.querySelector('.page-shell') || document.body;
+  if (!shell || document.querySelector('[data-visitor-counter]')) return;
+
+  const counter = document.createElement('div');
+  counter.className = 'visitor-counter';
+  counter.setAttribute('data-visitor-counter', '');
+  counter.setAttribute('aria-label', 'Счётчик посещений');
+  counter.hidden = true;
+  shell.appendChild(counter);
+
+  const render = (payload) => {
+    const today = Number(payload && payload.today);
+    const total = Number(payload && payload.total);
+    if (!Number.isFinite(today) || !Number.isFinite(total)) return;
+    counter.textContent = `👁 Сегодня: ${today} · Всего: ${total}`;
+    counter.hidden = false;
+  };
+
+  const load = async () => {
+    try {
+      const visitedKey = 'fxpilot_visit_counted';
+      const shouldIncrement = window.sessionStorage.getItem(visitedKey) !== '1';
+      const response = await fetch(`/api/visits${shouldIncrement ? '?increment=true' : ''}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (shouldIncrement) window.sessionStorage.setItem(visitedKey, '1');
+      render(payload);
+    } catch (_) {
+      counter.hidden = true;
+    }
+  };
+
+  load();
+})();
