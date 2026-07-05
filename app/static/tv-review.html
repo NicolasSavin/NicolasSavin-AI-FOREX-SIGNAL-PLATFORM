@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FXPilot TV · Review</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="shortcut icon" href="/favicon.svg">
+  </head>
+  <body data-page="tv-review">
+    <div class="page-shell tv-shell tv-review-shell">
+      <header class="site-header tv-hero tv-review-hero">
+        <nav class="top-nav" aria-label="Основная навигация">
+          <a href="/">Главная</a><a href="/ideas">Идеи</a><a href="/stats">Статистика</a><a href="/archive">Архив</a><a href="/analytics">Аналитика</a><a href="/news">Новости</a><a href="/calendar">Календарь</a><a href="/heatmap/page">Тепловая карта</a><a href="/tv" class="is-active" aria-current="page">🎥 FXPilot TV</a>
+        </nav>
+        <div class="tv-hero__grid">
+          <div class="tv-hero__copy">
+            <p class="eyebrow">FXPilot TV · Review Page</p>
+            <h1>Разбор видеообзора</h1>
+            <p class="lead">Первый рабочий экран review: плеер, метаданные и готовые секции для будущего JSON из API.</p>
+          </div>
+          <div class="tv-hero__signal" aria-label="Статус review">
+            <span class="tv-live-dot"></span><strong>Review UI ready</strong>
+            <p>/api/tv/review/&lt;video_id&gt; → ReviewPage component → будущая AI-логика</p>
+          </div>
+        </div>
+      </header>
+
+      <main class="content-stack tv-content tv-review-page" id="tvReviewPage" data-component="ReviewPage">
+        <div class="tv-player-empty">Загрузка review...</div>
+      </main>
+
+      <footer class="tv-footer"><strong>FXPilot 2.0</strong><span>Not just signals.<br />Understanding the market.</span></footer>
+    </div>
+    <script src="/static/nav.js"></script>
+    <script src="/static/tv-review.js"></script>
+  </body>
+</html>

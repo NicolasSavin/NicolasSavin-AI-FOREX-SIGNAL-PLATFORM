@@ -41,7 +41,7 @@
       <h3>${escapeHtml(video.title)}</h3>
       <p class="tv-author">Автор: ${escapeHtml(video.author)}</p>
       <p>${escapeHtml(video.description)}</p>
-      <button class="tv-check-button" type="button" disabled title="AI-проверка будет добавлена позже">Проверить обзор · скоро</button>
+      <a class="tv-check-button" href="/tv/review/${encodeURIComponent(video.id)}" aria-label="Открыть AI-разбор обзора ${escapeHtml(video.title)}">Проверить обзор</a>
     `;
   }
 
