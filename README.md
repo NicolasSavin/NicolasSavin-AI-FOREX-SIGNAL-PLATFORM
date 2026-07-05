@@ -3,6 +3,7 @@
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
 ## Что обновлено в версии 3.9
+- FXPilot TV на `/tv` превращён в рабочий видео-раздел: добавлен локальный JSON-каталог `data/tv_videos.json`, endpoint `GET /api/tv/videos`, YouTube iframe-плеер, sidebar со списком обзоров и preview будущей AI-проверки без YouTube API, scraping и внешних ключей.
 - Добавлен optional provider FXPilot OrderFlow Engine для `/api/ideas/market`: при `ORDERFLOW_ENABLED=true` backend запрашивает `ORDERFLOW_URL/api/orderflow/latest?symbol=...` с timeout 2 секунды и отдаёт отдельные поля отображения Order Flow без изменения scoring, BUY/SELL-логики, MT4 bridge и советника.
 - Интегрирован HFT Stop Hunt layer в `/api/ideas` и `/ideas/market`: поля MT4 Bridge v4 `hft_object_available`, `hft_point_type`, `hft_point_side`, `hft_point_price` теперь формируют `hft_layer`, расстояние до точки, bias, strength и ограниченную корректировку Score ±8 без создания самостоятельного сигнала.
 - HFT-диагностика добавлена в `learning_snapshot`, `advisor_filter_debug` и карточку `/ideas`; старые слои MZ, Heatmap, DPOC, CumDelta, Future Volume/Delta, Options, News/Fundamental и Lifecycle сохранены.

@@ -14,6 +14,21 @@
     nav.insertBefore(link, analyticsLink);
   });
 
+  nav.querySelectorAll('a').forEach((link) => {
+    const label = (link.textContent || '').trim().toLowerCase();
+    if (label === 'api ideas' || label === 'api идеи') {
+      link.href = '/tv';
+      link.textContent = '🎥 FXPilot TV';
+    }
+  });
+
+  if (!nav.querySelector('a[href="/tv"]')) {
+    const tvLink = document.createElement('a');
+    tvLink.href = '/tv';
+    tvLink.textContent = '🎥 FXPilot TV';
+    nav.appendChild(tvLink);
+  }
+
   nav.querySelectorAll('a[href]').forEach((link) => {
     const linkPath = normalize(link.getAttribute('href'));
     const isActive = linkPath === currentPath;

@@ -474,6 +474,23 @@ def tv_page():
     return FileResponse(STATIC_DIR / "tv.html")
 
 
+@app.get("/api/tv/videos")
+def api_tv_videos() -> list[dict[str, Any]]:
+    catalog_path = BASE_DIR.parent / "data" / "tv_videos.json"
+    try:
+        with catalog_path.open("r", encoding="utf-8") as catalog_file:
+            payload = json.load(catalog_file)
+    except Exception as exc:
+        logger.warning("tv_videos_catalog_unavailable path=%s error=%s", catalog_path, exc)
+        return []
+
+    if not isinstance(payload, list):
+        logger.warning("tv_videos_catalog_invalid path=%s type=%s", catalog_path, type(payload).__name__)
+        return []
+
+    return [item for item in payload if isinstance(item, dict)]
+
+
 @app.get("/news", include_in_schema=False)
 def news_page():
     return FileResponse(STATIC_DIR / "news.html")
