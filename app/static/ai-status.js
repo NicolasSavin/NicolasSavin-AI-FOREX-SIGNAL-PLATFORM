@@ -27,15 +27,16 @@
   function normalizeOrderflowSource(payload) {
     const idea = Array.isArray(payload?.ideas) ? payload.ideas.find((item) => item && typeof item === "object") : (Array.isArray(payload) ? payload.find((item) => item && typeof item === "object") : payload);
     const hasNewMetadata = ["data_source", "data_source_label", "data_source_status", "data_source_quality", "data_source_reason", "data_source_age_seconds", "orderflow_available"].some((key) => Object.prototype.hasOwnProperty.call(idea || {}, key));
-    const raw = String(idea?.data_source ?? (!hasNewMetadata ? idea?.orderflow_provider : "") ?? "").toLowerCase();
+    const useLiveMetadata = idea?.orderflow_available === true;
+    const raw = String((useLiveMetadata ? idea?.data_source : (idea?.data_source ?? (!hasNewMetadata ? (idea?.orderflow_provider ?? idea?.provider) : ""))) ?? "").toLowerCase();
     const fallbackLabel = raw === "databento" ? "Databento" : raw === "mt4_live" ? "MT4 Live" : raw === "cache" ? "Cache" : raw === "unavailable" ? "Unavailable" : "Unknown Source";
-    const label = idea?.data_source_label || idea?.orderflow_source_label || (!hasNewMetadata ? idea?.orderflow_provider : "") || fallbackLabel;
-    const status = String(idea?.data_source_status ?? (!hasNewMetadata ? idea?.orderflow_status : "") ?? "").toLowerCase();
+    const label = useLiveMetadata ? (idea?.data_source_label || fallbackLabel) : (idea?.data_source_label || idea?.orderflow_source_label || (!hasNewMetadata ? (idea?.orderflow_provider || idea?.provider) : "") || fallbackLabel);
+    const status = String((useLiveMetadata ? idea?.data_source_status : (idea?.data_source_status ?? (!hasNewMetadata ? (idea?.orderflow_status ?? idea?.provider_status) : ""))) ?? "").toLowerCase();
     const available = idea?.orderflow_available === true || status === "ok";
-    const unavailable = idea?.orderflow_available === false || status === "unavailable" || raw === "unavailable" || status.includes("offline");
+    const unavailable = idea?.orderflow_available === false || (idea?.orderflow_available !== true && (status === "unavailable" || raw === "unavailable" || status.includes("offline")));
     let icon = available ? "🟢" : unavailable ? "🔴" : "⚪";
     if (raw === "cache" || /cache|histor/i.test(label)) icon = "🟡";
-    if (raw === "unavailable") icon = "🔴";
+    if (raw === "unavailable" && idea?.orderflow_available !== true) icon = "🔴";
     const q = Number(idea?.data_source_quality ?? idea?.orderflow_source_quality);
     const quality = Number.isFinite(q) ? `Quality ${Math.max(0, Math.min(100, Math.round(q)))}%` : "Quality —";
     const ageRaw = idea?.data_source_age_seconds ?? idea?.orderflow_source_age_seconds;

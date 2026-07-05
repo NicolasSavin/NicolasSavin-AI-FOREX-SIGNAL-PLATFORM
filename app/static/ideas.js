@@ -932,13 +932,19 @@ function normalizeOrderflowReason(value) {
 }
 
 function normalizeOrderflowSource(idea) {
-  const hasNewMetadata = hasOrderflowSourceMetadata(idea);
-  const raw = String(idea?.data_source ?? idea?.orderflow_data_source ?? (!hasNewMetadata ? idea?.orderflow_provider : "") ?? "").toLowerCase();
-  const fallbackLabel = raw === "databento" ? "Databento" : raw === "mt4_live" ? "MT4 Live" : raw === "cache" ? "Cache" : raw === "unavailable" ? "Unavailable" : "Unknown Source";
-  const label = firstText(idea?.data_source_label, idea?.orderflow_source_label, !hasNewMetadata ? idea?.orderflow_provider : null) || fallbackLabel;
-  const status = String(idea?.data_source_status ?? (!hasNewMetadata ? idea?.orderflow_status : "") ?? "").toLowerCase();
   const explicitAvailable = idea?.orderflow_available;
-  const unavailable = explicitAvailable === false || status === "unavailable" || status.includes("offline") || raw === "unavailable" || raw === "offline";
+  const useLiveMetadata = explicitAvailable === true;
+  const hasNewMetadata = hasOrderflowSourceMetadata(idea);
+  const rawValue = useLiveMetadata
+    ? idea?.data_source
+    : (idea?.data_source ?? idea?.orderflow_data_source ?? (!hasNewMetadata ? (idea?.orderflow_provider ?? idea?.provider) : ""));
+  const raw = String(rawValue ?? "").toLowerCase();
+  const fallbackLabel = raw === "databento" ? "Databento" : raw === "mt4_live" ? "MT4 Live" : raw === "cache" ? "Cache" : raw === "unavailable" ? "Unavailable" : "Unknown Source";
+  const label = useLiveMetadata
+    ? (firstText(idea?.data_source_label) || fallbackLabel)
+    : (firstText(idea?.data_source_label, idea?.orderflow_source_label, !hasNewMetadata ? idea?.orderflow_provider : null, !hasNewMetadata ? idea?.provider : null) || fallbackLabel);
+  const status = String(useLiveMetadata ? idea?.data_source_status : (idea?.data_source_status ?? (!hasNewMetadata ? (idea?.orderflow_status ?? idea?.provider_status) : "")) ?? "").toLowerCase();
+  const unavailable = explicitAvailable === false || (explicitAvailable !== true && (status === "unavailable" || status.includes("offline") || raw === "unavailable" || raw === "offline"));
   const ok = explicitAvailable === true || status === "ok";
   let kind = "unknown";
   if (raw === "databento" || /databento|cme/.test(raw) || /databento|cme/i.test(label)) kind = "databento";
