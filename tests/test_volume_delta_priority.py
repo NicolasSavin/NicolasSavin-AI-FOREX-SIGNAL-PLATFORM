@@ -106,3 +106,28 @@ def test_prop_engine_marks_delta_divergence_and_reduces_score():
     assert with_divergence["delta_divergence"] is True
     assert with_divergence["prop_signal_score"]["score"] <= without_divergence["prop_signal_score"]["score"] - 5
     assert with_divergence["volume_delta"]["source"] == "FutureDelta"
+
+
+def test_orderflow_scoring_modes_scale_confirmation_boost():
+    base = {
+        "symbol": "EURUSD",
+        "signal": "BUY",
+        "entry": 1.1028,
+        "sl": 1.0980,
+        "tp": 1.1100,
+        "candles": _candles(up=True),
+        "volume_delta": {"source": "FutureDelta", "delta": 180, "cumdelta": 1200, "is_proxy": False, "priority_used": 1},
+    }
+
+    institutional = build_prop_signal_score({**base, "data_source": "databento"})
+    proxy = build_prop_signal_score({**base, "data_source": "mt4_live"})
+    cache = build_prop_signal_score({**base, "data_source": "cache"})
+
+    assert institutional["orderflow_mode"] == "institutional"
+    assert proxy["orderflow_mode"] == "proxy"
+    assert cache["orderflow_mode"] == "cache"
+    assert institutional["volume_delta"]["score_adjustment"] == 5
+    assert proxy["volume_delta"]["score_adjustment"] == 3
+    assert cache["volume_delta"]["score_adjustment"] == 1
+    assert proxy["score_weights"]["orderflow"] == 3
+    assert "MT4 proxy-режиме" in proxy["orderflow_mode_explanation"]

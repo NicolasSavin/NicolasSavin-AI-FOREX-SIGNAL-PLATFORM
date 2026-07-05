@@ -922,7 +922,7 @@ function getAiSourceMeta(idea) {
 
 
 function hasOrderflowSourceMetadata(idea) {
-  return ["data_source", "data_source_label", "data_source_status", "data_source_quality", "data_source_reason", "data_source_age_seconds", "orderflow_available"].some((key) => Object.prototype.hasOwnProperty.call(idea || {}, key));
+  return ["data_source", "data_source_label", "data_source_status", "data_source_quality", "data_source_reason", "data_source_age_seconds", "orderflow_available", "orderflow_mode"].some((key) => Object.prototype.hasOwnProperty.call(idea || {}, key));
 }
 
 function normalizeOrderflowReason(value) {
@@ -958,6 +958,9 @@ function normalizeOrderflowSource(idea) {
     unavailable: { icon: "🔴", label: label === "Unknown Source" ? "Unavailable" : label, compact: "Unavailable", descriptor: "Unavailable" },
     unknown: { icon: ok ? "🟢" : unavailable ? "🔴" : "⚪", label, compact: ok ? "OrderFlow" : "Unknown", descriptor: label },
   }[kind];
+  const explicitMode = String(idea?.orderflow_mode || "").toLowerCase();
+  const mode = explicitMode || (kind === "databento" ? "institutional" : kind === "mt4" ? "proxy" : kind === "cache" ? "cache" : "unavailable");
+  const modeLabel = mode === "institutional" ? "Institutional" : mode === "proxy" ? "Proxy" : mode === "cache" ? "Cache" : "Unavailable";
   const q = Number(idea?.data_source_quality ?? idea?.orderflow_source_quality);
   const qualityPercent = Number.isFinite(q) ? Math.max(0, Math.min(100, Math.round(q))) : null;
   const ageValue = idea?.data_source_age_seconds ?? idea?.orderflow_source_age_seconds;
@@ -970,6 +973,8 @@ function normalizeOrderflowSource(idea) {
     available: ok && !unavailable,
     status,
     source: raw,
+    mode,
+    modeLabel,
     qualityPercent,
     qualityText: qualityPercent === null ? "Quality —" : `Quality ${qualityPercent}%`,
     age: ageSeconds,
@@ -984,19 +989,19 @@ function renderOrderflowSourceBadge(idea) {
 
 function renderOrderflowSourceHybrid(idea) {
   const src = normalizeOrderflowSource(idea);
-  return `OrderFlow / ${src.label} / ${src.qualityText}`;
+  return `OrderFlow / ${src.label} / ${src.qualityText} / mode: ${src.modeLabel}`;
 }
 
 function renderOrderflowSourceHybridBlock(idea) {
   const src = normalizeOrderflowSource(idea);
-  return `<section class="institutional-section orderflow-source-compact"><h4>OrderFlow</h4><p>${escapeHtml(src.label)}<br>${escapeHtml(src.qualityText)}<br>Reason: ${escapeHtml(src.reason)}<br>Age: ${escapeHtml(src.ageText)}</p></section>`;
+  return `<section class="institutional-section orderflow-source-compact"><h4>OrderFlow</h4><p>${escapeHtml(src.label)}<br>OrderFlow mode: ${escapeHtml(src.modeLabel)}<br>${escapeHtml(src.qualityText)}<br>Reason: ${escapeHtml(src.reason)}<br>Age: ${escapeHtml(src.ageText)}</p></section>`;
 }
 
 function renderOrderflowSourceBlock(idea) {
   const src = normalizeOrderflowSource(idea);
   return `<section class="institutional-section orderflow-source-block" title="Source: ${escapeHtml(src.label)}
 Reason: ${escapeHtml(src.reason)}
-Age: ${escapeHtml(src.ageText)}"><h4>OrderFlow Source</h4><p><strong>${escapeHtml(`${src.icon} ${src.label}`)}</strong><br>Source: ${escapeHtml(src.label)}<br>${escapeHtml(src.qualityText)}<br>Reason: ${escapeHtml(src.reason)}<br>Age: ${escapeHtml(src.ageText)}</p></section>`;
+Age: ${escapeHtml(src.ageText)}"><h4>OrderFlow Source</h4><p><strong>${escapeHtml(`${src.icon} ${src.label}`)}</strong><br>Source: ${escapeHtml(src.label)}<br>OrderFlow mode: ${escapeHtml(src.modeLabel)}<br>${escapeHtml(src.qualityText)}<br>Reason: ${escapeHtml(src.reason)}<br>Age: ${escapeHtml(src.ageText)}</p></section>`;
 }
 
 function isOrderflowAvailable(idea) {
@@ -1021,6 +1026,7 @@ function renderOrderflowEngineBlock(idea) {
   const rows = [
     ["Source", normalizeOrderflowSource(idea).label],
     ["Quality", normalizeOrderflowSource(idea).qualityText],
+    ["Mode", normalizeOrderflowSource(idea).modeLabel],
     ["Reason", normalizeOrderflowSource(idea).reason],
     ["Age", normalizeOrderflowSource(idea).ageText],
     ["Delta", idea.delta],
@@ -1031,9 +1037,10 @@ function renderOrderflowEngineBlock(idea) {
     ["POC", idea.poc],
     ["VAH", idea.vah],
     ["VAL", idea.val],
-    ["DOM Pressure", idea.dom_pressure],
-    ["Imbalance", idea.imbalance],
-    ["Absorption", idea.absorption],
+    ["Proxy note", normalizeOrderflowSource(idea).mode === "proxy" ? "OrderFlow работает в MT4 proxy-режиме: используются live ticks брокера, без полноценного CME DOM." : "—"],
+    ["DOM Pressure", normalizeOrderflowSource(idea).mode === "proxy" ? "proxy-only / neutralized" : idea.dom_pressure],
+    ["Imbalance", normalizeOrderflowSource(idea).mode === "proxy" ? "proxy-only / neutralized" : idea.imbalance],
+    ["Absorption", normalizeOrderflowSource(idea).mode === "proxy" ? "proxy-only / neutralized" : idea.absorption],
     ["Exhaustion", idea.exhaustion],
     ["Market State", idea.market_state],
     ["Bias", idea.orderflow_bias],

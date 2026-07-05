@@ -16,6 +16,9 @@ ORDERFLOW_METADATA_FIELDS = (
     "data_source_status",
     "data_source_age_seconds",
     "data_source_reason",
+    "orderflow_mode",
+    "orderflow_mode_label",
+    "orderflow_mode_explanation",
 )
 
 ORDERFLOW_COMPATIBILITY_FIELDS = (
@@ -31,6 +34,9 @@ ORDERFLOW_MARKET_IDEA_FALLBACK: dict[str, Any] = {
     "data_source_quality": 0,
     "data_source_status": "unavailable",
     "data_source_reason": "orderflow_snapshot_missing",
+    "orderflow_mode": "unavailable",
+    "orderflow_mode_label": "Unavailable",
+    "orderflow_mode_explanation": "OrderFlow недоступен: подтверждающий слой не участвует в оценке.",
 }
 
 ORDERFLOW_FIELDS = (
@@ -62,9 +68,43 @@ UNAVAILABLE_SNAPSHOT: dict[str, Any] = {
     "data_source_status": "unavailable",
     "data_source_age_seconds": None,
     "data_source_reason": "OrderFlow Engine unavailable",
+    "orderflow_mode": "unavailable",
+    "orderflow_mode_label": "Unavailable",
+    "orderflow_mode_explanation": "OrderFlow недоступен: подтверждающий слой не участвует в оценке.",
     **{field: None for field in ORDERFLOW_FIELDS},
 }
 
+
+
+def resolve_orderflow_mode(data_source: Any) -> str:
+    source = str(data_source or "").strip().lower()
+    if source == "databento":
+        return "institutional"
+    if source == "mt4_live":
+        return "proxy"
+    if source == "cache":
+        return "cache"
+    return "unavailable"
+
+
+def orderflow_mode_label(mode: Any) -> str:
+    return {
+        "institutional": "Institutional",
+        "proxy": "Proxy",
+        "cache": "Cache",
+        "unavailable": "Unavailable",
+    }.get(str(mode or "").strip().lower(), "Unavailable")
+
+
+def orderflow_mode_explanation(mode: Any) -> str:
+    normalized = str(mode or "").strip().lower()
+    if normalized == "institutional":
+        return "OrderFlow работает в institutional-режиме: доступен полноценный Databento/CME поток."
+    if normalized == "proxy":
+        return "OrderFlow работает в MT4 proxy-режиме: используются live ticks брокера, без полноценного CME DOM."
+    if normalized == "cache":
+        return "OrderFlow работает из cache: используется только контекстный слой без свежего подтверждающего буста."
+    return "OrderFlow недоступен: подтверждающий слой не участвует в оценке."
 
 def is_orderflow_engine_enabled() -> bool:
     value = str(get_env("ORDERFLOW_ENABLED", get_env("ORDERFLOW_ENGINE_ENABLED", "false")) or "false").strip().lower()
@@ -103,6 +143,10 @@ def _normalize_snapshot(payload: Any) -> dict[str, Any]:
         normalized["data_source_label"] = "Unknown Source"
     if not normalized.get("data_source_status"):
         normalized["data_source_status"] = "ok" if available else "unavailable"
+    mode = resolve_orderflow_mode(normalized.get("data_source"))
+    normalized["orderflow_mode"] = mode
+    normalized["orderflow_mode_label"] = orderflow_mode_label(mode)
+    normalized["orderflow_mode_explanation"] = orderflow_mode_explanation(mode)
     for field in ORDERFLOW_FIELDS:
         normalized[field] = source.get(field)
     return normalized
