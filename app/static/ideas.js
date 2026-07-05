@@ -921,28 +921,56 @@ function getAiSourceMeta(idea) {
 }
 
 
-function normalizeOrderflowSource(idea) {
-  const raw = String(idea?.data_source || idea?.orderflow_data_source || idea?.orderflow_provider || "").toLowerCase();
-  const label = firstText(idea?.data_source_label, idea?.orderflow_source_label) || "Unknown Source";
-  const status = String(idea?.data_source_status || idea?.orderflow_status || "").toLowerCase();
-  const unavailable = status.includes("unavailable") || status.includes("offline") || raw === "unavailable" || raw === "offline";
-  let kind = "unknown";
-  if (/databento|cme/.test(raw) || /databento|cme/i.test(label)) kind = "databento";
-  else if (/mt4|bridge|broker/.test(raw) || /mt4|bridge/i.test(label)) kind = "mt4";
-  else if (/cache|histor/.test(raw) || /cache|histor/i.test(label)) kind = "cache";
-  else if (unavailable) kind = "unavailable";
-  const meta = {
-    databento: { icon: "🟢", label: label === "Unknown Source" ? "Databento CME" : label, compact: "Databento", descriptor: "CME Order Flow" },
-    mt4: { icon: "🟡", label: label === "Unknown Source" ? "MT4 Bridge" : label, compact: "MT4", descriptor: "Live broker ticks" },
-    cache: { icon: "🟠", label: label === "Unknown Source" ? "Historical Cache" : label, compact: "Cache", descriptor: "Historical snapshot" },
-    unavailable: { icon: "🔴", label: label === "Unknown Source" ? "Unavailable" : label, compact: "Offline", descriptor: "Unknown Source" },
-    unknown: { icon: "⚪", label, compact: "Unknown", descriptor: "Unknown Source" },
-  }[kind];
-  const q = Number(idea?.data_source_quality ?? idea?.orderflow_source_quality);
-  const quality = Number.isFinite(q) ? Math.max(1, Math.min(5, Math.round(q))) : 0;
-  return { kind, ...meta, qualityStars: quality ? `${"★".repeat(quality)}${"☆".repeat(5 - quality)}` : "☆☆☆☆☆", age: idea?.data_source_age_seconds ?? idea?.orderflow_source_age_seconds, reason: firstText(idea?.data_source_reason, idea?.orderflow_source_reason) };
+function hasOrderflowSourceMetadata(idea) {
+  return ["data_source", "data_source_label", "data_source_status", "data_source_quality", "data_source_reason", "data_source_age_seconds", "orderflow_available"].some((key) => Object.prototype.hasOwnProperty.call(idea || {}, key));
 }
 
+function normalizeOrderflowReason(value) {
+  const text = firstText(value);
+  if (!text) return "—";
+  return String(text).replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function normalizeOrderflowSource(idea) {
+  const hasNewMetadata = hasOrderflowSourceMetadata(idea);
+  const raw = String(idea?.data_source ?? idea?.orderflow_data_source ?? (!hasNewMetadata ? idea?.orderflow_provider : "") ?? "").toLowerCase();
+  const fallbackLabel = raw === "databento" ? "Databento" : raw === "mt4_live" ? "MT4 Live" : raw === "cache" ? "Cache" : raw === "unavailable" ? "Unavailable" : "Unknown Source";
+  const label = firstText(idea?.data_source_label, idea?.orderflow_source_label, !hasNewMetadata ? idea?.orderflow_provider : null) || fallbackLabel;
+  const status = String(idea?.data_source_status ?? (!hasNewMetadata ? idea?.orderflow_status : "") ?? "").toLowerCase();
+  const explicitAvailable = idea?.orderflow_available;
+  const unavailable = explicitAvailable === false || status === "unavailable" || status.includes("offline") || raw === "unavailable" || raw === "offline";
+  const ok = explicitAvailable === true || status === "ok";
+  let kind = "unknown";
+  if (raw === "databento" || /databento|cme/.test(raw) || /databento|cme/i.test(label)) kind = "databento";
+  else if (raw === "mt4_live" || /mt4|bridge|broker/.test(raw) || /mt4|bridge/i.test(label)) kind = "mt4";
+  else if (raw === "cache" || /cache|histor/.test(raw) || /cache|histor/i.test(label)) kind = "cache";
+  else if (unavailable) kind = "unavailable";
+  const meta = {
+    databento: { icon: "🟢", label: label === "Unknown Source" ? "Databento" : label, compact: "OrderFlow", descriptor: "Databento" },
+    mt4: { icon: "🟢", label: label === "Unknown Source" ? "MT4 Live" : label, compact: "OrderFlow", descriptor: "MT4 Live" },
+    cache: { icon: "🟡", label: label === "Unknown Source" ? "Cache" : label, compact: "Cache", descriptor: "Cache" },
+    unavailable: { icon: "🔴", label: label === "Unknown Source" ? "Unavailable" : label, compact: "Unavailable", descriptor: "Unavailable" },
+    unknown: { icon: ok ? "🟢" : unavailable ? "🔴" : "⚪", label, compact: ok ? "OrderFlow" : "Unknown", descriptor: label },
+  }[kind];
+  const q = Number(idea?.data_source_quality ?? idea?.orderflow_source_quality);
+  const qualityPercent = Number.isFinite(q) ? Math.max(0, Math.min(100, Math.round(q))) : null;
+  const ageValue = idea?.data_source_age_seconds ?? idea?.orderflow_source_age_seconds;
+  const ageSeconds = ageValue === null || ageValue === undefined || ageValue === "" ? null : Math.max(0, Math.round(Number(ageValue) || 0));
+  return {
+    kind,
+    ...meta,
+    ok,
+    unavailable,
+    available: ok && !unavailable,
+    status,
+    source: raw,
+    qualityPercent,
+    qualityText: qualityPercent === null ? "Quality —" : `Quality ${qualityPercent}%`,
+    age: ageSeconds,
+    ageText: ageSeconds === null ? "—" : `${ageSeconds} sec`,
+    reason: normalizeOrderflowReason(idea?.data_source_reason ?? idea?.orderflow_source_reason),
+  };
+}
 function renderOrderflowSourceBadge(idea) {
   const src = normalizeOrderflowSource(idea);
   return `${src.icon} ${src.compact}`;
@@ -950,22 +978,24 @@ function renderOrderflowSourceBadge(idea) {
 
 function renderOrderflowSourceHybrid(idea) {
   const src = normalizeOrderflowSource(idea);
-  return `OrderFlow / ${src.label} / ${src.qualityStars}`;
+  return `OrderFlow / ${src.label} / ${src.qualityText}`;
 }
 
 function renderOrderflowSourceHybridBlock(idea) {
   const src = normalizeOrderflowSource(idea);
-  return `<section class="institutional-section orderflow-source-compact"><h4>OrderFlow</h4><p>${escapeHtml(src.label)}<br>${escapeHtml(src.qualityStars)}</p></section>`;
+  return `<section class="institutional-section orderflow-source-compact"><h4>OrderFlow</h4><p>${escapeHtml(src.label)}<br>${escapeHtml(src.qualityText)}<br>Reason: ${escapeHtml(src.reason)}<br>Age: ${escapeHtml(src.ageText)}</p></section>`;
 }
 
 function renderOrderflowSourceBlock(idea) {
   const src = normalizeOrderflowSource(idea);
-  const age = src.age === null || src.age === undefined || src.age === "" ? "—" : `${Math.max(0, Math.round(Number(src.age) || 0))} seconds ago`;
-  const reason = src.kind === "unavailable" && src.reason ? `<br>Reason: ${escapeHtml(src.reason)}` : "";
-  return `<section class="institutional-section orderflow-source-block"><h4>OrderFlow Source</h4><p><strong>${escapeHtml(`${src.icon} ${src.label}`)}</strong><br>${escapeHtml(src.descriptor)}<br>Quality: ${escapeHtml(src.qualityStars)}<br>Last update: ${escapeHtml(age)}${reason}</p></section>`;
+  return `<section class="institutional-section orderflow-source-block" title="Source: ${escapeHtml(src.label)}
+Reason: ${escapeHtml(src.reason)}
+Age: ${escapeHtml(src.ageText)}"><h4>OrderFlow Source</h4><p><strong>${escapeHtml(`${src.icon} ${src.label}`)}</strong><br>Source: ${escapeHtml(src.label)}<br>${escapeHtml(src.qualityText)}<br>Reason: ${escapeHtml(src.reason)}<br>Age: ${escapeHtml(src.ageText)}</p></section>`;
 }
 
 function isOrderflowAvailable(idea) {
+  const src = normalizeOrderflowSource(idea);
+  if (hasOrderflowSourceMetadata(idea)) return src.available;
   const vd = resolveVolumeDelta(idea);
   return Boolean(idea.orderflow_available ?? idea.prop_signal_score?.orderflow_available ?? (vd.source && vd.source !== "unavailable" && (vd.delta !== undefined || vd.cumdelta !== undefined)));
 }
@@ -983,9 +1013,10 @@ function renderOrderflowEngineBlock(idea) {
     return `${renderOrderflowSourceBlock(idea)}<section class="institutional-section"><h4>2. Order Flow Engine</h4><p>Order Flow Engine недоступен. Слой временно не участвует в оценке.</p></section>`;
   }
   const rows = [
-    ["Provider", idea.orderflow_provider],
-    ["Status", idea.orderflow_status],
-    ["Source Detail", normalizeOrderflowSource(idea).descriptor],
+    ["Source", normalizeOrderflowSource(idea).label],
+    ["Quality", normalizeOrderflowSource(idea).qualityText],
+    ["Reason", normalizeOrderflowSource(idea).reason],
+    ["Age", normalizeOrderflowSource(idea).ageText],
     ["Delta", idea.delta],
     ["CumDelta", idea.cumdelta],
     ["Volume", idea.volume],
