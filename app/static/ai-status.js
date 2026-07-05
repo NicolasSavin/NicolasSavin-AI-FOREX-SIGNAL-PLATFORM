@@ -19,17 +19,28 @@
     return `${Math.floor(hours / 24)} дн назад`;
   }
 
+  function normalizeReason(value) {
+    const text = String(value || "").trim();
+    return text ? text.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()) : "—";
+  }
+
   function normalizeOrderflowSource(payload) {
     const idea = Array.isArray(payload?.ideas) ? payload.ideas.find((item) => item && typeof item === "object") : (Array.isArray(payload) ? payload.find((item) => item && typeof item === "object") : payload);
-    const label = idea?.data_source_label || idea?.orderflow_source_label || "Unknown Source";
-    const raw = String(idea?.data_source || idea?.orderflow_provider || label || "").toLowerCase();
-    const status = String(idea?.data_source_status || idea?.orderflow_status || "").toLowerCase();
-    const unavailable = status.includes("unavailable") || status.includes("offline") || raw === "unavailable";
-    if (/databento|cme/.test(raw) || /databento|cme/i.test(label)) return { icon: "🟢", label: label === "Unknown Source" ? "Databento CME" : label };
-    if (/mt4|bridge|broker/.test(raw) || /mt4|bridge/i.test(label)) return { icon: "🟡", label: label === "Unknown Source" ? "MT4 Bridge" : label };
-    if (/cache|histor/.test(raw) || /cache|histor/i.test(label)) return { icon: "🟠", label: label === "Unknown Source" ? "Cache" : label };
-    if (unavailable) return { icon: "🔴", label: label === "Unknown Source" ? "Offline" : label };
-    return { icon: "⚪", label };
+    const hasNewMetadata = ["data_source", "data_source_label", "data_source_status", "data_source_quality", "data_source_reason", "data_source_age_seconds", "orderflow_available"].some((key) => Object.prototype.hasOwnProperty.call(idea || {}, key));
+    const raw = String(idea?.data_source ?? (!hasNewMetadata ? idea?.orderflow_provider : "") ?? "").toLowerCase();
+    const fallbackLabel = raw === "databento" ? "Databento" : raw === "mt4_live" ? "MT4 Live" : raw === "cache" ? "Cache" : raw === "unavailable" ? "Unavailable" : "Unknown Source";
+    const label = idea?.data_source_label || idea?.orderflow_source_label || (!hasNewMetadata ? idea?.orderflow_provider : "") || fallbackLabel;
+    const status = String(idea?.data_source_status ?? (!hasNewMetadata ? idea?.orderflow_status : "") ?? "").toLowerCase();
+    const available = idea?.orderflow_available === true || status === "ok";
+    const unavailable = idea?.orderflow_available === false || status === "unavailable" || raw === "unavailable" || status.includes("offline");
+    let icon = available ? "🟢" : unavailable ? "🔴" : "⚪";
+    if (raw === "cache" || /cache|histor/i.test(label)) icon = "🟡";
+    if (raw === "unavailable") icon = "🔴";
+    const q = Number(idea?.data_source_quality ?? idea?.orderflow_source_quality);
+    const quality = Number.isFinite(q) ? `Quality ${Math.max(0, Math.min(100, Math.round(q)))}%` : "Quality —";
+    const ageRaw = idea?.data_source_age_seconds ?? idea?.orderflow_source_age_seconds;
+    const age = ageRaw === null || ageRaw === undefined || ageRaw === "" ? "—" : `${Math.max(0, Math.round(Number(ageRaw) || 0))} sec`;
+    return { icon, label, available: Boolean(idea?.orderflow_available), quality, reason: normalizeReason(idea?.data_source_reason ?? idea?.orderflow_source_reason), age };
   }
 
   function renderAiStatus(root, status, orderflowSource) {
@@ -49,7 +60,8 @@
         <span>Provider: <b>${escapeHtml(status?.provider || PROVIDER_LABEL)}</b></span>
         <span>Model: <b>${escapeHtml(MODEL_LABEL)}</b></span>
         <span>${active ? "Last Success" : "Last Error"}: <b>${active ? escapeHtml(timeAgo(status?.last_success_time)) : escapeHtml(error)}</b></span>
-        <span>OrderFlow: <b>${escapeHtml(orderflowSource ? `${orderflowSource.icon} ${orderflowSource.label}` : "Unknown Source")}</b></span>
+        <span title="${escapeHtml(orderflowSource ? `Source: ${orderflowSource.label}\nReason: ${orderflowSource.reason}\nAge: ${orderflowSource.age}` : "Source: Unknown Source")}">OrderFlow: <b>${escapeHtml(orderflowSource ? `${orderflowSource.icon} ${orderflowSource.label}` : "Unknown Source")}</b></span>
+        <span>OrderFlow quality: <b>${escapeHtml(orderflowSource ? orderflowSource.quality : "Quality —")}</b></span>
       </div>
     `;
   }
