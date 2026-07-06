@@ -3,6 +3,7 @@
   const playerEl = document.getElementById('tvPlayerFrame');
   const detailsEl = document.getElementById('tvSelectedDetails');
   const countEl = document.getElementById('tvVideoCount');
+  const catalogStatusEl = document.getElementById('tvCatalogStatus');
   const sidebarEl = document.querySelector('.tv-sidebar');
   if (!listEl || !playerEl || !detailsEl || !window.FXPilotTv) return;
 
@@ -157,16 +158,26 @@
     if (button) selectVideo(button.getAttribute('data-video-id'));
   });
 
+  function renderCatalogStatus(sources = []) {
+    if (!catalogStatusEl) return;
+    const importedDates = videos.map((video) => video.imported_at || video.published_at_raw || video.published_at).filter(Boolean).sort();
+    const updated = importedDates[importedDates.length - 1];
+    catalogStatusEl.textContent = `Каталог обновлен: ${updated ? formatDate(String(updated).slice(0, 10)) : 'нет данных'} · Источников: ${sources.length} · Видео: ${videos.length}`;
+  }
+
   playerEl.innerHTML = PlayerSkeleton();
-  fetch('/api/tv/videos', { headers: { Accept: 'application/json' }, cache: 'no-store' })
-    .then((response) => { if (!response.ok) throw new Error('videos_unavailable'); return response.json(); })
-    .then((payload) => {
+  Promise.all([
+    fetch('/api/tv/videos', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((response) => { if (!response.ok) throw new Error('videos_unavailable'); return response.json(); }),
+    fetch('/api/tv/sources', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((response) => response.ok ? response.json() : []).catch(() => []),
+  ])
+    .then(([payload, sources]) => {
       videos = (Array.isArray(payload) ? payload : []).sort(byNewest);
+      renderCatalogStatus(Array.isArray(sources) ? sources : []);
       filteredVideos = videos;
       renderFilters();
       document.getElementById('tvVideoSearch')?.addEventListener('input', (event) => { query = event.target.value; renderList(); });
       document.getElementById('tvCategoryFilter')?.addEventListener('change', (event) => { category = event.target.value; renderList(); selectVideo(filteredVideos[0]?.id); });
       selectVideo(videos[0] && videos[0].id);
     })
-    .catch(() => { videos = []; filteredVideos = []; if (countEl) countEl.textContent = '0 видео'; playerEl.innerHTML = '<div class="tv-player-empty"><strong>Каталог временно недоступен</strong><span>Не удалось загрузить локальный список видео. Попробуйте обновить страницу.</span></div>'; detailsEl.innerHTML = '<p class="section-text">Видеообзоры не загружены. Реальные рыночные данные не подменяются демо-контентом.</p>'; listEl.innerHTML = '<div class="tv-player-empty">Нет доступных видео.</div>'; });
+    .catch(() => { videos = []; filteredVideos = []; renderCatalogStatus([]); if (countEl) countEl.textContent = '0 видео'; playerEl.innerHTML = '<div class="tv-player-empty"><strong>Каталог временно недоступен</strong><span>Не удалось загрузить локальный список видео. Попробуйте обновить страницу.</span></div>'; detailsEl.innerHTML = '<p class="section-text">Видеообзоры не загружены. Реальные рыночные данные не подменяются демо-контентом.</p>'; listEl.innerHTML = '<div class="tv-player-empty">Нет доступных видео.</div>'; });
 })();

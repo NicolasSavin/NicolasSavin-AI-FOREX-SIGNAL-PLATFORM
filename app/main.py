@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -41,6 +41,7 @@ from app.services.signal_audit_logger import log_signal_audit
 from app.services.timing import timing_log
 from app.services.ai_runtime_status import get_ai_status, record_ai_request_failure, record_ai_request_start, record_ai_request_success, run_ai_test_request, startup_ai_healthcheck
 from app.services.visitor_counter import get_visit_stats, increment_visit
+from app.services.tv_import_service import import_tv_videos, load_tv_sources, merged_tv_videos
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -480,19 +481,7 @@ def tv_review_page(video_id: str):
 
 
 def _load_tv_video_catalog() -> list[dict[str, Any]]:
-    catalog_path = BASE_DIR.parent / "data" / "tv_videos.json"
-    try:
-        with catalog_path.open("r", encoding="utf-8") as catalog_file:
-            payload = json.load(catalog_file)
-    except Exception as exc:
-        logger.warning("tv_videos_catalog_unavailable path=%s error=%s", catalog_path, exc)
-        return []
-
-    if not isinstance(payload, list):
-        logger.warning("tv_videos_catalog_invalid path=%s type=%s", catalog_path, type(payload).__name__)
-        return []
-
-    return [item for item in payload if isinstance(item, dict)]
+    return merged_tv_videos()
 
 
 def _build_tv_review_payload(video: dict[str, Any]) -> dict[str, Any]:
@@ -516,6 +505,22 @@ def _build_tv_review_payload(video: dict[str, Any]) -> dict[str, Any]:
 @app.get("/api/tv/videos")
 def api_tv_videos() -> list[dict[str, Any]]:
     return _load_tv_video_catalog()
+
+
+@app.get("/api/tv/sources")
+def api_tv_sources() -> list[dict[str, Any]]:
+    return load_tv_sources()
+
+
+@app.post("/api/tv/import")
+def api_tv_import(x_tv_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    secret = os.getenv("TV_IMPORT_SECRET", "").strip()
+    if secret:
+        if x_tv_import_secret != secret:
+            raise HTTPException(status_code=403, detail="TV import secret required")
+    elif os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development")).strip().lower() not in {"dev", "development", "local", "test"}:
+        raise HTTPException(status_code=403, detail="TV import is disabled without TV_IMPORT_SECRET")
+    return import_tv_videos()
 
 
 @app.get("/api/tv/review/{video_id}")

@@ -1,0 +1,11 @@
+[
+  {
+    "id": "fxpilot",
+    "name": "FXPilot TV",
+    "type": "youtube_channel",
+    "channel_url": "https://www.youtube.com/@example",
+    "category": "Forex",
+    "default_symbol": "EURUSD",
+    "enabled": true
+  }
+]
