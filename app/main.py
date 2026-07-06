@@ -539,16 +539,17 @@ def api_media_sources() -> list[dict[str, Any]]:
 
 @app.post("/api/media/import")
 def api_media_import() -> dict[str, Any]:
+    logger.info("POST /api/media/import executed")
     try:
-        return media_import_engine.import_latest()
+        return media_import_engine.run()
     except MediaConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/media/debug")
-def api_media_debug() -> list[dict[str, Any]]:
+def api_media_debug() -> dict[str, Any]:
     try:
-        return media_import_engine.debug_sources()
+        return media_import_engine.debug_payload()
     except MediaConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

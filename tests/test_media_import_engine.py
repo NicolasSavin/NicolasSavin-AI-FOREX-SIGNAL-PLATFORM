@@ -102,7 +102,9 @@ def test_media_import_failure_continues_remaining_sources(tmp_path: Path):
 def test_media_debug_endpoint_contract():
     response = TestClient(app).get("/api/media/debug")
     assert response.status_code == 200
-    assert {"provider", "rss_url", "channel_id", "request_status", "response_status", "videos_found", "last_error"}.issubset(response.json()[0].keys())
+    payload = response.json()
+    assert {"engine_running", "sources", "providers", "catalog_size", "last_import", "logs"}.issubset(payload.keys())
+    assert {"provider", "rss_url", "channel_id", "request_status", "response_status", "videos_found", "last_error"}.issubset(payload["sources"][0].keys())
 
 
 def _source(channel_url: str, channel_id: str | None = None):
