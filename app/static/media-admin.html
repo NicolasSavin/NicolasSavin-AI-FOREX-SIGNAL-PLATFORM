@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FXPilot TV · Media Admin</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body data-page="tv-sources">
+    <div class="page-shell tv-shell tv-admin-shell">
+      <header class="site-header tv-hero tv-admin-hero">
+        <div class="tv-hero__grid">
+          <div class="tv-hero__copy">
+            <p class="eyebrow">FXPilot TV · Hidden Admin</p>
+            <h1>Media Import Engine</h1>
+            <p class="lead">Внутренняя панель автоматического импорта медиа: источники, RSS-провайдеры, каталог и статус будущего scheduler.</p>
+          </div>
+          <div class="tv-hero__signal" aria-label="Статус импорта">
+            <span class="tv-live-dot"></span><strong id="mediaImportStatus">Engine ready</strong>
+            <p>Архитектура готова к регулярным обновлениям без YouTube Data API и без scraping HTML.</p>
+          </div>
+        </div>
+      </header>
+
+      <main class="content-stack tv-content">
+        <section class="tv-source-stats" aria-label="Статистика Media Engine">
+          <article><span>Configured sources</span><strong id="mediaStatSources">—</strong></article>
+          <article><span>Imported videos</span><strong id="mediaStatVideos">—</strong></article>
+          <article><span>Last update</span><strong id="mediaStatLastUpdate">—</strong></article>
+          <article><span>Newest media</span><strong id="mediaStatNewest">—</strong></article>
+        </section>
+
+        <section class="panel tv-source-panel" aria-labelledby="mediaSourcesTitle">
+          <div class="section-heading split-heading">
+            <div>
+              <p class="section-kicker">Sources</p>
+              <h2 id="mediaSourcesTitle">Настроенные источники</h2>
+              <p class="section-text">Кнопки Enable / Disable зарезервированы под следующий спринт. Import Now уже вызывает серверный engine.</p>
+            </div>
+            <div class="tv-source-actions"><button type="button" id="mediaImportNow">Import Now</button></div>
+          </div>
+          <div class="tv-source-table-wrap">
+            <table class="tv-source-table">
+              <thead><tr><th>Источник</th><th>Provider</th><th>Enabled</th><th>Last update</th><th>Imported videos</th><th>Действия</th></tr></thead>
+              <tbody id="mediaSourcesBody"><tr><td colspan="6">Загрузка...</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel tv-source-panel" aria-labelledby="mediaNewestTitle">
+          <div class="section-heading"><p class="section-kicker">Catalog</p><h2 id="mediaNewestTitle">Newest media</h2></div>
+          <div class="tv-source-table-wrap">
+            <table class="tv-source-table">
+              <thead><tr><th>Видео</th><th>Symbol</th><th>Category</th><th>Published</th><th>Status</th></tr></thead>
+              <tbody id="mediaNewestBody"><tr><td colspan="5">Загрузка...</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/static/media-admin.js"></script>
+  </body>
+</html>

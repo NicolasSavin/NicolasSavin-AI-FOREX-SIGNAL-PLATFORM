@@ -42,6 +42,7 @@ from app.services.timing import timing_log
 from app.services.ai_runtime_status import get_ai_status, record_ai_request_failure, record_ai_request_start, record_ai_request_success, run_ai_test_request, startup_ai_healthcheck
 from app.services.visitor_counter import get_visit_stats, increment_visit
 from app.services.tv_source_manager import TvSourceConfigError, TvSourceManager
+from app.services.media_import_engine import MediaConfigError, MediaImportEngine
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,7 @@ from backend.signal_engine import SignalEngine
 canonical_market_service = get_canonical_market_service()
 trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_source_manager = TvSourceManager(BASE_DIR.parent / "data" / "tv_sources.json", BASE_DIR.parent / "data" / "tv_videos.json")
+media_import_engine = MediaImportEngine(BASE_DIR.parent / "data" / "media_sources.json", BASE_DIR.parent / "data" / "media_catalog.json", BASE_DIR.parent / "data" / "tv_videos.json")
 
 class _AnalyticsNewsConnector:
     def _descriptor(self, *, status: str = "unavailable", note_ru: str = "") -> dict[str, str]:
@@ -486,20 +488,17 @@ def tv_sources_page():
     return FileResponse(STATIC_DIR / "tv-sources.html")
 
 
+@app.get("/admin/media", include_in_schema=False)
+def media_admin_page():
+    return FileResponse(STATIC_DIR / "media-admin.html")
+
+
 def _load_tv_video_catalog() -> list[dict[str, Any]]:
-    catalog_path = BASE_DIR.parent / "data" / "tv_videos.json"
     try:
-        with catalog_path.open("r", encoding="utf-8") as catalog_file:
-            payload = json.load(catalog_file)
+        return media_import_engine.load_catalog()
     except Exception as exc:
-        logger.warning("tv_videos_catalog_unavailable path=%s error=%s", catalog_path, exc)
+        logger.warning("media_catalog_unavailable error=%s", exc)
         return []
-
-    if not isinstance(payload, list):
-        logger.warning("tv_videos_catalog_invalid path=%s type=%s", catalog_path, type(payload).__name__)
-        return []
-
-    return [item for item in payload if isinstance(item, dict)]
 
 
 def _build_tv_review_payload(video: dict[str, Any]) -> dict[str, Any]:
@@ -523,6 +522,32 @@ def _build_tv_review_payload(video: dict[str, Any]) -> dict[str, Any]:
 @app.get("/api/tv/videos")
 def api_tv_videos() -> list[dict[str, Any]]:
     return _load_tv_video_catalog()
+
+
+@app.get("/api/media")
+def api_media() -> list[dict[str, Any]]:
+    return _load_tv_video_catalog()
+
+
+@app.get("/api/media/sources")
+def api_media_sources() -> list[dict[str, Any]]:
+    try:
+        return media_import_engine.list_sources()
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/media/import")
+def api_media_import() -> dict[str, Any]:
+    try:
+        return media_import_engine.import_latest()
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/media/scheduler")
+def api_media_scheduler() -> dict[str, Any]:
+    return media_import_engine.scheduler.next_job_payload()
 
 
 @app.get("/api/tv/sources")
