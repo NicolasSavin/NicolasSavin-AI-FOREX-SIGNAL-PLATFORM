@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.media_import_engine import MediaImportEngine, detect_symbol
+from app.services.media_import_engine import FetchResult, MediaImportEngine, YouTubeRssProvider, detect_symbol
 
 
 def test_media_api_contracts():
@@ -47,3 +47,82 @@ def test_media_import_merges_and_deduplicates_manual_catalog(tmp_path: Path):
     assert len(catalog) == 1
     assert catalog[0]["youtube_id"] == "abc12345678"
     assert catalog[0]["symbol"] == "EURUSD"
+
+
+
+def test_youtube_rss_generation_for_channel_and_user_urls():
+    provider = YouTubeRssProvider()
+    assert provider.resolve_rss(_source("https://www.youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw"))["rss_url"] == "https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw"
+    assert provider.resolve_rss(_source("https://www.youtube.com/user/GoogleDevelopers"))["rss_url"] == "https://www.youtube.com/feeds/videos.xml?user=GoogleDevelopers"
+
+
+def test_youtube_handle_resolution_requires_channel_id_without_scraping():
+    provider = YouTubeRssProvider()
+    unresolved = provider.resolve_rss(_source("https://www.youtube.com/@demo"))
+    resolved = provider.resolve_rss(_source("https://www.youtube.com/@demo", channel_id="UCdemo123"))
+    assert unresolved["rss_url"] is None
+    assert "requires a channel_id" in unresolved["error"]
+    assert resolved["rss_url"] == "https://www.youtube.com/feeds/videos.xml?channel_id=UCdemo123"
+
+
+def test_media_import_success_updates_catalog_and_source_metadata(tmp_path: Path):
+    engine, catalog_path, sources_path = _engine_with_fetcher(tmp_path, lambda url: FetchResult(True, url, "ok", 200, _sample_feed()))
+    result = engine.import_latest()
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    source = json.loads(sources_path.read_text(encoding="utf-8"))[0]
+    assert result["success"] is True
+    assert result["processed"] == 1
+    assert result["imported"] == 1
+    assert result["failed"] == 0
+    assert catalog[0]["youtube_id"] == "abc12345678"
+    assert source["videos_count"] == 1
+    assert source["last_import"]
+    assert source["last_success"]
+    assert source.get("last_error") is None
+
+
+def test_media_import_failure_continues_remaining_sources(tmp_path: Path):
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    sources_path.write_text(json.dumps([
+        {"id":"bad","name":"Bad","provider":"youtube","channel_url":"https://www.youtube.com/@bad","language":"ru","priority":1,"categories":["Forex"],"enabled":True},
+        {"id":"good","name":"Good","provider":"youtube","channel_url":"https://www.youtube.com/channel/UCgood","language":"ru","priority":2,"categories":["Forex"],"enabled":True}
+    ]), encoding="utf-8")
+    catalog_path.write_text("[]", encoding="utf-8")
+    engine = MediaImportEngine(sources_path, catalog_path, youtube_provider=YouTubeRssProvider(lambda url: FetchResult(True, url, "ok", 200, _sample_feed("good1234567"))))
+    result = engine.import_latest()
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert result["processed"] == 2
+    assert result["failed"] == 1
+    assert result["imported"] == 1
+    assert catalog[0]["source_id"] == "good"
+    assert result["errors"][0]["source"] == "Bad"
+
+
+def test_media_debug_endpoint_contract():
+    response = TestClient(app).get("/api/media/debug")
+    assert response.status_code == 200
+    assert {"provider", "rss_url", "channel_id", "request_status", "response_status", "videos_found", "last_error"}.issubset(response.json()[0].keys())
+
+
+def _source(channel_url: str, channel_id: str | None = None):
+    from app.services.media_import_engine import MediaSource
+    return MediaSource("demo", "Demo", "youtube", channel_url, "ru", 1, ["Forex"], True, channel_id=channel_id)
+
+
+def _engine_with_fetcher(tmp_path: Path, fetcher):
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    sources_path.write_text(json.dumps([
+        {"id":"demo","name":"Demo","provider":"youtube","channel_url":"https://www.youtube.com/channel/UCdemo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
+    ]), encoding="utf-8")
+    catalog_path.write_text("[]", encoding="utf-8")
+    return MediaImportEngine(sources_path, catalog_path, youtube_provider=YouTubeRssProvider(fetcher)), catalog_path, sources_path
+
+
+def _sample_feed(video_id: str = "abc12345678") -> bytes:
+    xml = f"""<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns='http://www.w3.org/2005/Atom' xmlns:yt='http://www.youtube.com/xml/schemas/2015'>
+  <entry><yt:videoId>{video_id}</yt:videoId><title>EURUSD обзор</title><link href='https://www.youtube.com/watch?v={video_id}'/><author><name>Demo</name></author><published>2026-07-06T00:00:00+00:00</published></entry>
+</feed>"""
+    return xml.encode("utf-8")

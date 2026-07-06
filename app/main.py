@@ -545,6 +545,14 @@ def api_media_import() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/api/media/debug")
+def api_media_debug() -> list[dict[str, Any]]:
+    try:
+        return media_import_engine.debug_sources()
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/api/media/scheduler")
 def api_media_scheduler() -> dict[str, Any]:
     return media_import_engine.scheduler.next_job_payload()

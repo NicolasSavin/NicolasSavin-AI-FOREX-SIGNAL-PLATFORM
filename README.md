@@ -2,6 +2,10 @@
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
+## Что обновлено в версии 4.2
+- FXPilot Media Import Engine теперь строит YouTube RSS только из поддерживаемых публичных RSS-идентификаторов: `channel_id`, `/channel/UC...` и legacy `/user/...`; для `@handle` и `/c/...` без `channel_id` возвращается явная диагностика без HTML scraping и без YouTube Data API.
+- `POST /api/media/import` возвращает детальный контракт `processed/imported/updated/failed/errors`, продолжает импорт остальных источников при ошибке одного источника и сохраняет `channel_id`, `rss_url`, `last_import`, `last_success`, `last_error`, `videos_count` в `data/media_sources.json`.
+- Добавлен `GET /api/media/debug` для проверки provider, RSS URL, channel id, HTTP-статуса запроса, количества найденных видео и последней ошибки источника.
 
 ## Что обновлено в версии 4.1
 - FXPilot TV Sprint 3 Automatic Media Import Engine: добавлены `data/media_sources.json`, `data/media_catalog.json`, нормализованная модель `MediaItem` и модульный `MediaImportEngine` для provider-independent импорта YouTube RSS / будущих Telegram, RSS, Podcast, Vimeo, FXPilot, News и Articles без изменения API.
