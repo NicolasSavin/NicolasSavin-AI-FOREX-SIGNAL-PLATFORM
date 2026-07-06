@@ -41,6 +41,7 @@ from app.services.signal_audit_logger import log_signal_audit
 from app.services.timing import timing_log
 from app.services.ai_runtime_status import get_ai_status, record_ai_request_failure, record_ai_request_start, record_ai_request_success, run_ai_test_request, startup_ai_healthcheck
 from app.services.visitor_counter import get_visit_stats, increment_visit
+from app.services.tv_source_manager import TvSourceConfigError, TvSourceManager
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,7 @@ from backend.signal_engine import SignalEngine
 
 canonical_market_service = get_canonical_market_service()
 trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
+tv_source_manager = TvSourceManager(BASE_DIR.parent / "data" / "tv_sources.json", BASE_DIR.parent / "data" / "tv_videos.json")
 
 class _AnalyticsNewsConnector:
     def _descriptor(self, *, status: str = "unavailable", note_ru: str = "") -> dict[str, str]:
@@ -479,6 +481,11 @@ def tv_review_page(video_id: str):
     return FileResponse(STATIC_DIR / "tv-review.html")
 
 
+@app.get("/tv/sources", include_in_schema=False)
+def tv_sources_page():
+    return FileResponse(STATIC_DIR / "tv-sources.html")
+
+
 def _load_tv_video_catalog() -> list[dict[str, Any]]:
     catalog_path = BASE_DIR.parent / "data" / "tv_videos.json"
     try:
@@ -516,6 +523,25 @@ def _build_tv_review_payload(video: dict[str, Any]) -> dict[str, Any]:
 @app.get("/api/tv/videos")
 def api_tv_videos() -> list[dict[str, Any]]:
     return _load_tv_video_catalog()
+
+
+@app.get("/api/tv/sources")
+def api_tv_sources() -> list[dict[str, Any]]:
+    try:
+        return tv_source_manager.list_public_sources()
+    except TvSourceConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/tv/sources/stats")
+def api_tv_sources_stats() -> dict[str, Any]:
+    try:
+        return {
+            "stats": tv_source_manager.dashboard_stats(),
+            "import_jobs": tv_source_manager.prepare_import_jobs(),
+        }
+    except TvSourceConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/tv/review/{video_id}")
