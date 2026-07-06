@@ -1,6 +1,10 @@
-# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 3.8
+# NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 4.0
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
+
+## Что обновлено в версии 4.0
+- FXPilot TV на `/tv` доведён до production-quality video portal: responsive YouTube player со skeleton-загрузкой и autoplay выбранного ролика, duration/publish/category badges, подсветка текущего видео, поиск, фильтр категорий, сортировка newest-first, smooth-scroll sidebar и группировка Today / Yesterday / Archive.
+- Review-навигация закреплена как стабильный UX-контракт: «Проверить обзор» открывает `/tv/review/<video_id>`, а reusable frontend-компоненты `tv-components.js` позволяют будущему `/api/tv/review/<video_id>` наполнять страницу без переработки UI.
 
 ## Что обновлено в версии 3.9
 - FXPilot TV на `/tv` превращён в рабочий видео-раздел: добавлен локальный JSON-каталог `data/tv_videos.json`, endpoint `GET /api/tv/videos`, YouTube iframe-плеер, sidebar со списком обзоров и preview будущей AI-проверки без YouTube API, scraping и внешних ключей.

@@ -1,38 +1,18 @@
 (function initFxPilotReviewPage() {
   const root = document.getElementById('tvReviewPage');
-  if (!root) return;
+  if (!root || !window.FXPilotTv) return;
 
-  const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  }[char]));
-
-  const formatDate = (value) => {
-    if (!value) return 'Дата не указана';
-    const date = new Date(`${value}T00:00:00Z`);
-    if (Number.isNaN(date.getTime())) return value;
-    return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }).format(date);
-  };
+  const { escapeHtml, formatDate, VideoPlayer, CategoryBadges, ReviewSection } = window.FXPilotTv;
 
   const getVideoId = () => {
     const parts = window.location.pathname.split('/').filter(Boolean);
     return parts[0] === 'tv' && parts[1] === 'review' ? decodeURIComponent(parts[2] || '') : '';
   };
 
-  function ReviewSection({ id, className = '', title, content }) {
-    return `
-      <section id="${escapeHtml(id)}" class="tv-review-section ${escapeHtml(className)}" data-review-section="${escapeHtml(id)}" aria-labelledby="${escapeHtml(id)}Title">
-        <div class="tv-review-section__head"><p class="section-kicker">Review Module</p><h2 id="${escapeHtml(id)}Title">${escapeHtml(title)}</h2></div>
-        <div class="tv-review-section__body">${content}</div>
-      </section>
-    `;
-  }
-
   function ReviewPage(payload) {
     const video = payload.video || {};
     const review = payload.review || {};
-    const player = video.youtube_id
-      ? `<iframe src="https://www.youtube.com/embed/${encodeURIComponent(video.youtube_id)}" title="${escapeHtml(video.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy"></iframe>`
-      : '<div class="tv-player-empty">Видео пока недоступно.</div>';
+    const player = VideoPlayer(video, { autoplay: false, titleFallback: 'FXPilot TV Review' });
     const conclusions = Array.isArray(review.main_conclusions) ? review.main_conclusions : [];
 
     return `
@@ -41,7 +21,7 @@
         <div class="tv-player-frame tv-review-player" id="reviewPlayer">${player}</div>
         <article class="tv-selected-card tv-review-meta" id="reviewVideoMeta">
           <div class="tv-detail-top">
-            <div><span class="tv-category-badge" id="reviewCategory">${escapeHtml(video.category)}</span><span class="tv-symbol-badge" id="reviewSymbol">${escapeHtml(video.symbol)}</span><span class="tv-timeframe-badge" id="reviewTimeframe">${escapeHtml(video.timeframe || 'Timeframe уточняется')}</span></div>
+            <div id="reviewBadges">${CategoryBadges(video)}<span class="tv-duration-badge" id="reviewDuration">${escapeHtml(video.duration || '—')}</span></div>
             <time id="reviewPublishDate" datetime="${escapeHtml(video.published_at)}">${escapeHtml(formatDate(video.published_at))}</time>
           </div>
           <h2 id="reviewTitle">${escapeHtml(video.title || 'Видеообзор FXPilot TV')}</h2>

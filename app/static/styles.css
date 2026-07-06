@@ -2795,3 +2795,129 @@ body[data-page="tv-review"] {
     min-height: auto;
   }
 }
+
+.tv-player-skeleton {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+  background: linear-gradient(110deg, rgba(7, 17, 31, 0.95), rgba(16, 42, 72, 0.72), rgba(7, 17, 31, 0.95));
+  background-size: 220% 100%;
+  animation: tvSkeletonPulse 1.3s ease-in-out infinite;
+}
+
+.tv-player-skeleton span {
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  border: 1px solid rgba(76, 201, 240, 0.24);
+  box-shadow: 0 0 36px rgba(76, 201, 240, 0.22);
+}
+
+.tv-player-skeleton strong,
+.tv-player-skeleton small { display: block; }
+.tv-player-skeleton strong { color: #eaf6ff; }
+
+@keyframes tvSkeletonPulse {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 220% 50%; }
+}
+
+.tv-sidebar-controls {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tv-sidebar-controls input,
+.tv-sidebar-controls select {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(104, 143, 191, 0.22);
+  background: rgba(3, 12, 24, 0.72);
+  color: var(--text);
+  padding: 11px 12px;
+  outline: none;
+}
+
+.tv-sidebar-controls input:focus,
+.tv-sidebar-controls select:focus {
+  border-color: rgba(76, 201, 240, 0.58);
+  box-shadow: 0 0 0 3px rgba(76, 201, 240, 0.1);
+}
+
+.tv-sort-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.tv-video-list {
+  scroll-behavior: smooth;
+}
+
+.tv-video-group {
+  display: grid;
+  gap: 10px;
+}
+
+.tv-video-group h4 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 4px 0 0;
+  padding: 8px 4px;
+  color: #9fe7ff;
+  background: rgba(7, 17, 31, 0.94);
+  backdrop-filter: blur(10px);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+.tv-video-item.is-active {
+  box-shadow: 0 0 0 1px rgba(76, 201, 240, 0.22), 0 16px 34px rgba(0, 0, 0, 0.24);
+}
+
+.tv-duration-badge,
+.tv-timeframe-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.tv-duration-badge {
+  color: #fef3c7;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.tv-detail-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 1040px) {
+  .tv-video-group h4 { position: static; }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
