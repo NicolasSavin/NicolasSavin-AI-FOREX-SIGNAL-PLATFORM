@@ -3,6 +3,7 @@
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
 ## Что обновлено в версии 4.0
+- FXPilot TV Sprint 3: добавлен внутренний Source Manager на `/tv/sources` и API `GET /api/tv/sources`; источники берутся из `data/tv_sources.json`, валидируются сервисом `TvSourceManager`, а кнопки Import now / Disable / Enable пока показывают статус разработки без scraping, YouTube API и реального импорта.
 - FXPilot TV на `/tv` доведён до production-quality video portal: responsive YouTube player со skeleton-загрузкой и autoplay выбранного ролика, duration/publish/category badges, подсветка текущего видео, поиск, фильтр категорий, сортировка newest-first, smooth-scroll sidebar и группировка Today / Yesterday / Archive.
 - Review-навигация закреплена как стабильный UX-контракт: «Проверить обзор» открывает `/tv/review/<video_id>`, а reusable frontend-компоненты `tv-components.js` позволяют будущему `/api/tv/review/<video_id>` наполнять страницу без переработки UI.
 

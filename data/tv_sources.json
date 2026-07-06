@@ -1,0 +1,76 @@
+[
+  {
+    "id": "gerchik",
+    "name": "Gerchik & Co",
+    "provider": "youtube",
+    "channel_url": "https://www.youtube.com/@gerchikco9785",
+    "language": "ru",
+    "categories": [
+      "Forex",
+      "Smart Money"
+    ],
+    "priority": 1,
+    "enabled": true
+  },
+  {
+    "id": "instaforex",
+    "name": "InstaForex",
+    "provider": "youtube",
+    "channel_url": "https://www.youtube.com/@instaforex",
+    "language": "ru",
+    "categories": [
+      "Forex",
+      "Macro"
+    ],
+    "priority": 2,
+    "enabled": true
+  },
+  {
+    "id": "traderevo",
+    "name": "TraderEVO",
+    "provider": "youtube",
+    "channel_url": "https://www.youtube.com/@traderevo",
+    "language": "ru",
+    "categories": [
+      "Smart Money"
+    ],
+    "priority": 2,
+    "enabled": true
+  },
+  {
+    "id": "prosto_crypto",
+    "name": "PROSTO КРИПТО",
+    "provider": "youtube",
+    "channel_url": "https://www.youtube.com/@prosto_kripto",
+    "language": "ru",
+    "categories": [
+      "Crypto"
+    ],
+    "priority": 2,
+    "enabled": true
+  },
+  {
+    "id": "market_vector",
+    "name": "Market Vector",
+    "provider": "youtube",
+    "channel_url": "https://www.youtube.com/@market_vector",
+    "language": "ru",
+    "categories": [
+      "Market Analysis"
+    ],
+    "priority": 2,
+    "enabled": true
+  },
+  {
+    "id": "bazylev",
+    "name": "Aleksandr Bazylev",
+    "provider": "youtube",
+    "channel_url": "https://www.youtube.com/@AleksandrBazylev",
+    "language": "ru",
+    "categories": [
+      "Forex"
+    ],
+    "priority": 2,
+    "enabled": true
+  }
+]

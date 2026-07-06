@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FXPilot TV · Source Manager</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  </head>
+  <body data-page="tv-sources">
+    <div class="page-shell tv-shell tv-admin-shell">
+      <header class="site-header tv-hero tv-admin-hero">
+        <div class="tv-hero__grid">
+          <div class="tv-hero__copy">
+            <p class="eyebrow">FXPilot TV · Internal Admin</p>
+            <h1>Source Manager</h1>
+            <p class="lead">Управление источниками видео. Импорт, AI Summary, Reality Check и Trust Score пока не выполняются.</p>
+          </div>
+          <div class="tv-hero__signal" aria-label="Статус Source Manager">
+            <span class="tv-live-dot"></span><strong>Management layer online</strong>
+            <p>Конфигурация источников → подготовка import jobs → будущие провайдеры без изменения API</p>
+          </div>
+        </div>
+      </header>
+
+      <main class="content-stack tv-content">
+        <section class="tv-source-stats" aria-label="Статистика FXPilot TV">
+          <article><span>Sources</span><strong id="tvStatSources">—</strong></article>
+          <article><span>Videos</span><strong id="tvStatVideos">—</strong></article>
+          <article><span>Last update</span><strong id="tvStatLastUpdate">—</strong></article>
+          <article><span>Newest video</span><strong id="tvStatNewestVideo">—</strong></article>
+        </section>
+
+        <section class="panel tv-source-panel" aria-labelledby="tvSourcesTitle">
+          <div class="panel-heading compact">
+            <div>
+              <p class="section-kicker">Автоматические источники</p>
+              <h2 id="tvSourcesTitle">TV Source Manager</h2>
+              <p class="section-text">Список загружается из <code>data/tv_sources.json</code>. Кнопки уже зарезервированы под следующий спринт и пока показывают статус разработки.</p>
+            </div>
+          </div>
+          <div class="tv-source-table-wrap">
+            <table class="tv-source-table">
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Provider</th>
+                  <th>Priority</th>
+                  <th>Status</th>
+                  <th>Last import</th>
+                  <th>Videos</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="tvSourcesBody">
+                <tr><td colspan="7">Загрузка источников...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/static/tv-sources.js"></script>
+  </body>
+</html>
