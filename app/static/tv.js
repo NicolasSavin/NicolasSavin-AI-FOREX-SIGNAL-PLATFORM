@@ -38,7 +38,7 @@
         <div class="tv-detail-meta"><span class="tv-duration-badge">${escapeHtml(video.duration || '—')}</span><time datetime="${escapeHtml(video.published_at)}">${escapeHtml(formatDate(video.published_at))}</time></div>
       </div>
       <h3>${escapeHtml(video.title)}</h3>
-      <p class="tv-author">Автор: ${escapeHtml(video.author)}</p>
+      <p class="tv-author">Автор: ${escapeHtml(video.author)} · ${escapeHtml(video.symbol || 'Инструмент не указан')} · ${escapeHtml(video.category || 'Категория не указана')}</p>
       <p>${escapeHtml(video.description)}</p>
       <a class="tv-check-button" href="/tv/review/${encodeURIComponent(video.id)}" aria-label="Открыть AI-разбор обзора ${escapeHtml(video.title)}">Проверить обзор</a>
     `;
@@ -75,7 +75,7 @@
     applyFilters();
     if (countEl) countEl.textContent = `${filteredVideos.length} из ${videos.length} видео`;
     if (!filteredVideos.length) {
-      listEl.innerHTML = '<div class="tv-player-empty">По выбранным фильтрам видео не найдены.</div>';
+      listEl.innerHTML = '<div class="tv-player-empty"><strong>Видео не найдены</strong><span>Измените поиск или категорию. Каталог FXPilot TV будет расширяться без подключения YouTube API.</span></div>';
       return;
     }
     const groups = filteredVideos.reduce((acc, video) => {
@@ -91,7 +91,8 @@
           <button class="tv-video-item ${video.id === selectedId ? 'is-active' : ''}" type="button" data-video-id="${escapeHtml(video.id)}" aria-pressed="${video.id === selectedId ? 'true' : 'false'}">
             <span class="tv-video-item__meta">${CategoryBadges(video)}<span class="tv-duration-badge">${escapeHtml(video.duration || '—')}</span></span>
             <strong>${escapeHtml(video.title)}</strong>
-            <small>${escapeHtml(video.author)} · ${escapeHtml(formatDate(video.published_at))}</small>
+            <span class="tv-video-item__info"><b>${escapeHtml(video.symbol || '—')}</b><span>${escapeHtml(video.category || 'Без категории')}</span><time datetime="${escapeHtml(video.published_at)}">${escapeHtml(formatDate(video.published_at))}</time></span>
+            <small>${escapeHtml(video.author)} · ${escapeHtml(video.duration || '—')}</small>
           </button>
         `).join('')}
       </section>
@@ -114,7 +115,7 @@
 
   playerEl.innerHTML = PlayerSkeleton();
   fetch('/api/tv/videos', { headers: { Accept: 'application/json' }, cache: 'no-store' })
-    .then((response) => response.ok ? response.json() : [])
+    .then((response) => { if (!response.ok) throw new Error('videos_unavailable'); return response.json(); })
     .then((payload) => {
       videos = (Array.isArray(payload) ? payload : []).sort(byNewest);
       filteredVideos = videos;
@@ -123,5 +124,5 @@
       document.getElementById('tvCategoryFilter')?.addEventListener('change', (event) => { category = event.target.value; renderList(); selectVideo(filteredVideos[0]?.id); });
       selectVideo(videos[0] && videos[0].id);
     })
-    .catch(() => { videos = []; selectVideo(null); });
+    .catch(() => { videos = []; filteredVideos = []; if (countEl) countEl.textContent = '0 видео'; playerEl.innerHTML = '<div class="tv-player-empty"><strong>Каталог временно недоступен</strong><span>Не удалось загрузить локальный список видео. Попробуйте обновить страницу.</span></div>'; detailsEl.innerHTML = '<p class="section-text">Видеообзоры не загружены. Реальные рыночные данные не подменяются демо-контентом.</p>'; listEl.innerHTML = '<div class="tv-player-empty">Нет доступных видео.</div>'; });
 })();
