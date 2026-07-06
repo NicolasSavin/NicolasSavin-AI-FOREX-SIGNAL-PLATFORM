@@ -158,7 +158,7 @@
   });
 
   playerEl.innerHTML = PlayerSkeleton();
-  fetch('/api/tv/videos', { headers: { Accept: 'application/json' }, cache: 'no-store' })
+  fetch('/api/media', { headers: { Accept: 'application/json' }, cache: 'no-store' })
     .then((response) => { if (!response.ok) throw new Error('videos_unavailable'); return response.json(); })
     .then((payload) => {
       videos = (Array.isArray(payload) ? payload : []).sort(byNewest);
