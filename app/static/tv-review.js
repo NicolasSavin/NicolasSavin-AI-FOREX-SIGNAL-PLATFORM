@@ -2,7 +2,7 @@
   const root = document.getElementById('tvReviewPage');
   if (!root || !window.FXPilotTv) return;
 
-  const { escapeHtml, formatDate, VideoPlayer, CategoryBadges, ReviewSection } = window.FXPilotTv;
+  const { escapeHtml, formatDate, metaItems, VideoPlayer, CategoryBadges, ReviewSection } = window.FXPilotTv;
 
   const getVideoId = () => {
     const parts = window.location.pathname.split('/').filter(Boolean);
@@ -66,6 +66,21 @@
     return `<ul class="tv-premium-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
   }
 
+  function placeholder(text) {
+    return `<p>${escapeHtml(text)}</p><p class="tv-coming-soon">Данные будут доступны после будущего AI / Reality Check слоя</p>`;
+  }
+
+  function reviewTimeline(video) {
+    const items = [
+      ['Video Published', formatDate(video.published_at), 'Реальная дата из локального каталога видео.'],
+      ['Author Thesis', 'Placeholder', 'Тезис автора не извлекается: transcript parsing не подключен.'],
+      ['Current FXPilot View', 'Live context / unavailable', 'Показывается только доступный текущий контекст платформы без изменения торговой логики.'],
+      ['Reality Check', 'Coming Soon', 'Факт-чек будет добавлен позже.'],
+      ['Historical Result', 'Coming Soon', 'Исторический результат не рассчитывается на этом этапе.'],
+    ];
+    return `<div class="tv-review-timeline">${items.map(([title, value, text]) => `<div><span>${escapeHtml(title)}</span><strong>${escapeHtml(value)}</strong><p>${escapeHtml(text)}</p></div>`).join('')}</div>`;
+  }
+
   function ReviewPage(payload, marketPayload) {
     const video = payload.video || {};
     const review = payload.review || {};
@@ -82,21 +97,23 @@
             <time id="reviewPublishDate" datetime="${escapeHtml(video.published_at)}">${escapeHtml(formatDate(video.published_at))}</time>
           </div>
           <h2 id="reviewTitle">${escapeHtml(video.title || 'Видеообзор FXPilot TV')}</h2>
-          <p class="tv-author" id="reviewAuthor">Автор: ${escapeHtml(video.author || 'Не указан')} · ${escapeHtml(video.category || 'Категория не указана')}</p>
+          <div class="tv-player-meta-grid tv-review-meta-grid">${metaItems(video).map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>
           <p id="reviewDescription">${escapeHtml(video.description || 'Описание будет добавлено позже.')}</p>
           <p class="tv-review-slogan">Не просто сигналы. Понимание рынка. Проверяем торговые идеи фактами.</p>
         </article>
       </section>
       <div class="tv-review-grid" id="reviewSections">
-        ${ReviewSection({ id: 'videoOverview', className: 'tv-review-section--summary', title: 'Видеообзор', content: `<p>${escapeHtml(review.ai_summary)}</p><p class="tv-coming-soon">AI transcript analysis будет подключен позже</p>` })}
-        ${ReviewSection({ id: 'analysisScope', title: 'Что будет анализироваться', content: PremiumList(['Тезисы автора, уровни, invalidation и риск-менеджмент.', 'Совпадение сценариев с текущим контекстом FXPilot.', 'Фактическая проверка прогноза после движения рынка без изменения торговой логики.']) })}
-        ${ReviewSection({ id: 'currentFxpilotView', className: 'tv-review-section--summary', title: 'Текущий взгляд FXPilot', content: marketContextCard(marketIdea, video.symbol) })}
-        ${ReviewSection({ id: 'smartMoney', title: 'Smart Money', content: '<p>Будущий модуль сопоставит заявленные sweep, BOS/CHOCH, imbalance и premium/discount зоны с фактической структурой рынка.</p>' })}
-        ${ReviewSection({ id: 'orderFlow', title: 'OrderFlow', content: '<p>Будет проверяться наличие подтверждения объемом, реакция у уровней, признаки поглощения и доступность OrderFlow-данных.</p>' })}
-        ${ReviewSection({ id: 'options', title: 'Options', content: '<p>Опционный блок будет отмечать контекстные уровни, доступность метрик и ограничения: опционы — это фильтр вероятности, а не самостоятельный сигнал.</p>' })}
-        ${ReviewSection({ id: 'newsMacro', title: 'News / Macro', content: '<p>Макро-блок подготовлен для проверки календарных рисков, долларового режима, ставок, доходностей и чувствительности выбранного инструмента.</p>' })}
-        ${ReviewSection({ id: 'realityCheck', title: 'Reality Check', content: '<p>После подключения факт-чека FXPilot сравнит прогноз с последующим рынком: что подтвердилось, где сценарий был отменен и насколько четко автор обозначил риск.</p>' })}
-        ${ReviewSection({ id: 'trustScore', className: 'tv-review-section--score', title: 'Trust Score', content: `<div class="tv-review-score">${escapeHtml(review.agreement_score ?? 72)}%</div><p>Премиальный placeholder доверия. Оценка демонстрирует будущий формат и не является реальным рейтингом автора.</p>` })}
+        ${ReviewSection({ id: 'aiSummary', className: 'tv-review-section--summary', title: 'AI Summary', content: placeholder(review.ai_summary || 'AI-резюме недоступно: AI implementation не подключен в этом спринте.') })}
+        ${ReviewSection({ id: 'mainThesis', title: 'Main Thesis', content: placeholder('Главный тезис автора будет показан после подключения безопасного анализа transcript.') })}
+        ${ReviewSection({ id: 'currentFxpilotView', className: 'tv-review-section--summary', title: 'Current FXPilot View', content: marketContextCard(marketIdea, video.symbol) })}
+        ${ReviewSection({ id: 'smartMoney', title: 'Smart Money', content: placeholder('SMC-контекст зарезервирован для будущей сверки sweep, BOS/CHOCH, imbalance и зон ликвидности.') })}
+        ${ReviewSection({ id: 'orderFlow', title: 'OrderFlow', content: placeholder('OrderFlow-блок будет показывать только доступные подтверждения и ограничения данных.') })}
+        ${ReviewSection({ id: 'options', title: 'Options', content: placeholder('Опционный блок будет явно отделять proxy metrics от реальных доступных метрик.') })}
+        ${ReviewSection({ id: 'macro', title: 'Macro', content: placeholder('Макро-карта будет учитывать календарные риски, режим доллара, ставки и доходности после подключения данных.') })}
+        ${ReviewSection({ id: 'institutionalNarrative', className: 'tv-review-section--summary', title: 'Institutional Narrative', content: PremiumList(['Видео: тезис автора будет добавлен после AI-слоя.', 'Платформа: текущий FXPilot-контекст показан отдельно и не является анализом видео.', 'Риск: недоступные данные не подменяются сгенерированными значениями.']) })}
+        ${ReviewSection({ id: 'realityCheck', title: 'Reality Check (Coming Soon)', content: placeholder('Факт-чек прогноза после публикации появится на следующем этапе.') })}
+        ${ReviewSection({ id: 'trustScore', className: 'tv-review-section--score', title: 'Trust Score (Coming Soon)', content: `<div class="tv-review-score">—</div><p>Рейтинг доверия не рассчитывается в этом спринте, чтобы не создавать фиктивные оценки автора.</p>` })}
+        ${ReviewSection({ id: 'reviewTimeline', className: 'tv-review-section--summary', title: 'Timeline', content: reviewTimeline(video) })}
       </div>
     `;
   }

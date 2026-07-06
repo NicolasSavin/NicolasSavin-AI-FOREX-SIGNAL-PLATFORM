@@ -27,6 +27,17 @@ window.FXPilotTv = (() => {
     return `<iframe src="${embedUrl(video.youtube_id, { autoplay })}" title="${escapeHtml(video.title || titleFallback)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy"></iframe>`;
   };
 
+  const thumbnailUrl = (video = {}) => video.youtube_id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.youtube_id)}/hqdefault.jpg` : '';
+
+  const metaItems = (video = {}) => [
+    ['Автор', video.author],
+    ['Символ', video.symbol],
+    ['Категория', video.category],
+    ['Таймфрейм', video.timeframe],
+    ['Длительность', video.duration],
+    ['Дата публикации', formatDate(video.published_at)],
+  ].filter(([, value]) => value);
+
   const CategoryBadges = (video = {}) => [
     video.category && `<span class="tv-category-badge">${escapeHtml(video.category)}</span>`,
     video.symbol && `<span class="tv-symbol-badge">${escapeHtml(video.symbol)}</span>`,
@@ -40,5 +51,5 @@ window.FXPilotTv = (() => {
     </section>
   `;
 
-  return { escapeHtml, formatDate, PlayerSkeleton, VideoPlayer, CategoryBadges, ReviewSection };
+  return { escapeHtml, formatDate, thumbnailUrl, metaItems, PlayerSkeleton, VideoPlayer, CategoryBadges, ReviewSection };
 })();
