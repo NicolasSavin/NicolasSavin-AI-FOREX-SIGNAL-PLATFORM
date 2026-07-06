@@ -6,12 +6,16 @@
   const sidebarEl = document.querySelector('.tv-sidebar');
   if (!listEl || !playerEl || !detailsEl || !window.FXPilotTv) return;
 
-  const { escapeHtml, formatDate, PlayerSkeleton, VideoPlayer, CategoryBadges } = window.FXPilotTv;
+  const { escapeHtml, formatDate, thumbnailUrl, metaItems, PlayerSkeleton, VideoPlayer, CategoryBadges } = window.FXPilotTv;
   let videos = [];
   let filteredVideos = [];
   let selectedId = null;
   let query = '';
   let category = 'all';
+  const historyKey = 'fxpilot-tv-watch-history-v1';
+  const readHistory = () => { try { return JSON.parse(localStorage.getItem(historyKey) || '{}'); } catch (_) { return {}; } };
+  const saveHistory = (history) => localStorage.setItem(historyKey, JSON.stringify(history));
+  let watchHistory = readHistory();
 
   const todayKey = new Date().toISOString().slice(0, 10);
   const yesterdayDate = new Date();
@@ -19,12 +23,49 @@
   const yesterdayKey = yesterdayDate.toISOString().slice(0, 10);
 
   const byNewest = (a, b) => String(b.published_at || '').localeCompare(String(a.published_at || ''));
-  const groupTitle = (value) => value === todayKey ? 'Сегодня' : value === yesterdayKey ? 'Вчера' : 'Архив';
-  const groupOrder = (value) => value === todayKey ? 0 : value === yesterdayKey ? 1 : 2;
+  const isSameCategory = (video, name) => String(video.category || '').toLowerCase().includes(name.toLowerCase()) || (video.tags || []).some((tag) => String(tag).toLowerCase().includes(name.toLowerCase()));
+  const playlistGroups = [
+    { title: 'Today', match: (video) => video.published_at === todayKey },
+    { title: 'Yesterday', match: (video) => video.published_at === yesterdayKey },
+    { title: 'Forex', match: (video) => isSameCategory(video, 'forex') || /^(EURUSD|GBPUSD|USDJPY|DXY)$/i.test(video.symbol || '') },
+    { title: 'Macro', match: (video) => isSameCategory(video, 'macro') },
+    { title: 'OrderFlow', match: (video) => isSameCategory(video, 'orderflow') || isSameCategory(video, 'order flow') },
+    { title: 'Options', match: (video) => isSameCategory(video, 'options') },
+  ];
+  const getNextVideo = () => { const index = filteredVideos.findIndex((video) => video.id === selectedId); return filteredVideos[index + 1] || filteredVideos[0] || null; };
 
   function renderPlayer(video) {
     playerEl.innerHTML = PlayerSkeleton('Загрузка выбранного обзора...');
     window.setTimeout(() => { playerEl.innerHTML = VideoPlayer(video, { autoplay: true }); }, 180);
+  }
+
+  function renderHeader(video) {
+    if (!video) return '';
+    return `
+      <div class="tv-premium-player-header">
+        <div>
+          <p class="section-kicker">Premium Player</p>
+          <h3>${escapeHtml(video.title || 'Видеообзор FXPilot TV')}</h3>
+          <p>${escapeHtml(video.description || 'Описание недоступно.')}</p>
+        </div>
+        <div class="tv-player-meta-grid">
+          ${metaItems(video).map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderUpNext() {
+    const next = getNextVideo();
+    if (!next || next.id === selectedId) return '<div class="tv-up-next-card"><p class="section-kicker">Next Video</p><strong>Следующего видео нет</strong><span>Измените фильтр или вернитесь к каталогу.</span></div>';
+    return `
+      <button class="tv-up-next-card" type="button" data-video-id="${escapeHtml(next.id)}">
+        <p class="section-kicker">Next Video</p>
+        ${thumbnailUrl(next) ? `<span class="tv-up-next-thumb" style="background-image:url('${thumbnailUrl(next)}')"></span>` : `<span class="tv-up-next-thumb"></span>`}
+        <strong>${escapeHtml(next.title)}</strong>
+        <span>${escapeHtml(next.category || 'Категория не указана')}</span>
+      </button>
+    `;
   }
 
   function renderDetails(video) {
@@ -32,15 +73,17 @@
       detailsEl.innerHTML = '<p class="section-text">Каталог видео пуст или временно недоступен.</p>';
       return;
     }
+    const progress = watchHistory[video.id]?.progress || 0;
     detailsEl.innerHTML = `
+      ${renderHeader(video)}
       <div class="tv-detail-top">
         <div>${CategoryBadges(video)}</div>
-        <div class="tv-detail-meta"><span class="tv-duration-badge">${escapeHtml(video.duration || '—')}</span><time datetime="${escapeHtml(video.published_at)}">${escapeHtml(formatDate(video.published_at))}</time></div>
+        <div class="tv-detail-meta"><span class="tv-watch-status">${progress >= 100 ? '✓ Watched' : `Просмотрено ${progress}%`}</span><span class="tv-duration-badge">${escapeHtml(video.duration || '—')}</span><time datetime="${escapeHtml(video.published_at)}">${escapeHtml(formatDate(video.published_at))}</time></div>
       </div>
-      <h3>${escapeHtml(video.title)}</h3>
-      <p class="tv-author">Автор: ${escapeHtml(video.author)} · ${escapeHtml(video.symbol || 'Инструмент не указан')} · ${escapeHtml(video.category || 'Категория не указана')}</p>
-      <p>${escapeHtml(video.description)}</p>
+      <div class="tv-watch-progress" aria-label="Прогресс просмотра"><span style="width:${Math.max(0, Math.min(100, progress))}%"></span></div>
+      <p class="tv-author">Автор: ${escapeHtml(video.author)} · ${escapeHtml(video.symbol || 'Инструмент не указан')} · ${escapeHtml(video.category || 'Категория не указана')} · ${escapeHtml(video.timeframe || 'Таймфрейм не указан')}</p>
       <a class="tv-check-button" href="/tv/review/${encodeURIComponent(video.id)}" aria-label="Открыть AI-разбор обзора ${escapeHtml(video.title)}">Проверить обзор</a>
+      ${renderUpNext()}
     `;
   }
 
@@ -78,30 +121,31 @@
       listEl.innerHTML = '<div class="tv-player-empty"><strong>Видео не найдены</strong><span>Измените поиск или категорию. Каталог FXPilot TV будет расширяться без подключения YouTube API.</span></div>';
       return;
     }
-    const groups = filteredVideos.reduce((acc, video) => {
-      const key = groupTitle(video.published_at);
-      acc[key] = acc[key] || [];
-      acc[key].push(video);
-      return acc;
-    }, {});
-    listEl.innerHTML = Object.entries(groups).sort(([a], [b]) => groupOrder(a === 'Сегодня' ? todayKey : a === 'Вчера' ? yesterdayKey : '') - groupOrder(b === 'Сегодня' ? todayKey : b === 'Вчера' ? yesterdayKey : '')).map(([title, items]) => `
-      <section class="tv-video-group" aria-label="${escapeHtml(title)}">
-        <h4>${escapeHtml(title)}</h4>
-        ${items.map((video) => `
+    listEl.innerHTML = playlistGroups.map((group) => {
+      const items = filteredVideos.filter(group.match);
+      if (!items.length) return '';
+      return `
+      <section class="tv-video-group" aria-label="${escapeHtml(group.title)}">
+        <h4>${escapeHtml(group.title)}</h4>
+        ${items.map((video) => {
+          const progress = watchHistory[video.id]?.progress || 0;
+          return `
           <button class="tv-video-item ${video.id === selectedId ? 'is-active' : ''}" type="button" data-video-id="${escapeHtml(video.id)}" aria-pressed="${video.id === selectedId ? 'true' : 'false'}">
             <span class="tv-video-item__meta">${CategoryBadges(video)}<span class="tv-duration-badge">${escapeHtml(video.duration || '—')}</span></span>
             <strong>${escapeHtml(video.title)}</strong>
             <span class="tv-video-item__info"><b>${escapeHtml(video.symbol || '—')}</b><span>${escapeHtml(video.category || 'Без категории')}</span><time datetime="${escapeHtml(video.published_at)}">${escapeHtml(formatDate(video.published_at))}</time></span>
-            <small>${escapeHtml(video.author)} · ${escapeHtml(video.duration || '—')}</small>
-          </button>
-        `).join('')}
-      </section>
-    `).join('');
+            <span class="tv-mini-progress"><i style="width:${Math.max(0, Math.min(100, progress))}%"></i></span>
+            <small>${progress >= 100 ? '✓ Watched' : progress ? `Просмотрено ${progress}%` : `${escapeHtml(video.author)} · не просмотрено`}</small>
+          </button>`;
+        }).join('')}
+      </section>`;
+    }).join('');
   }
 
   function selectVideo(id) {
     const video = videos.find((item) => item.id === id) || filteredVideos[0] || videos[0];
     selectedId = video ? video.id : null;
+    if (video) { watchHistory[video.id] = { progress: Math.max(watchHistory[video.id]?.progress || 0, 35), updatedAt: new Date().toISOString() }; saveHistory(watchHistory); }
     renderPlayer(video);
     renderDetails(video);
     renderList();
