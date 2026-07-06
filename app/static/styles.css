@@ -2921,3 +2921,121 @@ body[data-page="tv-review"] {
   white-space: nowrap;
   border: 0;
 }
+
+.tv-video-item__info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.tv-video-item__info b,
+.tv-video-item__info span,
+.tv-video-item__info time {
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.tv-video-item.is-active::before {
+  content: "Выбрано";
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: #06111f;
+  background: linear-gradient(135deg, #9fe7ff, #86efac);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tv-review-slogan {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  color: #eaf6ff !important;
+  background: rgba(76, 201, 240, 0.08);
+  border: 1px solid rgba(76, 201, 240, 0.18);
+  font-weight: 800;
+}
+
+.tv-premium-list {
+  display: grid;
+  gap: 10px;
+}
+
+.tv-premium-list li::marker {
+  color: #7dd3fc;
+}
+
+.tv-market-context-card {
+  display: grid;
+  gap: 16px;
+}
+
+.tv-context-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(76, 201, 240, 0.12), rgba(139, 92, 246, 0.1));
+  border: 1px solid rgba(76, 201, 240, 0.2);
+}
+
+.tv-context-head span,
+.tv-context-head strong {
+  color: #eaf6ff;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tv-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tv-context-grid div {
+  min-height: 74px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(3, 12, 24, 0.54);
+  border: 1px solid rgba(104, 143, 191, 0.14);
+}
+
+.tv-context-grid span,
+.tv-context-grid strong {
+  display: block;
+}
+
+.tv-context-grid span {
+  margin-bottom: 7px;
+  color: #8da2bd;
+  font-size: 0.78rem;
+}
+
+.tv-context-grid strong {
+  color: #eaf6ff;
+  overflow-wrap: anywhere;
+}
+
+.tv-context-note,
+.tv-context-empty {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.18);
+}
+
+@media (max-width: 680px) {
+  .tv-context-grid {
+    grid-template-columns: 1fr;
+  }
+}
