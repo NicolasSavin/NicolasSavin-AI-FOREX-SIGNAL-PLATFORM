@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import traceback
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -92,6 +93,7 @@ class FetchResult:
     response_status: int | None = None
     content: bytes = b""
     error: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -102,6 +104,7 @@ class ImportSourceResult:
     response_status: int | None
     videos_found: int
     error: str | None = None
+    parser_diagnostic: str | None = None
 
 
 class MediaProvider(Protocol):
@@ -119,6 +122,9 @@ class YouTubeRssProvider:
         if resolved.get("error"):
             raise MediaImportError(str(resolved["error"]))
         rss_url = str(resolved["rss_url"])
+        validation_error = self.validate_rss_url(rss_url, source)
+        if validation_error:
+            return ImportSourceResult(replace(source, channel_id=resolved.get("channel_id") or source.channel_id, rss_url=rss_url), [], "invalid_rss_url", None, 0, validation_error, validation_error)
         fetched = self.fetcher(rss_url)
         logger.info("media_import_rss_fetch source_id=%s rss_url=%s http_status=%s request_status=%s", source.id, rss_url, fetched.response_status, fetched.request_status)
         resolved_source = replace(source, channel_id=resolved.get("channel_id") or source.channel_id, rss_url=rss_url)
@@ -126,11 +132,48 @@ class YouTubeRssProvider:
             return ImportSourceResult(resolved_source, [], fetched.request_status, fetched.response_status, 0, f"RSS request failed: {fetched.error or fetched.request_status}")
         parsed = feedparser.parse(fetched.content)
         entries = list(getattr(parsed, "entries", []))
+        parser_diagnostic = self._parser_diagnostic(parsed, fetched)
+        if not entries:
+            logger.warning("media_import_rss_zero_entries source_id=%s rss_url=%s http_status=%s diagnostic=%s", source.id, rss_url, fetched.response_status, parser_diagnostic)
         if getattr(parsed, "bozo", False) and not entries:
-            return ImportSourceResult(resolved_source, [], fetched.request_status, fetched.response_status, 0, f"RSS parse failed: {getattr(parsed, 'bozo_exception', 'unknown parse error')}")
+            return ImportSourceResult(resolved_source, [], fetched.request_status, fetched.response_status, 0, f"RSS parse failed: {getattr(parsed, 'bozo_exception', 'unknown parse error')}", parser_diagnostic)
         items = [self._entry_to_item(entry, source) for entry in entries[:20]]
         items = [item for item in items if item is not None]
-        return ImportSourceResult(resolved_source, items, fetched.request_status, fetched.response_status, len(entries))
+        return ImportSourceResult(resolved_source, items, fetched.request_status, fetched.response_status, len(entries), parser_diagnostic=parser_diagnostic)
+
+    def rss_test(self, source: MediaSource) -> dict[str, Any]:
+        resolved = self.resolve_rss(source)
+        rss_url = resolved.get("rss_url")
+        base: dict[str, Any] = {"source_id": source.id, "source": source.name, "provider": self.provider_name, "final_rss_url": rss_url, "rss_url": rss_url, "channel_id": resolved.get("channel_id") or source.channel_id, "http_status": None, "response_headers": {}, "content_type": None, "response_size": 0, "body_preview": "", "feed_title": None, "entry_count": 0, "parser_diagnostic": None, "url_validation": None, "channel_validation": None, "error": resolved.get("error"), "exception": None, "traceback": None}
+        if resolved.get("error") or not rss_url:
+            base["url_validation"] = "missing_rss_url"
+            return base
+        base["url_validation"] = self.validate_rss_url(str(rss_url), source) or "ok"
+        base["channel_validation"] = self.validate_channel_id(base.get("channel_id"), str(rss_url))
+        if base["url_validation"] != "ok":
+            return base
+        try:
+            fetched = self.fetcher(str(rss_url))
+            body = fetched.content or b""
+            headers = dict(fetched.headers or {})
+            content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), None)
+            base.update({"http_status": fetched.response_status, "response_headers": headers, "content_type": content_type, "response_size": len(body), "body_preview": body[:500].decode("utf-8", errors="replace"), "error": fetched.error})
+            if fetched.response_status == 404:
+                base["url_validation"] = self.validate_rss_url(str(rss_url), source) or "ok"
+                base["channel_validation"] = self.validate_channel_id(base.get("channel_id"), str(rss_url))
+            if fetched.ok and body:
+                parsed = feedparser.parse(body)
+                entries = list(getattr(parsed, "entries", []))
+                base["feed_title"] = getattr(getattr(parsed, "feed", {}), "get", lambda *_: None)("title")
+                base["entry_count"] = len(entries)
+                base["parser_diagnostic"] = self._parser_diagnostic(parsed, fetched)
+                if fetched.response_status == 200 and not entries:
+                    logger.warning("media_rss_test_zero_entries source_id=%s rss_url=%s diagnostic=%s", source.id, rss_url, base["parser_diagnostic"])
+            return base
+        except Exception as exc:
+            logger.exception("media_rss_test_failed source_id=%s", source.id)
+            base.update({"error": str(exc), "exception": {"type": exc.__class__.__name__, "message": str(exc)}, "traceback": traceback.format_exc()})
+            return base
 
     def resolve_rss(self, source: MediaSource) -> dict[str, Any]:
         if source.rss_url or source.feed_url:
@@ -163,11 +206,47 @@ class YouTubeRssProvider:
         try:
             req = Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/rss+xml, application/xml;q=0.9, */*;q=0.8"})
             with urlopen(req, timeout=15) as response:
-                return FetchResult(True, url, "ok", getattr(response, "status", None), response.read())
+                return FetchResult(True, url, "ok", getattr(response, "status", None), response.read(), headers=dict(response.headers.items()))
         except HTTPError as exc:
-            return FetchResult(False, url, "http_error", exc.code, error=str(exc))
+            content = exc.read() if hasattr(exc, "read") else b""
+            return FetchResult(False, url, "http_error", exc.code, content, str(exc), headers=dict(exc.headers.items()) if exc.headers else {})
         except (URLError, TimeoutError, OSError) as exc:
             return FetchResult(False, url, "request_error", None, error=str(exc))
+
+    @staticmethod
+    def validate_rss_url(rss_url: str, source: MediaSource | None = None) -> str | None:
+        parsed = urlparse(rss_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return "malformed_rss_url: expected absolute http(s) URL"
+        if "youtube.com" in parsed.netloc and parsed.path != "/feeds/videos.xml":
+            return "malformed_youtube_rss_url: expected /feeds/videos.xml"
+        qs = parse_qs(parsed.query)
+        if "youtube.com" in parsed.netloc and not (qs.get("channel_id") or qs.get("user")):
+            return "malformed_youtube_rss_url: expected channel_id or user query parameter"
+        return None
+
+    @staticmethod
+    def validate_channel_id(channel_id: str | None, rss_url: str | None = None) -> str:
+        parsed_id = parse_qs(urlparse(str(rss_url or "")).query).get("channel_id", [None])[0]
+        value = channel_id or parsed_id
+        if not value:
+            return "not_applicable_or_missing"
+        if not re.fullmatch(r"UC[A-Za-z0-9_-]{20,30}", str(value)):
+            return "suspicious_channel_id_format"
+        return "format_ok"
+
+    @staticmethod
+    def _parser_diagnostic(parsed: Any, fetched: FetchResult) -> str:
+        if getattr(parsed, "bozo", False):
+            return f"feedparser_bozo: {getattr(parsed, 'bozo_exception', 'unknown parse error')}"
+        if not getattr(parsed, "entries", []):
+            prefix = (fetched.content or b"")[:120].lstrip().decode("utf-8", errors="replace")
+            if not (fetched.content or b"").strip():
+                return "empty_response_body"
+            if not prefix.startswith("<"):
+                return "response_does_not_look_like_xml"
+            return "xml_parsed_but_no_entry_elements"
+        return "ok"
 
     @staticmethod
     def _entry_video_id(entry: Any) -> str | None:
@@ -240,6 +319,7 @@ class MediaImportEngine:
                 "entries_found": 0,
                 "imported_count": 0,
                 "error": None,
+                "parser_diagnostic": None,
             }
             try:
                 run_log["steps"].append(f"Processing source {source.name}")
@@ -258,6 +338,7 @@ class MediaImportEngine:
                     "entries_found": result.videos_found,
                     "imported_count": len(result.items),
                     "error": result.error,
+                    "parser_diagnostic": result.parser_diagnostic,
                 })
                 if result.error:
                     failed += 1
@@ -336,9 +417,19 @@ class MediaImportEngine:
                     "entries_found": last_source_run.get("entries_found"),
                     "imported_count": last_source_run.get("imported_count"),
                     "error": last_source_run.get("error"),
+                    "parser_diagnostic": last_source_run.get("parser_diagnostic"),
                 },
             })
         return {"last_import_run": last_run, "sources": rows}
+    def rss_test(self, source_id: str) -> dict[str, Any]:
+        source = next((s for s in self.load_sources() if s.id == source_id), None)
+        if not source:
+            raise MediaConfigError(f"unknown media source id: {source_id}")
+        provider = self.resolve_provider(source.provider)
+        if not isinstance(provider, YouTubeRssProvider):
+            return {"source_id": source.id, "source": source.name, "provider": source.provider, "error": "provider_not_implemented"}
+        return provider.rss_test(source)
+
     def resolve_provider(self, provider: str) -> MediaProvider: return self.youtube_provider if provider == "youtube" else EmptyProvider(provider)
     def _save_sources(self, updates: list[MediaSource]) -> None:
         by_id = {s.id: s for s in updates}; raw = self._read_json_list(self.sources_path); catalog = self.load_catalog()

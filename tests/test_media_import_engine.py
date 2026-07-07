@@ -208,3 +208,65 @@ def test_debug_sources_exposes_blocking_reason_for_missing_channel_id(tmp_path: 
     row = MediaImportEngine(sources_path, catalog_path).debug_sources()["sources"][0]
     assert row["can_import"] is False
     assert row["blocking_reason"] == "Нужен YouTube channel_id для RSS-импорта"
+
+
+def test_rss_test_returns_headers_preview_feed_title_and_entry_count(tmp_path: Path):
+    headers = {"Content-Type": "application/atom+xml; charset=utf-8", "X-Debug": "yes"}
+    engine, _, _ = _engine_with_fetcher(
+        tmp_path,
+        lambda url: FetchResult(True, url, "ok", 200, _sample_feed(), headers=headers),
+    )
+
+    payload = engine.rss_test("demo")
+
+    assert payload["final_rss_url"] == "https://www.youtube.com/feeds/videos.xml?channel_id=UCdemo"
+    assert payload["http_status"] == 200
+    assert payload["response_headers"] == headers
+    assert payload["content_type"] == headers["Content-Type"]
+    assert payload["response_size"] == len(_sample_feed())
+    assert payload["body_preview"].startswith("<?xml")
+    assert payload["entry_count"] == 1
+    assert payload["parser_diagnostic"] == "ok"
+
+
+def test_rss_test_reports_zero_entry_parser_diagnostic(tmp_path: Path):
+    empty_feed = b"<?xml version='1.0'?><feed xmlns='http://www.w3.org/2005/Atom'><title>Empty</title></feed>"
+    engine, _, _ = _engine_with_fetcher(
+        tmp_path,
+        lambda url: FetchResult(True, url, "ok", 200, empty_feed, headers={"Content-Type": "application/xml"}),
+    )
+
+    payload = engine.rss_test("demo")
+
+    assert payload["http_status"] == 200
+    assert payload["feed_title"] == "Empty"
+    assert payload["entry_count"] == 0
+    assert payload["parser_diagnostic"] == "xml_parsed_but_no_entry_elements"
+
+
+def test_rss_test_404_marks_suspicious_channel_id(tmp_path: Path):
+    engine, _, _ = _engine_with_fetcher(
+        tmp_path,
+        lambda url: FetchResult(False, url, "http_error", 404, b"not found", "HTTP Error 404", headers={"Content-Type": "text/plain"}),
+    )
+
+    payload = engine.rss_test("demo")
+
+    assert payload["http_status"] == 404
+    assert payload["url_validation"] == "ok"
+    assert payload["channel_validation"] == "suspicious_channel_id_format"
+    assert payload["body_preview"] == "not found"
+
+
+def test_rss_test_includes_exception_traceback(tmp_path: Path):
+    def failing_fetcher(url: str):
+        raise RuntimeError("upstream exploded")
+
+    engine, _, _ = _engine_with_fetcher(tmp_path, failing_fetcher)
+
+    payload = engine.rss_test("demo")
+
+    assert payload["error"] == "upstream exploded"
+    assert payload["exception"]["type"] == "RuntimeError"
+    assert "Traceback" in payload["traceback"]
+    assert "upstream exploded" in payload["traceback"]
