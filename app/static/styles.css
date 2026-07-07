@@ -3538,3 +3538,4 @@ body[data-page="tv-sources"] {
   padding: 0.75rem;
   font-size: 0.82rem;
 }
+.media-source-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:14px}.media-source-form label{display:grid;gap:6px;color:#90a4c3;font-size:.82rem;text-transform:uppercase;letter-spacing:.06em}.media-source-form input,.media-source-form select{border:1px solid rgba(104,143,191,.24);background:rgba(8,18,30,.9);color:#e8eef8;border-radius:12px;padding:11px}.media-source-form .media-check{display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0}.media-source-form .tv-source-actions{align-items:end}

@@ -545,6 +545,32 @@ def api_media_sources() -> list[dict[str, Any]]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/api/media/resolve-source")
+async def api_media_resolve_source(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    try:
+        return create_media_import_engine().resolve_source_url(str(payload.get("provider") or ""), str(payload.get("channel_url") or ""))
+    except (MediaConfigError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/media/sources")
+async def api_media_add_source(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    try:
+        return create_media_import_engine().add_source(payload)
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=409 if "duplicate" in str(exc).lower() else 400, detail=str(exc)) from exc
+
+
+@app.post("/api/media/resolve-all")
+def api_media_resolve_all() -> dict[str, Any]:
+    try:
+        return create_media_import_engine().resolve_all_youtube_sources()
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/media/import")
 def api_media_import() -> dict[str, Any]:
     try:

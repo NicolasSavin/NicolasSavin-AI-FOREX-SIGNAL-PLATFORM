@@ -3,12 +3,16 @@
   const newestBody = document.getElementById('mediaNewestBody');
   const importButton = document.getElementById('mediaImportNow');
   const importResult = document.getElementById('mediaImportResult');
+  const sourceForm = document.getElementById('mediaSourceForm');
+  const resolveResult = document.getElementById('mediaResolveResult');
   if (!sourcesBody || !newestBody) return;
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
   const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value || '—'; };
   const formatValue = (value) => value ? escapeHtml(value) : '—';
   const showImportResult = (payload) => { if (importResult) importResult.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2); };
 
+  const formPayload = () => { const fd = new FormData(sourceForm); return { id: fd.get('id'), name: fd.get('name'), provider: fd.get('provider') || 'youtube', channel_url: fd.get('channel_url'), language: fd.get('language') || 'ru', categories: String(fd.get('categories') || '').split(',').map((v) => v.trim()).filter(Boolean), priority: Number(fd.get('priority') || 1), enabled: Boolean(fd.get('enabled')) }; };
+  const showResolve = (payload) => { if (resolveResult) resolveResult.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2); };
   function implementationNotice(action, sourceName) { window.alert(`${action}: Implementation in next sprint${sourceName ? ` для ${sourceName}` : ''}.`); }
 
   function renderSources(sources) {
@@ -75,5 +79,26 @@
   }
 
   importButton?.addEventListener('click', runImport);
+  document.getElementById('mediaImportNowForm')?.addEventListener('click', runImport);
+  document.getElementById('mediaResolveSource')?.addEventListener('click', () => {
+    const payload = formPayload();
+    showResolve('Resolving...');
+    fetch('/api/media/resolve-source', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ provider: payload.provider, channel_url: payload.channel_url }) })
+      .then((r) => r.json().then((data) => { if (!r.ok) throw data; return data; }))
+      .then(showResolve).catch(showResolve);
+  });
+  sourceForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    showResolve('Saving...');
+    fetch('/api/media/sources', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(formPayload()) })
+      .then((r) => r.json().then((data) => { if (!r.ok) throw data; return data; }))
+      .then((payload) => { showResolve(payload); sourceForm.reset(); return refresh(); }).catch(showResolve);
+  });
+  document.getElementById('mediaResolveAll')?.addEventListener('click', () => {
+    showResolve('Re-resolving all YouTube sources...');
+    fetch('/api/media/resolve-all', { method: 'POST', headers: { Accept: 'application/json' } })
+      .then((r) => r.json().then((data) => { if (!r.ok) throw data; return data; }))
+      .then((payload) => { showResolve(payload); return refresh(); }).catch(showResolve);
+  });
   refresh();
 })();
