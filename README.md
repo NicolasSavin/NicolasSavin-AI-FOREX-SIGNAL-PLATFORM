@@ -513,6 +513,14 @@ Admin endpoints:
 - `POST /api/media/sources` — resolve, validate, duplicate-check, and save a source.
 - `POST /api/media/resolve-all` — re-resolve enabled YouTube sources and refresh stored RSS metadata.
 
+
+## FXPilot TV media catalog balancing
+
+- Automatic media import now keeps source diversity by limiting each enabled source to `FXPILOT_MEDIA_MAX_PER_SOURCE` newest valid videos; default is `5`.
+- Rebuilt `data/media_catalog.json` is sorted newest-first by `published_at`, falling back to `imported_at`, and `/api/media/stats` exposes `sources_with_videos` plus `videos_by_source` for catalog health checks.
+- yt-dlp metadata dates are normalized from `upload_date` (`YYYY-MM-DD`) or `timestamp` (UTC ISO datetime); when no published date is available, `imported_at` is used.
+- The `/tv` catalog list renders all videos returned by `/api/media` so visible videos are not restricted to one source group.
+
 ## FXPilot TV yt-dlp catalog migration
 
 - `/api/media` and `/tv` now read the video catalog from `data/media_catalog.json` only; `data/manual_youtube_videos.json` is excluded by default and can be enabled only for local development with `FXPILOT_DEV_MANUAL_MEDIA=1`.

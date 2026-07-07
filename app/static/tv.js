@@ -121,15 +121,9 @@
       listEl.innerHTML = '<div class="tv-player-empty"><strong>Каталог пока пуст.</strong><span>Запустите Import Now.</span></div>';
       return;
     }
-    listEl.innerHTML = playlistGroups.map((group) => {
-      const items = filteredVideos.filter(group.match);
-      if (!items.length) return '';
+    const renderItems = (items) => items.map((video) => {
+      const progress = watchHistory[video.id]?.progress || 0;
       return `
-      <section class="tv-video-group" aria-label="${escapeHtml(group.title)}">
-        <h4>${escapeHtml(group.title)}</h4>
-        ${items.map((video) => {
-          const progress = watchHistory[video.id]?.progress || 0;
-          return `
           <button class="tv-video-item ${video.id === selectedId ? 'is-active' : ''}" type="button" data-video-id="${escapeHtml(video.id)}" aria-pressed="${video.id === selectedId ? 'true' : 'false'}">
             <span class="tv-video-item__meta">${CategoryBadges(video)}<span class="tv-duration-badge">${escapeHtml(video.duration || '—')}</span></span>
             <strong>${escapeHtml(video.title)}</strong>
@@ -137,9 +131,12 @@
             <span class="tv-mini-progress"><i style="width:${Math.max(0, Math.min(100, progress))}%"></i></span>
             <small>${progress >= 100 ? '✓ Watched' : progress ? `Просмотрено ${progress}%` : `${escapeHtml(video.author)} · не просмотрено`}</small>
           </button>`;
-        }).join('')}
-      </section>`;
     }).join('');
+    listEl.innerHTML = `
+      <section class="tv-video-group" aria-label="Все видео">
+        <h4>Все видео</h4>
+        ${renderItems(filteredVideos)}
+      </section>`;
   }
 
   function selectVideo(id) {
