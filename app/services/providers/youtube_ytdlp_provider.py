@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
-from app.services.media_import_engine import ImportSourceResult, MediaImportError, MediaItem, MediaSource, detect_symbol, is_valid_youtube_id
+from app.services.media_import_engine import ImportSourceResult, MediaImportError, MediaItem, MediaSource, detect_symbol, is_valid_youtube_id, max_media_per_source
 
 logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 30 * 60
@@ -26,8 +26,8 @@ class YouTubeYtDlpProvider:
     provider_name = "youtube_ytdlp"
     _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
-    def __init__(self, max_results: int = DEFAULT_MAX_RESULTS) -> None:
-        self.max_results = max(1, min(int(max_results or DEFAULT_MAX_RESULTS), 50))
+    def __init__(self, max_results: int | None = None) -> None:
+        self.max_results = max(1, min(int(max_results or max_media_per_source()), 50))
         self.last_diagnostic: dict[str, Any] = {}
 
     def fetch_latest(self, source: MediaSource) -> ImportSourceResult:
@@ -54,7 +54,7 @@ class YouTubeYtDlpProvider:
 
             seen: set[str] = set()
             items: list[MediaItem] = []
-            for entry in entries[: self.max_results]:
+            for entry in entries[: max_media_per_source()]:
                 item = self._entry_to_item(entry, source, channel_title)
                 if not item or not item.youtube_id:
                     diagnostic["skipped_invalid"] += 1
@@ -134,7 +134,7 @@ class YouTubeYtDlpProvider:
             "no_warnings": True,
             "skip_download": True,
             "extract_flat": "discard_in_playlist",
-            "playlistend": self.max_results,
+            "playlistend": max_media_per_source(),
             "ignoreerrors": True,
             "socket_timeout": 20,
         }
@@ -179,7 +179,8 @@ class YouTubeYtDlpProvider:
         title = str(entry.get("title") or "Без названия").strip()
         description = str(entry.get("description") or entry.get("summary") or "").strip()
         symbol = detect_symbol(f"{title} {description}")
-        published_at = YouTubeYtDlpProvider._published_at(entry)
+        imported_at = datetime.now(timezone.utc).isoformat()
+        published_at = YouTubeYtDlpProvider._published_at(entry) or imported_at
         duration = entry.get("duration_string") or entry.get("duration")
         entry_categories = entry.get("categories") if isinstance(entry.get("categories"), list) else []
         tags = [str(tag).strip() for tag in [*source.categories, *entry_categories, *((entry.get("tags") or []) if isinstance(entry.get("tags"), list) else [])] if str(tag).strip()]
@@ -202,7 +203,7 @@ class YouTubeYtDlpProvider:
             description=description,
             channel=str(entry.get("channel") or channel_title or source.name),
             tags=tags,
-            imported_at=datetime.now(timezone.utc).isoformat(),
+            imported_at=imported_at,
         )
 
     @staticmethod
@@ -227,7 +228,7 @@ class YouTubeYtDlpProvider:
         timestamp = entry.get("timestamp") or entry.get("release_timestamp")
         if timestamp:
             try:
-                return datetime.fromtimestamp(float(timestamp), timezone.utc).date().isoformat()
+                return datetime.fromtimestamp(float(timestamp), timezone.utc).isoformat()
             except Exception:
                 return None
         return None

@@ -371,3 +371,59 @@ def test_rss_test_includes_exception_traceback(tmp_path: Path):
     assert payload["exception"]["type"] == "RuntimeError"
     assert "Traceback" in payload["traceback"]
     assert "upstream exploded" in payload["traceback"]
+
+
+def test_import_rebuild_balances_catalog_by_source_and_stats(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("FXPILOT_MEDIA_MAX_PER_SOURCE", "2")
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    sources_path.write_text(json.dumps([
+        {"id":"alpha","name":"Alpha","provider":"youtube_ytdlp","channel_url":"https://www.youtube.com/@alpha","language":"ru","priority":1,"categories":["Forex"],"enabled":True},
+        {"id":"beta","name":"Beta","provider":"youtube_ytdlp","channel_url":"https://www.youtube.com/@beta","language":"ru","priority":2,"categories":["Macro"],"enabled":True},
+    ]), encoding="utf-8")
+    catalog_path.write_text(json.dumps([
+        {"id":"youtube:Alpha000001","provider":"youtube_ytdlp","source_id":"alpha","youtube_id":"Alpha000001","title":"A1","author":"Alpha","url":"https://www.youtube.com/watch?v=Alpha000001","published_at":"2026-07-01","status":"imported"},
+        {"id":"youtube:Alpha000002","provider":"youtube_ytdlp","source_id":"alpha","youtube_id":"Alpha000002","title":"A2","author":"Alpha","url":"https://www.youtube.com/watch?v=Alpha000002","published_at":"2026-07-02","status":"imported"},
+        {"id":"youtube:Alpha000003","provider":"youtube_ytdlp","source_id":"alpha","youtube_id":"Alpha000003","title":"A3","author":"Alpha","url":"https://www.youtube.com/watch?v=Alpha000003","published_at":"2026-07-03","status":"imported"},
+    ]), encoding="utf-8")
+
+    class Provider:
+        provider_name = "youtube_ytdlp"
+        last_diagnostic = {"yt_dlp_version": "test", "execution_time": 0.01, "valid_items": 2, "skipped_invalid": 0}
+        def fetch_latest(self, source):
+            if source.id == "alpha":
+                items = [MediaItem(f"youtube:Alpha00000{i}", "youtube_ytdlp", "alpha", f"A{i}", "Alpha", f"Alpha00000{i}", f"https://www.youtube.com/watch?v=Alpha00000{i}", None, f"2026-07-0{i}", None, "Forex", "MARKET", "ru", "") for i in range(4, 7)]
+            else:
+                items = [MediaItem(f"youtube:Beta000000{i}", "youtube_ytdlp", "beta", f"B{i}", "Beta", f"Beta000000{i}", f"https://www.youtube.com/watch?v=Beta000000{i}", None, f"2026-07-0{i}", None, "Macro", "MARKET", "ru", "") for i in range(4, 6)]
+            return ImportSourceResult(source, items, "ok", 200, len(items))
+
+    engine = MediaImportEngine(sources_path, catalog_path, ytdlp_provider=Provider())
+    engine.import_latest()
+    catalog = engine.load_catalog()
+    stats = engine.stats()
+
+    assert len([item for item in catalog if item["source_id"] == "alpha"]) == 2
+    assert len([item for item in catalog if item["source_id"] == "beta"]) == 2
+    assert [item["published_at"] for item in catalog] == sorted([item["published_at"] for item in catalog], reverse=True)
+    assert stats["sources_with_videos"] == 2
+    assert stats["videos_by_source"] == {"alpha": 2, "beta": 2}
+
+
+def test_ytdlp_published_at_normalization_and_fallback(monkeypatch):
+    provider = YouTubeYtDlpProvider()
+    source = _source("https://www.youtube.com/@demo")
+    source = source.__class__(source.id, source.name, "youtube_ytdlp", source.channel_url, source.language, source.priority, source.categories, source.enabled)
+    monkeypatch.setattr(provider, "_extract_cached", lambda url: {
+        "title": "Demo Channel",
+        "entries": [
+            {"id": "Date0000001", "title": "Upload date", "upload_date": "20260706"},
+            {"id": "Time0000001", "title": "Timestamp", "timestamp": 1783382400},
+            {"id": "None0000001", "title": "No date"},
+        ],
+    })
+
+    result = provider.fetch_latest(source)
+
+    assert result.items[0].published_at == "2026-07-06"
+    assert result.items[1].published_at == "2026-07-07T00:00:00+00:00"
+    assert result.items[2].published_at == result.items[2].imported_at

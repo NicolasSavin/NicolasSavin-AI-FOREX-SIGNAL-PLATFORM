@@ -24,6 +24,15 @@ SYMBOLS = ("EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
 YOUTUBE_RSS_BY_CHANNEL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 YOUTUBE_RSS_BY_USER = "https://www.youtube.com/feeds/videos.xml?user={user}"
 YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+DEFAULT_MAX_MEDIA_PER_SOURCE = 5
+
+
+def max_media_per_source() -> int:
+    try:
+        value = int(str(os.getenv("FXPILOT_MEDIA_MAX_PER_SOURCE") or DEFAULT_MAX_MEDIA_PER_SOURCE).strip())
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_MEDIA_PER_SOURCE
+    return max(1, value)
 
 
 def is_valid_youtube_id(value: Any) -> bool:
@@ -447,7 +456,7 @@ class MediaImportEngine:
 
         valid_existing = [item for item in existing if self._is_catalog_item_importable(item)]
         valid_fetched = [item for item in fetched if self._is_catalog_item_importable(item)]
-        merged = self._sort_media(self._dedupe([*valid_existing, *valid_fetched]))
+        merged = self._balance_by_source(self._dedupe([*valid_existing, *valid_fetched]))
         raw_count = len(valid_existing) + len(valid_fetched)
         duplicates_removed = max(0, raw_count - len(merged))
         before = {str(i.get("youtube_id")) for i in valid_existing if is_valid_youtube_id(i.get("youtube_id"))}
@@ -556,11 +565,18 @@ class MediaImportEngine:
         except Exception:
             pass
         manual_demo = len([item for item in catalog if item.get("status") == "manual_demo" or item.get("provider") in {"youtube_manual", "youtube-manual"}])
-        real_videos = len([item for item in catalog if is_valid_youtube_id(item.get("youtube_id")) and item.get("status") != "manual_demo"])
+        real_items = [item for item in catalog if is_valid_youtube_id(item.get("youtube_id")) and item.get("status") != "manual_demo"]
+        real_videos = len(real_items)
+        videos_by_source: dict[str, int] = {}
+        for item in real_items:
+            source_id = str(item.get("source_id") or "unknown")
+            videos_by_source[source_id] = videos_by_source.get(source_id, 0) + 1
         return {
             "catalog_items": len(catalog),
             "real_videos": real_videos,
             "manual_demo": manual_demo,
+            "sources_with_videos": len(videos_by_source),
+            "videos_by_source": dict(sorted(videos_by_source.items())),
             "duplicates_removed": int(last_run.get("duplicates_removed") or 0),
             "last_import": last_run.get("finished_at") or last_run.get("started_at"),
         }
@@ -741,6 +757,19 @@ class MediaImportEngine:
             seen[youtube_id] = normalized
         return list(seen.values())
 
+    def _balance_by_source(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        limit = max_media_per_source()
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        enabled_sources = {source.id for source in self.load_sources() if source.enabled}
+        for item in self._sort_media(items):
+            source_id = str(item.get("source_id") or "unknown")
+            if enabled_sources and source_id not in enabled_sources:
+                continue
+            grouped.setdefault(source_id, [])
+            if len(grouped[source_id]) < limit:
+                grouped[source_id].append(item)
+        return self._sort_media([item for bucket in grouped.values() for item in bucket])
+
     @staticmethod
     def _sort_media(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return sorted(items, key=lambda item: str(item.get("published_at") or ""), reverse=True)
+        return sorted(items, key=lambda item: str(item.get("published_at") or item.get("imported_at") or ""), reverse=True)
