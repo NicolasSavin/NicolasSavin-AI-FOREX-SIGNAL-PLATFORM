@@ -39,3 +39,4 @@ signals_data/heatmap.json
 signals_data/market_ideas.json
 signals_data/market_news.json
 signals_data/signals.json
+data/media_import_debug.json

@@ -120,14 +120,17 @@ class YouTubeRssProvider:
             raise MediaImportError(str(resolved["error"]))
         rss_url = str(resolved["rss_url"])
         fetched = self.fetcher(rss_url)
+        logger.info("media_import_rss_fetch source_id=%s rss_url=%s http_status=%s request_status=%s", source.id, rss_url, fetched.response_status, fetched.request_status)
+        resolved_source = replace(source, channel_id=resolved.get("channel_id") or source.channel_id, rss_url=rss_url)
         if not fetched.ok:
-            raise MediaImportError(f"RSS request failed: {fetched.error or fetched.request_status}")
+            return ImportSourceResult(resolved_source, [], fetched.request_status, fetched.response_status, 0, f"RSS request failed: {fetched.error or fetched.request_status}")
         parsed = feedparser.parse(fetched.content)
-        if getattr(parsed, "bozo", False) and not getattr(parsed, "entries", []):
-            raise MediaImportError(f"RSS parse failed: {getattr(parsed, 'bozo_exception', 'unknown parse error')}")
-        items = [self._entry_to_item(entry, source) for entry in getattr(parsed, "entries", [])[:20]]
+        entries = list(getattr(parsed, "entries", []))
+        if getattr(parsed, "bozo", False) and not entries:
+            return ImportSourceResult(resolved_source, [], fetched.request_status, fetched.response_status, 0, f"RSS parse failed: {getattr(parsed, 'bozo_exception', 'unknown parse error')}")
+        items = [self._entry_to_item(entry, source) for entry in entries[:20]]
         items = [item for item in items if item is not None]
-        return ImportSourceResult(replace(source, channel_id=resolved.get("channel_id") or source.channel_id, rss_url=rss_url), items, fetched.request_status, fetched.response_status, len(items))
+        return ImportSourceResult(resolved_source, items, fetched.request_status, fetched.response_status, len(entries))
 
     def resolve_rss(self, source: MediaSource) -> dict[str, Any]:
         if source.rss_url or source.feed_url:
@@ -200,8 +203,8 @@ class MediaImportScheduler:
 
 
 class MediaImportEngine:
-    def __init__(self, sources_path: Path, catalog_path: Path, manual_videos_path: Path | None = None, youtube_provider: YouTubeRssProvider | None = None) -> None:
-        self.sources_path = sources_path; self.catalog_path = catalog_path; self.manual_videos_path = manual_videos_path; self.scheduler = MediaImportScheduler(); self.youtube_provider = youtube_provider or YouTubeRssProvider()
+    def __init__(self, sources_path: Path, catalog_path: Path, manual_videos_path: Path | None = None, youtube_provider: YouTubeRssProvider | None = None, debug_path: Path | None = None) -> None:
+        self.sources_path = sources_path; self.catalog_path = catalog_path; self.manual_videos_path = manual_videos_path; self.debug_path = debug_path or catalog_path.with_name("media_import_debug.json"); self.scheduler = MediaImportScheduler(); self.youtube_provider = youtube_provider or YouTubeRssProvider()
     def load_sources(self) -> list[MediaSource]:
         try: payload = json.loads(self.sources_path.read_text(encoding="utf-8"))
         except FileNotFoundError: return []
@@ -211,30 +214,109 @@ class MediaImportEngine:
     def load_catalog(self) -> list[dict[str, Any]]:
         return self._sort_media(self._dedupe([*(self._read_json_list(self.manual_videos_path) if self.manual_videos_path else []), *self._read_json_list(self.catalog_path)]))
     def import_latest(self) -> dict[str, Any]:
-        sources = [s for s in self.load_sources() if s.enabled]; existing = self.load_catalog(); fetched: list[dict[str, Any]] = []; errors: list[dict[str, str]] = []; processed = 0; failed = 0; now = datetime.now(timezone.utc).isoformat(); updated_sources: list[MediaSource] = []
+        sources = [s for s in self.load_sources() if s.enabled]
+        existing = self.load_catalog()
+        fetched: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+        processed = 0
+        failed = 0
+        now = datetime.now(timezone.utc).isoformat()
+        run_log: dict[str, Any] = {"started_at": now, "finished_at": None, "sources": []}
+        updated_sources: list[MediaSource] = []
+
         for source in sources:
-            processed += 1; provider = self.resolve_provider(source.provider)
+            processed += 1
+            provider = self.resolve_provider(source.provider)
+            source_log: dict[str, Any] = {
+                "source_id": source.id,
+                "source": source.name,
+                "provider": source.provider,
+                "rss_url": source.rss_url or source.feed_url,
+                "http_status": None,
+                "request_status": "not_requested",
+                "entries_found": 0,
+                "imported_count": 0,
+                "error": None,
+            }
             try:
-                result = provider.fetch_latest(source); fetched.extend(item.payload() for item in result.items)
+                result = provider.fetch_latest(source)
+                source_log.update({
+                    "rss_url": result.source.rss_url or result.source.feed_url or source_log["rss_url"],
+                    "http_status": result.response_status,
+                    "request_status": result.request_status,
+                    "entries_found": result.videos_found,
+                    "imported_count": len(result.items),
+                    "error": result.error,
+                })
+                if result.error:
+                    failed += 1
+                    errors.append({"source": source.name, "reason": result.error})
+                    updated_sources.append(replace(result.source, videos_count=0, last_import=now, last_error=result.error, rss_url=result.source.rss_url or result.source.feed_url, status="error"))
+                    logger.warning("media_import_source_failed source_id=%s rss_url=%s http_status=%s error=%s", source.id, source_log["rss_url"], result.response_status, result.error)
+                    continue
+
+                fetched.extend(item.payload() for item in result.items)
                 updated_sources.append(replace(result.source, videos_count=result.videos_found, last_import=now, last_success=now, last_error=None, rss_url=result.source.rss_url or result.source.feed_url))
-                if result.error: errors.append({"source": source.name, "reason": result.error})
+                logger.info("media_import_source_ok source_id=%s rss_url=%s http_status=%s entries=%s imported=%s", source.id, source_log["rss_url"], result.response_status, result.videos_found, len(result.items))
             except Exception as exc:
-                failed += 1; reason = str(exc); logger.warning("media_import_source_failed source_id=%s error=%s", source.id, reason); errors.append({"source": source.name, "reason": reason}); updated_sources.append(replace(source, last_import=now, last_error="YouTube RSS requires channel_id" if "requires a channel_id" in reason else reason, status="needs_channel_id" if "requires a channel_id" in reason else "error"))
-        merged = self._sort_media(self._dedupe([*existing, *fetched])); before = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in existing}; after = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in merged}
-        self.catalog_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"); self._save_sources(updated_sources)
-        return {"success": failed < len(sources) if sources else True, "sources": len(sources), "processed": processed, "imported": len(after - before), "new_items": len(after - before), "updated": max(0, len(fetched) - len(after - before)), "failed": failed, "errors": errors}
-    def debug_sources(self) -> list[dict[str, Any]]:
+                failed += 1
+                reason = str(exc)
+                logger.warning("media_import_source_failed source_id=%s error=%s", source.id, reason)
+                errors.append({"source": source.name, "reason": reason})
+                source_log["error"] = reason
+                updated_sources.append(replace(source, last_import=now, last_error="YouTube RSS requires channel_id" if "requires a channel_id" in reason else reason, status="needs_channel_id" if "requires a channel_id" in reason else "error"))
+            finally:
+                run_log["sources"].append(source_log)
+
+        merged = self._sort_media(self._dedupe([*existing, *fetched]))
+        before = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in existing}
+        after = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in merged}
+        self.catalog_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._save_sources(updated_sources)
+        run_log["finished_at"] = datetime.now(timezone.utc).isoformat()
+        self.debug_path.write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
+        imported = len(after - before)
+        return {"success": failed == 0, "processed": processed, "imported": imported, "updated": max(0, len(fetched) - imported), "failed": failed, "errors": errors, "catalog_size": len(merged), "sources": len(sources), "new_items": imported}
+
+    def debug_sources(self) -> dict[str, Any]:
+        last_run = {"started_at": None, "finished_at": None, "sources": []}
+        try:
+            payload = json.loads(self.debug_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                last_run.update(payload)
+        except Exception:
+            pass
         rows=[]
         for source in self.load_sources():
-            provider = self.resolve_provider(source.provider); resolved = provider.resolve_rss(source) if isinstance(provider, YouTubeRssProvider) else {"provider": provider.provider_name, "error":"provider_not_implemented"}; fetch = FetchResult(False, resolved.get("rss_url"), "not_requested", error=resolved.get("error"))
-            videos=0
-            if resolved.get("rss_url") and source.enabled:
-                fetch = provider.fetcher(str(resolved["rss_url"])) if isinstance(provider, YouTubeRssProvider) else fetch
-                if fetch.ok: videos = len(getattr(feedparser.parse(fetch.content), "entries", []))
+            provider = self.resolve_provider(source.provider)
+            resolved = provider.resolve_rss(source) if isinstance(provider, YouTubeRssProvider) else {"provider": provider.provider_name, "error":"provider_not_implemented"}
             channel_id = resolved.get("channel_id") or source.channel_id
             blocking_reason = "Нужен YouTube channel_id для RSS-импорта" if source.provider == "youtube" and not channel_id else None
-            rows.append({"source": source.name, "channel_url": source.channel_url, "provider": resolved.get("provider", source.provider), "rss_url": resolved.get("rss_url") or source.rss_url, "channel_id": channel_id, "can_import": blocking_reason is None, "blocking_reason": blocking_reason, "request_status": fetch.request_status, "response_status": fetch.response_status, "videos_found": videos, "last_error": fetch.error or source.last_error})
-        return rows
+            matching_logs = [row for row in last_run.get("sources", []) if row.get("source_id") == source.id]
+            last_source_run = matching_logs[-1] if matching_logs else {}
+            rows.append({
+                "source": source.name,
+                "source_id": source.id,
+                "channel_url": source.channel_url,
+                "provider": resolved.get("provider", source.provider),
+                "rss_url": resolved.get("rss_url") or source.rss_url,
+                "channel_id": channel_id,
+                "can_import": blocking_reason is None,
+                "blocking_reason": blocking_reason,
+                "last_import": source.last_import,
+                "last_success": source.last_success,
+                "videos_count": source.videos_count,
+                "last_error": source.last_error,
+                "last_run": {
+                    "rss_url": last_source_run.get("rss_url"),
+                    "http_status": last_source_run.get("http_status"),
+                    "request_status": last_source_run.get("request_status"),
+                    "entries_found": last_source_run.get("entries_found"),
+                    "imported_count": last_source_run.get("imported_count"),
+                    "error": last_source_run.get("error"),
+                },
+            })
+        return {"last_import_run": last_run, "sources": rows}
     def resolve_provider(self, provider: str) -> MediaProvider: return self.youtube_provider if provider == "youtube" else EmptyProvider(provider)
     def _save_sources(self, updates: list[MediaSource]) -> None:
         by_id = {s.id: s for s in updates}; raw = self._read_json_list(self.sources_path); catalog = self.load_catalog()

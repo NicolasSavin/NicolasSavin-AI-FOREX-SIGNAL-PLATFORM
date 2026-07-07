@@ -3527,3 +3527,14 @@ body[data-page="tv-sources"] {
     aspect-ratio: 16 / 9;
   }
 }
+.media-import-result {
+  margin-top: 0.75rem;
+  max-width: 520px;
+  white-space: pre-wrap;
+  color: #d8e4ff;
+  background: rgba(5, 10, 24, 0.72);
+  border: 1px solid rgba(103, 132, 255, 0.24);
+  border-radius: 12px;
+  padding: 0.75rem;
+  font-size: 0.82rem;
+}

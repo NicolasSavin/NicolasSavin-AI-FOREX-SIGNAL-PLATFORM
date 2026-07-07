@@ -135,7 +135,15 @@ from backend.signal_engine import SignalEngine
 canonical_market_service = get_canonical_market_service()
 trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_source_manager = TvSourceManager(BASE_DIR.parent / "data" / "tv_sources.json", BASE_DIR.parent / "data" / "tv_videos.json")
-media_import_engine = MediaImportEngine(BASE_DIR.parent / "data" / "media_sources.json", BASE_DIR.parent / "data" / "media_catalog.json", BASE_DIR.parent / "data" / "tv_videos.json")
+MEDIA_SOURCES_PATH = BASE_DIR.parent / "data" / "media_sources.json"
+MEDIA_CATALOG_PATH = BASE_DIR.parent / "data" / "media_catalog.json"
+MEDIA_MANUAL_VIDEOS_PATH = BASE_DIR.parent / "data" / "tv_videos.json"
+MEDIA_DEBUG_PATH = BASE_DIR.parent / "data" / "media_import_debug.json"
+
+def create_media_import_engine() -> MediaImportEngine:
+    return MediaImportEngine(MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, MEDIA_MANUAL_VIDEOS_PATH, debug_path=MEDIA_DEBUG_PATH)
+
+media_import_engine = create_media_import_engine()
 
 class _AnalyticsNewsConnector:
     def _descriptor(self, *, status: str = "unavailable", note_ru: str = "") -> dict[str, str]:
@@ -540,15 +548,15 @@ def api_media_sources() -> list[dict[str, Any]]:
 @app.post("/api/media/import")
 def api_media_import() -> dict[str, Any]:
     try:
-        return media_import_engine.import_latest()
+        return create_media_import_engine().import_latest()
     except MediaConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/media/debug")
-def api_media_debug() -> list[dict[str, Any]]:
+def api_media_debug() -> dict[str, Any]:
     try:
-        return media_import_engine.debug_sources()
+        return create_media_import_engine().debug_sources()
     except MediaConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
