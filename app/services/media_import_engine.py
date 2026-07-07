@@ -83,7 +83,7 @@ class MediaSource:
             "feed_title": self.feed_title,
             "entry_count": self.entry_count,
             "last_resolve_error": self.last_resolve_error,
-            "blocking_reason": "Нужен YouTube channel_id для RSS-импорта" if status == "needs_channel_id" else None,
+            "blocking_reason": "Нужен YouTube API key или корректный channel_id" if status == "needs_channel_id" else None,
             "can_import": not (self.provider == "youtube" and self.enabled and not self.channel_id),
         }
 
@@ -117,6 +117,8 @@ class ImportSourceResult:
     videos_found: int
     error: str | None = None
     parser_diagnostic: str | None = None
+    quota_used: int | None = None
+    channel_title: str | None = None
 
 
 class MediaProvider(Protocol):
@@ -289,8 +291,12 @@ class MediaImportScheduler:
 
 
 class MediaImportEngine:
-    def __init__(self, sources_path: Path, catalog_path: Path, manual_videos_path: Path | None = None, youtube_provider: YouTubeRssProvider | None = None, debug_path: Path | None = None) -> None:
-        self.sources_path = sources_path; self.catalog_path = catalog_path; self.manual_videos_path = manual_videos_path; self.debug_path = debug_path or catalog_path.with_name("media_import_debug.json"); self.scheduler = MediaImportScheduler(); self.youtube_provider = youtube_provider or YouTubeRssProvider()
+    def __init__(self, sources_path: Path, catalog_path: Path, manual_videos_path: Path | None = None, youtube_provider: MediaProvider | None = None, debug_path: Path | None = None) -> None:
+        self.sources_path = sources_path; self.catalog_path = catalog_path; self.manual_videos_path = manual_videos_path; self.debug_path = debug_path or catalog_path.with_name("media_import_debug.json"); self.scheduler = MediaImportScheduler()
+        if youtube_provider is None:
+            from app.services.providers.youtube_api_provider import YouTubeApiProvider
+            youtube_provider = YouTubeApiProvider()
+        self.youtube_provider = youtube_provider
     def load_sources(self) -> list[MediaSource]:
         try: payload = json.loads(self.sources_path.read_text(encoding="utf-8"))
         except FileNotFoundError: return []
@@ -316,6 +322,8 @@ class MediaImportEngine:
         for source in sources:
             processed += 1
             provider = self.resolve_provider(source.provider)
+            if hasattr(provider, "set_latest_imported_at"):
+                getattr(provider, "set_latest_imported_at")(source.id, self._latest_published_at(existing, source.id))
             source_log: dict[str, Any] = {
                 "source_id": source.id,
                 "source": source.name,
@@ -327,12 +335,15 @@ class MediaImportEngine:
                 "imported_count": 0,
                 "error": None,
                 "parser_diagnostic": None,
+                "quota_used": None,
+                "channel_id": source.channel_id,
+                "channel_title": source.feed_title,
             }
             try:
                 run_log["steps"].append(f"Processing source {source.name}")
-                run_log["steps"].append("Fetching RSS...")
+                run_log["steps"].append("Fetching provider data...")
                 logger.info("Processing source %s", source.name)
-                logger.info("Fetching RSS...")
+                logger.info("Fetching provider data...")
                 result = provider.fetch_latest(source)
                 run_log["steps"].append(f"HTTP {result.response_status if result.response_status is not None else result.request_status}")
                 run_log["steps"].append("Parsing...")
@@ -346,6 +357,9 @@ class MediaImportEngine:
                     "imported_count": len(result.items),
                     "error": result.error,
                     "parser_diagnostic": result.parser_diagnostic,
+                    "quota_used": result.quota_used,
+                    "channel_id": result.source.channel_id,
+                    "channel_title": result.channel_title or result.source.feed_title,
                 })
                 if result.error:
                     failed += 1
@@ -355,7 +369,7 @@ class MediaImportEngine:
                     continue
 
                 fetched.extend(item.payload() for item in result.items)
-                updated_sources.append(replace(result.source, videos_count=result.videos_found, last_import=now, last_success=now, last_error=None, rss_url=result.source.rss_url or result.source.feed_url))
+                updated_sources.append(replace(result.source, videos_count=result.videos_found, last_import=now, last_success=now, last_error=None, rss_url=result.source.rss_url or result.source.feed_url, feed_title=result.channel_title or result.source.feed_title))
                 run_log["steps"].append(f"Imported {len(result.items)}")
                 logger.info("Imported %s", len(result.items))
                 logger.info("media_import_source_ok source_id=%s rss_url=%s http_status=%s entries=%s imported=%s", source.id, source_log["rss_url"], result.response_status, result.videos_found, len(result.items))
@@ -399,9 +413,16 @@ class MediaImportEngine:
         rows=[]
         for source in self.load_sources():
             provider = self.resolve_provider(source.provider)
-            resolved = provider.resolve_rss(source) if isinstance(provider, YouTubeRssProvider) else {"provider": provider.provider_name, "error":"provider_not_implemented"}
+            if hasattr(provider, "resolve_source"):
+                resolved = getattr(provider, "resolve_source")(source)
+            elif isinstance(provider, YouTubeRssProvider):
+                resolved = provider.resolve_rss(source)
+            else:
+                resolved = {"provider": provider.provider_name, "error":"provider_not_implemented"}
             channel_id = resolved.get("channel_id") or source.channel_id
-            blocking_reason = "Нужен YouTube channel_id для RSS-импорта" if source.provider == "youtube" and not channel_id else None
+            blocking_reason = None
+            if source.provider == "youtube" and resolved.get("error"):
+                blocking_reason = str(resolved.get("error"))
             matching_logs = [row for row in last_run.get("sources", []) if row.get("source_id") == source.id]
             last_source_run = matching_logs[-1] if matching_logs else {}
             rows.append({
@@ -409,6 +430,7 @@ class MediaImportEngine:
                 "source_id": source.id,
                 "channel_url": source.channel_url,
                 "provider": resolved.get("provider", source.provider),
+                "quota_used": last_source_run.get("quota_used"),
                 "rss_url": resolved.get("rss_url") or source.rss_url,
                 "channel_id": channel_id,
                 "can_import": blocking_reason is None,
@@ -419,6 +441,7 @@ class MediaImportEngine:
                 "last_error": source.last_error,
                 "resolved_from": source.resolved_from or resolved.get("resolved_from"),
                 "rss_validation_status": source.rss_validation_status,
+                "channel_title": resolved.get("channel_title") or source.feed_title,
                 "feed_title": source.feed_title,
                 "entry_count": source.entry_count,
                 "last_resolve_error": source.last_resolve_error,
@@ -430,6 +453,12 @@ class MediaImportEngine:
                     "imported_count": last_source_run.get("imported_count"),
                     "error": last_source_run.get("error"),
                     "parser_diagnostic": last_source_run.get("parser_diagnostic"),
+                    "quota_used": last_source_run.get("quota_used"),
+                    "channel_id": last_source_run.get("channel_id"),
+                    "channel_title": last_source_run.get("channel_title"),
+                    "videos_found": last_source_run.get("entries_found"),
+                    "imported": last_source_run.get("imported_count"),
+                    "errors": [last_source_run.get("error")] if last_source_run.get("error") else [],
                 },
             })
         return {"last_import_run": last_run, "sources": rows}
@@ -446,6 +475,8 @@ class MediaImportEngine:
     def resolve_source_url(self, provider: str, channel_url: str) -> dict[str, Any]:
         if provider.lower() != "youtube":
             raise MediaConfigError("only youtube source resolving is supported")
+        if hasattr(self.youtube_provider, "resolve"):
+            return getattr(self.youtube_provider, "resolve")(channel_url)
         return self.youtube_provider.resolver.resolve(channel_url, validate_rss=True)
 
     def add_source(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -473,7 +504,7 @@ class MediaImportEngine:
             "priority": int(payload.get("priority") or 1), "categories": [str(v).strip() for v in categories if str(v).strip()],
             "enabled": bool(payload.get("enabled", True)), "channel_id": channel_id, "rss_url": resolved.get("rss_url"),
             "resolved_from": resolved.get("resolved_from"), "rss_validation_status": resolved.get("rss_validation_status"),
-            "feed_title": resolved.get("feed_title"), "entry_count": int(resolved.get("entry_count") or 0),
+            "feed_title": resolved.get("channel_title") or resolved.get("feed_title"), "entry_count": int(resolved.get("entry_count") or 0),
             "last_resolve_error": resolved.get("last_resolve_error"),
         }
         existing_raw.append(item)
@@ -496,7 +527,7 @@ class MediaImportEngine:
                     row.update({"ok": False, "error": f"duplicate youtube channel_id during resolve-all: {channel_id}"})
                 else:
                     seen_channels.add(channel_id)
-                    item.update({"channel_id": channel_id, "rss_url": resolved.get("rss_url"), "resolved_from": resolved.get("resolved_from"), "rss_validation_status": resolved.get("rss_validation_status"), "feed_title": resolved.get("feed_title"), "entry_count": int(resolved.get("entry_count") or 0), "last_resolve_error": resolved.get("last_resolve_error")})
+                    item.update({"channel_id": channel_id, "rss_url": resolved.get("rss_url"), "resolved_from": resolved.get("resolved_from"), "rss_validation_status": resolved.get("rss_validation_status"), "feed_title": resolved.get("channel_title") or resolved.get("feed_title"), "entry_count": int(resolved.get("entry_count") or 0), "last_resolve_error": resolved.get("last_resolve_error")})
                     item.pop("last_error", None); item.pop("status", None)
             else:
                 item.update({"last_resolve_error": resolved.get("error"), "rss_validation_status": "error", "last_error": resolved.get("error"), "status": "error"})
@@ -505,6 +536,11 @@ class MediaImportEngine:
         return {"success": all(r.get("ok") for r in results), "results": results}
 
     def resolve_provider(self, provider: str) -> MediaProvider: return self.youtube_provider if provider == "youtube" else EmptyProvider(provider)
+
+    @staticmethod
+    def _latest_published_at(catalog: list[dict[str, Any]], source_id: str) -> str | None:
+        values = [str(item.get("published_at") or "") for item in catalog if item.get("source_id") == source_id and item.get("published_at")]
+        return max(values) if values else None
     def _save_sources(self, updates: list[MediaSource]) -> None:
         by_id = {s.id: s for s in updates}; raw = self._read_json_list(self.sources_path); catalog = self.load_catalog()
         for item in raw:
