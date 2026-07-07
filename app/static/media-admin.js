@@ -48,8 +48,14 @@
       .catch(() => { sourcesBody.innerHTML = '<tr><td colspan="6">Media Engine временно недоступен.</td></tr>'; newestBody.innerHTML = '<tr><td colspan="5">Каталог временно недоступен.</td></tr>'; });
   }
 
-  sourcesBody.addEventListener('click', (event) => { const button = event.target.closest('button[data-action]'); if (button) implementationNotice(button.dataset.action, button.dataset.source); });
-  importButton?.addEventListener('click', () => {
+  sourcesBody.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-action]');
+    if (!button) return;
+    if (button.dataset.action === 'Import Now') { runImport(); return; }
+    implementationNotice(button.dataset.action, button.dataset.source);
+  });
+
+  function runImport() {
     setText('mediaImportStatus', 'Import running...');
     showImportResult('Import running...');
     fetch('/api/media/import', { method: 'POST', headers: { Accept: 'application/json' } })
@@ -66,6 +72,8 @@
         showImportResult(error);
         setText('mediaImportStatus', `Import failed: ${(error && (error.detail || error.message)) || 'request error'}`);
       });
-  });
+  }
+
+  importButton?.addEventListener('click', runImport);
   refresh();
 })();

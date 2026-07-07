@@ -214,14 +214,17 @@ class MediaImportEngine:
     def load_catalog(self) -> list[dict[str, Any]]:
         return self._sort_media(self._dedupe([*(self._read_json_list(self.manual_videos_path) if self.manual_videos_path else []), *self._read_json_list(self.catalog_path)]))
     def import_latest(self) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).isoformat()
+        run_log: dict[str, Any] = {"started_at": now, "finished_at": None, "sources": [], "steps": ["ENTER import_latest()"]}
+        self._persist_debug_run(run_log)
+        logger.info("ENTER import_latest()")
+
         sources = [s for s in self.load_sources() if s.enabled]
         existing = self.load_catalog()
         fetched: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
         processed = 0
         failed = 0
-        now = datetime.now(timezone.utc).isoformat()
-        run_log: dict[str, Any] = {"started_at": now, "finished_at": None, "sources": []}
         updated_sources: list[MediaSource] = []
 
         for source in sources:
@@ -239,7 +242,15 @@ class MediaImportEngine:
                 "error": None,
             }
             try:
+                run_log["steps"].append(f"Processing source {source.name}")
+                run_log["steps"].append("Fetching RSS...")
+                logger.info("Processing source %s", source.name)
+                logger.info("Fetching RSS...")
                 result = provider.fetch_latest(source)
+                run_log["steps"].append(f"HTTP {result.response_status if result.response_status is not None else result.request_status}")
+                run_log["steps"].append("Parsing...")
+                logger.info("HTTP %s", result.response_status if result.response_status is not None else result.request_status)
+                logger.info("Parsing...")
                 source_log.update({
                     "rss_url": result.source.rss_url or result.source.feed_url or source_log["rss_url"],
                     "http_status": result.response_status,
@@ -257,13 +268,16 @@ class MediaImportEngine:
 
                 fetched.extend(item.payload() for item in result.items)
                 updated_sources.append(replace(result.source, videos_count=result.videos_found, last_import=now, last_success=now, last_error=None, rss_url=result.source.rss_url or result.source.feed_url))
+                run_log["steps"].append(f"Imported {len(result.items)}")
+                logger.info("Imported %s", len(result.items))
                 logger.info("media_import_source_ok source_id=%s rss_url=%s http_status=%s entries=%s imported=%s", source.id, source_log["rss_url"], result.response_status, result.videos_found, len(result.items))
             except Exception as exc:
                 failed += 1
                 reason = str(exc)
-                logger.warning("media_import_source_failed source_id=%s error=%s", source.id, reason)
-                errors.append({"source": source.name, "reason": reason})
+                logger.exception("media_import_source_failed source_id=%s", source.id)
+                errors.append({"source": source.name, "reason": reason, "exception_type": exc.__class__.__name__})
                 source_log["error"] = reason
+                source_log["exception_type"] = exc.__class__.__name__
                 updated_sources.append(replace(source, last_import=now, last_error="YouTube RSS requires channel_id" if "requires a channel_id" in reason else reason, status="needs_channel_id" if "requires a channel_id" in reason else "error"))
             finally:
                 run_log["sources"].append(source_log)
@@ -271,12 +285,20 @@ class MediaImportEngine:
         merged = self._sort_media(self._dedupe([*existing, *fetched]))
         before = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in existing}
         after = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in merged}
+        run_log["steps"].append("Saving catalog...")
+        logger.info("Saving catalog...")
         self.catalog_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
         self._save_sources(updated_sources)
         run_log["finished_at"] = datetime.now(timezone.utc).isoformat()
-        self.debug_path.write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
+        run_log["steps"].append("DONE")
+        logger.info("DONE")
+        self._persist_debug_run(run_log)
         imported = len(after - before)
         return {"success": failed == 0, "processed": processed, "imported": imported, "updated": max(0, len(fetched) - imported), "failed": failed, "errors": errors, "catalog_size": len(merged), "sources": len(sources), "new_items": imported}
+
+    def _persist_debug_run(self, run_log: dict[str, Any]) -> None:
+        self.debug_path.parent.mkdir(parents=True, exist_ok=True)
+        self.debug_path.write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def debug_sources(self) -> dict[str, Any]:
         last_run = {"started_at": None, "finished_at": None, "sources": []}
