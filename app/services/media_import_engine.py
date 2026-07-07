@@ -46,11 +46,14 @@ class MediaSource:
     last_import: str | None = None
     last_success: str | None = None
     videos_count: int = 0
+    status: str | None = None
 
     def public_payload(self, catalog: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         videos = [item for item in (catalog or []) if item.get("source_id") == self.id]
         latest_import = self.last_import or max((str(item.get("imported_at") or "") for item in videos), default="") or None
-        status = "disabled" if not self.enabled else ("error" if self.last_error else "ok")
+        status = self.status or ("disabled" if not self.enabled else ("error" if self.last_error else "ok"))
+        if self.provider == "youtube" and self.enabled and not self.channel_id:
+            status = "needs_channel_id"
         return {
             "id": self.id,
             "name": self.name,
@@ -67,6 +70,8 @@ class MediaSource:
             "last_success": self.last_success,
             "status": status,
             "last_error": self.last_error,
+            "blocking_reason": "Нужен YouTube channel_id для RSS-импорта" if status == "needs_channel_id" else None,
+            "can_import": not (self.provider == "youtube" and self.enabled and not self.channel_id),
         }
 
 
@@ -214,7 +219,7 @@ class MediaImportEngine:
                 updated_sources.append(replace(result.source, videos_count=result.videos_found, last_import=now, last_success=now, last_error=None, rss_url=result.source.rss_url or result.source.feed_url))
                 if result.error: errors.append({"source": source.name, "reason": result.error})
             except Exception as exc:
-                failed += 1; reason = str(exc); logger.warning("media_import_source_failed source_id=%s error=%s", source.id, reason); errors.append({"source": source.name, "reason": reason}); updated_sources.append(replace(source, last_import=now, last_error=reason))
+                failed += 1; reason = str(exc); logger.warning("media_import_source_failed source_id=%s error=%s", source.id, reason); errors.append({"source": source.name, "reason": reason}); updated_sources.append(replace(source, last_import=now, last_error="YouTube RSS requires channel_id" if "requires a channel_id" in reason else reason, status="needs_channel_id" if "requires a channel_id" in reason else "error"))
         merged = self._sort_media(self._dedupe([*existing, *fetched])); before = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in existing}; after = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in merged}
         self.catalog_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"); self._save_sources(updated_sources)
         return {"success": failed < len(sources) if sources else True, "sources": len(sources), "processed": processed, "imported": len(after - before), "new_items": len(after - before), "updated": max(0, len(fetched) - len(after - before)), "failed": failed, "errors": errors}
@@ -226,7 +231,9 @@ class MediaImportEngine:
             if resolved.get("rss_url") and source.enabled:
                 fetch = provider.fetcher(str(resolved["rss_url"])) if isinstance(provider, YouTubeRssProvider) else fetch
                 if fetch.ok: videos = len(getattr(feedparser.parse(fetch.content), "entries", []))
-            rows.append({"source": source.name, "provider": resolved.get("provider", source.provider), "rss_url": resolved.get("rss_url"), "channel_id": resolved.get("channel_id") or source.channel_id, "request_status": fetch.request_status, "response_status": fetch.response_status, "videos_found": videos, "last_error": fetch.error or source.last_error})
+            channel_id = resolved.get("channel_id") or source.channel_id
+            blocking_reason = "Нужен YouTube channel_id для RSS-импорта" if source.provider == "youtube" and not channel_id else None
+            rows.append({"source": source.name, "channel_url": source.channel_url, "provider": resolved.get("provider", source.provider), "rss_url": resolved.get("rss_url") or source.rss_url, "channel_id": channel_id, "can_import": blocking_reason is None, "blocking_reason": blocking_reason, "request_status": fetch.request_status, "response_status": fetch.response_status, "videos_found": videos, "last_error": fetch.error or source.last_error})
         return rows
     def resolve_provider(self, provider: str) -> MediaProvider: return self.youtube_provider if provider == "youtube" else EmptyProvider(provider)
     def _save_sources(self, updates: list[MediaSource]) -> None:
@@ -234,8 +241,10 @@ class MediaImportEngine:
         for item in raw:
             upd = by_id.get(str(item.get("id")))
             if upd:
-                item.update({"channel_id": upd.channel_id, "rss_url": upd.rss_url or upd.feed_url, "last_error": upd.last_error, "last_import": upd.last_import, "last_success": upd.last_success, "videos_count": len([v for v in catalog if v.get("source_id") == upd.id])})
-                if not upd.last_error: item.pop("last_error", None)
+                item.update({"channel_id": upd.channel_id, "rss_url": upd.rss_url or upd.feed_url, "last_error": upd.last_error, "last_import": upd.last_import, "last_success": upd.last_success, "videos_count": len([v for v in catalog if v.get("source_id") == upd.id]), "status": upd.status})
+                if not upd.last_error:
+                    item.pop("last_error", None)
+                    item.pop("status", None)
         self.sources_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _validate_sources(self, payload: Any) -> list[MediaSource]:
@@ -256,7 +265,7 @@ class MediaImportEngine:
                 priority=int(item.get("priority") or 1), categories=[v.strip() for v in categories],
                 enabled=bool(item.get("enabled")), feed_url=item.get("feed_url"), channel_id=item.get("channel_id"),
                 rss_url=item.get("rss_url"), last_error=item.get("last_error"), last_import=item.get("last_import"),
-                last_success=item.get("last_success"), videos_count=int(item.get("videos_count") or 0),
+                last_success=item.get("last_success"), videos_count=int(item.get("videos_count") or 0), status=item.get("status"),
             ))
         return result
 

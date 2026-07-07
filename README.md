@@ -3,6 +3,7 @@
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
 ## Что обновлено в версии 4.2
+- YouTube источники FXPilot TV теперь содержат явные `channel_id` и `rss_url`; импорт строит RSS по `channel_id`, а источники без `channel_id` получают статус `needs_channel_id` и понятную диагностику в `/api/media/debug` и `/admin/media`. Добавлен помощник `python scripts/resolve_youtube_channels.py` для ручного поиска отсутствующих ID без YouTube Data API и без HTML scraping в приложении.
 - FXPilot Media Import Engine теперь строит YouTube RSS только из поддерживаемых публичных RSS-идентификаторов: `channel_id`, `/channel/UC...` и legacy `/user/...`; для `@handle` и `/c/...` без `channel_id` возвращается явная диагностика без HTML scraping и без YouTube Data API.
 - `POST /api/media/import` возвращает детальный контракт `processed/imported/updated/failed/errors`, продолжает импорт остальных источников при ошибке одного источника и сохраняет `channel_id`, `rss_url`, `last_import`, `last_success`, `last_error`, `videos_count` в `data/media_sources.json`.
 - Добавлен `GET /api/media/debug` для проверки provider, RSS URL, channel id, HTTP-статуса запроса, количества найденных видео и последней ошибки источника.

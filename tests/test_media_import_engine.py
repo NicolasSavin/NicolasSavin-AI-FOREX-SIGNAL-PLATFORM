@@ -126,3 +126,46 @@ def _sample_feed(video_id: str = "abc12345678") -> bytes:
   <entry><yt:videoId>{video_id}</yt:videoId><title>EURUSD обзор</title><link href='https://www.youtube.com/watch?v={video_id}'/><author><name>Demo</name></author><published>2026-07-06T00:00:00+00:00</published></entry>
 </feed>"""
     return xml.encode("utf-8")
+
+
+def test_youtube_source_with_channel_id_uses_channel_rss(tmp_path: Path):
+    requested = []
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    sources_path.write_text(json.dumps([
+        {"id":"demo","name":"Demo","provider":"youtube","channel_url":"https://www.youtube.com/@demo","channel_id":"UCexplicit","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
+    ]), encoding="utf-8")
+    catalog_path.write_text("[]", encoding="utf-8")
+    engine = MediaImportEngine(
+        sources_path,
+        catalog_path,
+        youtube_provider=YouTubeRssProvider(lambda url: requested.append(url) or FetchResult(True, url, "ok", 200, _sample_feed())),
+    )
+    engine.import_latest()
+    assert requested == ["https://www.youtube.com/feeds/videos.xml?channel_id=UCexplicit"]
+
+
+def test_youtube_source_without_channel_id_returns_needs_channel_id(tmp_path: Path):
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    sources_path.write_text(json.dumps([
+        {"id":"demo","name":"Demo","provider":"youtube","channel_url":"https://www.youtube.com/@demo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
+    ]), encoding="utf-8")
+    catalog_path.write_text("[]", encoding="utf-8")
+    result = MediaImportEngine(sources_path, catalog_path).import_latest()
+    source = json.loads(sources_path.read_text(encoding="utf-8"))[0]
+    assert result["failed"] == 1
+    assert source["status"] == "needs_channel_id"
+    assert source["last_error"] == "YouTube RSS requires channel_id"
+
+
+def test_debug_sources_exposes_blocking_reason_for_missing_channel_id(tmp_path: Path):
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    sources_path.write_text(json.dumps([
+        {"id":"demo","name":"Demo","provider":"youtube","channel_url":"https://www.youtube.com/@demo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
+    ]), encoding="utf-8")
+    catalog_path.write_text("[]", encoding="utf-8")
+    row = MediaImportEngine(sources_path, catalog_path).debug_sources()[0]
+    assert row["can_import"] is False
+    assert row["blocking_reason"] == "Нужен YouTube channel_id для RSS-импорта"
