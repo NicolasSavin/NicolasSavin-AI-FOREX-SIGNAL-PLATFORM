@@ -548,9 +548,14 @@ def api_media_sources() -> list[dict[str, Any]]:
 @app.post("/api/media/import")
 def api_media_import() -> dict[str, Any]:
     try:
-        return create_media_import_engine().import_latest()
+        engine = create_media_import_engine()
+        return engine.import_latest()
     except MediaConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("media_import_config_failed")
+        raise HTTPException(status_code=500, detail={"error": str(exc), "exception_type": exc.__class__.__name__}) from exc
+    except Exception as exc:
+        logger.exception("media_import_failed_before_completion")
+        raise HTTPException(status_code=500, detail={"error": str(exc), "exception_type": exc.__class__.__name__}) from exc
 
 
 @app.get("/api/media/debug")

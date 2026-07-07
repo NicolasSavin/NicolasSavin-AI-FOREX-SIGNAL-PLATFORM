@@ -107,6 +107,43 @@ def test_media_debug_endpoint_contract():
     assert {"provider", "rss_url", "channel_id", "can_import", "last_run", "last_error"}.issubset(payload["sources"][0].keys())
 
 
+
+def test_media_import_endpoint_calls_engine_once(monkeypatch):
+    import app.main as main
+
+    calls = []
+
+    class DummyEngine:
+        def import_latest(self):
+            calls.append("import_latest")
+            return {"success": True, "processed": 0, "imported": 0, "updated": 0, "failed": 0, "errors": [], "catalog_size": 0, "sources": 0, "new_items": 0}
+
+    monkeypatch.setattr(main, "create_media_import_engine", lambda: DummyEngine())
+    response = TestClient(app).post("/api/media/import")
+
+    assert response.status_code == 200
+    assert calls == ["import_latest"]
+    assert response.json()["success"] is True
+
+
+def test_import_latest_persists_started_at_before_source_loading_failure(tmp_path: Path):
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    debug_path = tmp_path / "media_import_debug.json"
+    sources_path.write_text(json.dumps({"invalid": "shape"}), encoding="utf-8")
+    catalog_path.write_text("[]", encoding="utf-8")
+
+    engine = MediaImportEngine(sources_path, catalog_path, debug_path=debug_path)
+    try:
+        engine.import_latest()
+    except Exception:
+        pass
+
+    payload = json.loads(debug_path.read_text(encoding="utf-8"))
+    assert payload["started_at"]
+    assert payload["finished_at"] is None
+    assert payload["steps"] == ["ENTER import_latest()"]
+
 def _source(channel_url: str, channel_id: str | None = None):
     from app.services.media_import_engine import MediaSource
     return MediaSource("demo", "Demo", "youtube", channel_url, "ru", 1, ["Forex"], True, channel_id=channel_id)
