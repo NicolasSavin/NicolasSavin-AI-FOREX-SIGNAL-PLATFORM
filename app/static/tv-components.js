@@ -21,7 +21,7 @@ window.FXPilotTv = (() => {
   `;
 
   const VideoPlayer = (video, { autoplay = false, titleFallback = 'FXPilot TV' } = {}) => {
-    if (!video || !isValidYouTubeId(video.youtube_id)) return '<div class="tv-player-empty">No videos imported</div>';
+    if (!video || !isValidYouTubeId(video.youtube_id)) return '<div class="tv-player-empty">Каталог пока пуст. Запустите Import Now.</div>';
     return `<iframe src="${embedUrl(video.youtube_id, { autoplay })}" title="${escapeHtml(video.title || titleFallback)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy"></iframe>`;
   };
 

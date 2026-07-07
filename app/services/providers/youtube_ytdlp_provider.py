@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+import logging
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +10,7 @@ from urllib.parse import urlparse
 
 from app.services.media_import_engine import ImportSourceResult, MediaImportError, MediaItem, MediaSource, detect_symbol, is_valid_youtube_id
 
+logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 30 * 60
 DEFAULT_MAX_RESULTS = 20
 
@@ -34,8 +36,10 @@ class YouTubeYtDlpProvider:
             "yt_dlp_version": self.version(),
             "channel_url": source.channel_url,
             "resolved_url": None,
-            "videos_found": 0,
-            "imported": 0,
+            "entries_found": 0,
+            "valid_items": 0,
+            "skipped_invalid": 0,
+            "imported_count": 0,
             "errors": [],
             "execution_time": None,
         }
@@ -46,18 +50,31 @@ class YouTubeYtDlpProvider:
             channel_title = str(info.get("channel") or info.get("uploader") or info.get("title") or source.name)
             resolved_url = str(info.get("webpage_url") or info.get("original_url") or normalized_url)
             diagnostic["resolved_url"] = resolved_url
-            diagnostic["videos_found"] = len(entries)
+            diagnostic["entries_found"] = len(entries)
 
             seen: set[str] = set()
             items: list[MediaItem] = []
             for entry in entries[: self.max_results]:
                 item = self._entry_to_item(entry, source, channel_title)
-                if not item or not item.youtube_id or item.youtube_id in seen:
+                if not item or not item.youtube_id:
+                    diagnostic["skipped_invalid"] += 1
+                    logger_reason = {
+                        "entry_id": entry.get("id") or entry.get("display_id") or entry.get("url"),
+                        "reason": "invalid_youtube_id",
+                    }
+                    logger.warning("youtube_ytdlp_skip_entry source_id=%s reason=%s entry_id=%s", source.id, logger_reason["reason"], logger_reason["entry_id"])
+                    diagnostic["errors"].append(logger_reason)
+                    continue
+                if item.youtube_id in seen:
+                    diagnostic["skipped_invalid"] += 1
+                    logger.warning("youtube_ytdlp_skip_entry source_id=%s reason=duplicate_youtube_id entry_id=%s", source.id, item.youtube_id)
+                    diagnostic["errors"].append({"entry_id": item.youtube_id, "reason": "duplicate_youtube_id"})
                     continue
                 seen.add(item.youtube_id)
                 items.append(item)
 
-            diagnostic["imported"] = len(items)
+            diagnostic["valid_items"] = len(items)
+            diagnostic["imported_count"] = len(items)
             resolved_source = replace(
                 source,
                 rss_url=resolved_url,
@@ -147,12 +164,16 @@ class YouTubeYtDlpProvider:
 
     @staticmethod
     def _entries(info: dict[str, Any]) -> list[dict[str, Any]]:
-        entries = info.get("entries") or []
-        return [entry for entry in entries if isinstance(entry, dict)]
+        entries = info.get("entries")
+        if isinstance(entries, list):
+            return [entry for entry in entries if isinstance(entry, dict)]
+        if YouTubeYtDlpProvider._candidate_video_id(info):
+            return [info]
+        return []
 
     @staticmethod
     def _entry_to_item(entry: dict[str, Any], source: MediaSource, channel_title: str) -> MediaItem | None:
-        video_id = str(entry.get("id") or entry.get("display_id") or "").strip()
+        video_id = YouTubeYtDlpProvider._candidate_video_id(entry)
         if not is_valid_youtube_id(video_id):
             return None
         title = str(entry.get("title") or "Без названия").strip()
@@ -160,13 +181,16 @@ class YouTubeYtDlpProvider:
         symbol = detect_symbol(f"{title} {description}")
         published_at = YouTubeYtDlpProvider._published_at(entry)
         duration = entry.get("duration_string") or entry.get("duration")
-        tags = [str(tag).strip() for tag in (entry.get("tags") or []) if str(tag).strip()]
+        entry_categories = entry.get("categories") if isinstance(entry.get("categories"), list) else []
+        tags = [str(tag).strip() for tag in [*source.categories, *entry_categories, *((entry.get("tags") or []) if isinstance(entry.get("tags"), list) else [])] if str(tag).strip()]
+        if symbol not in tags:
+            tags.append(symbol)
         return MediaItem(
             id=f"youtube:{video_id}",
             provider=YouTubeYtDlpProvider.provider_name,
             source_id=source.id,
             title=title,
-            author=str(entry.get("uploader") or entry.get("channel") or channel_title or source.name),
+            author=str(entry.get("uploader") or entry.get("author") or entry.get("channel") or channel_title or source.name),
             youtube_id=video_id,
             url=str(entry.get("webpage_url") or entry.get("url") or f"https://www.youtube.com/watch?v={video_id}"),
             thumbnail=YouTubeYtDlpProvider._thumbnail(entry, video_id),
@@ -176,10 +200,23 @@ class YouTubeYtDlpProvider:
             symbol=symbol,
             language=str(entry.get("language") or source.language),
             description=description,
-            channel=channel_title,
-            tags=[*source.categories, symbol, *tags],
+            channel=str(entry.get("channel") or channel_title or source.name),
+            tags=tags,
             imported_at=datetime.now(timezone.utc).isoformat(),
         )
+
+    @staticmethod
+    def _candidate_video_id(entry: dict[str, Any]) -> str:
+        for key in ("youtube_id", "id", "display_id"):
+            value = str(entry.get(key) or "").strip()
+            if is_valid_youtube_id(value):
+                return value
+        for key in ("url", "webpage_url"):
+            value = str(entry.get(key) or "").strip()
+            match = re.search(r"(?:v=|youtu\.be/|/embed/|/shorts/)([A-Za-z0-9_-]{11})", value)
+            if match and is_valid_youtube_id(match.group(1)):
+                return match.group(1)
+        return str(entry.get("id") or entry.get("display_id") or "").strip()
 
     @staticmethod
     def _published_at(entry: dict[str, Any]) -> str | None:

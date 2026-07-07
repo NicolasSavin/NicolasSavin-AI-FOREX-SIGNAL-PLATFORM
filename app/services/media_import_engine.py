@@ -27,7 +27,8 @@ YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
 def is_valid_youtube_id(value: Any) -> bool:
-    return bool(YOUTUBE_ID_RE.fullmatch(str(value or "").strip()))
+    text = str(value or "").strip()
+    return bool(text and not text.upper().startswith("DEMO") and YOUTUBE_ID_RE.fullmatch(text))
 
 
 class MediaConfigError(ValueError):
@@ -417,6 +418,9 @@ class MediaImportEngine:
                     "resolved_url": result.source.rss_url or result.source.feed_url,
                     "yt_dlp_version": getattr(provider, "last_diagnostic", {}).get("yt_dlp_version") if source.provider == "youtube_ytdlp" else None,
                     "execution_time": getattr(provider, "last_diagnostic", {}).get("execution_time") if source.provider == "youtube_ytdlp" else (datetime.now(timezone.utc) - source_started).total_seconds(),
+                    "valid_items": getattr(provider, "last_diagnostic", {}).get("valid_items", len(result.items)) if source.provider == "youtube_ytdlp" else len(result.items),
+                    "skipped_invalid": getattr(provider, "last_diagnostic", {}).get("skipped_invalid", 0) if source.provider == "youtube_ytdlp" else 0,
+                    "updated_count": 0,
                 })
                 if result.error:
                     failed += 1
@@ -450,7 +454,11 @@ class MediaImportEngine:
         after = {str(i.get("youtube_id")) for i in merged if is_valid_youtube_id(i.get("youtube_id"))}
         run_log["steps"].append("Saving catalog...")
         logger.info("Saving catalog...")
-        self.catalog_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._atomic_write_json(self.catalog_path, merged)
+        for row in run_log["sources"]:
+            if row.get("error"):
+                continue
+            row["updated_count"] = len([item for item in valid_fetched if item.get("source_id") == row.get("source_id") and str(item.get("youtube_id")) in before])
         self._save_sources(updated_sources)
         run_log["duplicates_removed"] = duplicates_removed
         run_log["catalog_items"] = len(merged)
@@ -463,7 +471,7 @@ class MediaImportEngine:
 
     def _persist_debug_run(self, run_log: dict[str, Any]) -> None:
         self.debug_path.parent.mkdir(parents=True, exist_ok=True)
-        self.debug_path.write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._atomic_write_json(self.debug_path, run_log)
 
     def debug_sources(self) -> dict[str, Any]:
         last_run = {"started_at": None, "finished_at": None, "sources": []}
@@ -509,6 +517,14 @@ class MediaImportEngine:
                 "feed_title": source.feed_title,
                 "entry_count": source.entry_count,
                 "last_resolve_error": source.last_resolve_error,
+                "yt_dlp_version": last_source_run.get("yt_dlp_version") or resolved.get("yt_dlp_version"),
+                "entries_found": last_source_run.get("entries_found"),
+                "valid_items": last_source_run.get("valid_items"),
+                "skipped_invalid": last_source_run.get("skipped_invalid"),
+                "imported_count": last_source_run.get("imported_count"),
+                "updated_count": last_source_run.get("updated_count"),
+                "error": last_source_run.get("error"),
+                "execution_time": last_source_run.get("execution_time") or resolved.get("execution_time"),
                 "last_run": {
                     "rss_url": last_source_run.get("rss_url"),
                     "http_status": last_source_run.get("http_status"),
@@ -602,7 +618,7 @@ class MediaImportEngine:
         }
         existing_raw.append(item)
         self._validate_sources(existing_raw)
-        self.sources_path.write_text(json.dumps(existing_raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._atomic_write_json(self.sources_path, existing_raw)
         return self._validate_sources([item])[0].public_payload()
 
     def resolve_all_youtube_sources(self) -> dict[str, Any]:
@@ -627,8 +643,15 @@ class MediaImportEngine:
             else:
                 item.update({"last_resolve_error": resolved.get("error"), "rss_validation_status": "error", "last_error": resolved.get("error"), "status": "error"})
             results.append(row)
-        self.sources_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._atomic_write_json(self.sources_path, raw)
         return {"success": all(r.get("ok") for r in results), "results": results}
+
+    @staticmethod
+    def _atomic_write_json(path: Path, payload: Any) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f".{path.name}.tmp")
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.replace(path)
 
     def resolve_provider(self, provider: str) -> MediaProvider:
         if provider == "youtube":
@@ -650,7 +673,7 @@ class MediaImportEngine:
                 if not upd.last_error:
                     item.pop("last_error", None)
                     item.pop("status", None)
-        self.sources_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._atomic_write_json(self.sources_path, raw)
 
     def _validate_sources(self, payload: Any) -> list[MediaSource]:
         if not isinstance(payload, list):
