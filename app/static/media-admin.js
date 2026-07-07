@@ -19,9 +19,10 @@
     setText('mediaStatSources', String(sources.length));
     if (!sources.length) { sourcesBody.innerHTML = '<tr><td colspan="6">Источники не настроены.</td></tr>'; return; }
     sourcesBody.innerHTML = sources.map((source) => {
+      const isManualSource = source.status === 'manual_source' || source.provider === 'youtube_manual';
       const needsChannelId = source.status === 'needs_channel_id' || (source.provider === 'youtube' && !source.channel_id);
-      const statusLabel = needsChannelId ? 'Нужен YouTube channel_id для RSS-импорта' : (source.enabled ? 'Enabled' : 'Disabled');
-      const statusClass = needsChannelId ? 'is-disabled' : (source.enabled ? 'is-enabled' : 'is-disabled');
+      const statusLabel = isManualSource ? 'Manual source — API not connected' : (needsChannelId ? 'Нужен YouTube channel_id для RSS-импорта' : (source.enabled ? 'Enabled' : 'Disabled'));
+      const statusClass = (needsChannelId || isManualSource) ? 'is-disabled' : (source.enabled ? 'is-enabled' : 'is-disabled');
       return `
       <tr>
         <td><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.channel_url || '')}</span></td>
