@@ -5,17 +5,33 @@
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
 
-## Что обновлено в версии 4.3
-- YouTube-провайдер FXPilot TV переведён с нестабильного RSS на официальный YouTube Data API v3: backend резолвит `@handle`, `/channel/UC...`, `/c/...` и `/user/...`, сохраняет `channel_id`, получает реальные видео через API, нормализует их в существующий `MediaItem` и не меняет TV UI, AI Summary, Reality Check, Trust Score или OrderFlow.
-- Импорт остаётся provider-independent: текущие кнопки Admin UI `Resolve`, `Import`, `Resolve All` используют тот же backend-контракт, а будущие Telegram/RSS/Podcast/Website провайдеры не требуют редизайна Media Engine.
-- Дедупликация YouTube выполняется по `videoId`, повторный импорт скачивает только видео новее последнего импортированного `published_at`, а `/api/media/debug` показывает provider, `quota_used`, `channel_id`, `channel_title`, `videos_found`, `imported` и ошибки последнего запуска.
 
-### Настройка YouTube Data API v3
-1. Откройте Google Cloud Console и создайте новый проект или выберите существующий.
-2. В разделе APIs & Services включите **YouTube Data API v3**.
-3. В разделе Credentials создайте API key и при необходимости ограничьте его по API/доменам окружения.
-4. Добавьте переменную окружения `YOUTUBE_API_KEY=<ваш ключ>` в backend/Render Environment.
-5. Перезапустите backend, затем в `/admin/media` используйте `Resolve`, `Resolve All` или `Import`. Если ключ отсутствует, backend вернёт явную ошибку `YOUTUBE_API_KEY is required for YouTube Data API import` без fallback на RSS/scraping.
+## Что обновлено в версии 4.4
+- YouTube-импорт FXPilot TV переведён на `yt-dlp`: backend больше не требует Google Cloud и YouTube Data API, не парсит HTML вручную и не скачивает видеофайлы — импортируются только метаданные публичных каналов.
+- Добавлен провайдер `youtube_ytdlp`, который принимает `@handle`, `/channel/`, `/user/` и `/c/`, кэширует ответы по каналу на 30 минут, нормализует видео в `MediaItem` и сохраняет каталог с дедупликацией по `youtube_id`.
+- `/admin/media` показывает provider `YouTube (yt-dlp)`, статус Online, Last import, Videos imported, Import duration и Errors; кнопка Import Now запускает yt-dlp import и после сохранения обновляет UI.
+- `/api/media/debug` возвращает `yt-dlp` version, channel URL, resolved URL, videos found, imported, errors и execution time для диагностики последнего запуска. При ошибке `yt-dlp` существующий каталог сохраняется и импортированные ранее видео не удаляются.
+
+### Установка yt-dlp
+```bash
+pip install yt-dlp
+```
+В проекте зависимость добавлена в `pyproject.toml`; на Render она установится вместе с backend dependencies.
+
+### Как работает автоматический YouTube import
+1. Источники в `data/media_sources.json` используют provider `youtube_ytdlp`. Legacy/manual источники не удаляются из каталогов и продолжат дедуплицироваться по `youtube_id`.
+2. `POST /api/media/import` вызывает `YouTubeYtDlpProvider.fetch_latest()` для каждого enabled источника, получает только metadata через `yt-dlp`, нормализует поля `youtube_id`, `title`, `description`, `thumbnail`, `duration`, `published_at`, `author`, `channel`, `url`, `tags`, `language`, `provider="youtube_ytdlp"`.
+3. `MediaImportEngine` объединяет новые записи с `data/media_catalog.json`, дедуплицирует по `youtube_id` и никогда не удаляет уже импортированные видео при ошибке провайдера.
+4. Повторные обращения к одному каналу кэшируются на 30 минут, чтобы не делать лишние запросы.
+
+### Поддерживаемые URL каналов
+- `https://www.youtube.com/@channel_handle` и коротко `@channel_handle`
+- `https://www.youtube.com/channel/UC...`
+- `https://www.youtube.com/user/legacyUser`
+- `https://www.youtube.com/c/customName`
+
+## Что обновлено в версии 4.3
+- Исторический этап YouTube Data API сохранён только как legacy provider `youtube`; актуальный автоматический импорт описан выше в версии 4.4 и работает через `youtube_ytdlp` без Google Cloud.
 
 ## Что обновлено в версии 4.2
 - YouTube источники FXPilot TV теперь содержат явные `channel_id` и `rss_url`; импорт строит RSS по `channel_id`, а источники без `channel_id` получают статус `needs_channel_id` и понятную диагностику в `/api/media/debug` и `/admin/media`. Добавлен помощник `python scripts/resolve_youtube_channels.py` для ручного поиска отсутствующих ID без YouTube Data API и без HTML scraping в приложении.
