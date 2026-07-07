@@ -118,7 +118,7 @@
     applyFilters();
     if (countEl) countEl.textContent = `${filteredVideos.length} из ${videos.length} видео`;
     if (!filteredVideos.length) {
-      listEl.innerHTML = '<div class="tv-player-empty"><strong>Видео не найдены</strong><span>Измените поиск или категорию. Каталог FXPilot TV будет расширяться без подключения YouTube API.</span></div>';
+      listEl.innerHTML = '<div class="tv-player-empty"><strong>No videos imported</strong><span>Запустите Import Now в Media Admin, чтобы загрузить реальные ролики YouTube.</span></div>';
       return;
     }
     listEl.innerHTML = playlistGroups.map((group) => {
@@ -166,6 +166,7 @@
       renderFilters();
       document.getElementById('tvVideoSearch')?.addEventListener('input', (event) => { query = event.target.value; renderList(); });
       document.getElementById('tvCategoryFilter')?.addEventListener('change', (event) => { category = event.target.value; renderList(); selectVideo(filteredVideos[0]?.id); });
+      if (!videos.length) { renderList(); renderPlayer(null); renderDetails(null); return; }
       selectVideo(videos[0] && videos[0].id);
     })
     .catch(() => { videos = []; filteredVideos = []; if (countEl) countEl.textContent = '0 видео'; playerEl.innerHTML = '<div class="tv-player-empty"><strong>Каталог временно недоступен</strong><span>Не удалось загрузить локальный список видео. Попробуйте обновить страницу.</span></div>'; detailsEl.innerHTML = '<p class="section-text">Видеообзоры не загружены. Реальные рыночные данные не подменяются демо-контентом.</p>'; listEl.innerHTML = '<div class="tv-player-empty">Нет доступных видео.</div>'; });

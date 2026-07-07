@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import traceback
 from dataclasses import asdict, dataclass, field, replace
@@ -22,6 +23,11 @@ SUPPORTED_MEDIA_PROVIDERS = {"youtube", "youtube_ytdlp", "youtube_manual", "tele
 SYMBOLS = ("EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD", "XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD", "DXY", "US500", "NASDAQ", "GER40", "UK100")
 YOUTUBE_RSS_BY_CHANNEL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 YOUTUBE_RSS_BY_USER = "https://www.youtube.com/feeds/videos.xml?user={user}"
+YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def is_valid_youtube_id(value: Any) -> bool:
+    return bool(YOUTUBE_ID_RE.fullmatch(str(value or "").strip()))
 
 
 class MediaConfigError(ValueError):
@@ -211,7 +217,7 @@ class YouTubeRssProvider:
 
     def _entry_to_item(self, entry: Any, source: MediaSource) -> MediaItem | None:
         youtube_id = self._entry_video_id(entry)
-        if not youtube_id: return None
+        if not is_valid_youtube_id(youtube_id): return None
         title = str(entry.get("title") or "Без названия").strip(); description = str(entry.get("summary") or entry.get("description") or "").strip(); symbol = detect_symbol(f"{title} {description}")
         return MediaItem(id=f"youtube:{youtube_id}", provider=self.provider_name, source_id=source.id, title=title, author=str(entry.get("author") or source.name), youtube_id=youtube_id, url=str(entry.get("link") or f"https://www.youtube.com/watch?v={youtube_id}"), thumbnail=self._thumbnail(entry), published_at=self._published_date(entry), duration=None, category=source.categories[0] if source.categories else "Market Analysis", symbol=symbol, language=source.language, description=description, tags=[*source.categories, symbol], imported_at=datetime.now(timezone.utc).isoformat())
 
@@ -336,7 +342,14 @@ class MediaImportEngine:
             result.append(payload)
         return result
     def load_catalog(self) -> list[dict[str, Any]]:
-        return self._sort_media(self._dedupe([*(self._read_json_list(self.manual_videos_path) if self.manual_videos_path else []), *self._read_json_list(self.catalog_path)]))
+        items = self._read_json_list(self.catalog_path)
+        if self._manual_dev_mode_enabled() and self.manual_videos_path:
+            items = [*self._read_json_list(self.manual_videos_path), *items]
+        return self._sort_media(self._dedupe(items, allow_manual=self._manual_dev_mode_enabled()))
+
+    @staticmethod
+    def _manual_dev_mode_enabled() -> bool:
+        return str(os.getenv("FXPILOT_DEV_MANUAL_MEDIA") or "").strip().lower() in {"1", "true", "yes", "on", "dev"}
     def import_latest(self) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
         run_log: dict[str, Any] = {"started_at": now, "finished_at": None, "sources": [], "steps": ["ENTER import_latest()"]}
@@ -428,19 +441,25 @@ class MediaImportEngine:
             finally:
                 run_log["sources"].append(source_log)
 
-        merged = self._sort_media(self._dedupe([*existing, *fetched]))
-        before = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in existing}
-        after = {(str(i.get("provider")), str(i.get("youtube_id") or i.get("id") or i.get("url"))) for i in merged}
+        valid_existing = [item for item in existing if self._is_catalog_item_importable(item)]
+        valid_fetched = [item for item in fetched if self._is_catalog_item_importable(item)]
+        merged = self._sort_media(self._dedupe([*valid_existing, *valid_fetched]))
+        raw_count = len(valid_existing) + len(valid_fetched)
+        duplicates_removed = max(0, raw_count - len(merged))
+        before = {str(i.get("youtube_id")) for i in valid_existing if is_valid_youtube_id(i.get("youtube_id"))}
+        after = {str(i.get("youtube_id")) for i in merged if is_valid_youtube_id(i.get("youtube_id"))}
         run_log["steps"].append("Saving catalog...")
         logger.info("Saving catalog...")
         self.catalog_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
         self._save_sources(updated_sources)
+        run_log["duplicates_removed"] = duplicates_removed
+        run_log["catalog_items"] = len(merged)
         run_log["finished_at"] = datetime.now(timezone.utc).isoformat()
         run_log["steps"].append("DONE")
         logger.info("DONE")
         self._persist_debug_run(run_log)
         imported = len(after - before)
-        return {"success": failed == 0, "processed": processed, "imported": imported, "updated": max(0, len(fetched) - imported), "failed": failed, "errors": errors, "catalog_size": len(merged), "sources": len(sources), "new_items": imported}
+        return {"success": failed == 0, "processed": processed, "imported": imported, "updated": max(0, len(valid_fetched) - imported), "failed": failed, "errors": errors, "catalog_size": len(merged), "sources": len(sources), "new_items": imported, "duplicates_removed": duplicates_removed}
 
     def _persist_debug_run(self, run_log: dict[str, Any]) -> None:
         self.debug_path.parent.mkdir(parents=True, exist_ok=True)
@@ -511,6 +530,25 @@ class MediaImportEngine:
                 },
             })
         return {"last_import_run": last_run, "sources": rows}
+    def stats(self) -> dict[str, Any]:
+        catalog = self.load_catalog()
+        last_run = {}
+        try:
+            payload = json.loads(self.debug_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                last_run = payload
+        except Exception:
+            pass
+        manual_demo = len([item for item in catalog if item.get("status") == "manual_demo" or item.get("provider") in {"youtube_manual", "youtube-manual"}])
+        real_videos = len([item for item in catalog if is_valid_youtube_id(item.get("youtube_id")) and item.get("status") != "manual_demo"])
+        return {
+            "catalog_items": len(catalog),
+            "real_videos": real_videos,
+            "manual_demo": manual_demo,
+            "duplicates_removed": int(last_run.get("duplicates_removed") or 0),
+            "last_import": last_run.get("finished_at") or last_run.get("started_at"),
+        }
+
     def rss_test(self, source_id: str) -> dict[str, Any]:
         source = next((s for s in self.load_sources() if s.id == source_id), None)
         if not source:
@@ -604,7 +642,7 @@ class MediaImportEngine:
         values = [str(item.get("published_at") or "") for item in catalog if item.get("source_id") == source_id and item.get("published_at")]
         return max(values) if values else None
     def _save_sources(self, updates: list[MediaSource]) -> None:
-        by_id = {s.id: s for s in updates}; raw = self._read_json_list(self.sources_path); catalog = self.load_catalog()
+        by_id = {s.id: s for s in updates}; raw = self._read_json_list(self.sources_path); catalog = self._sort_media(self._dedupe(self._read_json_list(self.catalog_path)))
         for item in raw:
             upd = by_id.get(str(item.get("id")))
             if upd:
@@ -653,18 +691,31 @@ class MediaImportEngine:
         return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
 
     @staticmethod
-    def _dedupe(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        seen: dict[tuple[str, str], dict[str, Any]] = {}
+    def _is_catalog_item_importable(item: dict[str, Any], *, allow_manual: bool = False) -> bool:
+        if not isinstance(item, dict):
+            return False
+        if not allow_manual and (item.get("status") == "manual_demo" or str(item.get("provider") or "") in {"youtube_manual", "youtube-manual"}):
+            return False
+        return is_valid_youtube_id(item.get("youtube_id"))
+
+    @staticmethod
+    def _dedupe(items: list[dict[str, Any]], *, allow_manual: bool = False) -> list[dict[str, Any]]:
+        seen: dict[str, dict[str, Any]] = {}
         for item in items:
-            provider = str(item.get("provider") or ("youtube-manual" if item.get("youtube_id") else "manual"))
-            external_id = str(item.get("youtube_id") or item.get("id") or item.get("url"))
-            dedupe_key = ("youtube_id", external_id) if item.get("youtube_id") else (provider, external_id)
+            if not MediaImportEngine._is_catalog_item_importable(item, allow_manual=allow_manual):
+                continue
+            youtube_id = str(item.get("youtube_id") or "").strip()
             normalized = dict(item)
-            normalized.setdefault("provider", provider); normalized.setdefault("source_id", "manual")
-            normalized.setdefault("status", "manual"); normalized.setdefault("language", "ru")
-            normalized.setdefault("thumbnail", f"https://i.ytimg.com/vi/{normalized.get('youtube_id')}/hqdefault.jpg" if normalized.get("youtube_id") else None)
+            normalized["youtube_id"] = youtube_id
+            normalized.setdefault("id", f"youtube:{youtube_id}")
+            normalized.setdefault("provider", "youtube_ytdlp")
+            normalized.setdefault("source_id", "imported")
+            normalized.setdefault("status", "imported")
+            normalized.setdefault("language", "ru")
+            normalized.setdefault("thumbnail", f"https://i.ytimg.com/vi/{youtube_id}/hqdefault.jpg")
+            normalized.setdefault("url", f"https://www.youtube.com/watch?v={youtube_id}")
             normalized.setdefault("symbol", detect_symbol(f"{normalized.get('title','')} {normalized.get('description','')}"))
-            seen[dedupe_key] = normalized
+            seen[youtube_id] = normalized
         return list(seen.values())
 
     @staticmethod

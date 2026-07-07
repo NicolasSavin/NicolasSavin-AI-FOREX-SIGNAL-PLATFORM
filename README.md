@@ -512,3 +512,9 @@ Admin endpoints:
 - `POST /api/media/resolve-source` — resolve and validate one YouTube channel URL.
 - `POST /api/media/sources` — resolve, validate, duplicate-check, and save a source.
 - `POST /api/media/resolve-all` — re-resolve enabled YouTube sources and refresh stored RSS metadata.
+
+## FXPilot TV yt-dlp catalog migration
+
+- `/api/media` and `/tv` now read the video catalog from `data/media_catalog.json` only; `data/manual_youtube_videos.json` is excluded by default and can be enabled only for local development with `FXPILOT_DEV_MANUAL_MEDIA=1`.
+- `POST /api/media/import` rebuilds and saves `media_catalog.json` immediately after provider import, filters out records without a valid 11-character `youtube_id`, deduplicates by `youtube_id`, and records `duplicates_removed` in the import debug log.
+- Added `GET /api/media/stats` for catalog health (`catalog_items`, `real_videos`, `manual_demo`, `duplicates_removed`, `last_import`); the TV player shows `No videos imported` when the automatic catalog is empty and always uses `https://www.youtube.com/embed/{youtube_id}` for playback.

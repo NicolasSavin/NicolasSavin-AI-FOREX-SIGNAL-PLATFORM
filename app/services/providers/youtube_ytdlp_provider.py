@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
-from app.services.media_import_engine import ImportSourceResult, MediaImportError, MediaItem, MediaSource, detect_symbol
+from app.services.media_import_engine import ImportSourceResult, MediaImportError, MediaItem, MediaSource, detect_symbol, is_valid_youtube_id
 
 CACHE_TTL_SECONDS = 30 * 60
 DEFAULT_MAX_RESULTS = 20
@@ -153,7 +153,7 @@ class YouTubeYtDlpProvider:
     @staticmethod
     def _entry_to_item(entry: dict[str, Any], source: MediaSource, channel_title: str) -> MediaItem | None:
         video_id = str(entry.get("id") or entry.get("display_id") or "").strip()
-        if not video_id:
+        if not is_valid_youtube_id(video_id):
             return None
         title = str(entry.get("title") or "Без названия").strip()
         description = str(entry.get("description") or entry.get("summary") or "").strip()

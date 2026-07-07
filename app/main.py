@@ -142,7 +142,8 @@ MEDIA_MANUAL_YOUTUBE_PATH = BASE_DIR.parent / "data" / "manual_youtube_videos.js
 MEDIA_DEBUG_PATH = BASE_DIR.parent / "data" / "media_import_debug.json"
 
 def create_media_import_engine() -> MediaImportEngine:
-    return MediaImportEngine(MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, MEDIA_TV_VIDEOS_PATH, debug_path=MEDIA_DEBUG_PATH)
+    manual_path = MEDIA_MANUAL_YOUTUBE_PATH if os.getenv("FXPILOT_DEV_MANUAL_MEDIA", "").strip().lower() in {"1", "true", "yes", "on", "dev"} else None
+    return MediaImportEngine(MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, manual_path, debug_path=MEDIA_DEBUG_PATH)
 
 media_import_engine = create_media_import_engine()
 
@@ -504,24 +505,10 @@ def media_admin_page():
 
 def _load_tv_video_catalog() -> list[dict[str, Any]]:
     try:
-        return MediaImportEngine(
-            MEDIA_SOURCES_PATH,
-            MEDIA_CATALOG_PATH,
-            MEDIA_MANUAL_YOUTUBE_PATH,
-            debug_path=MEDIA_DEBUG_PATH,
-        )._sort_media(
-            MediaImportEngine._dedupe(
-                [
-                    *MediaImportEngine._read_json_list(MEDIA_MANUAL_YOUTUBE_PATH),
-                    *MediaImportEngine._read_json_list(MEDIA_TV_VIDEOS_PATH),
-                    *MediaImportEngine._read_json_list(MEDIA_CATALOG_PATH),
-                ]
-            )
-        )
+        return create_media_import_engine().load_catalog()
     except Exception as exc:
         logger.warning("media_catalog_unavailable error=%s", exc)
         return []
-
 
 def _build_tv_review_payload(video: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -596,6 +583,14 @@ def api_media_import() -> dict[str, Any]:
     except Exception as exc:
         logger.exception("media_import_failed_before_completion")
         raise HTTPException(status_code=500, detail={"error": str(exc), "exception_type": exc.__class__.__name__}) from exc
+
+
+@app.get("/api/media/stats")
+def api_media_stats() -> dict[str, Any]:
+    try:
+        return create_media_import_engine().stats()
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/media/debug")

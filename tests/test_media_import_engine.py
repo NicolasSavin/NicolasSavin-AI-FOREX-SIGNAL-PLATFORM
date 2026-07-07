@@ -27,7 +27,7 @@ def test_symbol_detection_supported_symbols():
     assert detect_symbol("общий рыночный обзор") == "MARKET"
 
 
-def test_media_import_merges_and_deduplicates_manual_catalog(tmp_path: Path):
+def test_media_catalog_ignores_manual_demo_without_dev_mode(tmp_path: Path):
     sources_path = tmp_path / "media_sources.json"
     catalog_path = tmp_path / "media_catalog.json"
     manual_path = tmp_path / "tv_videos.json"
@@ -38,15 +38,11 @@ def test_media_import_merges_and_deduplicates_manual_catalog(tmp_path: Path):
         {"id": "manual", "youtube_id": "abc12345678", "title": "EURUSD manual", "published_at": "2026-07-06"}
     ]), encoding="utf-8")
     catalog_path.write_text(json.dumps([
-        {"id": "duplicate", "provider": "youtube-manual", "youtube_id": "abc12345678", "title": "EURUSD duplicate", "published_at": "2026-07-05"}
+        {"id": "duplicate", "provider": "youtube-manual", "youtube_id": "abc12345678", "title": "EURUSD duplicate", "published_at": "2026-07-05", "status": "manual_demo"}
     ]), encoding="utf-8")
 
     engine = MediaImportEngine(sources_path, catalog_path, manual_path)
-    catalog = engine.load_catalog()
-
-    assert len(catalog) == 1
-    assert catalog[0]["youtube_id"] == "abc12345678"
-    assert catalog[0]["symbol"] == "EURUSD"
+    assert engine.load_catalog() == []
 
 
 
@@ -105,6 +101,14 @@ def test_media_debug_endpoint_contract():
     payload = response.json()
     assert {"started_at", "finished_at", "sources"}.issubset(payload["last_import_run"].keys())
     assert {"provider", "rss_url", "channel_id", "can_import", "last_run", "last_error"}.issubset(payload["sources"][0].keys())
+
+
+def test_media_stats_endpoint_contract():
+    response = TestClient(app).get("/api/media/stats")
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"catalog_items", "real_videos", "manual_demo", "duplicates_removed", "last_import"}.issubset(payload.keys())
+    assert payload["manual_demo"] == 0
 
 
 
