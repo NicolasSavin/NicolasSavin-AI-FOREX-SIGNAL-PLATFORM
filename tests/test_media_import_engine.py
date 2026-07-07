@@ -102,7 +102,9 @@ def test_media_import_failure_continues_remaining_sources(tmp_path: Path):
 def test_media_debug_endpoint_contract():
     response = TestClient(app).get("/api/media/debug")
     assert response.status_code == 200
-    assert {"provider", "rss_url", "channel_id", "request_status", "response_status", "videos_found", "last_error"}.issubset(response.json()[0].keys())
+    payload = response.json()
+    assert {"started_at", "finished_at", "sources"}.issubset(payload["last_import_run"].keys())
+    assert {"provider", "rss_url", "channel_id", "can_import", "last_run", "last_error"}.issubset(payload["sources"][0].keys())
 
 
 def _source(channel_url: str, channel_id: str | None = None):
@@ -166,6 +168,6 @@ def test_debug_sources_exposes_blocking_reason_for_missing_channel_id(tmp_path: 
         {"id":"demo","name":"Demo","provider":"youtube","channel_url":"https://www.youtube.com/@demo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
     ]), encoding="utf-8")
     catalog_path.write_text("[]", encoding="utf-8")
-    row = MediaImportEngine(sources_path, catalog_path).debug_sources()[0]
+    row = MediaImportEngine(sources_path, catalog_path).debug_sources()["sources"][0]
     assert row["can_import"] is False
     assert row["blocking_reason"] == "Нужен YouTube channel_id для RSS-импорта"

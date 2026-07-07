@@ -2,10 +2,12 @@
   const sourcesBody = document.getElementById('mediaSourcesBody');
   const newestBody = document.getElementById('mediaNewestBody');
   const importButton = document.getElementById('mediaImportNow');
+  const importResult = document.getElementById('mediaImportResult');
   if (!sourcesBody || !newestBody) return;
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
   const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value || '—'; };
   const formatValue = (value) => value ? escapeHtml(value) : '—';
+  const showImportResult = (payload) => { if (importResult) importResult.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2); };
 
   function implementationNotice(action, sourceName) { window.alert(`${action}: Implementation in next sprint${sourceName ? ` для ${sourceName}` : ''}.`); }
 
@@ -49,9 +51,21 @@
   sourcesBody.addEventListener('click', (event) => { const button = event.target.closest('button[data-action]'); if (button) implementationNotice(button.dataset.action, button.dataset.source); });
   importButton?.addEventListener('click', () => {
     setText('mediaImportStatus', 'Import running...');
-    fetch('/api/media/import', { method: 'POST', headers: { Accept: 'application/json' } }).then((r) => r.json()).then((payload) => {
-      setText('mediaImportStatus', payload.success ? `Imported: ${payload.new_items} new` : 'Import failed'); refresh();
-    }).catch(() => setText('mediaImportStatus', 'Import failed'));
+    showImportResult('Import running...');
+    fetch('/api/media/import', { method: 'POST', headers: { Accept: 'application/json' } })
+      .then((response) => response.json().catch(() => ({ success: false, errors: [{ reason: 'Invalid JSON response' }] })).then((payload) => {
+        if (!response.ok) throw payload;
+        return payload;
+      }))
+      .then((payload) => {
+        showImportResult(payload);
+        setText('mediaImportStatus', payload.success ? `Imported: ${payload.imported ?? payload.new_items ?? 0} new · catalog: ${payload.catalog_size ?? '—'}` : `Import failed: ${(payload.errors || []).map((e) => e.reason || e).join('; ') || 'unknown error'}`);
+        return refresh();
+      })
+      .catch((error) => {
+        showImportResult(error);
+        setText('mediaImportStatus', `Import failed: ${(error && (error.detail || error.message)) || 'request error'}`);
+      });
   });
   refresh();
 })();
