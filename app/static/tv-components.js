@@ -10,11 +10,9 @@ window.FXPilotTv = (() => {
     return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }).format(date);
   };
 
-  const embedUrl = (youtubeId, { autoplay = false } = {}) => {
-    const params = new URLSearchParams({ rel: '0', modestbranding: '1', playsinline: '1' });
-    if (autoplay) params.set('autoplay', '1');
-    return `https://www.youtube.com/embed/${encodeURIComponent(youtubeId)}?${params.toString()}`;
-  };
+  const isValidYouTubeId = (youtubeId) => /^[A-Za-z0-9_-]{11}$/.test(String(youtubeId || ''));
+
+  const embedUrl = (youtubeId) => `https://www.youtube.com/embed/${encodeURIComponent(youtubeId)}`;
 
   const PlayerSkeleton = (label = 'Загрузка видео...') => `
     <div class="tv-player-skeleton" aria-live="polite">
@@ -23,7 +21,7 @@ window.FXPilotTv = (() => {
   `;
 
   const VideoPlayer = (video, { autoplay = false, titleFallback = 'FXPilot TV' } = {}) => {
-    if (!video || !video.youtube_id) return '<div class="tv-player-empty">Видео пока недоступно.</div>';
+    if (!video || !isValidYouTubeId(video.youtube_id)) return '<div class="tv-player-empty">No videos imported</div>';
     return `<iframe src="${embedUrl(video.youtube_id, { autoplay })}" title="${escapeHtml(video.title || titleFallback)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy"></iframe>`;
   };
 
