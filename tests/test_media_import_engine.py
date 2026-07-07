@@ -4,7 +4,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.media_import_engine import FetchResult, MediaImportEngine, YouTubeRssProvider, detect_symbol
+from app.services.media_import_engine import FetchResult, ImportSourceResult, MediaImportEngine, MediaItem, YouTubeRssProvider, detect_symbol
+from app.services.providers.youtube_ytdlp_provider import YouTubeYtDlpProvider
 
 
 def test_media_api_contracts():
@@ -109,6 +110,102 @@ def test_media_stats_endpoint_contract():
     payload = response.json()
     assert {"catalog_items", "real_videos", "manual_demo", "duplicates_removed", "last_import"}.issubset(payload.keys())
     assert payload["manual_demo"] == 0
+
+
+def test_ytdlp_flat_playlist_entries_to_media_items(monkeypatch):
+    provider = YouTubeYtDlpProvider()
+    source = _source("https://www.youtube.com/@demo")
+    source = source.__class__(source.id, source.name, "youtube_ytdlp", source.channel_url, source.language, source.priority, source.categories, source.enabled)
+    monkeypatch.setattr(provider, "_extract_cached", lambda url: {
+        "title": "Demo Channel",
+        "webpage_url": "https://www.youtube.com/@demo/videos",
+        "entries": [
+            {
+                "id": "AbC12345678",
+                "title": "XAUUSD обзор",
+                "url": "https://www.youtube.com/watch?v=AbC12345678",
+                "uploader": "Demo Author",
+                "timestamp": 1783382400,
+            }
+        ],
+    })
+
+    result = provider.fetch_latest(source)
+
+    assert result.error is None
+    assert result.videos_found == 1
+    assert result.items[0].provider == "youtube_ytdlp"
+    assert result.items[0].youtube_id == "AbC12345678"
+    assert result.items[0].source_id == "demo"
+    assert result.items[0].status == "imported"
+    assert result.items[0].symbol == "XAUUSD"
+
+
+def test_ytdlp_invalid_video_id_skipped(monkeypatch):
+    provider = YouTubeYtDlpProvider()
+    source = _source("https://www.youtube.com/@demo")
+    source = source.__class__(source.id, source.name, "youtube_ytdlp", source.channel_url, source.language, source.priority, source.categories, source.enabled)
+    monkeypatch.setattr(provider, "_extract_cached", lambda url: {
+        "title": "Demo Channel",
+        "entries": [{"id": "DEMO1234567", "title": "Bad demo"}, {"id": "", "title": "Empty"}],
+    })
+
+    result = provider.fetch_latest(source)
+
+    assert result.items == []
+    assert provider.last_diagnostic["entries_found"] == 2
+    assert provider.last_diagnostic["skipped_invalid"] == 2
+
+
+def test_catalog_merge_by_youtube_id_and_save_load(tmp_path: Path):
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    sources_path.write_text(json.dumps([
+        {"id":"demo","name":"Demo","provider":"youtube_ytdlp","channel_url":"https://www.youtube.com/@demo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
+    ]), encoding="utf-8")
+    catalog_path.write_text(json.dumps([
+        {"id":"youtube:AbC12345678","provider":"youtube_ytdlp","source_id":"demo","youtube_id":"AbC12345678","title":"Old","author":"A","url":"https://www.youtube.com/watch?v=AbC12345678","published_at":"2026-07-01","status":"imported"}
+    ]), encoding="utf-8")
+
+    class Provider:
+        provider_name = "youtube_ytdlp"
+        last_diagnostic = {"yt_dlp_version": "test", "execution_time": 0.01, "valid_items": 1, "skipped_invalid": 0}
+        def fetch_latest(self, source):
+            item = MediaItem("youtube:AbC12345678", "youtube_ytdlp", "demo", "New", "A", "AbC12345678", "https://www.youtube.com/watch?v=AbC12345678", None, "2026-07-07", None, "Forex", "MARKET", "ru", "")
+            return ImportSourceResult(source, [item], "ok", 200, 1)
+
+    engine = MediaImportEngine(sources_path, catalog_path, ytdlp_provider=Provider())
+    result = engine.import_latest()
+    loaded = engine.load_catalog()
+
+    assert result["updated"] == 1
+    assert len(loaded) == 1
+    assert loaded[0]["title"] == "New"
+    assert json.loads(catalog_path.read_text(encoding="utf-8"))[0]["title"] == "New"
+
+
+def test_stats_real_videos_after_mocked_import(tmp_path: Path):
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    sources_path.write_text(json.dumps([
+        {"id":"demo","name":"Demo","provider":"youtube_ytdlp","channel_url":"https://www.youtube.com/@demo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
+    ]), encoding="utf-8")
+    catalog_path.write_text("[]", encoding="utf-8")
+
+    class Provider:
+        provider_name = "youtube_ytdlp"
+        last_diagnostic = {"yt_dlp_version": "test", "execution_time": 0.01, "valid_items": 1, "skipped_invalid": 0}
+        def fetch_latest(self, source):
+            item = MediaItem("youtube:XyZ12345678", "youtube_ytdlp", "demo", "Video", "A", "XyZ12345678", "https://www.youtube.com/watch?v=XyZ12345678", None, "2026-07-07", None, "Forex", "MARKET", "ru", "")
+            return ImportSourceResult(source, [item], "ok", 200, 1)
+
+    engine = MediaImportEngine(sources_path, catalog_path, ytdlp_provider=Provider())
+    engine.import_latest()
+    stats = engine.stats()
+
+    assert stats["catalog_items"] == 1
+    assert stats["real_videos"] == 1
+    assert stats["manual_demo"] == 0
 
 
 

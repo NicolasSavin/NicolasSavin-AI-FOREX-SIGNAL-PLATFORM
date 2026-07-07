@@ -70,7 +70,7 @@
 
   function renderDetails(video) {
     if (!video) {
-      detailsEl.innerHTML = '<p class="section-text">Каталог видео пуст или временно недоступен.</p>';
+      detailsEl.innerHTML = '<p class="section-text">Каталог пока пуст. Запустите Import Now.</p>';
       return;
     }
     const progress = watchHistory[video.id]?.progress || 0;
@@ -118,7 +118,7 @@
     applyFilters();
     if (countEl) countEl.textContent = `${filteredVideos.length} из ${videos.length} видео`;
     if (!filteredVideos.length) {
-      listEl.innerHTML = '<div class="tv-player-empty"><strong>No videos imported</strong><span>Запустите Import Now в Media Admin, чтобы загрузить реальные ролики YouTube.</span></div>';
+      listEl.innerHTML = '<div class="tv-player-empty"><strong>Каталог пока пуст.</strong><span>Запустите Import Now.</span></div>';
       return;
     }
     listEl.innerHTML = playlistGroups.map((group) => {
