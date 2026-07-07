@@ -12,15 +12,20 @@
   function renderSources(sources) {
     setText('mediaStatSources', String(sources.length));
     if (!sources.length) { sourcesBody.innerHTML = '<tr><td colspan="6">Источники не настроены.</td></tr>'; return; }
-    sourcesBody.innerHTML = sources.map((source) => `
+    sourcesBody.innerHTML = sources.map((source) => {
+      const needsChannelId = source.status === 'needs_channel_id' || (source.provider === 'youtube' && !source.channel_id);
+      const statusLabel = needsChannelId ? 'Нужен YouTube channel_id для RSS-импорта' : (source.enabled ? 'Enabled' : 'Disabled');
+      const statusClass = needsChannelId ? 'is-disabled' : (source.enabled ? 'is-enabled' : 'is-disabled');
+      return `
       <tr>
         <td><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.channel_url || '')}</span></td>
         <td><span class="tv-provider-pill">${escapeHtml(source.provider)}</span></td>
-        <td><span class="tv-status-pill ${source.enabled ? 'is-enabled' : 'is-disabled'}">${source.enabled ? 'Enabled' : 'Disabled'}</span></td>
+        <td><span class="tv-status-pill ${statusClass}">${escapeHtml(statusLabel)}</span></td>
         <td>${formatValue(source.last_import)}</td>
         <td>${escapeHtml(source.videos_count ?? 0)}</td>
         <td><div class="tv-source-actions"><button data-action="Import Now" data-source="${escapeHtml(source.name)}">Import Now</button><button data-action="Disable" data-source="${escapeHtml(source.name)}">Disable</button><button data-action="Enable" data-source="${escapeHtml(source.name)}">Enable</button></div></td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
   }
 
   function renderMedia(items) {
