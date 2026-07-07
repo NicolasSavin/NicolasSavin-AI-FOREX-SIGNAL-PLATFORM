@@ -566,6 +566,14 @@ def api_media_debug() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/api/media/rss-test/{source_id}")
+def api_media_rss_test(source_id: str) -> dict[str, Any]:
+    try:
+        return create_media_import_engine().rss_test(source_id)
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=404 if "unknown media source id" in str(exc) else 500, detail=str(exc)) from exc
+
+
 @app.get("/api/media/scheduler")
 def api_media_scheduler() -> dict[str, Any]:
     return media_import_engine.scheduler.next_job_payload()

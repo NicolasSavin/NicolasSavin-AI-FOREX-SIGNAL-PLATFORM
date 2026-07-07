@@ -1,4 +1,5 @@
 # NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 4.0
+- Добавлен диагностический endpoint `GET /api/media/rss-test/{source_id}`: он возвращает итоговый RSS URL, HTTP-статус, headers, content-type, размер и первые 500 байт ответа, title/entry count для XML, диагностику пустых feedparser entries, проверку YouTube RSS URL/channel_id для 404 и traceback для неожиданных ошибок.
 - Media Import execution hardened: `/admin/media` now displays the raw `POST /api/media/import` JSON/error result, refreshes sources/catalog after success, and `/api/media/debug` reads the last import run log with per-source RSS URL, HTTP status, entries found, imported count and exact error reason.
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
