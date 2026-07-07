@@ -16,5 +16,6 @@ dependencies = [
   "httpx==0.27.2",
   "scikit-learn",
   "ta",
-  "python-dotenv"
+  "python-dotenv",
+  "yt-dlp"
 ]

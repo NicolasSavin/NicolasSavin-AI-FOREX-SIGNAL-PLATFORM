@@ -13,11 +13,11 @@
           <div class="tv-hero__copy">
             <p class="eyebrow">FXPilot TV · Hidden Admin</p>
             <h1>Media Import Engine</h1>
-            <p class="lead">Внутренняя панель автоматического импорта медиа: источники, RSS-провайдеры, каталог и статус будущего scheduler.</p>
+            <p class="lead">Внутренняя панель автоматического импорта медиа: YouTube (yt-dlp), каталог и статус будущего scheduler.</p>
           </div>
           <div class="tv-hero__signal" aria-label="Статус импорта">
             <span class="tv-live-dot"></span><strong id="mediaImportStatus">Engine ready</strong>
-            <p>YouTube API is not connected. Videos are currently managed manually.</p>
+            <p>YouTube (yt-dlp) online: импортирует только метаданные публичных каналов, без Google Cloud и без скачивания видео.</p>
           </div>
         </div>
       </header>
@@ -33,13 +33,13 @@
 
         <section class="panel tv-source-panel" aria-labelledby="mediaAddTitle">
           <div class="section-heading split-heading">
-            <div><p class="section-kicker">Add source</p><h2 id="mediaAddTitle">Добавить YouTube-источник</h2><p class="section-text">YouTube API is not connected. Videos are currently managed manually. RSS/API-код сохранен для будущего подключения.</p></div>
+            <div><p class="section-kicker">Add source</p><h2 id="mediaAddTitle">Добавить YouTube-источник</h2><p class="section-text">Автоматический импорт работает через yt-dlp: поддерживаются @handle, /channel/, /user/ и /c/.</p></div>
             <div class="tv-source-actions"><button type="button" id="mediaResolveAll">Re-resolve all YouTube sources</button></div>
           </div>
           <form id="mediaSourceForm" class="media-source-form">
             <label>ID<input name="id" placeholder="gerchik" required /></label>
             <label>Название<input name="name" placeholder="Gerchik & Co" required /></label>
-            <label>Provider<select name="provider"><option value="youtube">youtube</option></select></label>
+            <label>Provider<select name="provider"><option value="youtube_ytdlp">YouTube (yt-dlp)</option><option value="youtube_manual">youtube_manual</option><option value="youtube">youtube</option></select></label>
             <label>URL канала<input name="channel_url" placeholder="https://www.youtube.com/@channel" required /></label>
             <label>Язык<input name="language" value="ru" required /></label>
             <label>Категории<input name="categories" placeholder="Forex, Smart Money" required /></label>
@@ -62,8 +62,8 @@
           </div>
           <div class="tv-source-table-wrap">
             <table class="tv-source-table">
-              <thead><tr><th>Источник</th><th>Provider</th><th>Enabled</th><th>Last update</th><th>Imported videos</th><th>Действия</th></tr></thead>
-              <tbody id="mediaSourcesBody"><tr><td colspan="6">Загрузка...</td></tr></tbody>
+              <thead><tr><th>Источник</th><th>Provider</th><th>Status</th><th>Last import</th><th>Videos imported</th><th>Duration</th><th>Errors</th><th>Действия</th></tr></thead>
+              <tbody id="mediaSourcesBody"><tr><td colspan="8">Загрузка...</td></tr></tbody>
             </table>
           </div>
         </section>

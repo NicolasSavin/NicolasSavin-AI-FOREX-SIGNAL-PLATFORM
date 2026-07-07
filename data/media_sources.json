@@ -2,7 +2,7 @@
   {
     "id": "gerchik",
     "name": "Gerchik & Co",
-    "provider": "youtube_manual",
+    "provider": "youtube_ytdlp",
     "channel_url": "https://www.youtube.com/@gerchikco9785",
     "language": "ru",
     "priority": 1,
@@ -11,12 +11,12 @@
       "Smart Money"
     ],
     "enabled": true,
-    "status": "manual_source"
+    "status": "online"
   },
   {
     "id": "instaforex",
     "name": "InstaForex",
-    "provider": "youtube_manual",
+    "provider": "youtube_ytdlp",
     "channel_url": "https://www.youtube.com/@instaforex",
     "language": "ru",
     "priority": 2,
@@ -25,12 +25,12 @@
       "Macro"
     ],
     "enabled": true,
-    "status": "manual_source"
+    "status": "online"
   },
   {
     "id": "traderevo",
     "name": "TraderEVO",
-    "provider": "youtube_manual",
+    "provider": "youtube_ytdlp",
     "channel_url": "https://www.youtube.com/@traderevo",
     "language": "ru",
     "priority": 2,
@@ -38,12 +38,12 @@
       "Smart Money"
     ],
     "enabled": true,
-    "status": "manual_source"
+    "status": "online"
   },
   {
     "id": "prosto_crypto",
     "name": "PROSTO КРИПТО",
-    "provider": "youtube_manual",
+    "provider": "youtube_ytdlp",
     "channel_url": "https://www.youtube.com/@prosto_kripto",
     "language": "ru",
     "priority": 2,
@@ -51,12 +51,12 @@
       "Crypto"
     ],
     "enabled": true,
-    "status": "manual_source"
+    "status": "online"
   },
   {
     "id": "market_vector",
     "name": "Market Vector",
-    "provider": "youtube_manual",
+    "provider": "youtube_ytdlp",
     "channel_url": "https://www.youtube.com/@market_vector",
     "language": "ru",
     "priority": 2,
@@ -64,12 +64,12 @@
       "Market Analysis"
     ],
     "enabled": true,
-    "status": "manual_source"
+    "status": "online"
   },
   {
     "id": "bazylev",
     "name": "Aleksandr Bazylev",
-    "provider": "youtube_manual",
+    "provider": "youtube_ytdlp",
     "channel_url": "https://www.youtube.com/@AleksandrBazylev",
     "language": "ru",
     "priority": 2,
@@ -77,6 +77,6 @@
       "Forex"
     ],
     "enabled": true,
-    "status": "manual_source"
+    "status": "online"
   }
 ]
