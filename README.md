@@ -4,6 +4,19 @@
 
 Платформа на **FastAPI** с модульным backend, тёмным профессиональным frontend и подготовленными API-контрактами для live-сигналов, news alert и будущей интеграции с MT4.
 
+
+## Что обновлено в версии 4.3
+- YouTube-провайдер FXPilot TV переведён с нестабильного RSS на официальный YouTube Data API v3: backend резолвит `@handle`, `/channel/UC...`, `/c/...` и `/user/...`, сохраняет `channel_id`, получает реальные видео через API, нормализует их в существующий `MediaItem` и не меняет TV UI, AI Summary, Reality Check, Trust Score или OrderFlow.
+- Импорт остаётся provider-independent: текущие кнопки Admin UI `Resolve`, `Import`, `Resolve All` используют тот же backend-контракт, а будущие Telegram/RSS/Podcast/Website провайдеры не требуют редизайна Media Engine.
+- Дедупликация YouTube выполняется по `videoId`, повторный импорт скачивает только видео новее последнего импортированного `published_at`, а `/api/media/debug` показывает provider, `quota_used`, `channel_id`, `channel_title`, `videos_found`, `imported` и ошибки последнего запуска.
+
+### Настройка YouTube Data API v3
+1. Откройте Google Cloud Console и создайте новый проект или выберите существующий.
+2. В разделе APIs & Services включите **YouTube Data API v3**.
+3. В разделе Credentials создайте API key и при необходимости ограничьте его по API/доменам окружения.
+4. Добавьте переменную окружения `YOUTUBE_API_KEY=<ваш ключ>` в backend/Render Environment.
+5. Перезапустите backend, затем в `/admin/media` используйте `Resolve`, `Resolve All` или `Import`. Если ключ отсутствует, backend вернёт явную ошибку `YOUTUBE_API_KEY is required for YouTube Data API import` без fallback на RSS/scraping.
+
 ## Что обновлено в версии 4.2
 - YouTube источники FXPilot TV теперь содержат явные `channel_id` и `rss_url`; импорт строит RSS по `channel_id`, а источники без `channel_id` получают статус `needs_channel_id` и понятную диагностику в `/api/media/debug` и `/admin/media`. Добавлен помощник `python scripts/resolve_youtube_channels.py` для ручного поиска отсутствующих ID без YouTube Data API и без HTML scraping в приложении.
 - FXPilot Media Import Engine теперь строит YouTube RSS только из поддерживаемых публичных RSS-идентификаторов: `channel_id`, `/channel/UC...` и legacy `/user/...`; для `@handle` и `/c/...` без `channel_id` возвращается явная диагностика без HTML scraping и без YouTube Data API.

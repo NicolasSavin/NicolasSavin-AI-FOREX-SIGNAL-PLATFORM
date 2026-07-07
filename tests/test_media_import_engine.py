@@ -184,7 +184,7 @@ def test_youtube_source_with_channel_id_uses_channel_rss(tmp_path: Path):
     assert requested == ["https://www.youtube.com/feeds/videos.xml?channel_id=UCexplicit"]
 
 
-def test_youtube_source_without_channel_id_returns_needs_channel_id(tmp_path: Path):
+def test_youtube_source_without_api_key_returns_config_error(tmp_path: Path):
     sources_path = tmp_path / "media_sources.json"
     catalog_path = tmp_path / "media_catalog.json"
     sources_path.write_text(json.dumps([
@@ -194,11 +194,11 @@ def test_youtube_source_without_channel_id_returns_needs_channel_id(tmp_path: Pa
     result = MediaImportEngine(sources_path, catalog_path).import_latest()
     source = json.loads(sources_path.read_text(encoding="utf-8"))[0]
     assert result["failed"] == 1
-    assert source["status"] == "needs_channel_id"
-    assert source["last_error"] == "YouTube RSS requires channel_id"
+    assert source["status"] == "error"
+    assert "YOUTUBE_API_KEY" in source["last_error"]
 
 
-def test_debug_sources_exposes_blocking_reason_for_missing_channel_id(tmp_path: Path):
+def test_debug_sources_exposes_api_key_blocking_reason(tmp_path: Path):
     sources_path = tmp_path / "media_sources.json"
     catalog_path = tmp_path / "media_catalog.json"
     sources_path.write_text(json.dumps([
@@ -207,7 +207,7 @@ def test_debug_sources_exposes_blocking_reason_for_missing_channel_id(tmp_path: 
     catalog_path.write_text("[]", encoding="utf-8")
     row = MediaImportEngine(sources_path, catalog_path).debug_sources()["sources"][0]
     assert row["can_import"] is False
-    assert row["blocking_reason"] == "Нужен YouTube channel_id для RSS-импорта"
+    assert "YOUTUBE_API_KEY" in row["blocking_reason"]
 
 
 def test_rss_test_returns_headers_preview_feed_title_and_entry_count(tmp_path: Path):
