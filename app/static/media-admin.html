@@ -17,7 +17,7 @@
           </div>
           <div class="tv-hero__signal" aria-label="Статус импорта">
             <span class="tv-live-dot"></span><strong id="mediaImportStatus">Engine ready</strong>
-            <p>Архитектура готова к регулярным обновлениям без YouTube Data API и без scraping HTML.</p>
+            <p>Архитектура готова к регулярным обновлениям без YouTube Data API: channel_id определяется автоматически по URL канала.</p>
           </div>
         </div>
       </header>
@@ -28,6 +28,26 @@
           <article><span>Imported videos</span><strong id="mediaStatVideos">—</strong></article>
           <article><span>Last update</span><strong id="mediaStatLastUpdate">—</strong></article>
           <article><span>Newest media</span><strong id="mediaStatNewest">—</strong></article>
+        </section>
+
+
+        <section class="panel tv-source-panel" aria-labelledby="mediaAddTitle">
+          <div class="section-heading split-heading">
+            <div><p class="section-kicker">Add source</p><h2 id="mediaAddTitle">Добавить YouTube-источник</h2><p class="section-text">Введите только URL канала — FXPilot определит channel_id, проверит RSS и сохранит валидный источник.</p></div>
+            <div class="tv-source-actions"><button type="button" id="mediaResolveAll">Re-resolve all YouTube sources</button></div>
+          </div>
+          <form id="mediaSourceForm" class="media-source-form">
+            <label>ID<input name="id" placeholder="gerchik" required /></label>
+            <label>Название<input name="name" placeholder="Gerchik & Co" required /></label>
+            <label>Provider<select name="provider"><option value="youtube">youtube</option></select></label>
+            <label>URL канала<input name="channel_url" placeholder="https://www.youtube.com/@channel" required /></label>
+            <label>Язык<input name="language" value="ru" required /></label>
+            <label>Категории<input name="categories" placeholder="Forex, Smart Money" required /></label>
+            <label>Priority<input name="priority" type="number" value="1" min="1" /></label>
+            <label class="media-check"><input name="enabled" type="checkbox" checked /> Enabled</label>
+            <div class="tv-source-actions"><button type="button" id="mediaResolveSource">Resolve</button><button type="submit">Save Source</button><button type="button" id="mediaImportNowForm">Import Now</button></div>
+          </form>
+          <pre id="mediaResolveResult" class="media-import-result" aria-live="polite">—</pre>
         </section>
 
         <section class="panel tv-source-panel" aria-labelledby="mediaSourcesTitle">

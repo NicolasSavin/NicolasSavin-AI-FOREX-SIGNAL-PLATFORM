@@ -473,3 +473,13 @@ Backend сохраняет реальный уровень индикатора 
 FXPilot 2.0 starts with the **FXPilot Intelligence** philosophy: not just signals, but market understanding backed by facts. The homepage now states this direction, and the public navigation includes the new **FXPilot TV** foundation at `/tv`.
 
 FXPilot TV is currently a premium UX/UI foundation only. It intentionally does not implement YouTube ingestion, backend video processing, or AI video analysis yet. The page describes the future roadmap for video cataloging, AI summaries, FXPilot comparison, Reality Check, Trust Score, Market Memory, and AI Mentor.
+
+## Media Import: YouTube Source Resolver
+
+FXPilot Media Admin can add YouTube sources from a channel URL only. The backend resolves the real `channel_id` from `/channel/UC...`, `@handle`, `/c/...`, or `/user/...` public channel URLs without the YouTube Data API, validates the generated RSS feed, and stores `channel_id`, `rss_url`, feed title, entry count, and resolver diagnostics in `data/media_sources.json`.
+
+Admin endpoints:
+
+- `POST /api/media/resolve-source` — resolve and validate one YouTube channel URL.
+- `POST /api/media/sources` — resolve, validate, duplicate-check, and save a source.
+- `POST /api/media/resolve-all` — re-resolve enabled YouTube sources and refresh stored RSS metadata.

@@ -14,6 +14,8 @@ from urllib.request import Request, urlopen
 
 import feedparser
 
+from app.services.youtube_source_resolver import YouTubeSourceResolver
+
 logger = logging.getLogger(__name__)
 
 SUPPORTED_MEDIA_PROVIDERS = {"youtube", "telegram", "rss", "podcast", "vimeo", "fxpilot", "news", "articles"}
@@ -48,6 +50,11 @@ class MediaSource:
     last_success: str | None = None
     videos_count: int = 0
     status: str | None = None
+    resolved_from: str | None = None
+    rss_validation_status: str | None = None
+    feed_title: str | None = None
+    entry_count: int = 0
+    last_resolve_error: str | None = None
 
     def public_payload(self, catalog: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         videos = [item for item in (catalog or []) if item.get("source_id") == self.id]
@@ -71,6 +78,11 @@ class MediaSource:
             "last_success": self.last_success,
             "status": status,
             "last_error": self.last_error,
+            "resolved_from": self.resolved_from,
+            "rss_validation_status": self.rss_validation_status,
+            "feed_title": self.feed_title,
+            "entry_count": self.entry_count,
+            "last_resolve_error": self.last_resolve_error,
             "blocking_reason": "Нужен YouTube channel_id для RSS-импорта" if status == "needs_channel_id" else None,
             "can_import": not (self.provider == "youtube" and self.enabled and not self.channel_id),
         }
@@ -114,8 +126,9 @@ class MediaProvider(Protocol):
 
 class YouTubeRssProvider:
     provider_name = "youtube-rss"
-    def __init__(self, fetcher: Callable[[str], FetchResult] | None = None) -> None:
+    def __init__(self, fetcher: Callable[[str], FetchResult] | None = None, resolver: YouTubeSourceResolver | None = None) -> None:
         self.fetcher = fetcher or self._default_fetcher
+        self.resolver = resolver or YouTubeSourceResolver()
 
     def fetch_latest(self, source: MediaSource) -> ImportSourceResult:
         resolved = self.resolve_rss(source)
@@ -176,24 +189,18 @@ class YouTubeRssProvider:
             return base
 
     def resolve_rss(self, source: MediaSource) -> dict[str, Any]:
-        if source.rss_url or source.feed_url:
-            return {"rss_url": source.rss_url or source.feed_url, "channel_id": source.channel_id, "provider": self.provider_name}
+        if source.rss_url and source.channel_id:
+            return {"rss_url": source.rss_url, "channel_id": source.channel_id, "provider": self.provider_name, "resolved_from": source.resolved_from}
+        if source.channel_id:
+            return {"rss_url": YOUTUBE_RSS_BY_CHANNEL.format(channel_id=source.channel_id), "channel_id": source.channel_id, "provider": self.provider_name, "resolved_from": source.resolved_from or "saved_channel_id"}
         parsed = urlparse(source.channel_url)
-        qs = parse_qs(parsed.query)
-        channel_id = source.channel_id or qs.get("channel_id", [None])[0]
-        if channel_id:
-            return {"rss_url": YOUTUBE_RSS_BY_CHANNEL.format(channel_id=channel_id), "channel_id": channel_id, "provider": self.provider_name}
-        channel_match = re.search(r"/(?:channel)/([A-Za-z0-9_-]+)", parsed.path)
-        if channel_match:
-            channel_id = channel_match.group(1)
-            return {"rss_url": YOUTUBE_RSS_BY_CHANNEL.format(channel_id=channel_id), "channel_id": channel_id, "provider": self.provider_name}
         user_match = re.search(r"/user/([^/?#]+)", parsed.path)
         if user_match:
             user = user_match.group(1)
-            return {"rss_url": YOUTUBE_RSS_BY_USER.format(user=user), "channel_id": None, "provider": self.provider_name}
-        if re.search(r"/(?:@|c/)[^/?#]+", parsed.path):
-            return {"rss_url": None, "channel_id": None, "provider": self.provider_name, "error": "YouTube RSS requires a channel_id for @handle or /c/ URLs. Add channel_id to media_sources.json; HTML scraping and YouTube Data API are intentionally not used."}
-        return {"rss_url": None, "channel_id": None, "provider": self.provider_name, "error": "Unsupported YouTube URL for RSS import. Use /channel/UC..., /user/... or provide channel_id."}
+            return {"rss_url": YOUTUBE_RSS_BY_USER.format(user=user), "channel_id": None, "provider": self.provider_name, "resolved_from": "url_user_path"}
+        resolved = self.resolver.resolve(source.channel_url, validate_rss=False)
+        resolved["provider"] = self.provider_name
+        return resolved
 
     def _entry_to_item(self, entry: Any, source: MediaSource) -> MediaItem | None:
         youtube_id = self._entry_video_id(entry)
@@ -410,6 +417,11 @@ class MediaImportEngine:
                 "last_success": source.last_success,
                 "videos_count": source.videos_count,
                 "last_error": source.last_error,
+                "resolved_from": source.resolved_from or resolved.get("resolved_from"),
+                "rss_validation_status": source.rss_validation_status,
+                "feed_title": source.feed_title,
+                "entry_count": source.entry_count,
+                "last_resolve_error": source.last_resolve_error,
                 "last_run": {
                     "rss_url": last_source_run.get("rss_url"),
                     "http_status": last_source_run.get("http_status"),
@@ -430,13 +442,75 @@ class MediaImportEngine:
             return {"source_id": source.id, "source": source.name, "provider": source.provider, "error": "provider_not_implemented"}
         return provider.rss_test(source)
 
+
+    def resolve_source_url(self, provider: str, channel_url: str) -> dict[str, Any]:
+        if provider.lower() != "youtube":
+            raise MediaConfigError("only youtube source resolving is supported")
+        return self.youtube_provider.resolver.resolve(channel_url, validate_rss=True)
+
+    def add_source(self, payload: dict[str, Any]) -> dict[str, Any]:
+        source_id = self._required_str(payload, "id", 0)
+        provider = self._required_str(payload, "provider", 0).lower()
+        if provider != "youtube":
+            raise MediaConfigError("only youtube sources can be added from Media Admin")
+        existing_raw = self._read_json_list(self.sources_path)
+        if any(str(item.get("id")) == source_id for item in existing_raw):
+            raise MediaConfigError(f"duplicate media source id: {source_id}")
+        resolved = self.resolve_source_url(provider, self._required_str(payload, "channel_url", 0))
+        if not resolved.get("ok"):
+            raise MediaConfigError(str(resolved.get("error") or "Unable to resolve YouTube channel_id from URL"))
+        channel_id = str(resolved.get("channel_id"))
+        if any(str(item.get("channel_id") or "") == channel_id for item in existing_raw):
+            raise MediaConfigError(f"duplicate youtube channel_id: {channel_id}")
+        categories = payload.get("categories")
+        if isinstance(categories, str):
+            categories = [v.strip() for v in categories.split(",") if v.strip()]
+        if not isinstance(categories, list) or not categories:
+            raise MediaConfigError("categories must be a non-empty list")
+        item = {
+            "id": source_id, "name": self._required_str(payload, "name", 0), "provider": provider,
+            "channel_url": self._required_str(payload, "channel_url", 0), "language": str(payload.get("language") or "ru").strip(),
+            "priority": int(payload.get("priority") or 1), "categories": [str(v).strip() for v in categories if str(v).strip()],
+            "enabled": bool(payload.get("enabled", True)), "channel_id": channel_id, "rss_url": resolved.get("rss_url"),
+            "resolved_from": resolved.get("resolved_from"), "rss_validation_status": resolved.get("rss_validation_status"),
+            "feed_title": resolved.get("feed_title"), "entry_count": int(resolved.get("entry_count") or 0),
+            "last_resolve_error": resolved.get("last_resolve_error"),
+        }
+        existing_raw.append(item)
+        self._validate_sources(existing_raw)
+        self.sources_path.write_text(json.dumps(existing_raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        return self._validate_sources([item])[0].public_payload()
+
+    def resolve_all_youtube_sources(self) -> dict[str, Any]:
+        raw = self._read_json_list(self.sources_path)
+        results = []
+        seen_channels: set[str] = set()
+        for item in raw:
+            if str(item.get("provider") or "").lower() != "youtube" or not bool(item.get("enabled")):
+                continue
+            resolved = self.resolve_source_url("youtube", str(item.get("channel_url") or ""))
+            row = {"id": item.get("id"), "name": item.get("name"), **resolved}
+            if resolved.get("ok"):
+                channel_id = str(resolved.get("channel_id"))
+                if channel_id in seen_channels:
+                    row.update({"ok": False, "error": f"duplicate youtube channel_id during resolve-all: {channel_id}"})
+                else:
+                    seen_channels.add(channel_id)
+                    item.update({"channel_id": channel_id, "rss_url": resolved.get("rss_url"), "resolved_from": resolved.get("resolved_from"), "rss_validation_status": resolved.get("rss_validation_status"), "feed_title": resolved.get("feed_title"), "entry_count": int(resolved.get("entry_count") or 0), "last_resolve_error": resolved.get("last_resolve_error")})
+                    item.pop("last_error", None); item.pop("status", None)
+            else:
+                item.update({"last_resolve_error": resolved.get("error"), "rss_validation_status": "error", "last_error": resolved.get("error"), "status": "error"})
+            results.append(row)
+        self.sources_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"success": all(r.get("ok") for r in results), "results": results}
+
     def resolve_provider(self, provider: str) -> MediaProvider: return self.youtube_provider if provider == "youtube" else EmptyProvider(provider)
     def _save_sources(self, updates: list[MediaSource]) -> None:
         by_id = {s.id: s for s in updates}; raw = self._read_json_list(self.sources_path); catalog = self.load_catalog()
         for item in raw:
             upd = by_id.get(str(item.get("id")))
             if upd:
-                item.update({"channel_id": upd.channel_id, "rss_url": upd.rss_url or upd.feed_url, "last_error": upd.last_error, "last_import": upd.last_import, "last_success": upd.last_success, "videos_count": len([v for v in catalog if v.get("source_id") == upd.id]), "status": upd.status})
+                item.update({"channel_id": upd.channel_id, "rss_url": upd.rss_url or upd.feed_url, "last_error": upd.last_error, "last_import": upd.last_import, "last_success": upd.last_success, "videos_count": len([v for v in catalog if v.get("source_id") == upd.id]), "status": upd.status, "resolved_from": upd.resolved_from, "rss_validation_status": upd.rss_validation_status, "feed_title": upd.feed_title, "entry_count": upd.entry_count, "last_resolve_error": upd.last_resolve_error})
                 if not upd.last_error:
                     item.pop("last_error", None)
                     item.pop("status", None)
@@ -461,6 +535,9 @@ class MediaImportEngine:
                 enabled=bool(item.get("enabled")), feed_url=item.get("feed_url"), channel_id=item.get("channel_id"),
                 rss_url=item.get("rss_url"), last_error=item.get("last_error"), last_import=item.get("last_import"),
                 last_success=item.get("last_success"), videos_count=int(item.get("videos_count") or 0), status=item.get("status"),
+                resolved_from=item.get("resolved_from"), rss_validation_status=item.get("rss_validation_status"),
+                feed_title=item.get("feed_title"), entry_count=int(item.get("entry_count") or 0),
+                last_resolve_error=item.get("last_resolve_error"),
             ))
         return result
 
