@@ -18,7 +18,7 @@ from app.services.youtube_source_resolver import YouTubeSourceResolver
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_MEDIA_PROVIDERS = {"youtube", "telegram", "rss", "podcast", "vimeo", "fxpilot", "news", "articles"}
+SUPPORTED_MEDIA_PROVIDERS = {"youtube", "youtube_manual", "telegram", "rss", "podcast", "vimeo", "fxpilot", "news", "articles"}
 SYMBOLS = ("EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD", "XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD", "DXY", "US500", "NASDAQ", "GER40", "UK100")
 YOUTUBE_RSS_BY_CHANNEL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 YOUTUBE_RSS_BY_USER = "https://www.youtube.com/feeds/videos.xml?user={user}"
@@ -60,6 +60,8 @@ class MediaSource:
         videos = [item for item in (catalog or []) if item.get("source_id") == self.id]
         latest_import = self.last_import or max((str(item.get("imported_at") or "") for item in videos), default="") or None
         status = self.status or ("disabled" if not self.enabled else ("error" if self.last_error else "ok"))
+        if self.provider == "youtube_manual":
+            status = "manual_source"
         if self.provider == "youtube" and self.enabled and not self.channel_id:
             status = "needs_channel_id"
         return {
@@ -83,8 +85,8 @@ class MediaSource:
             "feed_title": self.feed_title,
             "entry_count": self.entry_count,
             "last_resolve_error": self.last_resolve_error,
-            "blocking_reason": "Нужен YouTube API key или корректный channel_id" if status == "needs_channel_id" else None,
-            "can_import": not (self.provider == "youtube" and self.enabled and not self.channel_id),
+            "blocking_reason": "Manual source — API not connected" if status == "manual_source" else ("Нужен YouTube API key или корректный channel_id" if status == "needs_channel_id" else None),
+            "can_import": False if status == "manual_source" else not (self.provider == "youtube" and self.enabled and not self.channel_id),
         }
 
 
@@ -320,6 +322,9 @@ class MediaImportEngine:
         updated_sources: list[MediaSource] = []
 
         for source in sources:
+            if source.provider == "youtube_manual":
+                updated_sources.append(replace(source, last_import=source.last_import, last_error=None, status="manual_source"))
+                continue
             processed += 1
             provider = self.resolve_provider(source.provider)
             if hasattr(provider, "set_latest_imported_at"):
@@ -596,12 +601,13 @@ class MediaImportEngine:
         for item in items:
             provider = str(item.get("provider") or ("youtube-manual" if item.get("youtube_id") else "manual"))
             external_id = str(item.get("youtube_id") or item.get("id") or item.get("url"))
+            dedupe_key = ("youtube_id", external_id) if item.get("youtube_id") else (provider, external_id)
             normalized = dict(item)
             normalized.setdefault("provider", provider); normalized.setdefault("source_id", "manual")
             normalized.setdefault("status", "manual"); normalized.setdefault("language", "ru")
             normalized.setdefault("thumbnail", f"https://i.ytimg.com/vi/{normalized.get('youtube_id')}/hqdefault.jpg" if normalized.get("youtube_id") else None)
             normalized.setdefault("symbol", detect_symbol(f"{normalized.get('title','')} {normalized.get('description','')}"))
-            seen[(provider, external_id)] = normalized
+            seen[dedupe_key] = normalized
         return list(seen.values())
 
     @staticmethod

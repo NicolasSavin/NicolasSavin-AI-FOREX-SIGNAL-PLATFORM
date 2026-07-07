@@ -137,11 +137,12 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_source_manager = TvSourceManager(BASE_DIR.parent / "data" / "tv_sources.json", BASE_DIR.parent / "data" / "tv_videos.json")
 MEDIA_SOURCES_PATH = BASE_DIR.parent / "data" / "media_sources.json"
 MEDIA_CATALOG_PATH = BASE_DIR.parent / "data" / "media_catalog.json"
-MEDIA_MANUAL_VIDEOS_PATH = BASE_DIR.parent / "data" / "tv_videos.json"
+MEDIA_TV_VIDEOS_PATH = BASE_DIR.parent / "data" / "tv_videos.json"
+MEDIA_MANUAL_YOUTUBE_PATH = BASE_DIR.parent / "data" / "manual_youtube_videos.json"
 MEDIA_DEBUG_PATH = BASE_DIR.parent / "data" / "media_import_debug.json"
 
 def create_media_import_engine() -> MediaImportEngine:
-    return MediaImportEngine(MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, MEDIA_MANUAL_VIDEOS_PATH, debug_path=MEDIA_DEBUG_PATH)
+    return MediaImportEngine(MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, MEDIA_TV_VIDEOS_PATH, debug_path=MEDIA_DEBUG_PATH)
 
 media_import_engine = create_media_import_engine()
 
@@ -503,7 +504,20 @@ def media_admin_page():
 
 def _load_tv_video_catalog() -> list[dict[str, Any]]:
     try:
-        return media_import_engine.load_catalog()
+        return MediaImportEngine(
+            MEDIA_SOURCES_PATH,
+            MEDIA_CATALOG_PATH,
+            MEDIA_MANUAL_YOUTUBE_PATH,
+            debug_path=MEDIA_DEBUG_PATH,
+        )._sort_media(
+            MediaImportEngine._dedupe(
+                [
+                    *MediaImportEngine._read_json_list(MEDIA_MANUAL_YOUTUBE_PATH),
+                    *MediaImportEngine._read_json_list(MEDIA_TV_VIDEOS_PATH),
+                    *MediaImportEngine._read_json_list(MEDIA_CATALOG_PATH),
+                ]
+            )
+        )
     except Exception as exc:
         logger.warning("media_catalog_unavailable error=%s", exc)
         return []
