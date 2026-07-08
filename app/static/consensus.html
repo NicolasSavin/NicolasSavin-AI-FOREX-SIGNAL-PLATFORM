@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Consensus Engine — FXPilot TV</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="page-shell consensus-shell">
+    <nav class="top-nav"><a href="/">Главная</a><a href="/tv">🎥 FXPilot TV</a><a href="/committee">Committee</a><a href="/consensus">AI Consensus</a><a href="/analytics">Аналитика</a></nav>
+    <section class="hero panel">
+      <p class="eyebrow">Stage 8 · AI Consensus Engine</p>
+      <h1>Консенсус аналитиков по импортированным видео</h1>
+      <p class="lead">Агрегация всех мнений по символу и таймфрейму с учётом Rule Analyzer, Knowledge Layer, LLM Review и Investment Committee.</p>
+      <form id="consensusForm" class="consensus-form">
+        <label>Символ <input id="symbolInput" value="EURUSD" /></label>
+        <label>Таймфрейм <input id="timeframeInput" value="H4" /></label>
+        <button type="submit">Обновить</button>
+      </form>
+    </section>
+    <section id="consensusRoot" class="consensus-grid"><article class="panel">Загрузка...</article></section>
+  </main>
+  <script src="/static/nav.js"></script>
+  <script src="/static/consensus.js"></script>
+</body>
+</html>
