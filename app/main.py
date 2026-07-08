@@ -47,6 +47,7 @@ from app.services.transcript import TranscriptEngine, TranscriptStorage
 from app.services.ai_analyzer import AIAnalyzerEngine
 from app.services.knowledge import KnowledgeEngine
 from app.services.llm_review import LLMReview, LLMReviewStorage, OpenAIReviewProvider, ReviewEngine
+from app.services.investment_committee import InvestmentCommitteeEngine
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -948,6 +949,15 @@ def api_media_llm_review(video_id: str, force: bool = False) -> dict[str, Any]:
         "llm_review": review.model_dump(),
     }
 
+@app.get("/api/media/committee/{video_id}")
+def api_media_committee(video_id: str) -> dict[str, Any]:
+    engine = InvestmentCommitteeEngine(media_catalog_loader=_load_tv_video_catalog, review_payload_builder=_build_tv_review_payload)
+    try:
+        return engine.build_for_video(video_id).model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/api/media/review/{video_id}")
 def api_media_review(video_id: str) -> dict[str, Any]:
     return _get_media_review(video_id)
@@ -956,6 +966,11 @@ def api_media_review(video_id: str) -> dict[str, Any]:
 @app.get("/api/tv/review/{video_id}")
 def api_tv_review(video_id: str) -> dict[str, Any]:
     return _get_media_review(video_id)
+
+
+@app.get("/committee", include_in_schema=False)
+def committee_page():
+    return FileResponse(STATIC_DIR / "investment-committee.html")
 
 
 @app.get("/news", include_in_schema=False)

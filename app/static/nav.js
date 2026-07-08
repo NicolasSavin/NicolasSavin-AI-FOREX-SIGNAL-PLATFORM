@@ -22,6 +22,13 @@
     }
   });
 
+  if (!nav.querySelector('a[href="/committee"]')) {
+    const committeeLink = document.createElement('a');
+    committeeLink.href = '/committee';
+    committeeLink.textContent = '🏛 Committee';
+    nav.appendChild(committeeLink);
+  }
+
   if (!nav.querySelector('a[href="/tv"]')) {
     const tvLink = document.createElement('a');
     tvLink.href = '/tv';
