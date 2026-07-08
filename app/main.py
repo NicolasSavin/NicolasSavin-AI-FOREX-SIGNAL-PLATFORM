@@ -45,6 +45,7 @@ from app.services.tv_source_manager import TvSourceConfigError, TvSourceManager
 from app.services.media_import_engine import MediaConfigError, MediaImportEngine
 from app.services.transcript import TranscriptEngine, TranscriptStorage
 from app.services.ai_analyzer import AIAnalyzerEngine
+from app.services.knowledge import KnowledgeEngine
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,7 @@ def create_media_import_engine() -> MediaImportEngine:
 media_import_engine = create_media_import_engine()
 transcript_engine = TranscriptEngine(storage=TranscriptStorage(BASE_DIR.parent / "data" / "transcripts"))
 ai_analyzer_engine = AIAnalyzerEngine()
+MEDIA_KNOWLEDGE_DEBUG = {"knowledge_requests": 0, "knowledge_errors": 0, "last_knowledge_video_id": None, "last_agreement_score": None}
 
 class _AnalyticsNewsConnector:
     def _descriptor(self, *, status: str = "unavailable", note_ru: str = "") -> dict[str, str]:
@@ -659,10 +661,15 @@ def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, An
     transcript = _review_transcript_payload(video)
     ai_review = ai_analyzer_engine.analyze(str(transcript.get("text") or ""), {**video, "video_id": video.get("id")})
     analysis = ai_review.to_api_analysis()
+    knowledge_context = _build_knowledge_for_video(str(video.get("id") or ""), market_payload=market_payload).model_dump()
     return {
         "video": video,
         "transcript": transcript,
         "analysis": analysis,
+        "knowledge_context": knowledge_context,
+        "agreement_score": knowledge_context.get("agreement_score"),
+        "warnings": knowledge_context.get("warnings", []),
+        "conflicts": knowledge_context.get("conflicts", []),
         "ai_review": ai_review.to_dict(),
         "author_source": {
             "author": video.get("author"),
@@ -673,13 +680,34 @@ def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, An
         "detected_symbol": video.get("symbol"),
         "current_fxpilot_idea": model,
         "comparison": {
-            "video_says": analysis.get("summary") or "Transcript data is insufficient for AI analysis.",
+            "video_says": analysis.get("summary") if transcript.get("status") == "FOUND" and analysis.get("summary") else "No transcript yet. AI summary will appear later.",
             "fxpilot_says": model,
         },
         "confluence_score": score,
         "preliminary_verdict": _review_verdict(model, score, idea is not None),
         "source_endpoints": {"media": "/api/media", "market": "/api/ideas/market"},
     }
+
+
+def _build_knowledge_for_video(video_id: str, market_payload: dict[str, Any] | None = None):
+    def _market_payload_loader() -> dict[str, Any]:
+        return market_payload if isinstance(market_payload, dict) else ideas_market()
+
+    engine = KnowledgeEngine(
+        media_catalog_loader=_load_tv_video_catalog,
+        transcript_engine=transcript_engine,
+        ai_analyzer_engine=ai_analyzer_engine,
+        market_payload_loader=_market_payload_loader,
+    )
+    MEDIA_KNOWLEDGE_DEBUG["knowledge_requests"] += 1
+    MEDIA_KNOWLEDGE_DEBUG["last_knowledge_video_id"] = video_id
+    try:
+        context = engine.build_for_video(video_id)
+        MEDIA_KNOWLEDGE_DEBUG["last_agreement_score"] = context.agreement_score
+        return context
+    except Exception:
+        MEDIA_KNOWLEDGE_DEBUG["knowledge_errors"] += 1
+        raise
 
 
 @app.get("/api/tv/videos")
@@ -768,6 +796,7 @@ def api_media_debug() -> dict[str, Any]:
     try:
         payload = create_media_import_engine().debug_sources()
         payload.update(transcript_engine.debug_payload())
+        payload.update(MEDIA_KNOWLEDGE_DEBUG)
         return payload
     except MediaConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -826,6 +855,23 @@ def _get_media_review(video_id: str) -> dict[str, Any]:
         if video.get("id") == video_id:
             return _build_tv_review_payload(video)
     raise HTTPException(status_code=404, detail="TV video not found")
+
+
+@app.get("/api/media/knowledge/{video_id}")
+def api_media_knowledge(video_id: str) -> dict[str, Any]:
+    try:
+        context = _build_knowledge_for_video(video_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "video": context.video,
+        "analysis": context.ai_analysis,
+        "market_context": context.market_context,
+        "risk": context.risk,
+        "agreement_score": context.agreement_score,
+        "conflicts": context.conflicts,
+        "warnings": context.warnings,
+    }
 
 
 @app.get("/api/media/review/{video_id}")

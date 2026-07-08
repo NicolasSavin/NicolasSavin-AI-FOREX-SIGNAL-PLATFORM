@@ -107,6 +107,22 @@
         <div><strong>Opportunities</strong><p>${list(analysis.opportunities)}</p></div>
       </div>` });
   }
+  function renderKnowledgeContext(review) {
+    const knowledge = review.knowledge_context || {};
+    const market = knowledge.market_context || {};
+    const cards = [
+      ['Market Idea', `${value(market.symbol || knowledge.symbol)} · ${directionRu(market.direction || knowledge.direction)} · Entry ${value(market.entry)} · SL ${value(market.sl)} · TP ${value(market.tp)}`],
+      ['Agreement Score', `${value(knowledge.agreement_score, 0)}/100`],
+      ['OrderFlow', `${statusRu(knowledge.orderflow?.status || (knowledge.orderflow?.available ? 'available' : 'unavailable'))}${knowledge.orderflow?.bias ? ` · ${knowledge.orderflow.bias}` : ''}`],
+      ['Options', `${statusRu(knowledge.options?.status || (knowledge.options?.available ? 'available' : 'unavailable'))}${knowledge.options?.bias ? ` · ${knowledge.options.bias}` : ''}`],
+      ['News', knowledge.news?.status || 'neutral'],
+      ['Institutional Narrative', knowledge.institutional_narrative],
+      ['Risk Warnings', Array.isArray(knowledge.warnings) && knowledge.warnings.length ? knowledge.warnings.join(' · ') : 'Предупреждений нет'],
+      ['Conflicts', Array.isArray(knowledge.conflicts) && knowledge.conflicts.length ? knowledge.conflicts.join(' · ') : 'Конфликтов нет'],
+    ];
+    return ReviewSection({ id: 'knowledgeContext', className: 'tv-review-section--summary tv-verdict-section', title: 'FXPilot Knowledge Context', content: `<div class="tv-snapshot-grid tv-review-wide-grid">${cards.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div><p class="tv-context-note">Единый Knowledge Layer: metadata + transcript + rule AI analysis + FXPilot market idea. LLM/external AI calls не используются.</p>` });
+  }
+
 
   function renderComparison(review) {
     const idea = review.current_fxpilot_idea || {};
@@ -127,7 +143,7 @@
 
   function ReviewPage(review, transcript) {
     const video = review.video || {};
-    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review v1: фактический контекст без OpenAI, с архитектурой transcript pipeline и локальным кешем.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderAIAnalysis(review)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
+    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review v1: фактический контекст без OpenAI, с архитектурой transcript pipeline и локальным кешем.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderAIAnalysis(review)}${renderKnowledgeContext(review)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
   }
 
   async function loadReview() {
