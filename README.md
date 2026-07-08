@@ -549,3 +549,8 @@ Admin endpoints:
 - Локальный кеш хранится в `data/transcripts/{video_id}.json` с `video_id`, `created_at`, `provider`, `language`, `segments`, `full_text`, `duration`; повторный запрос читает файл и не обращается к YouTube повторно.
 - `/api/media/debug` дополнительно показывает `transcripts_cached`, `transcript_requests`, `transcript_errors`, `provider_used`.
 - Страница `/tv/review/{video_id}` показывает секцию Transcript: первые абзацы при `FOUND`, `Transcript unavailable` при недоступности и `Whisper processing required`, если нужен будущий Whisper-процессинг.
+
+
+## FXPilot TV Stage 8 — AI Consensus Engine
+
+Stage 8 adds `/api/consensus/{symbol}` and `/api/consensus/{symbol}/{timeframe}` plus the `/consensus` page. The consensus engine aggregates all imported Media Catalog videos for the requested market, reusing Transcript Engine, Rule Analyzer, Knowledge Layer, LLM Review, and Investment Committee contracts through existing service builders. It returns bullish/bearish/neutral distribution, average confidence, average committee score, author leaderboard, detected conflicts, and a provider-independent consensus report. Historical author accuracy is intentionally exposed as a placeholder until verified performance data is available.

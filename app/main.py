@@ -48,6 +48,7 @@ from app.services.ai_analyzer import AIAnalyzerEngine
 from app.services.knowledge import KnowledgeEngine
 from app.services.llm_review import LLMReview, LLMReviewStorage, OpenAIReviewProvider, ReviewEngine
 from app.services.investment_committee import InvestmentCommitteeEngine
+from app.services.consensus import ConsensusEngine
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -958,6 +959,27 @@ def api_media_committee(video_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+def create_consensus_engine() -> ConsensusEngine:
+    return ConsensusEngine(
+        media_catalog_loader=_load_tv_video_catalog,
+        review_payload_builder=_build_tv_review_payload,
+        committee_builder=lambda video_id: InvestmentCommitteeEngine(
+            media_catalog_loader=_load_tv_video_catalog,
+            review_payload_builder=_build_tv_review_payload,
+        ).build_for_video(video_id).model_dump(),
+    )
+
+
+@app.get("/api/consensus/{symbol}")
+def api_consensus_symbol(symbol: str, timeframe: str | None = None, date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
+    return create_consensus_engine().build(symbol, timeframe, date_from=date_from, date_to=date_to)
+
+
+@app.get("/api/consensus/{symbol}/{timeframe}")
+def api_consensus_symbol_timeframe(symbol: str, timeframe: str, date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
+    return create_consensus_engine().build(symbol, timeframe, date_from=date_from, date_to=date_to)
+
+
 @app.get("/api/media/review/{video_id}")
 def api_media_review(video_id: str) -> dict[str, Any]:
     return _get_media_review(video_id)
@@ -966,6 +988,11 @@ def api_media_review(video_id: str) -> dict[str, Any]:
 @app.get("/api/tv/review/{video_id}")
 def api_tv_review(video_id: str) -> dict[str, Any]:
     return _get_media_review(video_id)
+
+
+@app.get("/consensus", include_in_schema=False)
+def consensus_page():
+    return FileResponse(STATIC_DIR / "consensus.html")
 
 
 @app.get("/committee", include_in_schema=False)

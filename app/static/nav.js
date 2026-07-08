@@ -29,6 +29,13 @@
     nav.appendChild(committeeLink);
   }
 
+  if (!nav.querySelector('a[href="/consensus"]')) {
+    const consensusLink = document.createElement('a');
+    consensusLink.href = '/consensus';
+    consensusLink.textContent = '🤝 Consensus';
+    nav.appendChild(consensusLink);
+  }
+
   if (!nav.querySelector('a[href="/tv"]')) {
     const tvLink = document.createElement('a');
     tvLink.href = '/tv';
