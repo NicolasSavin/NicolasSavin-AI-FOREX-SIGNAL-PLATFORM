@@ -526,3 +526,11 @@ Admin endpoints:
 - `/api/media` and `/tv` now read the video catalog from `data/media_catalog.json` only; `data/manual_youtube_videos.json` is excluded by default and can be enabled only for local development with `FXPILOT_DEV_MANUAL_MEDIA=1`.
 - `POST /api/media/import` rebuilds and saves `media_catalog.json` immediately after provider import, filters out records without a valid 11-character `youtube_id`, deduplicates by `youtube_id`, and records `duplicates_removed` in the import debug log.
 - Added `GET /api/media/stats` for catalog health (`catalog_items`, `real_videos`, `manual_demo`, `duplicates_removed`, `last_import`); the TV player shows `No videos imported` when the automatic catalog is empty and always uses `https://www.youtube.com/embed/{youtube_id}` for playback.
+
+## FXPilot AI Transcript Engine v1
+
+- `GET /api/media/transcript/{video_id}` получает YouTube transcript без OpenAI/GPT, нормализует сегменты (`text`, `start`, `duration`, optional `speaker`) и возвращает контракт `status`, `provider`, `language`, `duration`, `segments`, `text`.
+- Pipeline построен вокруг `TranscriptEngine` и provider-интерфейса: текущий provider использует `youtube-transcript-api` для `ru`, `en`, `auto` и переводимого transcript, а `WhisperTranscriptProvider` пока является placeholder и возвращает `WHISPER_REQUIRED`.
+- Локальный кеш хранится в `data/transcripts/{video_id}.json` с `video_id`, `created_at`, `provider`, `language`, `segments`, `full_text`, `duration`; повторный запрос читает файл и не обращается к YouTube повторно.
+- `/api/media/debug` дополнительно показывает `transcripts_cached`, `transcript_requests`, `transcript_errors`, `provider_used`.
+- Страница `/tv/review/{video_id}` показывает секцию Transcript: первые абзацы при `FOUND`, `Transcript unavailable` при недоступности и `Whisper processing required`, если нужен будущий Whisper-процессинг.

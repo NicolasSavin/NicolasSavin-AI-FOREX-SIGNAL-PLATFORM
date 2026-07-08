@@ -59,6 +59,25 @@
     return ReviewSection({ id: 'fxpilotIdea', className: 'tv-review-section--summary', title: 'Current FXPilot idea', content: `<div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div><p class="tv-context-note">Контекст построен фактически из /api/ideas/market. Transcript и LLM не используются.</p>` });
   }
 
+  function transcriptMessage(status) {
+    if (status === 'WHISPER_REQUIRED') return 'Whisper processing required';
+    if (status === 'ERROR') return 'Transcript unavailable';
+    return 'Transcript unavailable';
+  }
+
+  function transcriptParagraphs(text) {
+    return String(text || '').split(/\n{2,}/).map((item) => item.trim()).filter(Boolean).slice(0, 3);
+  }
+
+  function renderTranscript(transcript) {
+    const paragraphs = transcriptParagraphs(transcript && transcript.text);
+    const meta = transcript ? `${value(transcript.provider)} · ${value(transcript.language)} · ${value(transcript.duration ? Math.round(transcript.duration) + ' сек.' : null)}` : '—';
+    const body = transcript && transcript.status === 'FOUND' && paragraphs.length
+      ? `<div class="tv-transcript-preview">${paragraphs.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join('')}</div>`
+      : `<div class="tv-player-empty">${escapeHtml(transcriptMessage(transcript && transcript.status))}</div>`;
+    return ReviewSection({ id: 'transcript', className: 'tv-review-section--summary tv-transcript-section', title: 'Transcript', content: `<div class="tv-context-note">${escapeHtml(meta)}</div>${body}` });
+  }
+
   function renderComparison(review) {
     const idea = review.current_fxpilot_idea || {};
     return ReviewSection({ id: 'comparison', className: 'tv-review-section--summary', title: 'Comparison', content: `
@@ -76,15 +95,24 @@
     return ReviewSection({ id: 'preliminaryVerdict', className: 'tv-review-section--summary tv-verdict-section', title: 'Preliminary verdict', content: `<div class="tv-verdict"><strong>${escapeHtml(verdictRu(review.preliminary_verdict))}</strong><p>Это предварительная проверка рыночного контекста, а не анализ тезисов автора видео.</p></div>` });
   }
 
-  function ReviewPage(review) {
+  function ReviewPage(review, transcript) {
     const video = review.video || {};
-    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review v1: фактический контекст без OpenAI, transcript parsing и изменения import pipeline.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
+    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review v1: фактический контекст без OpenAI, с архитектурой transcript pipeline и локальным кешем.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
   }
 
   async function loadReview() {
     const response = await fetch(`/api/media/review/${encodeURIComponent(getVideoId())}`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
     if (!response.ok) throw new Error('review_not_found');
-    root.innerHTML = ReviewPage(await response.json());
+    const review = await response.json();
+    const youtubeId = (review.video && (review.video.youtube_id || review.video.id)) || getVideoId();
+    let transcript = null;
+    try {
+      const transcriptResponse = await fetch(`/api/media/transcript/${encodeURIComponent(youtubeId)}`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+      if (transcriptResponse.ok) transcript = await transcriptResponse.json();
+    } catch (error) {
+      transcript = { status: 'NOT_AVAILABLE' };
+    }
+    root.innerHTML = ReviewPage(review, transcript);
   }
 
   loadReview().catch(() => {

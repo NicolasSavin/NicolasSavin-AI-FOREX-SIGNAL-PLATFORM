@@ -43,6 +43,7 @@ from app.services.ai_runtime_status import get_ai_status, record_ai_request_fail
 from app.services.visitor_counter import get_visit_stats, increment_visit
 from app.services.tv_source_manager import TvSourceConfigError, TvSourceManager
 from app.services.media_import_engine import MediaConfigError, MediaImportEngine
+from app.services.transcript import TranscriptEngine, TranscriptStorage
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -146,6 +147,7 @@ def create_media_import_engine() -> MediaImportEngine:
     return MediaImportEngine(MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, manual_path, debug_path=MEDIA_DEBUG_PATH)
 
 media_import_engine = create_media_import_engine()
+transcript_engine = TranscriptEngine(storage=TranscriptStorage(BASE_DIR.parent / "data" / "transcripts"))
 
 class _AnalyticsNewsConnector:
     def _descriptor(self, *, status: str = "unavailable", note_ru: str = "") -> dict[str, str]:
@@ -739,9 +741,27 @@ def api_media_stats() -> dict[str, Any]:
 @app.get("/api/media/debug")
 def api_media_debug() -> dict[str, Any]:
     try:
-        return create_media_import_engine().debug_sources()
+        payload = create_media_import_engine().debug_sources()
+        payload.update(transcript_engine.debug_payload())
+        return payload
     except MediaConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/media/transcript/{video_id}")
+def api_media_transcript(video_id: str) -> dict[str, Any]:
+    try:
+        result = transcript_engine.get(video_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": result.status.value,
+        "provider": result.source,
+        "language": result.language,
+        "duration": result.duration,
+        "segments": [segment.to_dict() for segment in result.segments],
+        "text": result.transcript,
+    }
 
 
 @app.get("/api/media/rss-test/{source_id}")
