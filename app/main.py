@@ -510,21 +510,148 @@ def _load_tv_video_catalog() -> list[dict[str, Any]]:
         logger.warning("media_catalog_unavailable error=%s", exc)
         return []
 
-def _build_tv_review_payload(video: dict[str, Any]) -> dict[str, Any]:
+def _normalize_review_symbol(value: Any) -> str:
+    return "".join(ch for ch in str(value or "").upper() if ch.isalnum())
+
+
+def _first_review_value(*values: Any) -> Any:
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _review_ideas(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    ideas: list[dict[str, Any]] = []
+    for key in ("ideas", "signals", "active", "archive"):
+        values = payload.get(key)
+        if isinstance(values, list):
+            ideas.extend(item for item in values if isinstance(item, dict))
+    return ideas
+
+
+def _find_review_market_idea(market_payload: dict[str, Any], symbol: str) -> dict[str, Any] | None:
+    wanted = _normalize_review_symbol(symbol)
+    if not wanted:
+        return None
+    for idea in _review_ideas(market_payload):
+        candidate = _normalize_review_symbol(_first_review_value(idea.get("symbol"), idea.get("pair"), idea.get("instrument"), idea.get("ticker")))
+        if candidate == wanted:
+            return idea
+    return None
+
+
+def _review_direction(idea: dict[str, Any] | None) -> str | None:
+    if not idea:
+        return None
+    raw = str(_first_review_value(idea.get("action"), idea.get("direction"), idea.get("signal"), idea.get("final_signal"), idea.get("recommendation"), idea.get("bias"), "") or "").strip().upper()
+    if raw in {"BUY", "LONG", "BULLISH", "ПОКУПКА", "БЫЧИЙ"}:
+        return "BUY"
+    if raw in {"SELL", "SHORT", "BEARISH", "ПРОДАЖА", "МЕДВЕЖИЙ"}:
+        return "SELL"
+    return raw or None
+
+
+def _review_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 1:
+        number *= 100
+    return max(0.0, min(100.0, number))
+
+
+def _review_available(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None or value == "":
+        return False
+    return str(value).strip().lower() not in {"false", "0", "none", "null", "unavailable", "недоступно"}
+
+
+def _review_news_support(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    negative = ("high", "risk", "negative", "bearish", "conflict", "blocked", "красн", "риск", "негатив", "конфликт")
+    return not any(token in text for token in negative)
+
+
+def _build_review_market_model(video: dict[str, Any], idea: dict[str, Any] | None) -> dict[str, Any]:
+    levels = idea.get("levels", {}) if isinstance(idea, dict) and isinstance(idea.get("levels"), dict) else {}
+    setup = idea.get("setup", {}) if isinstance(idea, dict) and isinstance(idea.get("setup"), dict) else {}
+    orderflow = idea.get("orderflow", {}) if isinstance(idea, dict) and isinstance(idea.get("orderflow"), dict) else {}
+    options = idea.get("options", {}) if isinstance(idea, dict) and isinstance(idea.get("options"), dict) else {}
+    news = idea.get("news", {}) if isinstance(idea, dict) and isinstance(idea.get("news"), dict) else {}
+    context = idea.get("market_context", {}) if isinstance(idea, dict) and isinstance(idea.get("market_context"), dict) else {}
+    idea = idea or {}
+    confidence = _first_review_value(idea.get("confidence"), idea.get("score"), idea.get("confidence_score"), idea.get("prop_score"), idea.get("total_score"), idea.get("confluence"))
+    return {
+        "symbol": _first_review_value(idea.get("symbol"), idea.get("pair"), idea.get("instrument"), video.get("symbol")),
+        "direction": _review_direction(idea),
+        "entry": _first_review_value(idea.get("entry"), idea.get("entry_price"), idea.get("entryPrice"), levels.get("entry"), setup.get("entry")),
+        "sl": _first_review_value(idea.get("sl"), idea.get("stop_loss"), idea.get("stopLoss"), levels.get("sl"), levels.get("stop_loss")),
+        "tp": _first_review_value(idea.get("tp"), idea.get("take_profit"), idea.get("takeProfit"), levels.get("tp"), levels.get("take_profit")),
+        "confidence": _review_number(confidence),
+        "orderflow_status": "available" if _review_available(_first_review_value(idea.get("orderflow_available"), idea.get("order_flow_available"), orderflow.get("available"), idea.get("orderflow_bias"), orderflow.get("bias"))) else "unavailable",
+        "orderflow_bias": _first_review_value(idea.get("orderflow_bias"), idea.get("orderFlowBias"), orderflow.get("bias")),
+        "options_status": "available" if _review_available(_first_review_value(idea.get("options_available"), idea.get("optionsAvailable"), options.get("available"), idea.get("options_bias"), options.get("bias"))) else "unavailable",
+        "options_bias": _first_review_value(idea.get("options_bias"), idea.get("optionsBias"), idea.get("external_options_bias"), options.get("bias")),
+        "news_status": _first_review_value(idea.get("news_risk"), idea.get("newsRisk"), news.get("risk"), idea.get("news_status"), "neutral"),
+        "institutional_narrative": _first_review_value(idea.get("institutional_narrative"), idea.get("narrative"), context.get("institutional_narrative")),
+        "raw_idea": idea or None,
+    }
+
+
+def _review_confluence_score(video: dict[str, Any], model: dict[str, Any], has_idea: bool) -> int:
+    score = 0
+    if has_idea and _normalize_review_symbol(video.get("symbol")) == _normalize_review_symbol(model.get("symbol")):
+        score += 20
+    if model.get("direction") in {"BUY", "SELL"}:
+        score += 15
+    if model.get("orderflow_status") == "available":
+        score += 15
+    if model.get("options_status") == "available":
+        score += 15
+    if _review_news_support(model.get("news_status")):
+        score += 10
+    score += round((model.get("confidence") or 0) * 0.25)
+    return max(0, min(100, int(score)))
+
+
+def _review_verdict(model: dict[str, Any], score: int, has_idea: bool) -> str:
+    if not has_idea or score < 35:
+        return "FXPilot has insufficient data."
+    if score < 65:
+        return "FXPilot warns that confirmation is weak."
+    return "FXPilot currently supports this market context."
+
+
+def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    market_payload = market_payload if isinstance(market_payload, dict) else ideas_market()
+    idea = _find_review_market_idea(market_payload, str(video.get("symbol") or ""))
+    model = _build_review_market_model(video, idea)
+    score = _review_confluence_score(video, model, idea is not None)
     return {
         "video": video,
-        "review": {
-            "ai_summary": "Премиальный шаблон FXPilot Review уже готов: выбранный видеообзор отображается рядом с рыночным контекстом платформы. Реальная AI-расшифровка и анализ тезисов автора пока не выполняются.",
-            "fxpilot_opinion": "Текущий взгляд FXPilot берется из существующего /api/ideas/market на стороне страницы review. Торговая логика, скоринг и OrderFlow Engine не изменяются.",
-            "agreement_score": 72,
-            "main_conclusions": [
-                "Будущий AI-модуль будет извлекать тезисы автора, уровни, риск и условия отмены сценария.",
-                "Сценарии видео будут сопоставляться с текущим FXPilot-контекстом по тому же инструменту.",
-                "Reality Check и Trust Score подготовлены как интерфейсные блоки без реального рейтинга автора.",
-            ],
-            "reality_check": {"status": "coming_soon", "label": "Coming Soon"},
-            "trust_score": {"status": "coming_soon", "label": "Coming Soon"},
+        "author_source": {
+            "author": video.get("author"),
+            "provider": video.get("provider"),
+            "source_id": video.get("source_id"),
+            "youtube_id": video.get("youtube_id"),
         },
+        "detected_symbol": video.get("symbol"),
+        "current_fxpilot_idea": model,
+        "comparison": {
+            "video_says": "No transcript yet. AI summary will appear later.",
+            "fxpilot_says": model,
+        },
+        "confluence_score": score,
+        "preliminary_verdict": _review_verdict(model, score, idea is not None),
+        "source_endpoints": {"media": "/api/media", "market": "/api/ideas/market"},
     }
 
 
@@ -649,12 +776,21 @@ def api_tv_sources_stats() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.get("/api/tv/review/{video_id}")
-def api_tv_review(video_id: str) -> dict[str, Any]:
+def _get_media_review(video_id: str) -> dict[str, Any]:
     for video in _load_tv_video_catalog():
         if video.get("id") == video_id:
             return _build_tv_review_payload(video)
     raise HTTPException(status_code=404, detail="TV video not found")
+
+
+@app.get("/api/media/review/{video_id}")
+def api_media_review(video_id: str) -> dict[str, Any]:
+    return _get_media_review(video_id)
+
+
+@app.get("/api/tv/review/{video_id}")
+def api_tv_review(video_id: str) -> dict[str, Any]:
+    return _get_media_review(video_id)
 
 
 @app.get("/news", include_in_schema=False)
