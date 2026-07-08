@@ -400,6 +400,11 @@ class MediaImportEngine:
                 "resolved_url": None,
                 "yt_dlp_version": None,
                 "execution_time": None,
+                "fetched_raw_count": 0,
+                "valid_items": 0,
+                "skipped_invalid": 0,
+                "skipped_reasons": {},
+                "saved_catalog_items": 0,
             }
             try:
                 run_log["steps"].append(f"Processing source {source.name}")
@@ -427,8 +432,10 @@ class MediaImportEngine:
                     "resolved_url": result.source.rss_url or result.source.feed_url,
                     "yt_dlp_version": getattr(provider, "last_diagnostic", {}).get("yt_dlp_version") if source.provider == "youtube_ytdlp" else None,
                     "execution_time": getattr(provider, "last_diagnostic", {}).get("execution_time") if source.provider == "youtube_ytdlp" else (datetime.now(timezone.utc) - source_started).total_seconds(),
+                    "fetched_raw_count": getattr(provider, "last_diagnostic", {}).get("fetched_raw_count", result.videos_found) if source.provider == "youtube_ytdlp" else result.videos_found,
                     "valid_items": getattr(provider, "last_diagnostic", {}).get("valid_items", len(result.items)) if source.provider == "youtube_ytdlp" else len(result.items),
                     "skipped_invalid": getattr(provider, "last_diagnostic", {}).get("skipped_invalid", 0) if source.provider == "youtube_ytdlp" else 0,
+                    "skipped_reasons": getattr(provider, "last_diagnostic", {}).get("skipped_reasons", {}) if source.provider == "youtube_ytdlp" else {},
                     "updated_count": 0,
                 })
                 if result.error:
@@ -454,12 +461,11 @@ class MediaImportEngine:
             finally:
                 run_log["sources"].append(source_log)
 
-        valid_existing = [item for item in existing if self._is_catalog_item_importable(item)]
         valid_fetched = [item for item in fetched if self._is_catalog_item_importable(item)]
-        merged = self._balance_by_source(self._dedupe([*valid_existing, *valid_fetched]))
-        raw_count = len(valid_existing) + len(valid_fetched)
+        merged = self._balance_by_source(self._dedupe(valid_fetched))
+        raw_count = len(valid_fetched)
         duplicates_removed = max(0, raw_count - len(merged))
-        before = {str(i.get("youtube_id")) for i in valid_existing if is_valid_youtube_id(i.get("youtube_id"))}
+        before = {str(i.get("youtube_id")) for i in existing if is_valid_youtube_id(i.get("youtube_id"))}
         after = {str(i.get("youtube_id")) for i in merged if is_valid_youtube_id(i.get("youtube_id"))}
         run_log["steps"].append("Saving catalog...")
         logger.info("Saving catalog...")
@@ -467,16 +473,44 @@ class MediaImportEngine:
         for row in run_log["sources"]:
             if row.get("error"):
                 continue
+            row["saved_catalog_items"] = len([item for item in merged if item.get("source_id") == row.get("source_id")])
             row["updated_count"] = len([item for item in valid_fetched if item.get("source_id") == row.get("source_id") and str(item.get("youtube_id")) in before])
         self._save_sources(updated_sources)
         run_log["duplicates_removed"] = duplicates_removed
+        run_log["fetched_raw_count"] = sum(int(row.get("fetched_raw_count") or row.get("entries_found") or 0) for row in run_log["sources"])
+        run_log["valid_items"] = len(valid_fetched)
+        run_log["skipped_invalid"] = sum(int(row.get("skipped_invalid") or 0) for row in run_log["sources"])
+        skipped_reasons: dict[str, int] = {}
+        for row in run_log["sources"]:
+            for reason, count in (row.get("skipped_reasons") or {}).items():
+                skipped_reasons[str(reason)] = skipped_reasons.get(str(reason), 0) + int(count or 0)
+        run_log["skipped_reasons"] = skipped_reasons
+        run_log["saved_catalog_items"] = len(merged)
+        run_log["videos_by_source"] = self._videos_by_source(merged)
         run_log["catalog_items"] = len(merged)
         run_log["finished_at"] = datetime.now(timezone.utc).isoformat()
         run_log["steps"].append("DONE")
         logger.info("DONE")
         self._persist_debug_run(run_log)
         imported = len(after - before)
-        return {"success": failed == 0, "processed": processed, "imported": imported, "updated": max(0, len(valid_fetched) - imported), "failed": failed, "errors": errors, "catalog_size": len(merged), "sources": len(sources), "new_items": imported, "duplicates_removed": duplicates_removed}
+        return {
+            "success": failed == 0,
+            "processed": processed,
+            "imported": imported,
+            "updated": max(0, len(valid_fetched) - imported),
+            "failed": failed,
+            "errors": errors,
+            "catalog_size": len(merged),
+            "sources": len(sources),
+            "new_items": imported,
+            "duplicates_removed": duplicates_removed,
+            "fetched_raw_count": run_log["fetched_raw_count"],
+            "valid_items": run_log["valid_items"],
+            "skipped_invalid": run_log["skipped_invalid"],
+            "skipped_reasons": run_log["skipped_reasons"],
+            "saved_catalog_items": run_log["saved_catalog_items"],
+            "videos_by_source": run_log["videos_by_source"],
+        }
 
     def _persist_debug_run(self, run_log: dict[str, Any]) -> None:
         self.debug_path.parent.mkdir(parents=True, exist_ok=True)
@@ -530,6 +564,9 @@ class MediaImportEngine:
                 "entries_found": last_source_run.get("entries_found"),
                 "valid_items": last_source_run.get("valid_items"),
                 "skipped_invalid": last_source_run.get("skipped_invalid"),
+                "skipped_reasons": last_source_run.get("skipped_reasons"),
+                "fetched_raw_count": last_source_run.get("fetched_raw_count"),
+                "saved_catalog_items": last_source_run.get("saved_catalog_items"),
                 "imported_count": last_source_run.get("imported_count"),
                 "updated_count": last_source_run.get("updated_count"),
                 "error": last_source_run.get("error"),
@@ -567,10 +604,7 @@ class MediaImportEngine:
         manual_demo = len([item for item in catalog if item.get("status") == "manual_demo" or item.get("provider") in {"youtube_manual", "youtube-manual"}])
         real_items = [item for item in catalog if is_valid_youtube_id(item.get("youtube_id")) and item.get("status") != "manual_demo"]
         real_videos = len(real_items)
-        videos_by_source: dict[str, int] = {}
-        for item in real_items:
-            source_id = str(item.get("source_id") or "unknown")
-            videos_by_source[source_id] = videos_by_source.get(source_id, 0) + 1
+        videos_by_source = self._videos_by_source(real_items)
         return {
             "catalog_items": len(catalog),
             "real_videos": real_videos,
@@ -751,11 +785,22 @@ class MediaImportEngine:
             normalized.setdefault("source_id", "imported")
             normalized.setdefault("status", "imported")
             normalized.setdefault("language", "ru")
+            normalized.setdefault("imported_at", datetime.now(timezone.utc).isoformat())
+            if not normalized.get("published_at"):
+                normalized["published_at"] = normalized.get("imported_at")
             normalized.setdefault("thumbnail", f"https://i.ytimg.com/vi/{youtube_id}/hqdefault.jpg")
             normalized.setdefault("url", f"https://www.youtube.com/watch?v={youtube_id}")
             normalized.setdefault("symbol", detect_symbol(f"{normalized.get('title','')} {normalized.get('description','')}"))
             seen[youtube_id] = normalized
         return list(seen.values())
+
+    @staticmethod
+    def _videos_by_source(items: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in items:
+            source_id = str(item.get("source_id") or "unknown")
+            counts[source_id] = counts.get(source_id, 0) + 1
+        return dict(sorted(counts.items()))
 
     def _balance_by_source(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         limit = max_media_per_source()
