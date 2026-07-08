@@ -1,3 +1,11 @@
+
+## FXPilot TV Stage 7: Institutional Investment Committee
+
+- Добавлен финальный слой `app/services/investment_committee/`: `InvestmentCommitteeEngine` собирает video metadata, transcript, Rule AI Review, Knowledge Layer и LLM Review в единый provider-independent отчёт.
+- Новый endpoint `GET /api/media/committee/{video_id}` возвращает стабильный JSON-контракт: `video`, `summary`, `overall_score`, `decision`, `signal_quality`, `risk_level`, `agreement_score`, `institutional_bias`, `pros`, `cons`, `conflicts`, `committee_verdict`.
+- Добавлена страница `/committee` с русским dark trading UI для карточек Overall Score, Decision, Risk, Agreement, Institutional Bias, Pros, Cons, Conflicts и Committee Verdict.
+- Provider architecture изолирует финальный расчёт: текущий локальный rule provider можно заменить на OpenAI, Gemini, Claude, DeepSeek, OpenRouter или Local LLM без изменения frontend-контракта.
+
 # NicolasSavin AI FOREX SIGNAL PLATFORM — Версия 4.0
 - Добавлен диагностический endpoint `GET /api/media/rss-test/{source_id}`: он возвращает итоговый RSS URL, HTTP-статус, headers, content-type, размер и первые 500 байт ответа, title/entry count для XML, диагностику пустых feedparser entries, проверку YouTube RSS URL/channel_id для 404 и traceback для неожиданных ошибок.
 - Media Import execution hardened: `/admin/media` now displays the raw `POST /api/media/import` JSON/error result, refreshes sources/catalog after success, and `/api/media/debug` reads the last import run log with per-source RSS URL, HTTP status, entries found, imported count and exact error reason.
