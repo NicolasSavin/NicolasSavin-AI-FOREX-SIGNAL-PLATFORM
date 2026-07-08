@@ -6,7 +6,7 @@ import logging
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from app.services.media_import_engine import ImportSourceResult, MediaImportError, MediaItem, MediaSource, detect_symbol, is_valid_youtube_id, max_media_per_source
 
@@ -41,6 +41,7 @@ class YouTubeYtDlpProvider:
             "fetched_raw_count": 0,
             "skipped_invalid": 0,
             "skipped_reasons": {},
+            "skipped_items": [],
             "imported_count": 0,
             "errors": [],
             "execution_time": None,
@@ -119,9 +120,21 @@ class YouTubeYtDlpProvider:
         diagnostic["skipped_invalid"] = int(diagnostic.get("skipped_invalid") or 0) + 1
         skipped_reasons = diagnostic.setdefault("skipped_reasons", {})
         skipped_reasons[reason] = int(skipped_reasons.get(reason) or 0) + 1
-        raw_id = entry_id or entry.get("id") or entry.get("display_id") or entry.get("url") or entry.get("webpage_url")
-        logger.warning("youtube_ytdlp_skip_entry source_id=%s reason=%s entry_id=%s", source_id, reason, raw_id)
-        diagnostic.setdefault("errors", []).append({"entry_id": raw_id, "reason": reason})
+        raw_id = entry_id or entry.get("id") or entry.get("display_id")
+        raw_url = entry.get("url")
+        webpage_url = entry.get("webpage_url")
+        skipped_item = {
+            "source_id": source_id,
+            "title": str(entry.get("title") or ""),
+            "raw_id": str(raw_id or ""),
+            "raw_url": str(raw_url or ""),
+            "webpage_url": str(webpage_url or ""),
+            "reason": reason,
+        }
+        logger.warning("youtube_ytdlp_skip_entry source_id=%s reason=%s entry_id=%s raw_url=%s webpage_url=%s", source_id, reason, raw_id, raw_url, webpage_url)
+        if len(diagnostic.setdefault("skipped_items", [])) < 20:
+            diagnostic["skipped_items"].append(skipped_item)
+        diagnostic.setdefault("errors", []).append(skipped_item)
 
     def _extract_cached(self, normalized_url: str) -> dict[str, Any]:
         now = time.time()
@@ -216,16 +229,46 @@ class YouTubeYtDlpProvider:
 
     @staticmethod
     def _candidate_video_id(entry: dict[str, Any]) -> str:
-        for key in ("youtube_id", "id", "display_id"):
-            value = str(entry.get(key) or "").strip()
-            if is_valid_youtube_id(value):
-                return value
-        for key in ("url", "webpage_url"):
-            value = str(entry.get(key) or "").strip()
-            match = re.search(r"(?:v=|youtu\.be/|/embed/|/shorts/)([A-Za-z0-9_-]{11})", value)
+        for key in ("id", "url", "webpage_url", "original_url"):
+            candidate = YouTubeYtDlpProvider._extract_video_id(entry.get(key))
+            if candidate:
+                return candidate
+        ie_key = str(entry.get("ie_key") or "").strip().lower()
+        if ie_key == "youtube":
+            for key in ("id", "url", "webpage_url", "original_url"):
+                value = str(entry.get(key) or "").strip()
+                if value:
+                    candidate = YouTubeYtDlpProvider._extract_video_id(f"https://www.youtube.com/watch?v={value}")
+                    if candidate:
+                        return candidate
+        for key in ("youtube_id", "display_id"):
+            candidate = YouTubeYtDlpProvider._extract_video_id(entry.get(key))
+            if candidate:
+                return candidate
+        return str(entry.get("id") or entry.get("url") or entry.get("webpage_url") or entry.get("display_id") or "").strip()
+
+    @staticmethod
+    def _extract_video_id(value: Any) -> str | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if is_valid_youtube_id(text):
+            return text
+        parsed = urlparse(text if re.match(r"^https?://", text, re.I) else f"https://www.youtube.com{text if text.startswith('/') else '/' + text}")
+        query_id = parse_qs(parsed.query).get("v", [None])[0]
+        if is_valid_youtube_id(query_id):
+            return str(query_id)
+        patterns = (
+            r"(?:^|/)watch/?$",  # query already handled above
+            r"(?:^|/)shorts/([A-Za-z0-9_-]{11})(?:[/?#]|$)",
+            r"(?:^|/)embed/([A-Za-z0-9_-]{11})(?:[/?#]|$)",
+            r"youtu\.be/([A-Za-z0-9_-]{11})(?:[/?#]|$)",
+        )
+        for pattern in patterns[1:]:
+            match = re.search(pattern, text)
             if match and is_valid_youtube_id(match.group(1)):
                 return match.group(1)
-        return str(entry.get("id") or entry.get("display_id") or "").strip()
+        return None
 
     @staticmethod
     def _published_at(entry: dict[str, Any]) -> str | None:

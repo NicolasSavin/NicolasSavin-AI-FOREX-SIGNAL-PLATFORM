@@ -404,6 +404,7 @@ class MediaImportEngine:
                 "valid_items": 0,
                 "skipped_invalid": 0,
                 "skipped_reasons": {},
+                "skipped_items": [],
                 "saved_catalog_items": 0,
             }
             try:
@@ -436,6 +437,7 @@ class MediaImportEngine:
                     "valid_items": getattr(provider, "last_diagnostic", {}).get("valid_items", len(result.items)) if source.provider == "youtube_ytdlp" else len(result.items),
                     "skipped_invalid": getattr(provider, "last_diagnostic", {}).get("skipped_invalid", 0) if source.provider == "youtube_ytdlp" else 0,
                     "skipped_reasons": getattr(provider, "last_diagnostic", {}).get("skipped_reasons", {}) if source.provider == "youtube_ytdlp" else {},
+                    "skipped_items": getattr(provider, "last_diagnostic", {}).get("skipped_items", [])[:20] if source.provider == "youtube_ytdlp" else [],
                     "updated_count": 0,
                 })
                 if result.error:
@@ -485,6 +487,12 @@ class MediaImportEngine:
             for reason, count in (row.get("skipped_reasons") or {}).items():
                 skipped_reasons[str(reason)] = skipped_reasons.get(str(reason), 0) + int(count or 0)
         run_log["skipped_reasons"] = skipped_reasons
+        skipped_items: list[dict[str, Any]] = []
+        for row in run_log["sources"]:
+            skipped_items.extend((row.get("skipped_items") or [])[: max(0, 20 - len(skipped_items))])
+            if len(skipped_items) >= 20:
+                break
+        run_log["skipped_items"] = skipped_items
         run_log["saved_catalog_items"] = len(merged)
         run_log["videos_by_source"] = self._videos_by_source(merged)
         run_log["catalog_items"] = len(merged)
@@ -508,8 +516,12 @@ class MediaImportEngine:
             "valid_items": run_log["valid_items"],
             "skipped_invalid": run_log["skipped_invalid"],
             "skipped_reasons": run_log["skipped_reasons"],
+            "skipped_items": run_log["skipped_items"],
             "saved_catalog_items": run_log["saved_catalog_items"],
             "videos_by_source": run_log["videos_by_source"],
+            "sources_with_videos": len(run_log["videos_by_source"]),
+            "real_videos": len([item for item in merged if is_valid_youtube_id(item.get("youtube_id")) and item.get("status") != "manual_demo"]),
+            "manual_demo": len([item for item in merged if item.get("status") == "manual_demo" or item.get("provider") in {"youtube_manual", "youtube-manual"}]),
         }
 
     def _persist_debug_run(self, run_log: dict[str, Any]) -> None:
@@ -565,6 +577,7 @@ class MediaImportEngine:
                 "valid_items": last_source_run.get("valid_items"),
                 "skipped_invalid": last_source_run.get("skipped_invalid"),
                 "skipped_reasons": last_source_run.get("skipped_reasons"),
+                "skipped_items": (last_source_run.get("skipped_items") or [])[:20],
                 "fetched_raw_count": last_source_run.get("fetched_raw_count"),
                 "saved_catalog_items": last_source_run.get("saved_catalog_items"),
                 "imported_count": last_source_run.get("imported_count"),
