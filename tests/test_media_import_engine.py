@@ -157,6 +157,40 @@ def test_ytdlp_invalid_video_id_skipped(monkeypatch):
     assert provider.last_diagnostic["skipped_invalid"] == 2
 
 
+def test_ytdlp_extracts_video_id_from_supported_fields(monkeypatch):
+    provider = YouTubeYtDlpProvider(max_results=10)
+    source = _source("https://www.youtube.com/@demo")
+    source = source.__class__(source.id, source.name, "youtube_ytdlp", source.channel_url, source.language, source.priority, source.categories, source.enabled)
+    monkeypatch.setattr(provider, "_extract_cached", lambda url: {
+        "title": "Demo Channel",
+        "entries": [
+            {"id": "Flat0000001", "title": "Flat id"},
+            {"id": "playlist-entry-1", "url": "https://www.youtube.com/watch?v=Url00000001", "title": "URL watch"},
+            {"id": "playlist-entry-2", "webpage_url": "https://www.youtube.com/watch?v=Web00000001", "title": "Webpage watch"},
+            {"id": "playlist-entry-3", "webpage_url": "https://www.youtube.com/shorts/Sho00000001?feature=share", "title": "Shorts"},
+            {"id": "bad", "title": "Invalid id"},
+        ],
+    })
+
+    result = provider.fetch_latest(source)
+
+    assert [item.youtube_id for item in result.items] == ["Flat0000001", "Url00000001", "Web00000001", "Sho00000001"]
+    assert provider.last_diagnostic["skipped_invalid"] == 1
+    assert provider.last_diagnostic["skipped_items"] == [{
+        "source_id": "demo",
+        "title": "Invalid id",
+        "raw_id": "bad",
+        "raw_url": "",
+        "webpage_url": "",
+        "reason": "invalid_youtube_id",
+    }]
+
+
+def test_ytdlp_extract_video_id_from_relative_watch_original_and_youtube_ie_key():
+    assert YouTubeYtDlpProvider._candidate_video_id({"url": "/watch?v=Rel00000001"}) == "Rel00000001"
+    assert YouTubeYtDlpProvider._candidate_video_id({"original_url": "https://youtu.be/Org00000001?t=10"}) == "Org00000001"
+    assert YouTubeYtDlpProvider._candidate_video_id({"ie_key": "Youtube", "url": "Iek00000001"}) == "Iek00000001"
+
 def test_catalog_merge_by_youtube_id_and_save_load(tmp_path: Path):
     sources_path = tmp_path / "media_sources.json"
     catalog_path = tmp_path / "media_catalog.json"
