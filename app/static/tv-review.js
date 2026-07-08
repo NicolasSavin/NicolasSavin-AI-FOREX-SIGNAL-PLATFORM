@@ -124,6 +124,29 @@
   }
 
 
+  function renderExpertVerdict(review) {
+    const verdict = review.llm_review || {};
+    const rows = [
+      ['Agreement', verdict.agreement_score === undefined ? null : `${verdict.agreement_score}/100`],
+      ['Recommended Action', verdict.recommended_action],
+      ['Institutional View', verdict.institutional_view],
+      ['News Impact', verdict.news_impact],
+      ['Market Bias', verdict.market_bias],
+      ['Confidence', percent(verdict.confidence)],
+    ];
+    const block = (title, value) => `<div class="tv-premium-placeholder"><strong>${escapeHtml(title)}</strong><p>${Array.isArray(value) && value.length ? value.map((item) => escapeHtml(item)).join(' · ') : escapeHtml(value || 'Unknown')}</p></div>`;
+    return ReviewSection({ id: 'aiExpertVerdict', className: 'tv-review-section--summary tv-verdict-section', title: 'AI Expert Verdict', content: `
+      ${block('Summary', verdict.summary)}
+      <div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item, 'Unknown'))}</strong></div>`).join('')}</div>
+      <div class="tv-analysis-lists">
+        <div><strong>Reasoning</strong><p>${list(verdict.reasoning)}</p></div>
+        <div><strong>Risks</strong><p>${list(verdict.risks)}</p></div>
+        <div><strong>Contradictions</strong><p>${list(verdict.contradictions)}</p></div>
+      </div>
+      <p class="tv-context-note">Senior Institutional FX Analyst: использует только supplied context, без выдумывания цен и символов.</p>` });
+  }
+
+
   function renderComparison(review) {
     const idea = review.current_fxpilot_idea || {};
     return ReviewSection({ id: 'comparison', className: 'tv-review-section--summary', title: 'Comparison', content: `
@@ -143,7 +166,7 @@
 
   function ReviewPage(review, transcript) {
     const video = review.video || {};
-    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review v1: фактический контекст без OpenAI, с архитектурой transcript pipeline и локальным кешем.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderAIAnalysis(review)}${renderKnowledgeContext(review)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
+    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review v1: фактический контекст без OpenAI, с архитектурой transcript pipeline и локальным кешем.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderAIAnalysis(review)}${renderExpertVerdict(review)}${renderKnowledgeContext(review)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
   }
 
   async function loadReview() {

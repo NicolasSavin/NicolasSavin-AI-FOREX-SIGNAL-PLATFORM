@@ -46,6 +46,7 @@ from app.services.media_import_engine import MediaConfigError, MediaImportEngine
 from app.services.transcript import TranscriptEngine, TranscriptStorage
 from app.services.ai_analyzer import AIAnalyzerEngine
 from app.services.knowledge import KnowledgeEngine
+from app.services.llm_review import LLMReview, LLMReviewStorage, OpenAIReviewProvider, ReviewEngine
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,7 @@ media_import_engine = create_media_import_engine()
 transcript_engine = TranscriptEngine(storage=TranscriptStorage(BASE_DIR.parent / "data" / "transcripts"))
 ai_analyzer_engine = AIAnalyzerEngine()
 MEDIA_KNOWLEDGE_DEBUG = {"knowledge_requests": 0, "knowledge_errors": 0, "last_knowledge_video_id": None, "last_agreement_score": None}
+LLM_REVIEW_STORAGE = LLMReviewStorage(BASE_DIR.parent / "data" / "llm_reviews")
 
 class _AnalyticsNewsConnector:
     def _descriptor(self, *, status: str = "unavailable", note_ru: str = "") -> dict[str, str]:
@@ -653,6 +655,59 @@ def _review_transcript_payload(video: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+class ContextOnlyReviewProvider:
+    """Local provider fallback that preserves the LLMReview contract when no external key is configured."""
+
+    def generate_review(self, context: dict[str, Any]) -> LLMReview:
+        knowledge = context.get("knowledge_layer") or {}
+        analysis = context.get("ai_analysis") or {}
+        idea = context.get("current_fxpilot_idea") or {}
+        warnings = knowledge.get("warnings") or context.get("detected_risks") or []
+        conflicts = knowledge.get("conflicts") or context.get("detected_conflicts") or []
+        symbol = knowledge.get("symbol") or analysis.get("symbol") or (idea or {}).get("symbol") or "Unknown"
+        direction = knowledge.get("direction") or analysis.get("direction") or (idea or {}).get("direction") or "Unknown"
+        summary = analysis.get("summary") or f"Контекст по {symbol}: направление {direction}. Детали ограничены supplied context."
+        agreement = int(knowledge.get("agreement_score") or context.get("agreement_score") or 0)
+        confidence = int(analysis.get("confidence") or knowledge.get("confidence") or 0)
+        recommended = "WAIT / наблюдать" if conflicts or agreement < 65 else "Использовать как подтверждающий контекст, без входа без собственного риск-менеджмента"
+        return LLMReview(
+            summary=summary,
+            direction=direction,
+            confidence=max(0, min(100, confidence)),
+            agreement_score=max(0, min(100, agreement)),
+            entry=analysis.get("entry") or (idea or {}).get("entry") or "Unknown",
+            stop_loss=analysis.get("sl") or (idea or {}).get("sl") or "Unknown",
+            take_profit=analysis.get("tp") or (idea or {}).get("tp") or "Unknown",
+            targets=analysis.get("targets") or [],
+            reasoning=analysis.get("reasoning") or ["Оценка построена только на Transcript, AI Analyzer, Knowledge Layer и текущей идее FXPilot."],
+            risks=analysis.get("risks") or warnings or ["Unknown"],
+            opportunities=analysis.get("opportunities") or ["Unknown"],
+            contradictions=conflicts,
+            institutional_view=knowledge.get("institutional_narrative") or "Unknown.",
+            news_impact=(knowledge.get("news") or {}).get("status") or (knowledge.get("news") or {}).get("risk") or "Unknown",
+            market_bias=direction,
+            recommended_action=recommended,
+            provider="local-context",
+        )
+
+
+def create_llm_review_provider():
+    if os.getenv("OPENAI_API_KEY", "").strip():
+        return OpenAIReviewProvider()
+    return ContextOnlyReviewProvider()
+
+
+def create_llm_review_engine(market_payload: dict[str, Any] | None = None, provider: Any | None = None) -> ReviewEngine:
+    return ReviewEngine(
+        media_catalog_loader=_load_tv_video_catalog,
+        transcript_engine=transcript_engine,
+        ai_analyzer_engine=ai_analyzer_engine,
+        market_payload_loader=lambda: market_payload if isinstance(market_payload, dict) else ideas_market(),
+        provider=provider or create_llm_review_provider(),
+        storage=LLM_REVIEW_STORAGE,
+    )
+
 def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     market_payload = market_payload if isinstance(market_payload, dict) else ideas_market()
     idea = _find_review_market_idea(market_payload, str(video.get("symbol") or ""))
@@ -662,11 +717,14 @@ def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, An
     ai_review = ai_analyzer_engine.analyze(str(transcript.get("text") or ""), {**video, "video_id": video.get("id")})
     analysis = ai_review.to_api_analysis()
     knowledge_context = _build_knowledge_for_video(str(video.get("id") or ""), market_payload=market_payload).model_dump()
+    llm_review = create_llm_review_engine(market_payload=market_payload).generate(str(video.get("id") or ""))
     return {
         "video": video,
         "transcript": transcript,
         "analysis": analysis,
         "knowledge_context": knowledge_context,
+        "knowledge": knowledge_context,
+        "llm_review": llm_review.model_dump(),
         "agreement_score": knowledge_context.get("agreement_score"),
         "warnings": knowledge_context.get("warnings", []),
         "conflicts": knowledge_context.get("conflicts", []),
@@ -873,6 +931,22 @@ def api_media_knowledge(video_id: str) -> dict[str, Any]:
         "warnings": context.warnings,
     }
 
+
+
+@app.get("/api/media/llm-review/{video_id}")
+def api_media_llm_review(video_id: str, force: bool = False) -> dict[str, Any]:
+    video = next((item for item in _load_tv_video_catalog() if item.get("id") == video_id), None)
+    if not video:
+        raise HTTPException(status_code=404, detail="TV video not found")
+    market_payload = ideas_market()
+    review = create_llm_review_engine(market_payload=market_payload).generate(video_id, force=force)
+    knowledge = _build_knowledge_for_video(video_id, market_payload=market_payload).model_dump()
+    return {
+        "video": video,
+        "analysis": knowledge.get("ai_analysis", {}),
+        "knowledge": knowledge,
+        "llm_review": review.model_dump(),
+    }
 
 @app.get("/api/media/review/{video_id}")
 def api_media_review(video_id: str) -> dict[str, Any]:
