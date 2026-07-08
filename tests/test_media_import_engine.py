@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import app.main as main
 from app.main import app
 from app.services.media_import_engine import FetchResult, ImportSourceResult, MediaImportEngine, MediaItem, YouTubeRssProvider, detect_symbol
 from app.services.providers.youtube_ytdlp_provider import YouTubeYtDlpProvider
@@ -461,3 +462,46 @@ def test_ytdlp_published_at_normalization_and_fallback(monkeypatch):
     assert result.items[0].published_at == "2026-07-06"
     assert result.items[1].published_at == "2026-07-07T00:00:00+00:00"
     assert result.items[2].published_at == result.items[2].imported_at
+
+
+def test_media_review_endpoint_returns_fxpilot_context(monkeypatch):
+    video = {
+        "id": "video-eurusd",
+        "title": "EURUSD обзор",
+        "author": "Desk",
+        "symbol": "EURUSD",
+        "youtube_id": "dQw4w9WgXcQ",
+        "provider": "youtube_rss",
+        "source_id": "desk",
+    }
+    market_payload = {
+        "ideas": [{
+            "symbol": "EURUSD",
+            "direction": "BUY",
+            "entry": 1.1000,
+            "sl": 1.0950,
+            "tp": 1.1120,
+            "confidence": 80,
+            "orderflow_available": True,
+            "options_available": True,
+            "news_risk": "neutral",
+            "institutional_narrative": "Долларовый контекст поддерживает EURUSD.",
+        }]
+    }
+
+    monkeypatch.setattr(main, "_load_tv_video_catalog", lambda: [video])
+    monkeypatch.setattr(main, "ideas_market", lambda: market_payload)
+
+    response = TestClient(app).get("/api/media/review/video-eurusd")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["video"]["id"] == "video-eurusd"
+    assert payload["detected_symbol"] == "EURUSD"
+    assert payload["current_fxpilot_idea"]["direction"] == "BUY"
+    assert payload["current_fxpilot_idea"]["entry"] == 1.1
+    assert payload["current_fxpilot_idea"]["orderflow_status"] == "available"
+    assert payload["current_fxpilot_idea"]["options_status"] == "available"
+    assert payload["comparison"]["video_says"] == "No transcript yet. AI summary will appear later."
+    assert payload["confluence_score"] == 95
+    assert payload["preliminary_verdict"] == "FXPilot currently supports this market context."
