@@ -6,6 +6,13 @@
 
 
 
+## Что обновлено в версии 4.5
+- Добавлен модульный FXPilot AI Review Engine Stage 3: `app/services/llm_review/` содержит контракт `LLMReview`, интерфейс `LLMReviewProvider`, OpenAI-провайдер, prompt builder, engine и JSON-cache в `data/llm_reviews/`.
+- Новый endpoint `GET /api/media/llm-review/{video_id}` возвращает `video`, `analysis`, `knowledge` и `llm_review`; существующий `GET /api/media/review/{video_id}` обратносовместимо расширен полем `llm_review`.
+- Архитектура построена через dependency injection: API и frontend зависят от `ReviewEngine -> LLMReviewProvider`, поэтому Gemini/Claude/DeepSeek/Local LLM можно добавить заменой провайдера без изменения UI-контракта.
+- OpenAI-провайдер использует только env `OPENAI_API_KEY`, `FXPILOT_OPENAI_MODEL` (default `gpt-4.1`) и `FXPILOT_LLM_TIMEOUT`, запрашивает structured JSON и валидирует ответ через `LLMReview`.
+- На странице review добавлен блок `AI Expert Verdict` с Summary, Agreement, Recommended Action, Reasoning, Risks, Contradictions, Institutional View, News Impact, Market Bias и Confidence.
+
 ## Что обновлено в версии 4.4
 - YouTube-импорт FXPilot TV переведён на `yt-dlp`: backend больше не требует Google Cloud и YouTube Data API, не парсит HTML вручную и не скачивает видеофайлы — импортируются только метаданные публичных каналов.
 - Добавлен провайдер `youtube_ytdlp`, который принимает `@handle`, `/channel/`, `/user/` и `/c/`, кэширует ответы по каналу на 30 минут, нормализует видео в `MediaItem` и сохраняет каталог с дедупликацией по `youtube_id`.
