@@ -78,6 +78,36 @@
     return ReviewSection({ id: 'transcript', className: 'tv-review-section--summary tv-transcript-section', title: 'Transcript', content: `<div class="tv-context-note">${escapeHtml(meta)}</div>${body}` });
   }
 
+
+  function list(items) {
+    const values = Array.isArray(items) ? items.filter((item) => item !== null && item !== undefined && item !== '') : [];
+    return values.length ? values.map((item) => `<span class="tv-analysis-pill">${escapeHtml(item)}</span>`).join('') : '<span class="tv-context-note">—</span>';
+  }
+
+  function renderAIAnalysis(review) {
+    const analysis = review.analysis || {};
+    const rows = [
+      ['Symbol', analysis.symbol],
+      ['Direction', directionRu(analysis.direction)],
+      ['Confidence', percent(analysis.confidence)],
+      ['Entry', analysis.entry],
+      ['SL', analysis.sl],
+      ['TP', analysis.tp],
+    ];
+    return ReviewSection({ id: 'aiAnalysis', className: 'tv-review-section--summary tv-ai-analysis-section', title: 'AI Analysis', content: `
+      <p class="tv-context-note">Rule Engine: без OpenAI/GPT/Gemini/Claude. Провайдер можно заменить без изменения API и Frontend.</p>
+      <div class="tv-premium-placeholder"><strong>Summary</strong><p>${escapeHtml(analysis.summary || 'Недостаточно данных транскрипта для резюме.')}</p></div>
+      <div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div>
+      <div class="tv-analysis-lists">
+        <div><strong>Targets</strong><p>${list(analysis.targets)}</p></div>
+        <div><strong>Detected Levels</strong><p>${list(analysis.levels)}</p></div>
+        <div><strong>Indicators</strong><p>${list(analysis.indicators)}</p></div>
+        <div><strong>Concepts</strong><p>${list(analysis.concepts)}</p></div>
+        <div><strong>Risks</strong><p>${list(analysis.risks)}</p></div>
+        <div><strong>Opportunities</strong><p>${list(analysis.opportunities)}</p></div>
+      </div>` });
+  }
+
   function renderComparison(review) {
     const idea = review.current_fxpilot_idea || {};
     return ReviewSection({ id: 'comparison', className: 'tv-review-section--summary', title: 'Comparison', content: `
@@ -97,21 +127,14 @@
 
   function ReviewPage(review, transcript) {
     const video = review.video || {};
-    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review v1: фактический контекст без OpenAI, с архитектурой transcript pipeline и локальным кешем.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
+    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review v1: фактический контекст без OpenAI, с архитектурой transcript pipeline и локальным кешем.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderAIAnalysis(review)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
   }
 
   async function loadReview() {
     const response = await fetch(`/api/media/review/${encodeURIComponent(getVideoId())}`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
     if (!response.ok) throw new Error('review_not_found');
     const review = await response.json();
-    const youtubeId = (review.video && (review.video.youtube_id || review.video.id)) || getVideoId();
-    let transcript = null;
-    try {
-      const transcriptResponse = await fetch(`/api/media/transcript/${encodeURIComponent(youtubeId)}`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-      if (transcriptResponse.ok) transcript = await transcriptResponse.json();
-    } catch (error) {
-      transcript = { status: 'NOT_AVAILABLE' };
-    }
+    const transcript = review.transcript || { status: 'NOT_AVAILABLE' };
     root.innerHTML = ReviewPage(review, transcript);
   }
 

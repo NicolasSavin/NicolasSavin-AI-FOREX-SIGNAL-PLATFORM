@@ -3556,3 +3556,38 @@ body[data-page="tv-sources"] {
     grid-template-columns: 1fr;
   }
 }
+
+.tv-ai-analysis-section {
+  border-color: rgba(76, 201, 240, 0.28);
+}
+
+.tv-analysis-lists {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  margin-top: 16px;
+}
+
+.tv-analysis-lists > div {
+  border: 1px solid rgba(141, 162, 189, 0.18);
+  border-radius: 16px;
+  background: rgba(6, 14, 28, 0.42);
+  padding: 14px;
+}
+
+.tv-analysis-lists strong {
+  color: #eaf6ff;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.tv-analysis-pill {
+  display: inline-flex;
+  margin: 0 6px 6px 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: #dff7ff;
+  background: rgba(76, 201, 240, 0.12);
+  border: 1px solid rgba(76, 201, 240, 0.24);
+  font-size: 0.86rem;
+}

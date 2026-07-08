@@ -44,6 +44,7 @@ from app.services.visitor_counter import get_visit_stats, increment_visit
 from app.services.tv_source_manager import TvSourceConfigError, TvSourceManager
 from app.services.media_import_engine import MediaConfigError, MediaImportEngine
 from app.services.transcript import TranscriptEngine, TranscriptStorage
+from app.services.ai_analyzer import AIAnalyzerEngine
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,7 @@ def create_media_import_engine() -> MediaImportEngine:
 
 media_import_engine = create_media_import_engine()
 transcript_engine = TranscriptEngine(storage=TranscriptStorage(BASE_DIR.parent / "data" / "transcripts"))
+ai_analyzer_engine = AIAnalyzerEngine()
 
 class _AnalyticsNewsConnector:
     def _descriptor(self, *, status: str = "unavailable", note_ru: str = "") -> dict[str, str]:
@@ -632,13 +634,36 @@ def _review_verdict(model: dict[str, Any], score: int, has_idea: bool) -> str:
     return "FXPilot currently supports this market context."
 
 
+def _review_transcript_payload(video: dict[str, Any]) -> dict[str, Any]:
+    transcript_id = str(_first_review_value(video.get("youtube_id"), video.get("id")) or "")
+    try:
+        result = transcript_engine.get(transcript_id)
+    except ValueError:
+        return {"video_id": transcript_id, "status": "ERROR", "provider": "none", "language": None, "duration": None, "segments": [], "text": ""}
+    return {
+        "video_id": result.video_id,
+        "status": result.status.value,
+        "provider": result.source,
+        "language": result.language,
+        "duration": result.duration,
+        "segments": [segment.to_dict() for segment in result.segments],
+        "text": result.transcript,
+    }
+
+
 def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     market_payload = market_payload if isinstance(market_payload, dict) else ideas_market()
     idea = _find_review_market_idea(market_payload, str(video.get("symbol") or ""))
     model = _build_review_market_model(video, idea)
     score = _review_confluence_score(video, model, idea is not None)
+    transcript = _review_transcript_payload(video)
+    ai_review = ai_analyzer_engine.analyze(str(transcript.get("text") or ""), {**video, "video_id": video.get("id")})
+    analysis = ai_review.to_api_analysis()
     return {
         "video": video,
+        "transcript": transcript,
+        "analysis": analysis,
+        "ai_review": ai_review.to_dict(),
         "author_source": {
             "author": video.get("author"),
             "provider": video.get("provider"),
@@ -648,7 +673,7 @@ def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, An
         "detected_symbol": video.get("symbol"),
         "current_fxpilot_idea": model,
         "comparison": {
-            "video_says": "No transcript yet. AI summary will appear later.",
+            "video_says": analysis.get("summary") or "Transcript data is insufficient for AI analysis.",
             "fxpilot_says": model,
         },
         "confluence_score": score,
