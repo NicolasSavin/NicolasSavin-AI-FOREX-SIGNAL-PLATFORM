@@ -27,7 +27,7 @@ class YouTubeYtDlpProvider:
     _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     def __init__(self, max_results: int | None = None) -> None:
-        self.max_results = max(1, min(int(max_results or max_media_per_source()), 50))
+        self.max_results = max(1, min(int(max_results or DEFAULT_MAX_RESULTS), 50))
         self.last_diagnostic: dict[str, Any] = {}
 
     def fetch_latest(self, source: MediaSource) -> ImportSourceResult:
@@ -38,7 +38,9 @@ class YouTubeYtDlpProvider:
             "resolved_url": None,
             "entries_found": 0,
             "valid_items": 0,
+            "fetched_raw_count": 0,
             "skipped_invalid": 0,
+            "skipped_reasons": {},
             "imported_count": 0,
             "errors": [],
             "execution_time": None,
@@ -51,27 +53,23 @@ class YouTubeYtDlpProvider:
             resolved_url = str(info.get("webpage_url") or info.get("original_url") or normalized_url)
             diagnostic["resolved_url"] = resolved_url
             diagnostic["entries_found"] = len(entries)
+            diagnostic["fetched_raw_count"] = len(entries)
 
             seen: set[str] = set()
             items: list[MediaItem] = []
-            for entry in entries[: max_media_per_source()]:
+            limit = max_media_per_source()
+            for entry in entries:
                 item = self._entry_to_item(entry, source, channel_title)
                 if not item or not item.youtube_id:
-                    diagnostic["skipped_invalid"] += 1
-                    logger_reason = {
-                        "entry_id": entry.get("id") or entry.get("display_id") or entry.get("url"),
-                        "reason": "invalid_youtube_id",
-                    }
-                    logger.warning("youtube_ytdlp_skip_entry source_id=%s reason=%s entry_id=%s", source.id, logger_reason["reason"], logger_reason["entry_id"])
-                    diagnostic["errors"].append(logger_reason)
+                    self._record_skip(diagnostic, source.id, entry, "invalid_youtube_id")
                     continue
                 if item.youtube_id in seen:
-                    diagnostic["skipped_invalid"] += 1
-                    logger.warning("youtube_ytdlp_skip_entry source_id=%s reason=duplicate_youtube_id entry_id=%s", source.id, item.youtube_id)
-                    diagnostic["errors"].append({"entry_id": item.youtube_id, "reason": "duplicate_youtube_id"})
+                    self._record_skip(diagnostic, source.id, entry, "duplicate_youtube_id", item.youtube_id)
                     continue
                 seen.add(item.youtube_id)
                 items.append(item)
+                if len(items) >= limit:
+                    break
 
             diagnostic["valid_items"] = len(items)
             diagnostic["imported_count"] = len(items)
@@ -115,16 +113,26 @@ class YouTubeYtDlpProvider:
         except Exception as exc:
             return {"ok": False, "provider": self.provider_name, "channel_url": source.channel_url, "error": str(exc), "yt_dlp_version": self.version(), "execution_time": round(time.perf_counter() - started, 3)}
 
+
+    @staticmethod
+    def _record_skip(diagnostic: dict[str, Any], source_id: str, entry: dict[str, Any], reason: str, entry_id: str | None = None) -> None:
+        diagnostic["skipped_invalid"] = int(diagnostic.get("skipped_invalid") or 0) + 1
+        skipped_reasons = diagnostic.setdefault("skipped_reasons", {})
+        skipped_reasons[reason] = int(skipped_reasons.get(reason) or 0) + 1
+        raw_id = entry_id or entry.get("id") or entry.get("display_id") or entry.get("url") or entry.get("webpage_url")
+        logger.warning("youtube_ytdlp_skip_entry source_id=%s reason=%s entry_id=%s", source_id, reason, raw_id)
+        diagnostic.setdefault("errors", []).append({"entry_id": raw_id, "reason": reason})
+
     def _extract_cached(self, normalized_url: str) -> dict[str, Any]:
         now = time.time()
         cached = self._cache.get(normalized_url)
         if cached and now - cached[0] < CACHE_TTL_SECONDS:
             return cached[1]
-        info = self._extract(normalized_url)
+        info = self._extract(normalized_url, self.max_results)
         self._cache[normalized_url] = (now, info)
         return info
 
-    def _extract(self, normalized_url: str) -> dict[str, Any]:
+    def _extract(self, normalized_url: str, max_results: int | None = None) -> dict[str, Any]:
         try:
             import yt_dlp
         except Exception as exc:
@@ -134,7 +142,7 @@ class YouTubeYtDlpProvider:
             "no_warnings": True,
             "skip_download": True,
             "extract_flat": "discard_in_playlist",
-            "playlistend": max_media_per_source(),
+            "playlistend": max(1, int(max_results or self.max_results)),
             "ignoreerrors": True,
             "socket_timeout": 20,
         }
