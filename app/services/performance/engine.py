@@ -5,6 +5,7 @@ from statistics import mean
 from typing import Any, Callable
 
 from .evaluator import PerformanceEvaluator
+from .models import SignalOutcome
 
 class PerformanceEngine:
     def __init__(self, *, media_catalog_loader: Callable[[], list[dict[str, Any]]], review_payload_builder: Callable[[dict[str, Any]], dict[str, Any]], evaluator: PerformanceEvaluator | None = None, completion_hooks: list[Callable[[dict[str, Any]], None]] | None = None) -> None:
@@ -25,7 +26,14 @@ class PerformanceEngine:
         return {"author": author, "items": items, "summary": self._summary(items)}
 
     def _eval(self, video: dict[str, Any]):
-        outcome=self.evaluator.evaluate(video, self.review_payload_builder(video))
+        try:
+            review = self.review_payload_builder(video)
+        except Exception as exc:
+            return SignalOutcome(video_id=str(video.get("id") or ""), author=video.get("author") or video.get("source_id"), symbol=video.get("symbol"), status="review_unavailable", data_status="unavailable", warning_ru=f"Review слой недоступен: {exc.__class__.__name__}: {exc}", prediction={"direction": "UNKNOWN"})
+        try:
+            outcome=self.evaluator.evaluate(video, review)
+        except Exception as exc:
+            return SignalOutcome(video_id=str(video.get("id") or ""), author=video.get("author") or video.get("source_id"), symbol=video.get("symbol"), status="review_unavailable", data_status="unavailable", warning_ru=f"Performance evaluation failed: {exc.__class__.__name__}: {exc}", prediction={"direction": "UNKNOWN"})
         if outcome.status == "finished":
             payload=outcome.model_dump()
             for hook in self.completion_hooks: hook(payload)

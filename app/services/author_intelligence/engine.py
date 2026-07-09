@@ -80,11 +80,20 @@ class AuthorIntelligenceEngine:
         return dict(grouped)
 
     def _opinion(self, video: dict[str, Any]) -> dict[str, Any]:
-        payload = self.review_payload_builder(video)
+        warnings: list[str] = []
+        try:
+            payload = self.review_payload_builder(video)
+        except Exception as exc:
+            payload = {}
+            warnings.append(f"review_unavailable: {exc.__class__.__name__}: {exc}")
         analysis = payload.get("analysis") or payload.get("ai_review") or {}
         knowledge = payload.get("knowledge") or payload.get("knowledge_context") or {}
         llm = payload.get("llm_review") or {}
-        committee = self.committee_builder(str(video.get("id") or ""))
+        try:
+            committee = self.committee_builder(str(video.get("id") or ""))
+        except Exception as exc:
+            committee = {"decision": "WAIT", "overall_score": 0, "agreement_score": 0, "risk_level": "HIGH", "committee_verdict": "WATCH", "institutional_bias": "NEUTRAL"}
+            warnings.append(f"committee_unavailable: {exc.__class__.__name__}: {exc}")
         direction = _direction(committee.get("decision") or analysis.get("direction") or knowledge.get("direction") or llm.get("direction"))
         confidence = int(_number(analysis.get("confidence") or llm.get("confidence") or knowledge.get("confidence") or committee.get("overall_score")) or 0)
         risk_text = str(committee.get("risk_level") or "MEDIUM").upper()
@@ -106,6 +115,9 @@ class AuthorIntelligenceEngine:
             "institutional_bias": committee.get("institutional_bias") or "NEUTRAL",
             "committee_verdict": committee.get("committee_verdict") or "WATCH",
             "outcome": outcome,
+            "warnings": warnings,
+            "errors_count": len(warnings),
+            "review_status": "review_unavailable" if any(w.startswith("review_unavailable") for w in warnings) else "ok",
         }
 
     def _build_author(self, author: str, videos: list[dict[str, Any]], *, include_opinions: bool = False) -> dict[str, Any]:
@@ -116,6 +128,8 @@ class AuthorIntelligenceEngine:
         successful = sum(1 for item in outcomes if item.get("status") == "success")
         failed = sum(1 for item in outcomes if item.get("status") == "failed")
         neutral = total - successful - failed
+        warnings_count = sum(len(item.get("warnings") or []) for item in opinions)
+        errors_count = sum(int(item.get("errors_count") or 0) for item in opinions)
         avg_conf = _avg([item["confidence"] for item in opinions])
         avg_committee = _avg([item["committee_score"] for item in opinions])
         avg_agreement = _avg([item["agreement_score"] for item in opinions])
@@ -142,6 +156,8 @@ class AuthorIntelligenceEngine:
             "neutral_signals": neutral,
             "accuracy": proxy_accuracy,
             "accuracy_label": "proxy_committee_accuracy_until_real_market_outcomes_available",
+            "warnings_count": warnings_count,
+            "errors_count": errors_count,
             "win_rate": win_rate,
             "average_confidence": avg_conf,
             "average_committee_score": avg_committee,
@@ -168,6 +184,8 @@ class AuthorIntelligenceEngine:
                 "bullish_bias": round((directions.get("BUY", 0) / total) * 100) if total else 0,
                 "bearish_bias": round((directions.get("SELL", 0) / total) * 100) if total else 0,
                 "risk_profile": "HIGH" if avg_risk >= 66 else "MEDIUM" if avg_risk >= 40 else "LOW",
+                "warnings_count": warnings_count,
+                "errors_count": errors_count,
             },
         }
         if include_opinions:
