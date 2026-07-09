@@ -1,3 +1,32 @@
+## Stage 12 — YouTube Data API Primary Provider
+
+- FXPilot TV теперь использует официальный YouTube Data API v3 как первичный YouTube-провайдер при наличии `YOUTUBE_API_KEY`; `yt-dlp` остаётся автоматическим fallback только для источников, где API-импорт завершился ошибкой или ключ отсутствует.
+- Новый модуль `app/services/providers/youtube_api_provider.py` поддерживает `channelId`, `@handle`, legacy `username`, playlist URL и uploads playlist из `provider_config`, резолвит `https://youtube.com/@xxx` в `channel_id` и кэширует результат.
+- Импорт строится на `channels.list`, `search.list`, `videos.list` и `playlistItems.list`, возвращает тот же `MediaItem`-контракт для `/api/media`, а существующий каталог не очищается при ошибке провайдера.
+- `/api/media/debug` расширен полями `provider_selected`, `provider_used`, `provider_fallback`, `youtube_api_enabled`, `youtube_api_quota_used`, `youtube_api_remaining_estimate`, `resolved_channel_id`, `api_errors`, `fallback_reason`; `/api/media/stats` считает videos per provider, quota usage, API latency и fallback count.
+- Админ-панель `/admin/media` показывает диагностику API / yt-dlp / RSS / Telegram и фактический provider used без изменения публичных API routes.
+
+```mermaid
+flowchart TD
+  A[Admin Import Now / Scheduler] --> B[MediaImportEngine]
+  B --> C{YouTube source?}
+  C -->|YOUTUBE_API_KEY exists| D[YouTubeApiProvider]
+  C -->|No key| E[YouTubeYtDlpProvider]
+  D --> F[channels.list / search.list / videos.list / playlistItems.list]
+  F --> G{API success?}
+  G -->|yes| H[Normalize to MediaItem]
+  G -->|no| E
+  E --> I[yt-dlp metadata fallback]
+  I --> H
+  B --> J[RSS Provider]
+  B --> K[Telegram Provider]
+  H --> L[Deduplicate + merge catalog]
+  J --> L
+  K --> L
+  L --> M[/api/media compatible catalog]
+  B --> N[/api/media/debug + /api/media/stats diagnostics]
+```
+
 ## Stage 9 — Author Intelligence Engine
 
 - Добавлен пакет `app/services/author_intelligence/` с `AuthorIntelligenceEngine`: он агрегирует Media Catalog, Transcript/Review payload, Knowledge Layer, LLM Review, Investment Committee и Consensus-compatible метрики по каждому YouTube автору.
