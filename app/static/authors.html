@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Author Intelligence — FXPilot TV</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="page-shell authors-shell">
+    <nav class="top-nav"><a href="/">Главная</a><a href="/tv">🎥 FXPilot TV</a><a href="/committee">Committee</a><a href="/consensus">AI Consensus</a><a href="/authors">Авторы</a><a href="/analytics">Аналитика</a></nav>
+    <section class="hero panel">
+      <p class="eyebrow">Stage 9 · Author Intelligence Engine</p>
+      <h1>Рейтинг YouTube авторов</h1>
+      <p class="lead">Leaderboard оценивает авторов через Consensus, Committee, LLM Review, Knowledge Layer, Transcript и Media Catalog. Accuracy сейчас является proxy-метрикой до подключения реальных market outcomes.</p>
+      <label class="authors-sort">Сортировка
+        <select id="authorsSort">
+          <option value="highest_accuracy">Highest Accuracy</option>
+          <option value="highest_rating" selected>Highest Rating</option>
+          <option value="most_active">Most Active</option>
+          <option value="best_institutional_score">Best Institutional Score</option>
+        </select>
+      </label>
+    </section>
+    <section id="authorsRoot" class="authors-grid"><article class="panel">Загрузка...</article></section>
+  </main>
+  <script src="/static/nav.js"></script>
+  <script src="/static/authors.js"></script>
+</body>
+</html>

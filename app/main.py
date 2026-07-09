@@ -49,6 +49,7 @@ from app.services.knowledge import KnowledgeEngine
 from app.services.llm_review import LLMReview, LLMReviewStorage, OpenAIReviewProvider, ReviewEngine
 from app.services.investment_committee import InvestmentCommitteeEngine
 from app.services.consensus import ConsensusEngine
+from app.services.author_intelligence import AuthorIntelligenceEngine
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -970,6 +971,43 @@ def create_consensus_engine() -> ConsensusEngine:
     )
 
 
+def create_author_intelligence_engine() -> AuthorIntelligenceEngine:
+    return AuthorIntelligenceEngine(
+        media_catalog_loader=_load_tv_video_catalog,
+        review_payload_builder=_build_tv_review_payload,
+        committee_builder=lambda video_id: InvestmentCommitteeEngine(
+            media_catalog_loader=_load_tv_video_catalog,
+            review_payload_builder=_build_tv_review_payload,
+        ).build_for_video(video_id).model_dump(),
+    )
+
+
+@app.get("/api/authors")
+def api_authors(sort: str = "rating") -> list[dict[str, Any]]:
+    authors = create_author_intelligence_engine().build_all()
+    sort_key = sort.strip().lower().replace("-", "_")
+    keys = {
+        "accuracy": "accuracy",
+        "highest_accuracy": "accuracy",
+        "rating": "rating",
+        "highest_rating": "rating",
+        "active": "activity_score",
+        "most_active": "activity_score",
+        "institutional": "institutional_score",
+        "best_institutional_score": "institutional_score",
+    }
+    key = keys.get(sort_key, "rating")
+    return sorted(authors, key=lambda row: row.get(key) or 0, reverse=True)
+
+
+@app.get("/api/authors/{author}")
+def api_author_report(author: str) -> dict[str, Any]:
+    try:
+        return create_author_intelligence_engine().build_for_author(author)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/api/consensus/{symbol}")
 def api_consensus_symbol(symbol: str, timeframe: str | None = None, date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
     return create_consensus_engine().build(symbol, timeframe, date_from=date_from, date_to=date_to)
@@ -993,6 +1031,11 @@ def api_tv_review(video_id: str) -> dict[str, Any]:
 @app.get("/consensus", include_in_schema=False)
 def consensus_page():
     return FileResponse(STATIC_DIR / "consensus.html")
+
+
+@app.get("/authors", include_in_schema=False)
+def authors_page():
+    return FileResponse(STATIC_DIR / "authors.html")
 
 
 @app.get("/committee", include_in_schema=False)
