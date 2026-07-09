@@ -576,3 +576,48 @@ The engine stores and returns explicit outcome fields: `entry_price`, `stop_loss
 Market replay is intentionally provider-neutral: the default adapter uses the existing canonical market service / MT4 bridge path, while the interface can be backed by MT5, Databento, Polygon, TwelveData or future providers. If candles or explicit Entry/SL/TP levels are missing, the engine returns `UNKNOWN` and does not replace real outcomes with proxy metrics.
 
 Frontend page `/performance` shows leaderboard blocks for Best Authors, Worst Authors, Most Accurate and Most Profitable plus per-video Prediction, Reality, Difference, Profit/Loss and Result cards. Completed outcomes call a hook point for refreshing Author Intelligence, Consensus and Institutional Rating without changing existing public APIs.
+
+
+## FXPilot TV Source Manager v1
+
+FXPilot TV imports content through a unified source registry (`data/media_sources.json`) with stable fields for `source_type`, `provider`, diagnostics, counters, tags, symbols and `provider_config`. Existing catalog items are merged and deduplicated by YouTube ID or URL; a failed source does **not** clear the media catalog.
+
+### YouTube Data API setup
+
+Preferred production mode uses YouTube Data API v3 when a key is available:
+
+```bash
+YOUTUBE_API_KEY=your_google_api_key
+FXPILOT_YOUTUBE_PROVIDER=auto
+```
+
+Provider mode values:
+
+- `auto` — try `youtube_api` when `YOUTUBE_API_KEY` exists, then fallback to `youtube_ytdlp` if the API fails.
+- `api` — use YouTube Data API provider.
+- `ytdlp` — force yt-dlp fallback provider.
+
+Admins can add a YouTube source by URL in `/admin/media`; channel IDs are resolved automatically where possible and saved in `provider_config.channel_id`.
+
+### Telegram public source setup
+
+Telegram v1 supports public preview pages without a bot token. Add a source with provider `telegram_public` and a URL such as:
+
+- `https://t.me/channelname`
+- `https://t.me/s/channelname`
+
+The importer normalizes public post metadata into Media Catalog items. `telegram_bot_provider.py` is present as a future placeholder and activates only when `TELEGRAM_BOT_TOKEN` is configured.
+
+### RSS setup
+
+Add an RSS source with provider `rss_feed` and the feed URL. The provider reads title, link, summary, published date, author and thumbnail/enclosure metadata via `feedparser`.
+
+### Render environment variables
+
+Configure these in Render when enabling production ingestion:
+
+```bash
+YOUTUBE_API_KEY=...
+FXPILOT_YOUTUBE_PROVIDER=auto
+TELEGRAM_BOT_TOKEN=... # optional future bot provider
+```
