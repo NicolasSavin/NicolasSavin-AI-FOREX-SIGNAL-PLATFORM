@@ -42,6 +42,7 @@ from app.services.timing import timing_log
 from app.services.ai_runtime_status import get_ai_status, record_ai_request_failure, record_ai_request_start, record_ai_request_success, run_ai_test_request, startup_ai_healthcheck
 from app.services.visitor_counter import get_visit_stats, increment_visit
 from app.services.tv_source_manager import TvSourceConfigError, TvSourceManager
+from app.services.media_identity import canonical_catalog_id, canonical_youtube_id, resolve_media_video as _resolve_media_video_from_catalog
 from app.services.media_import_engine import MediaConfigError, MediaImportEngine
 from app.services.media_automation import MediaAutomationService
 from app.services.transcript import TranscriptEngine, TranscriptStorage
@@ -165,7 +166,7 @@ media_automation_service = MediaAutomationService(
 )
 transcript_engine = TranscriptEngine(storage=TranscriptStorage(BASE_DIR.parent / "data" / "transcripts"))
 ai_analyzer_engine = AIAnalyzerEngine()
-MEDIA_KNOWLEDGE_DEBUG = {"knowledge_requests": 0, "knowledge_errors": 0, "last_knowledge_video_id": None, "last_agreement_score": None}
+MEDIA_KNOWLEDGE_DEBUG = {"knowledge_requests": 0, "knowledge_errors": 0, "last_knowledge_video_id": None, "last_agreement_score": None, "last_review_video_id": None, "last_review_catalog_id": None, "last_review_youtube_id": None, "review_storage_keys_count": 0, "review_lookup_strategy": None}
 LLM_REVIEW_STORAGE = LLMReviewStorage(BASE_DIR.parent / "data" / "llm_reviews")
 
 class _AnalyticsNewsConnector:
@@ -533,6 +534,22 @@ def _load_tv_video_catalog() -> list[dict[str, Any]]:
         logger.warning("media_catalog_unavailable error=%s", exc)
         return []
 
+
+
+def resolve_media_video(video_id: str) -> dict[str, Any] | None:
+    return _resolve_media_video_from_catalog(video_id, _load_tv_video_catalog())
+
+
+def _review_lookup_debug(video_id: str, video: dict[str, Any] | None, strategy: str) -> None:
+    MEDIA_KNOWLEDGE_DEBUG["last_review_video_id"] = video_id
+    MEDIA_KNOWLEDGE_DEBUG["last_review_catalog_id"] = canonical_catalog_id(video or {}) if video else None
+    MEDIA_KNOWLEDGE_DEBUG["last_review_youtube_id"] = canonical_youtube_id(video or {}) if video else None
+    try:
+        MEDIA_KNOWLEDGE_DEBUG["review_storage_keys_count"] = len(list(LLM_REVIEW_STORAGE.base_dir.glob("*.json")))
+    except Exception:
+        MEDIA_KNOWLEDGE_DEBUG["review_storage_keys_count"] = 0
+    MEDIA_KNOWLEDGE_DEBUG["review_lookup_strategy"] = strategy
+
 def _normalize_review_symbol(value: Any) -> str:
     return "".join(ch for ch in str(value or "").upper() if ch.isalnum())
 
@@ -654,7 +671,7 @@ def _review_verdict(model: dict[str, Any], score: int, has_idea: bool) -> str:
 
 
 def _review_transcript_payload(video: dict[str, Any]) -> dict[str, Any]:
-    transcript_id = str(_first_review_value(video.get("youtube_id"), video.get("id")) or "")
+    transcript_id = canonical_youtube_id(video)
     try:
         result = transcript_engine.get(transcript_id)
     except ValueError:
@@ -731,8 +748,9 @@ def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, An
     transcript = _review_transcript_payload(video)
     ai_review = ai_analyzer_engine.analyze(str(transcript.get("text") or ""), {**video, "video_id": video.get("id")})
     analysis = ai_review.to_api_analysis()
-    knowledge_context = _build_knowledge_for_video(str(video.get("id") or ""), market_payload=market_payload).model_dump()
-    llm_review = create_llm_review_engine(market_payload=market_payload).generate(str(video.get("id") or ""))
+    catalog_id = canonical_catalog_id(video)
+    knowledge_context = _build_knowledge_for_video(catalog_id, market_payload=market_payload).model_dump()
+    llm_review = create_llm_review_engine(market_payload=market_payload).generate(catalog_id)
     return {
         "video": video,
         "transcript": transcript,
@@ -763,6 +781,12 @@ def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, An
 
 
 def _build_knowledge_for_video(video_id: str, market_payload: dict[str, Any] | None = None):
+    video = resolve_media_video(video_id)
+    if not video:
+        raise ValueError("TV video not found")
+    catalog_id = canonical_catalog_id(video)
+    _review_lookup_debug(video_id, video, "knowledge_resolve_to_catalog_id")
+
     def _market_payload_loader() -> dict[str, Any]:
         return market_payload if isinstance(market_payload, dict) else ideas_market()
 
@@ -773,9 +797,9 @@ def _build_knowledge_for_video(video_id: str, market_payload: dict[str, Any] | N
         market_payload_loader=_market_payload_loader,
     )
     MEDIA_KNOWLEDGE_DEBUG["knowledge_requests"] += 1
-    MEDIA_KNOWLEDGE_DEBUG["last_knowledge_video_id"] = video_id
+    MEDIA_KNOWLEDGE_DEBUG["last_knowledge_video_id"] = catalog_id
     try:
-        context = engine.build_for_video(video_id)
+        context = engine.build_for_video(catalog_id)
         MEDIA_KNOWLEDGE_DEBUG["last_agreement_score"] = context.agreement_score
         return context
     except Exception:
@@ -873,7 +897,7 @@ def api_media_resolve_all() -> dict[str, Any]:
 
 def _run_automatic_media_pipeline(item: dict[str, Any]) -> dict[str, Any]:
     """Run the automatic Import → Transcript → AI → Knowledge → Review → Committee pipeline for one item."""
-    video_id = str(item.get("id") or item.get("youtube_id") or "")
+    video_id = canonical_catalog_id(item) or canonical_youtube_id(item)
     if not video_id:
         return {"status": "skipped", "reason": "missing_video_id"}
     transcript = _review_transcript_payload(item)
@@ -1020,9 +1044,10 @@ def api_tv_sources_stats() -> dict[str, Any]:
 
 
 def _get_media_review(video_id: str) -> dict[str, Any]:
-    for video in _load_tv_video_catalog():
-        if video.get("id") == video_id:
-            return _build_tv_review_payload(video)
+    video = resolve_media_video(video_id)
+    _review_lookup_debug(video_id, video, "catalog_id|youtube_id|prefixed_id|url_contains")
+    if video:
+        return _build_tv_review_payload(video)
     raise HTTPException(status_code=404, detail="TV video not found")
 
 
@@ -1046,12 +1071,14 @@ def api_media_knowledge(video_id: str) -> dict[str, Any]:
 
 @app.get("/api/media/llm-review/{video_id}")
 def api_media_llm_review(video_id: str, force: bool = False) -> dict[str, Any]:
-    video = next((item for item in _load_tv_video_catalog() if item.get("id") == video_id), None)
+    video = resolve_media_video(video_id)
+    _review_lookup_debug(video_id, video, "llm_review_resolve_to_catalog_id")
     if not video:
         raise HTTPException(status_code=404, detail="TV video not found")
+    catalog_id = canonical_catalog_id(video)
     market_payload = ideas_market()
-    review = create_llm_review_engine(market_payload=market_payload).generate(video_id, force=force)
-    knowledge = _build_knowledge_for_video(video_id, market_payload=market_payload).model_dump()
+    review = create_llm_review_engine(market_payload=market_payload).generate(catalog_id, force=force)
+    knowledge = _build_knowledge_for_video(catalog_id, market_payload=market_payload).model_dump()
     return {
         "video": video,
         "analysis": knowledge.get("ai_analysis", {}),
@@ -1061,9 +1088,13 @@ def api_media_llm_review(video_id: str, force: bool = False) -> dict[str, Any]:
 
 @app.get("/api/media/committee/{video_id}")
 def api_media_committee(video_id: str) -> dict[str, Any]:
+    video = resolve_media_video(video_id)
+    _review_lookup_debug(video_id, video, "committee_resolve_to_catalog_id")
+    if not video:
+        raise HTTPException(status_code=404, detail="TV video not found")
     engine = InvestmentCommitteeEngine(media_catalog_loader=_load_tv_video_catalog, review_payload_builder=_build_tv_review_payload)
     try:
-        return engine.build_for_video(video_id).model_dump()
+        return engine.build_for_video(canonical_catalog_id(video)).model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

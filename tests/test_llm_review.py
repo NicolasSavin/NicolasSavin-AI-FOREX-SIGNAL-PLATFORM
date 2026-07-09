@@ -152,3 +152,83 @@ def test_automatic_media_pipeline_uses_catalog_id_for_review_generation(monkeypa
 
     assert calls == ["youtube:abc12345678"]
     assert result["video_id"] == "youtube:abc12345678"
+
+
+def test_media_video_resolution_supports_catalog_and_youtube_ids(monkeypatch):
+    import app.main as main
+
+    video = {"id": "youtube:Hf7eX113oIc", "youtube_id": "Hf7eX113oIc", "url": "https://youtube.com/watch?v=Hf7eX113oIc"}
+    monkeypatch.setattr(main, "_load_tv_video_catalog", lambda: [video])
+
+    assert main.resolve_media_video("youtube:Hf7eX113oIc") == video
+    assert main.resolve_media_video("Hf7eX113oIc") == video
+
+
+def test_review_engine_lookup_by_youtube_id_and_transcript_uses_clean_id(tmp_path):
+    from app.services.llm_review import LLMReviewStorage, ReviewEngine
+
+    transcript_calls = []
+    video = {"id": "youtube:Hf7eX113oIc", "youtube_id": "Hf7eX113oIc", "symbol": "EURUSD"}
+
+    class FakeTranscriptEngine:
+        def get(self, video_id):
+            transcript_calls.append(video_id)
+            return TranscriptResult(video_id, "en", "cache", "Buy EURUSD", status=TranscriptStatus.FOUND)
+
+    engine = ReviewEngine(
+        media_catalog_loader=lambda: [video],
+        transcript_engine=FakeTranscriptEngine(),
+        ai_analyzer_engine=FakeAnalyzer(),
+        market_payload_loader=lambda: {},
+        provider=MockProvider(),
+        storage=LLMReviewStorage(tmp_path),
+    )
+
+    review = engine.generate("Hf7eX113oIc")
+
+    assert review.provider == "mock"
+    assert transcript_calls == ["Hf7eX113oIc", "Hf7eX113oIc"]
+    assert (tmp_path / "youtubeHf7eX113oIc.json").exists()
+
+
+def test_media_review_endpoint_accepts_catalog_and_youtube_id(monkeypatch):
+    import app.main as main
+
+    video = {"id": "youtube:Hf7eX113oIc", "youtube_id": "Hf7eX113oIc", "symbol": "EURUSD", "title": "Обзор"}
+    monkeypatch.setattr(main, "_load_tv_video_catalog", lambda: [video])
+    monkeypatch.setattr(main, "ideas_market", lambda: {})
+    monkeypatch.setattr(main, "_review_transcript_payload", lambda video: {"status": "FOUND", "text": "Buy EURUSD"})
+    monkeypatch.setattr(main.ai_analyzer_engine, "analyze", lambda transcript, metadata: AIReview(video_id=metadata["video_id"], symbol="EURUSD", direction="BUY", summary="Покупка"))
+    monkeypatch.setattr(main, "_build_knowledge_for_video", lambda video_id, market_payload=None: type("Knowledge", (), {"model_dump": lambda self: {"agreement_score": 80, "ai_analysis": {}}})())
+    monkeypatch.setattr(main, "create_llm_review_engine", lambda market_payload=None: type("Engine", (), {"generate": lambda self, video_id, force=False: LLMReview(summary="Generated", provider="mock")})())
+
+    client = TestClient(main.app)
+    assert client.get("/api/media/review/youtube:Hf7eX113oIc").status_code == 200
+    assert client.get("/api/media/review/Hf7eX113oIc").status_code == 200
+
+
+def test_import_now_generates_review_for_imported_youtube_id(monkeypatch):
+    import app.main as main
+
+    calls = []
+    video = {"id": "youtube:Hf7eX113oIc", "youtube_id": "Hf7eX113oIc"}
+
+    class FakeImportEngine:
+        def import_latest(self):
+            return {"success": True, "new_item_ids": ["Hf7eX113oIc"], "imported": 1}
+
+    class FakeReviewEngine:
+        def generate(self, video_id):
+            assert main.resolve_media_video(video_id) == video
+            calls.append(video_id)
+            return LLMReview(summary="Generated after import", provider="mock")
+
+    monkeypatch.setattr(main, "_load_tv_video_catalog", lambda: [video])
+    monkeypatch.setattr(main, "create_media_import_engine", lambda: FakeImportEngine())
+    monkeypatch.setattr(main, "create_llm_review_engine", lambda: FakeReviewEngine())
+
+    result = main.api_media_import_now()
+
+    assert calls == ["Hf7eX113oIc"]
+    assert result["review_generation"]["generated"] == 1
+    assert result["review_generation"]["failed"] == 0
