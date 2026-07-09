@@ -2,6 +2,7 @@
   const sourcesBody = document.getElementById('mediaSourcesBody');
   const newestBody = document.getElementById('mediaNewestBody');
   const importButton = document.getElementById('mediaImportNow');
+  const schedulerState = document.getElementById('mediaSchedulerState');
   const importResult = document.getElementById('mediaImportResult');
   const sourceForm = document.getElementById('mediaSourceForm');
   const resolveResult = document.getElementById('mediaResolveResult');
@@ -34,7 +35,7 @@
         <td>${formatValue(source.last_success || source.last_import)}</td>
         <td>${escapeHtml(source.items_count ?? source.videos_count ?? 0)}</td>
         <td>${escapeHtml(sourceErrors(source))}</td>
-        <td><div class="tv-source-actions"><button data-action="Test" data-id="${escapeHtml(source.id)}">Test</button><button data-action="Import Source" data-id="${escapeHtml(source.id)}">Import</button><button data-action="Disable" data-id="${escapeHtml(source.id)}">Disable</button><button data-action="Enable" data-id="${escapeHtml(source.id)}">Enable</button><button data-action="Delete" data-id="${escapeHtml(source.id)}">Delete</button></div></td>
+        <td><div class="tv-source-actions"><button data-action="Test" data-id="${escapeHtml(source.id)}">Health</button><button data-action="Disable" data-id="${escapeHtml(source.id)}">Disable</button><button data-action="Enable" data-id="${escapeHtml(source.id)}">Enable</button><button data-action="Delete" data-id="${escapeHtml(source.id)}">Delete</button></div></td>
       </tr>`;
     }).join('');
   }
@@ -49,11 +50,25 @@
     `).join('') || '<tr><td colspan="5">Каталог пуст.</td></tr>';
   }
 
+  function renderAutomation(stats, scheduler) {
+    setText('mediaStatToday', String(stats.imported_today ?? 0));
+    setText('mediaStatWeek', String(stats.imported_this_week ?? 0));
+    setText('mediaStatOnline', String(stats.sources_online ?? 0));
+    setText('mediaStatFailed', String(stats.sources_failed ?? 0));
+    setText('mediaStatAnalyzed', String(stats.videos_analyzed ?? 0));
+    setText('mediaStatAwaiting', String(stats.videos_awaiting_ai ?? 0));
+    setText('mediaStatAvgDuration', `${stats.average_import_duration ?? 0}s`);
+    setText('mediaStatProviders', Object.entries(stats.provider_usage || {}).map(([k, v]) => `${k}:${v}`).join(' · ') || '—');
+    if (schedulerState) schedulerState.textContent = JSON.stringify({ scheduler: scheduler.status, jobs: scheduler.jobs, notifications: scheduler.notifications, queue: scheduler.state?.last_payload, retry_policy_minutes: scheduler.retry_policy_minutes }, null, 2);
+  }
+
   function refresh() {
     Promise.all([
       fetch('/api/media/sources', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((r) => r.ok ? r.json() : []),
       fetch('/api/media', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((r) => r.ok ? r.json() : []),
-    ]).then(([sources, media]) => { renderSources(Array.isArray(sources) ? sources : []); renderMedia(Array.isArray(media) ? media : []); })
+      fetch('/api/media/stats', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((r) => r.ok ? r.json() : {}),
+      fetch('/api/media/scheduler', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((r) => r.ok ? r.json() : {}),
+    ]).then(([sources, media, stats, scheduler]) => { renderSources(Array.isArray(sources) ? sources : []); renderMedia(Array.isArray(media) ? media : []); renderAutomation(stats || {}, scheduler || {}); })
       .catch(() => { sourcesBody.innerHTML = '<tr><td colspan="8">Media Engine временно недоступен.</td></tr>'; newestBody.innerHTML = '<tr><td colspan="5">Каталог временно недоступен.</td></tr>'; });
   }
 
@@ -87,7 +102,6 @@
   }
 
   importButton?.addEventListener('click', runImport);
-  document.getElementById('mediaImportNowForm')?.addEventListener('click', runImport);
   document.getElementById('mediaResolveSource')?.addEventListener('click', () => {
     const payload = formPayload();
     showResolve('Resolving...');

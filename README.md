@@ -621,3 +621,16 @@ YOUTUBE_API_KEY=...
 FXPILOT_YOUTUBE_PROVIDER=auto
 TELEGRAM_BOT_TOKEN=... # optional future bot provider
 ```
+
+## FXPilot TV Autonomous Platform (Stage 12)
+
+FXPilot TV now runs as an autonomous FastAPI-managed media platform. After an administrator adds a YouTube, Telegram, or RSS source in `/admin/media`, the application starts APScheduler with the API process and runs provider-specific jobs without requiring Render Cron:
+
+- YouTube sources: every 15 minutes.
+- Telegram public sources: every 10 minutes.
+- RSS sources: every 30 minutes.
+- Nightly maintenance: rebuild author, consensus, and performance layers, publish the TV catalog, and clean temporary caches.
+
+The automatic pipeline is Import → Transcript → Rule AI → Knowledge Layer → LLM Review → Committee → Consensus → Author Intelligence → Performance → Publish to TV. Manual import endpoints remain for backward compatibility, but normal daily operation is source-once/autopilot afterwards.
+
+The admin interface shows Sources, Statistics, Scheduler, Import Queue/last run, Logs, Health, and Notifications in one dark Russian-language interface. Source health uses explicit states (`Healthy`, `Warning`, `Broken`, `Disabled`) and tracks last successful import, last failed import, last error, imported item counts, average import duration, provider usage, and AI backlog metrics.

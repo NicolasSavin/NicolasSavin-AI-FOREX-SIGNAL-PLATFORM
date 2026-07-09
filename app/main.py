@@ -43,6 +43,7 @@ from app.services.ai_runtime_status import get_ai_status, record_ai_request_fail
 from app.services.visitor_counter import get_visit_stats, increment_visit
 from app.services.tv_source_manager import TvSourceConfigError, TvSourceManager
 from app.services.media_import_engine import MediaConfigError, MediaImportEngine
+from app.services.media_automation import MediaAutomationService
 from app.services.transcript import TranscriptEngine, TranscriptStorage
 from app.services.ai_analyzer import AIAnalyzerEngine
 from app.services.knowledge import KnowledgeEngine
@@ -154,6 +155,14 @@ def create_media_import_engine() -> MediaImportEngine:
     return MediaImportEngine(MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, manual_path, debug_path=MEDIA_DEBUG_PATH)
 
 media_import_engine = create_media_import_engine()
+media_automation_service = MediaAutomationService(
+    engine_factory=create_media_import_engine,
+    catalog_loader=lambda: create_media_import_engine().load_catalog(),
+    pipeline_runner=lambda item: _run_automatic_media_pipeline(item),
+    state_path=BASE_DIR.parent / "data" / "media_automation_state.json",
+    tv_catalog_path=MEDIA_TV_VIDEOS_PATH,
+    data_dir=BASE_DIR.parent / "data",
+)
 transcript_engine = TranscriptEngine(storage=TranscriptStorage(BASE_DIR.parent / "data" / "transcripts"))
 ai_analyzer_engine = AIAnalyzerEngine()
 MEDIA_KNOWLEDGE_DEBUG = {"knowledge_requests": 0, "knowledge_errors": 0, "last_knowledge_video_id": None, "last_agreement_score": None}
@@ -448,12 +457,14 @@ if STATIC_DIR.exists():
 @app.on_event("startup")
 def startup() -> None:
     twelvedata_ws_service.start()
+    media_automation_service.start()
     asyncio.create_task(startup_ai_healthcheck())
     _queue_market_ideas_refresh()
 
 
 @app.on_event("shutdown")
 def shutdown() -> None:
+    media_automation_service.stop()
     twelvedata_ws_service.stop()
 
 
@@ -859,6 +870,34 @@ def api_media_resolve_all() -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+
+def _run_automatic_media_pipeline(item: dict[str, Any]) -> dict[str, Any]:
+    """Run the automatic Import → Transcript → AI → Knowledge → Review → Committee pipeline for one item."""
+    video_id = str(item.get("youtube_id") or item.get("id") or "")
+    if not video_id:
+        return {"status": "skipped", "reason": "missing_video_id"}
+    transcript = _review_transcript_payload(item)
+    analysis = ai_analyzer_engine.analyze(str(transcript.get("text") or item.get("description") or ""), {**item, "video_id": video_id}).to_dict()
+    knowledge = _build_knowledge_for_video(video_id).model_dump()
+    review = create_llm_review_engine().generate(video_id).model_dump()
+    committee = InvestmentCommitteeEngine(media_catalog_loader=_load_tv_video_catalog, review_payload_builder=_build_tv_review_payload).build_for_video(video_id).model_dump()
+    consensus = create_consensus_engine().build(str(item.get("symbol") or "MARKET"))
+    author = create_author_intelligence_engine().build_for_author(str(item.get("author") or item.get("source_id") or "Unknown"))
+    performance = create_performance_engine().evaluate_video(video_id)
+    return {
+        "status": "published",
+        "video_id": video_id,
+        "steps": ["import", "transcript", "rule_ai", "knowledge", "llm_review", "committee", "consensus", "author_intelligence", "performance", "publish_to_tv"],
+        "transcript_status": transcript.get("status"),
+        "analysis": analysis,
+        "knowledge": knowledge,
+        "llm_review": review,
+        "committee": committee,
+        "consensus": consensus,
+        "author_intelligence": author,
+        "performance": performance,
+    }
+
 def _run_media_import() -> dict[str, Any]:
     engine = create_media_import_engine()
     return engine.import_latest()
@@ -933,7 +972,7 @@ def api_media_rss_test(source_id: str) -> dict[str, Any]:
 
 @app.get("/api/media/scheduler")
 def api_media_scheduler() -> dict[str, Any]:
-    return media_import_engine.scheduler.next_job_payload()
+    return media_automation_service.status()
 
 
 @app.get("/api/tv/sources")
