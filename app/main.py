@@ -808,6 +808,49 @@ async def api_media_add_source(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=409 if "duplicate" in str(exc).lower() else 400, detail=str(exc)) from exc
 
 
+
+@app.put("/api/media/sources/{source_id}")
+async def api_media_update_source(source_id: str, request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    try:
+        return create_media_import_engine().update_source(source_id, payload)
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=404 if "unknown" in str(exc).lower() else 400, detail=str(exc)) from exc
+
+
+@app.delete("/api/media/sources/{source_id}")
+def api_media_delete_source(source_id: str) -> dict[str, Any]:
+    try:
+        return create_media_import_engine().delete_source(source_id)
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/media/sources/{source_id}/test")
+def api_media_test_source(source_id: str) -> dict[str, Any]:
+    try:
+        return create_media_import_engine().test_source(source_id)
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/media/sources/{source_id}/test-now")
+def api_media_test_source_now(source_id: str) -> dict[str, Any]:
+    return api_media_test_source(source_id)
+
+
+@app.post("/api/media/sources/{source_id}/import")
+def api_media_import_source(source_id: str) -> dict[str, Any]:
+    try:
+        return create_media_import_engine().import_source(source_id)
+    except MediaConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/media/import-all")
+def api_media_import_all() -> dict[str, Any]:
+    return api_media_import()
+
 @app.post("/api/media/resolve-all")
 def api_media_resolve_all() -> dict[str, Any]:
     try:

@@ -17,5 +17,6 @@ dependencies = [
   "scikit-learn",
   "ta",
   "python-dotenv",
-  "yt-dlp"
+  "yt-dlp",
+  "feedparser"
 ]

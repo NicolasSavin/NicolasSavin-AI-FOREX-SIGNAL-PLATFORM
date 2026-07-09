@@ -11,10 +11,10 @@
   const formatValue = (value) => value ? escapeHtml(value) : '—';
   const showImportResult = (payload) => { if (importResult) importResult.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2); };
 
-  const formPayload = () => { const fd = new FormData(sourceForm); return { id: fd.get('id'), name: fd.get('name'), provider: fd.get('provider') || 'youtube_ytdlp', channel_url: fd.get('channel_url'), language: fd.get('language') || 'ru', categories: String(fd.get('categories') || '').split(',').map((v) => v.trim()).filter(Boolean), priority: Number(fd.get('priority') || 1), enabled: Boolean(fd.get('enabled')) }; };
+  const formPayload = () => { const fd = new FormData(sourceForm); return { id: fd.get('id'), name: fd.get('name'), source_type: fd.get('source_type') || 'youtube', provider: fd.get('provider') || 'youtube_api', url: fd.get('channel_url'), channel_url: fd.get('channel_url'), language: fd.get('language') || 'ru', categories: String(fd.get('categories') || '').split(',').map((v) => v.trim()).filter(Boolean), symbols: String(fd.get('symbols') || '').split(',').map((v) => v.trim()).filter(Boolean), priority: Number(fd.get('priority') || 1), enabled: Boolean(fd.get('enabled')) }; };
   const showResolve = (payload) => { if (resolveResult) resolveResult.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2); };
   function implementationNotice(action, sourceName) { window.alert(`${action}: Implementation in next sprint${sourceName ? ` для ${sourceName}` : ''}.`); }
-  const providerLabel = (provider) => provider === 'youtube_ytdlp' ? 'YouTube (yt-dlp)' : provider;
+  const providerLabel = (provider) => provider === 'youtube_ytdlp' ? 'YouTube (yt-dlp)' : (provider === 'youtube_api' ? 'YouTube API' : provider);
   const statusLabel = (source) => { if (source.provider === 'youtube_ytdlp' && source.status === 'online') return 'Online'; if (source.status === 'manual_source' || source.provider === 'youtube_manual') return 'Manual source — API not connected'; if (source.status === 'needs_channel_id' || (source.provider === 'youtube' && !source.channel_id)) return 'Нужен YouTube channel_id для RSS-импорта'; return source.enabled ? 'Online' : 'Disabled'; };
   const sourceDuration = (source) => source.last_run?.execution_time ? `${source.last_run.execution_time}s` : (source.import_duration ? `${source.import_duration}s` : '—');
   const sourceErrors = (source) => source.last_error || (source.last_run?.errors || []).filter(Boolean).join('; ') || '—';
@@ -27,14 +27,14 @@
       const statusClass = source.enabled && !source.last_error && label !== 'Manual source — API not connected' ? 'is-enabled' : 'is-disabled';
       return `
       <tr>
-        <td><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.channel_url || '')}</span></td>
+        <td><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.url || source.channel_url || '')}</span></td>
+        <td>${escapeHtml(source.source_type || 'youtube')}</td>
         <td><span class="tv-provider-pill">${escapeHtml(providerLabel(source.provider))}</span></td>
-        <td><span class="tv-status-pill ${statusClass}">${escapeHtml(label)}</span></td>
-        <td>${formatValue(source.last_import)}</td>
-        <td>${escapeHtml(source.videos_count ?? 0)}</td>
-        <td>${escapeHtml(sourceDuration(source))}</td>
+        <td><span class="tv-status-pill ${statusClass}">${escapeHtml(source.enabled ? 'Enabled' : 'Disabled')}</span></td>
+        <td>${formatValue(source.last_success || source.last_import)}</td>
+        <td>${escapeHtml(source.items_count ?? source.videos_count ?? 0)}</td>
         <td>${escapeHtml(sourceErrors(source))}</td>
-        <td><div class="tv-source-actions"><button data-action="Import Now" data-source="${escapeHtml(source.name)}">Import Now</button><button data-action="Disable" data-source="${escapeHtml(source.name)}">Disable</button><button data-action="Enable" data-source="${escapeHtml(source.name)}">Enable</button></div></td>
+        <td><div class="tv-source-actions"><button data-action="Test" data-id="${escapeHtml(source.id)}">Test</button><button data-action="Import Source" data-id="${escapeHtml(source.id)}">Import</button><button data-action="Disable" data-id="${escapeHtml(source.id)}">Disable</button><button data-action="Enable" data-id="${escapeHtml(source.id)}">Enable</button><button data-action="Delete" data-id="${escapeHtml(source.id)}">Delete</button></div></td>
       </tr>`;
     }).join('');
   }
@@ -60,14 +60,17 @@
   sourcesBody.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-action]');
     if (!button) return;
-    if (button.dataset.action === 'Import Now') { runImport(); return; }
-    implementationNotice(button.dataset.action, button.dataset.source);
+    const id = button.dataset.id;
+    if (button.dataset.action === 'Import Source') { fetch(`/api/media/sources/${id}/import`, { method: 'POST', headers: { Accept: 'application/json' } }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); return; }
+    if (button.dataset.action === 'Test') { fetch(`/api/media/sources/${id}/test`, { method: 'POST', headers: { Accept: 'application/json' } }).then((r) => r.json()).then(showImportResult); return; }
+    if (button.dataset.action === 'Delete') { fetch(`/api/media/sources/${id}`, { method: 'DELETE', headers: { Accept: 'application/json' } }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); return; }
+    if (button.dataset.action === 'Disable' || button.dataset.action === 'Enable') { fetch(`/api/media/sources/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ enabled: button.dataset.action === 'Enable' }) }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); return; }
   });
 
   function runImport() {
     setText('mediaImportStatus', 'Import running...');
     showImportResult('Import running...');
-    fetch('/api/media/import', { method: 'POST', headers: { Accept: 'application/json' } })
+    fetch('/api/media/import-all', { method: 'POST', headers: { Accept: 'application/json' } })
       .then((response) => response.json().catch(() => ({ success: false, errors: [{ reason: 'Invalid JSON response' }] })).then((payload) => {
         if (!response.ok) throw payload;
         return payload;
