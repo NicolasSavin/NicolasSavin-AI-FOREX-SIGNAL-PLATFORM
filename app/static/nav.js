@@ -36,6 +36,13 @@
     nav.appendChild(consensusLink);
   }
 
+  if (!nav.querySelector('a[href="/authors"]')) {
+    const authorsLink = document.createElement('a');
+    authorsLink.href = '/authors';
+    authorsLink.textContent = '🧠 Авторы';
+    nav.appendChild(authorsLink);
+  }
+
   if (!nav.querySelector('a[href="/tv"]')) {
     const tvLink = document.createElement('a');
     tvLink.href = '/tv';

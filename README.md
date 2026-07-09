@@ -1,3 +1,9 @@
+## Stage 9 — Author Intelligence Engine
+
+- Добавлен пакет `app/services/author_intelligence/` с `AuthorIntelligenceEngine`: он агрегирует Media Catalog, Transcript/Review payload, Knowledge Layer, LLM Review, Investment Committee и Consensus-compatible метрики по каждому YouTube автору.
+- Новые endpoint’ы `GET /api/authors` и `GET /api/authors/{author}` возвращают leaderboard и полный author report с rating, tier, proxy accuracy, win rate placeholder, activity, consistency, institutional score, favorite symbols/timeframes и latest opinion.
+- Добавлена страница `/authors` с тёмным responsive leaderboard UI и сортировками Highest Accuracy, Highest Rating, Most Active и Best Institutional Score. Accuracy явно помечена как proxy metric до подключения реальных market outcomes.
+
 
 ## FXPilot TV Stage 7: Institutional Investment Committee
 
