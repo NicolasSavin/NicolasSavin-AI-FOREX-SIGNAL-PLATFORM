@@ -50,6 +50,7 @@ from app.services.llm_review import LLMReview, LLMReviewStorage, OpenAIReviewPro
 from app.services.investment_committee import InvestmentCommitteeEngine
 from app.services.consensus import ConsensusEngine
 from app.services.author_intelligence import AuthorIntelligenceEngine
+from app.services.performance import PerformanceEngine
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -982,6 +983,42 @@ def create_author_intelligence_engine() -> AuthorIntelligenceEngine:
     )
 
 
+
+def _performance_completion_hook(outcome: dict[str, Any]) -> None:
+    # Hook point for Stage 10: completed outcomes can refresh Author Intelligence,
+    # Consensus and Institutional Rating without changing existing public APIs.
+    logger.info("performance_outcome_finished video_id=%s result=%s", outcome.get("video_id"), outcome.get("result"))
+
+
+def create_performance_engine() -> PerformanceEngine:
+    return PerformanceEngine(
+        media_catalog_loader=_load_tv_video_catalog,
+        review_payload_builder=_build_tv_review_payload,
+        completion_hooks=[_performance_completion_hook],
+    )
+
+
+@app.get("/api/performance")
+def api_performance() -> dict[str, Any]:
+    return create_performance_engine().evaluate_all()
+
+
+@app.get("/api/performance/author/{author}")
+def api_performance_author(author: str) -> dict[str, Any]:
+    try:
+        return create_performance_engine().evaluate_author(author)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/performance/{video_id}")
+def api_performance_video(video_id: str) -> dict[str, Any]:
+    try:
+        return create_performance_engine().evaluate_video(video_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/api/authors")
 def api_authors(sort: str = "rating") -> list[dict[str, Any]]:
     authors = create_author_intelligence_engine().build_all()
@@ -1036,6 +1073,11 @@ def consensus_page():
 @app.get("/authors", include_in_schema=False)
 def authors_page():
     return FileResponse(STATIC_DIR / "authors.html")
+
+
+@app.get("/performance", include_in_schema=False)
+def performance_page():
+    return FileResponse(STATIC_DIR / "performance.html")
 
 
 @app.get("/committee", include_in_schema=False)

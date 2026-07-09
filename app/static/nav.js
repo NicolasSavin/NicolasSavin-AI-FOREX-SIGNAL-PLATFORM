@@ -36,6 +36,13 @@
     nav.appendChild(consensusLink);
   }
 
+  if (!nav.querySelector('a[href="/performance"]')) {
+    const performanceLink = document.createElement('a');
+    performanceLink.href = '/performance';
+    performanceLink.textContent = '📈 Performance';
+    nav.appendChild(performanceLink);
+  }
+
   if (!nav.querySelector('a[href="/authors"]')) {
     const authorsLink = document.createElement('a');
     authorsLink.href = '/authors';

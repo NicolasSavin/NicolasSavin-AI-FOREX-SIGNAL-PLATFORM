@@ -560,3 +560,19 @@ Admin endpoints:
 ## FXPilot TV Stage 8 — AI Consensus Engine
 
 Stage 8 adds `/api/consensus/{symbol}` and `/api/consensus/{symbol}/{timeframe}` plus the `/consensus` page. The consensus engine aggregates all imported Media Catalog videos for the requested market, reusing Transcript Engine, Rule Analyzer, Knowledge Layer, LLM Review, and Investment Committee contracts through existing service builders. It returns bullish/bearish/neutral distribution, average confidence, average committee score, author leaderboard, detected conflicts, and a provider-independent consensus report. Historical author accuracy is intentionally exposed as a placeholder until verified performance data is available.
+
+## FXPilot TV Stage 10 — Performance Engine / Truth Engine
+
+Stage 10 adds a provider-neutral post-analysis engine at `app/services/performance/` for verified YouTube idea outcomes. It reuses Media Catalog, Transcript/Rule/Knowledge/LLM Review, Investment Committee, Consensus and Author Intelligence builders instead of duplicating services.
+
+New endpoints:
+
+- `GET /api/performance` — evaluates imported videos and returns outcomes plus leaderboards.
+- `GET /api/performance/{video_id}` — returns one video outcome.
+- `GET /api/performance/author/{author}` — returns author-level performance summary and evaluated videos.
+
+The engine stores and returns explicit outcome fields: `entry_price`, `stop_loss`, `take_profit`, `entry_time`, `evaluation_start`, `evaluation_end`, `market_high`, `market_low`, `max_profit`, `max_drawdown`, `profit`, `loss`, `rr`, `mfe`, `mae`, `holding_time_hours`, `result`, `status`, provider metadata and Russian warnings. Supported results are `WIN`, `LOSS`, `PARTIAL`, `BREAKEVEN`, `EXPIRED`, and `UNKNOWN`.
+
+Market replay is intentionally provider-neutral: the default adapter uses the existing canonical market service / MT4 bridge path, while the interface can be backed by MT5, Databento, Polygon, TwelveData or future providers. If candles or explicit Entry/SL/TP levels are missing, the engine returns `UNKNOWN` and does not replace real outcomes with proxy metrics.
+
+Frontend page `/performance` shows leaderboard blocks for Best Authors, Worst Authors, Most Accurate and Most Profitable plus per-video Prediction, Reality, Difference, Profit/Loss and Result cards. Completed outcomes call a hook point for refreshing Author Intelligence, Consensus and Institutional Rating without changing existing public APIs.
