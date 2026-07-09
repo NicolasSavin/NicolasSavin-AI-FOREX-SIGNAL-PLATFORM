@@ -52,6 +52,7 @@ from app.services.investment_committee import InvestmentCommitteeEngine
 from app.services.consensus import ConsensusEngine
 from app.services.author_intelligence import AuthorIntelligenceEngine
 from app.services.performance import PerformanceEngine
+from app.services.pipeline import PipelineEngine, PipelineRunner, PipelineStorage
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ MEDIA_CATALOG_PATH = BASE_DIR.parent / "data" / "media_catalog.json"
 MEDIA_TV_VIDEOS_PATH = BASE_DIR.parent / "data" / "tv_videos.json"
 MEDIA_MANUAL_YOUTUBE_PATH = BASE_DIR.parent / "data" / "manual_youtube_videos.json"
 MEDIA_DEBUG_PATH = BASE_DIR.parent / "data" / "media_import_debug.json"
+PIPELINE_STORAGE_PATH = BASE_DIR.parent / "data" / "pipeline"
 
 def create_media_import_engine() -> MediaImportEngine:
     manual_path = MEDIA_MANUAL_YOUTUBE_PATH if os.getenv("FXPILOT_DEV_MANUAL_MEDIA", "").strip().lower() in {"1", "true", "yes", "on", "dev"} else None
@@ -853,7 +855,14 @@ def api_media_test_source_now(source_id: str) -> dict[str, Any]:
 @app.post("/api/media/sources/{source_id}/import")
 def api_media_import_source(source_id: str) -> dict[str, Any]:
     try:
-        return create_media_import_engine().import_source(source_id)
+        engine = create_media_import_engine()
+        before_ids = {str(item.get("id") or "") for item in engine.load_catalog() if item.get("id")}
+        result = engine.import_source(source_id)
+        new_ids = [str(item.get("id") or "") for item in engine.load_catalog() if item.get("id") and str(item.get("id")) not in before_ids]
+        pipeline_results = [create_pipeline_runner().run(video_id) for video_id in new_ids]
+        result["pipeline_processed"] = len(pipeline_results)
+        result["pipeline_results"] = pipeline_results
+        return result
     except MediaConfigError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -872,35 +881,26 @@ def api_media_resolve_all() -> dict[str, Any]:
 
 
 def _run_automatic_media_pipeline(item: dict[str, Any]) -> dict[str, Any]:
-    """Run the automatic Import → Transcript → AI → Knowledge → Review → Committee pipeline for one item."""
-    video_id = str(item.get("youtube_id") or item.get("id") or "")
+    """Run the automatic Import → Transcript → Rule AI → Knowledge → Review → Committee pipeline for one item."""
+    video_id = str(item.get("id") or item.get("youtube_id") or "")
     if not video_id:
-        return {"status": "skipped", "reason": "missing_video_id"}
-    transcript = _review_transcript_payload(item)
-    analysis = ai_analyzer_engine.analyze(str(transcript.get("text") or item.get("description") or ""), {**item, "video_id": video_id}).to_dict()
-    knowledge = _build_knowledge_for_video(video_id).model_dump()
-    review = create_llm_review_engine().generate(video_id).model_dump()
-    committee = InvestmentCommitteeEngine(media_catalog_loader=_load_tv_video_catalog, review_payload_builder=_build_tv_review_payload).build_for_video(video_id).model_dump()
-    consensus = create_consensus_engine().build(str(item.get("symbol") or "MARKET"))
-    author = create_author_intelligence_engine().build_for_author(str(item.get("author") or item.get("source_id") or "Unknown"))
-    performance = create_performance_engine().evaluate_video(video_id)
-    return {
-        "status": "published",
-        "video_id": video_id,
-        "steps": ["import", "transcript", "rule_ai", "knowledge", "llm_review", "committee", "consensus", "author_intelligence", "performance", "publish_to_tv"],
-        "transcript_status": transcript.get("status"),
-        "analysis": analysis,
-        "knowledge": knowledge,
-        "llm_review": review,
-        "committee": committee,
-        "consensus": consensus,
-        "author_intelligence": author,
-        "performance": performance,
-    }
+        return {"pipeline_status": "skipped", "reason": "missing_video_id"}
+    return PipelineRunner(create_pipeline_engine()).run(video_id)
 
 def _run_media_import() -> dict[str, Any]:
     engine = create_media_import_engine()
-    return engine.import_latest()
+    before_ids = {str(item.get("id") or "") for item in engine.load_catalog() if item.get("id")}
+    result = engine.import_latest()
+    after = engine.load_catalog()
+    new_ids = [str(item.get("id") or "") for item in after if item.get("id") and str(item.get("id")) not in before_ids]
+    if not new_ids:
+        new_ids = [str(item) for item in result.get("new_item_ids") or [] if item]
+    pipeline_results = []
+    for video_id in new_ids:
+        pipeline_results.append(PipelineRunner(create_pipeline_engine()).run(video_id))
+    result["pipeline_processed"] = len(pipeline_results)
+    result["pipeline_results"] = pipeline_results
+    return result
 
 
 @app.post("/api/media/import")
@@ -941,6 +941,7 @@ def api_media_debug() -> dict[str, Any]:
         payload = create_media_import_engine().debug_sources()
         payload.update(transcript_engine.debug_payload())
         payload.update(MEDIA_KNOWLEDGE_DEBUG)
+        payload.update(PipelineStorage(PIPELINE_STORAGE_PATH).metrics())
         return payload
     except MediaConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1078,6 +1079,48 @@ def create_performance_engine() -> PerformanceEngine:
         review_payload_builder=_build_tv_review_payload,
         completion_hooks=[_performance_completion_hook],
     )
+
+
+def create_pipeline_engine() -> PipelineEngine:
+    return PipelineEngine(
+        media_catalog_loader=_load_tv_video_catalog,
+        transcript_engine=transcript_engine,
+        ai_analyzer_engine=ai_analyzer_engine,
+        knowledge_engine_factory=lambda: KnowledgeEngine(
+            media_catalog_loader=_load_tv_video_catalog,
+            transcript_engine=transcript_engine,
+            ai_analyzer_engine=ai_analyzer_engine,
+            market_payload_loader=ideas_market,
+        ),
+        review_engine_factory=create_llm_review_engine,
+        committee_engine_factory=lambda: InvestmentCommitteeEngine(
+            media_catalog_loader=_load_tv_video_catalog,
+            review_payload_builder=_build_tv_review_payload,
+        ),
+        consensus_engine_factory=create_consensus_engine,
+        author_intelligence_engine_factory=create_author_intelligence_engine,
+        performance_engine_factory=create_performance_engine,
+        storage=PipelineStorage(PIPELINE_STORAGE_PATH),
+    )
+
+
+def create_pipeline_runner() -> PipelineRunner:
+    return PipelineRunner(create_pipeline_engine())
+
+
+@app.post("/api/pipeline/run/{video_id}")
+def api_pipeline_run(video_id: str) -> dict[str, Any]:
+    return create_pipeline_runner().run(video_id)
+
+
+@app.post("/api/pipeline/run-all")
+def api_pipeline_run_all() -> dict[str, Any]:
+    return create_pipeline_runner().run_all()
+
+
+@app.get("/api/pipeline/{video_id}")
+def api_pipeline_status(video_id: str) -> dict[str, Any]:
+    return create_pipeline_runner().status(video_id)
 
 
 @app.get("/api/performance")

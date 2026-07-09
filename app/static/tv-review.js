@@ -177,7 +177,15 @@
     root.innerHTML = ReviewPage(review, transcript);
   }
 
-  loadReview().catch(() => {
-    root.innerHTML = '<section class="panel"><div class="tv-player-empty">Review не найден. Вернитесь в каталог FXPilot TV и выберите другой обзор.</div></section>';
+  loadReview().catch(async () => {
+    root.innerHTML = '<section class="panel"><div class="tv-player-empty">AI pipeline запускается автоматически. Подождите несколько секунд…</div></section>';
+    try {
+      const videoId = getVideoId();
+      const pipeline = await fetch(`/api/pipeline/run/${encodeURIComponent(videoId)}`, { method: 'POST', headers: { Accept: 'application/json' }, cache: 'no-store' });
+      if (!pipeline.ok) throw new Error('pipeline_failed');
+      await loadReview();
+    } catch (error) {
+      root.innerHTML = '<section class="panel"><div class="tv-player-empty">Review не найден: AI pipeline завершился с ошибкой.</div></section>';
+    }
   });
 })();
