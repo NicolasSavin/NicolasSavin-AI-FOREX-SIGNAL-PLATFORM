@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app.services.media_identity import resolve_media_video
+
 from app.services.investment_committee.models import CommitteeInput, InvestmentCommitteeReport
 from app.services.investment_committee.provider import InvestmentCommitteeProvider
 from app.services.investment_committee.rule_provider import RuleCommitteeProvider
@@ -22,7 +24,7 @@ class InvestmentCommitteeEngine:
         self.provider = provider or RuleCommitteeProvider()
 
     def build_for_video(self, video_id: str) -> InvestmentCommitteeReport:
-        video = next((item for item in self.media_catalog_loader() if str(item.get("id")) == str(video_id)), None)
+        video = resolve_media_video(video_id, self.media_catalog_loader())
         if not video:
             raise ValueError("TV video not found")
         warnings: list[str] = []

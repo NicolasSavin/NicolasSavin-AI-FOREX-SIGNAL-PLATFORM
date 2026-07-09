@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app.services.media_identity import canonical_catalog_id, canonical_youtube_id, resolve_media_video
+
 from app.services.ai_analyzer import AIAnalyzerEngine
 from app.services.knowledge import KnowledgeEngine
 from app.services.llm_review.models import LLMReview
@@ -29,19 +31,20 @@ class ReviewEngine:
         self.storage = storage or LLMReviewStorage()
 
     def build_context(self, video_id: str) -> dict[str, Any]:
-        video = next((item for item in self.media_catalog_loader() if item.get("id") == video_id), None)
+        video = resolve_media_video(video_id, self.media_catalog_loader())
         if not video:
             raise ValueError("TV video not found")
-        transcript_id = str(video.get("youtube_id") or video.get("id") or video_id)
+        catalog_id = canonical_catalog_id(video)
+        transcript_id = canonical_youtube_id(video)
         transcript = self.transcript_engine.get(transcript_id)
-        ai_review = self.ai_analyzer_engine.analyze(transcript.transcript, {**video, "video_id": video.get("id")})
+        ai_review = self.ai_analyzer_engine.analyze(transcript.transcript, {**video, "video_id": catalog_id})
         market_payload = self.market_payload_loader()
         knowledge = KnowledgeEngine(
             media_catalog_loader=self.media_catalog_loader,
             transcript_engine=self.transcript_engine,
             ai_analyzer_engine=self.ai_analyzer_engine,
             market_payload_loader=lambda: market_payload,
-        ).build_for_video(video_id)
+        ).build_for_video(catalog_id)
         return {
             "video": video,
             "transcript": {"status": transcript.status.value, "text": transcript.transcript, "language": transcript.language, "provider": transcript.source},
@@ -55,12 +58,14 @@ class ReviewEngine:
         }
 
     def generate(self, video_id: str, *, force: bool = False) -> LLMReview:
+        video = resolve_media_video(video_id, self.media_catalog_loader())
+        storage_id = canonical_catalog_id(video) if video else str(video_id)
         if not force:
-            cached = self.storage.get(video_id)
+            cached = self.storage.get(storage_id) or self.storage.get(video_id)
             if cached:
                 return cached
-        review = self.provider.generate_review(self.build_context(video_id))
+        review = self.provider.generate_review(self.build_context(storage_id))
         # Re-validate provider JSON through the explicit contract before caching.
         review = LLMReview.model_validate(review.model_dump())
-        self.storage.set(video_id, review)
+        self.storage.set(storage_id, review)
         return review
