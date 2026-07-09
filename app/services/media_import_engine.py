@@ -90,6 +90,7 @@ class MediaSource:
             status = "needs_channel_id"
         if self.provider == "youtube_ytdlp" and self.enabled and not self.last_error:
             status = "online"
+        health = "Disabled" if not self.enabled else ("Broken" if self.last_error else ("Warning" if status in {"needs_channel_id", "error"} else "Healthy"))
         return {
             "id": self.id,
             "name": self.name,
@@ -111,6 +112,11 @@ class MediaSource:
             "last_success": self.last_success,
             "status": status,
             "last_error": self.last_error,
+            "health": health,
+            "last_successful_import": self.last_success,
+            "last_failed_import": self.last_import if self.last_error else None,
+            "items_imported": len(videos) if catalog is not None else (self.items_count or self.videos_count),
+            "average_import_duration": None,
             "resolved_from": self.resolved_from,
             "rss_validation_status": self.rss_validation_status,
             "feed_title": self.feed_title,
@@ -377,13 +383,13 @@ class MediaImportEngine:
     @staticmethod
     def _manual_dev_mode_enabled() -> bool:
         return str(os.getenv("FXPILOT_DEV_MANUAL_MEDIA") or "").strip().lower() in {"1", "true", "yes", "on", "dev"}
-    def import_latest(self) -> dict[str, Any]:
+    def import_latest(self, source_types: set[str] | None = None) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
         run_log: dict[str, Any] = {"started_at": now, "finished_at": None, "sources": [], "steps": ["ENTER import_latest()"]}
         self._persist_debug_run(run_log)
         logger.info("ENTER import_latest()")
 
-        sources = [s for s in self.load_sources() if s.enabled]
+        sources = [s for s in self.load_sources() if s.enabled and (not source_types or s.source_type in source_types)]
         existing_raw_catalog = self._read_json_list(self.catalog_path)
         existing = self.load_catalog()
         fetched: list[dict[str, Any]] = []
@@ -500,6 +506,7 @@ class MediaImportEngine:
         raw_count = len(valid_fetched) + len(kept_existing)
         duplicates_removed = max(0, raw_count - len(merged))
         before_keys = {self._dedupe_key(i) for i in existing if self._dedupe_key(i)}
+        before_ids = {str(i.get("id") or "") for i in existing if i.get("id")}
         after_keys = {self._dedupe_key(i) for i in merged if self._dedupe_key(i)}
         before = {str(i.get("youtube_id")) for i in existing if is_valid_youtube_id(i.get("youtube_id"))}
         after = {str(i.get("youtube_id")) for i in merged if is_valid_youtube_id(i.get("youtube_id"))}
@@ -534,7 +541,8 @@ class MediaImportEngine:
         run_log["steps"].append("DONE")
         logger.info("DONE")
         self._persist_debug_run(run_log)
-        imported = len([item for item in fetched if self._dedupe_key(item) not in before_keys])
+        imported_items = [item for item in fetched if self._dedupe_key(item) not in before_keys and str(item.get("id") or "") not in before_ids]
+        imported = len(imported_items)
         return {
             "success": failed == 0,
             "processed": processed,
@@ -545,6 +553,7 @@ class MediaImportEngine:
             "catalog_size": len(merged),
             "sources": len(sources),
             "new_items": imported,
+            "new_item_ids": [str(item.get("id") or "") for item in imported_items],
             "duplicates_removed": duplicates_removed,
             "fetched_raw_count": run_log["fetched_raw_count"],
             "valid_items": run_log["valid_items"],
@@ -660,8 +669,29 @@ class MediaImportEngine:
             stype = source_meta.get(sid).source_type if sid in source_meta else self._infer_source_type(provider)
             by_source_type[stype] = by_source_type.get(stype, 0) + 1; by_provider[provider] = by_provider.get(provider, 0) + 1; by_source[sid] = by_source.get(sid, 0) + 1
         failed = [s for s in sources if s.last_error]
+        now_dt = datetime.now(timezone.utc)
+        def _dt(value: Any) -> datetime | None:
+            text = str(value or "").replace("Z", "+00:00")
+            try:
+                parsed = datetime.fromisoformat(text)
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            except Exception:
+                return None
+        imported_today = 0; imported_week = 0; awaiting_ai = 0; videos_analyzed = 0
+        for item in catalog:
+            d = _dt(item.get("imported_at") or item.get("published_at"))
+            if d and d.date() == now_dt.date(): imported_today += 1
+            if d and (now_dt - d).days < 7: imported_week += 1
+            if item.get("analysis_status") in {"analyzed", "published"}: videos_analyzed += 1
+            else: awaiting_ai += 1
+        durations = [float((r.get("execution_time") or 0)) for r in (last_run.get("sources") or []) if isinstance(r, dict) and r.get("execution_time")]
+        avg_duration = round(sum(durations) / len(durations), 3) if durations else 0
         return {
             "catalog_items": len(catalog), "total_items": len(catalog),
+            "imported_today": imported_today, "imported_this_week": imported_week,
+            "sources_online": len([s for s in sources if s.enabled and not s.last_error]), "sources_failed": len(failed),
+            "videos_analyzed": videos_analyzed, "videos_awaiting_ai": awaiting_ai,
+            "average_import_duration": avg_duration, "provider_usage": dict(sorted(by_provider.items())),
             "real_videos": real_videos,
             "manual_demo": manual_demo,
             "sources_with_videos": len(videos_by_source),

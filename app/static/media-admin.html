@@ -11,9 +11,9 @@
       <header class="site-header tv-hero tv-admin-hero">
         <div class="tv-hero__grid">
           <div class="tv-hero__copy">
-            <p class="eyebrow">FXPilot TV · Hidden Admin</p>
-            <h1>Media Import Engine</h1>
-            <p class="lead">Внутренняя панель управления источниками FXPilot TV: YouTube API/yt-dlp, Telegram, RSS и ручные источники.</p>
+            <p class="eyebrow">FXPilot TV · Автономная админ-панель</p>
+            <h1>Автономный Media Engine</h1>
+            <p class="lead">Администратор добавляет YouTube, Telegram или RSS один раз — дальше импорт, AI-анализ, публикация и архивирование выполняются автоматически.</p>
           </div>
           <div class="tv-hero__signal" aria-label="Статус импорта">
             <span class="tv-live-dot"></span><strong id="mediaImportStatus">Engine ready</strong>
@@ -34,7 +34,7 @@
         <section class="panel tv-source-panel" aria-labelledby="mediaAddTitle">
           <div class="section-heading split-heading">
             <div><p class="section-kicker">Add source</p><h2 id="mediaAddTitle">Добавить источник</h2><p class="section-text">YouTube: URL канала, Telegram: t.me URL, RSS: feed URL. Импорт не удаляет старый каталог при ошибках провайдера.</p></div>
-            <div class="tv-source-actions"><button type="button" id="mediaResolveAll">Re-resolve all YouTube sources</button></div>
+            <div class="tv-source-actions"><button type="button" id="mediaResolveAll">Обновить YouTube-метаданные</button></div>
           </div>
           <form id="mediaSourceForm" class="media-source-form">
             <label>ID<input name="id" placeholder="gerchik" required /></label>
@@ -45,7 +45,7 @@
             <label>Категории<input name="categories" placeholder="Forex, Smart Money" required /></label><label>Символы<input name="symbols" placeholder="EURUSD, XAUUSD" /></label>
             <label>Priority<input name="priority" type="number" value="1" min="1" /></label>
             <label class="media-check"><input name="enabled" type="checkbox" checked /> Enabled</label>
-            <div class="tv-source-actions"><button type="button" id="mediaResolveSource">Resolve</button><button type="submit">Save Source</button><button type="button" id="mediaImportNowForm">Import Now</button></div>
+            <div class="tv-source-actions"><button type="button" id="mediaResolveSource">Проверить источник</button><button type="submit">Сохранить источник</button></div>
           </form>
           <pre id="mediaResolveResult" class="media-import-result" aria-live="polite">—</pre>
         </section>
@@ -55,9 +55,9 @@
             <div>
               <p class="section-kicker">Sources</p>
               <h2 id="mediaSourcesTitle">Настроенные источники</h2>
-              <p class="section-text">Доступны Add/Edit, Enable/Disable, Delete, Test Source, Import Source и Import All.</p>
+              <p class="section-text">Ежедневный импорт автоматический. Ручные кнопки импорта скрыты и оставлены только API-совместимостью.</p>
             </div>
-            <div class="tv-source-actions"><button type="button" id="mediaImportNow">Import All</button><a class="tv-source-button" href="/api/media/import-now" target="_blank" rel="noopener">Import Now (browser)</a></div>
+            <div class="tv-source-actions"><span class="tv-status-pill is-enabled">Автопилот включён</span></div>
               <pre id="mediaImportResult" class="media-import-result" aria-live="polite">—</pre>
           </div>
           <div class="tv-source-table-wrap">
@@ -66,6 +66,20 @@
               <tbody id="mediaSourcesBody"><tr><td colspan="8">Загрузка...</td></tr></tbody>
             </table>
           </div>
+        </section>
+        <section class="panel tv-source-panel" aria-labelledby="mediaAutomationTitle">
+          <div class="section-heading"><p class="section-kicker">Scheduler · Queue · Logs · Health · Notifications</p><h2 id="mediaAutomationTitle">Автоматизация платформы</h2><p class="section-text">YouTube каждые 15 минут, Telegram каждые 10 минут, RSS каждые 30 минут, ночное обслуживание — без Render Cron.</p></div>
+          <div class="tv-source-stats" aria-label="Автоматическая статистика">
+            <article><span>Сегодня импортировано</span><strong id="mediaStatToday">—</strong></article>
+            <article><span>За неделю</span><strong id="mediaStatWeek">—</strong></article>
+            <article><span>Источники online</span><strong id="mediaStatOnline">—</strong></article>
+            <article><span>Источники failed</span><strong id="mediaStatFailed">—</strong></article>
+            <article><span>Видео проанализировано</span><strong id="mediaStatAnalyzed">—</strong></article>
+            <article><span>Ожидают AI</span><strong id="mediaStatAwaiting">—</strong></article>
+            <article><span>Средний импорт</span><strong id="mediaStatAvgDuration">—</strong></article>
+            <article><span>Провайдеры</span><strong id="mediaStatProviders">—</strong></article>
+          </div>
+          <pre id="mediaSchedulerState" class="media-import-result" aria-live="polite">Загрузка scheduler...</pre>
         </section>
 
         <section class="panel tv-source-panel" aria-labelledby="mediaNewestTitle">
