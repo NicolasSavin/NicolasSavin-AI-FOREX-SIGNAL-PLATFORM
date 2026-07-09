@@ -38,6 +38,8 @@ class InvestmentCommitteeReport(BaseModel):
     conflicts: list[str] = Field(default_factory=list)
     committee_verdict: CommitteeVerdict = "WATCH"
     provider: str = "rule-committee"
+    warnings: list[str] = Field(default_factory=list)
+    degraded: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @field_validator("overall_score", "agreement_score", mode="before")

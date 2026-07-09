@@ -20,7 +20,7 @@ from app.services.youtube_source_resolver import YouTubeSourceResolver
 logger = logging.getLogger(__name__)
 
 SUPPORTED_SOURCE_TYPES = {"youtube", "telegram", "rss", "website", "podcast", "manual"}
-SUPPORTED_MEDIA_PROVIDERS = {"youtube_api", "youtube_ytdlp", "telegram_public", "telegram_bot", "rss_feed", "manual", "youtube", "youtube_manual", "telegram", "rss", "podcast", "vimeo", "fxpilot", "news", "articles"}
+SUPPORTED_MEDIA_PROVIDERS = {"youtube_api", "youtube_ytdlp", "auto", "telegram_public", "telegram_bot", "rss_feed", "manual", "youtube", "youtube_manual", "telegram", "rss", "podcast", "vimeo", "fxpilot", "news", "articles"}
 SYMBOLS = ("EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD", "XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD", "DXY", "US500", "NASDAQ", "GER40", "UK100")
 YOUTUBE_RSS_BY_CHANNEL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 YOUTUBE_RSS_BY_USER = "https://www.youtube.com/feeds/videos.xml?user={user}"
@@ -348,7 +348,25 @@ class MediaImportEngine:
     def load_sources(self) -> list[MediaSource]:
         try: payload = json.loads(self.sources_path.read_text(encoding="utf-8"))
         except FileNotFoundError: return []
+        payload = self._migrate_youtube_providers(payload)
         return self._validate_sources(payload)
+
+    def _migrate_youtube_providers(self, payload: Any) -> Any:
+        if not isinstance(payload, list):
+            return payload
+        should_migrate = bool(os.getenv("YOUTUBE_API_KEY")) or str(os.getenv("FXPILOT_YOUTUBE_PROVIDER") or "auto").strip().lower() == "auto"
+        if not should_migrate:
+            return payload
+        changed = False
+        migrated: list[Any] = []
+        for item in payload:
+            if isinstance(item, dict) and str(item.get("source_type") or self._infer_source_type(str(item.get("provider") or ""))).lower() == "youtube" and str(item.get("provider") or "").lower() == "youtube_ytdlp":
+                item = {**item, "provider": "auto"}
+                changed = True
+            migrated.append(item)
+        if changed:
+            self._atomic_write_json(self.sources_path, migrated)
+        return migrated
     def list_sources(self) -> list[dict[str, Any]]:
         catalog = self.load_catalog()
         debug_rows: dict[str, dict[str, Any]] = {}
@@ -481,6 +499,7 @@ class MediaImportEngine:
                     "skipped_reasons": active_diag.get("skipped_reasons", {}),
                     "skipped_items": active_diag.get("skipped_items", [])[:20],
                     "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY")),
+                    "api_key_detected": bool(os.getenv("YOUTUBE_API_KEY")),
                     "youtube_api_quota_used": api_diag.get("quota_used") if api_diag else result.quota_used,
                     "youtube_api_remaining_estimate": max(0, 10000 - int((api_diag.get("quota_used") if api_diag else result.quota_used) or 0)),
                     "resolved_channel_id": api_diag.get("resolved_channel_id") or result.source.channel_id,
@@ -614,6 +633,7 @@ class MediaImportEngine:
                 "provider_used": last_source_run.get("provider_used") or resolved.get("provider", source.provider),
                 "provider_fallback": bool(last_source_run.get("provider_fallback") or last_source_run.get("fallback_used")),
                 "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY")),
+                "api_key_detected": bool(os.getenv("YOUTUBE_API_KEY")),
                 "youtube_api_quota_used": last_source_run.get("youtube_api_quota_used") or last_source_run.get("quota_used"),
                 "youtube_api_remaining_estimate": last_source_run.get("youtube_api_remaining_estimate"),
                 "resolved_channel_id": last_source_run.get("resolved_channel_id") or channel_id,
@@ -669,6 +689,7 @@ class MediaImportEngine:
                     "provider_used": last_source_run.get("provider_used"),
                     "provider_fallback": bool(last_source_run.get("provider_fallback") or last_source_run.get("fallback_used")),
                     "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY")),
+                    "api_key_detected": bool(os.getenv("YOUTUBE_API_KEY")),
                     "youtube_api_quota_used": last_source_run.get("youtube_api_quota_used") or last_source_run.get("quota_used"),
                     "youtube_api_remaining_estimate": last_source_run.get("youtube_api_remaining_estimate"),
                     "resolved_channel_id": last_source_run.get("resolved_channel_id") or last_source_run.get("channel_id"),
@@ -762,11 +783,22 @@ class MediaImportEngine:
             return getattr(self.youtube_provider, "resolve")(channel_url)
         return self.youtube_provider.resolver.resolve(channel_url, validate_rss=True)
 
+    def _default_provider_for_source_type(self, source_type: str | None, provider: str | None = None) -> str:
+        explicit = str(provider or "").strip().lower()
+        stype = str(source_type or self._infer_source_type(explicit)).strip().lower()
+        if explicit:
+            if stype == "youtube" and explicit == "youtube_ytdlp" and (bool(os.getenv("YOUTUBE_API_KEY")) or str(os.getenv("FXPILOT_YOUTUBE_PROVIDER") or "auto").strip().lower() == "auto"):
+                return "auto"
+            return explicit
+        if stype == "youtube":
+            return "auto"
+        return explicit or "manual"
+
     def add_source(self, payload: dict[str, Any]) -> dict[str, Any]:
         name = self._required_str(payload, "name", 0)
         raw_id = str(payload.get("id") or name).strip().lower()
         source_id = re.sub(r"[^a-z0-9_]+", "_", raw_id).strip("_") or f"source_{len(self._read_json_list(self.sources_path))+1}"
-        provider = self._required_str(payload, "provider", 0).lower()
+        provider = self._default_provider_for_source_type(str(payload.get("source_type") or ""), str(payload.get("provider") or ""))
         source_type = str(payload.get("source_type") or self._infer_source_type(provider)).lower()
         if provider not in SUPPORTED_MEDIA_PROVIDERS:
             raise MediaConfigError(f"unsupported media provider: {provider}")
@@ -833,9 +865,11 @@ class MediaImportEngine:
 
     def resolve_provider(self, provider: str) -> MediaProvider:
         provider = (provider or "").lower()
-        if provider == "youtube":
+        if provider in {"youtube", "auto"}:
             mode = str(os.getenv("FXPILOT_YOUTUBE_PROVIDER") or "auto").strip().lower()
-            if not self._custom_youtube_provider and (mode == "ytdlp" or (mode == "auto" and not os.getenv("YOUTUBE_API_KEY"))):
+            if provider == "auto" and mode not in {"api", "youtube_api", "ytdlp", "youtube_ytdlp", "auto"}:
+                mode = "auto"
+            if not self._custom_youtube_provider and (mode in {"ytdlp", "youtube_ytdlp"} or (mode == "auto" and not os.getenv("YOUTUBE_API_KEY"))):
                 return self.ytdlp_provider
             return self.youtube_provider
         if provider == "youtube_api":
@@ -881,7 +915,7 @@ class MediaImportEngine:
             if not isinstance(item, dict): raise MediaConfigError(f"source #{index} must be an object")
             source_id = self._required_str(item, "id", index)
             if source_id in seen: raise MediaConfigError(f"duplicate media source id: {source_id}")
-            seen.add(source_id); provider = self._required_str(item, "provider", index).lower()
+            seen.add(source_id); provider = self._default_provider_for_source_type(str(item.get("source_type") or ""), str(item.get("provider") or ""))
             if provider not in SUPPORTED_MEDIA_PROVIDERS: raise MediaConfigError(f"unsupported media provider: {provider}")
             categories = item.get("categories")
             if not isinstance(categories, list) or not all(isinstance(v, str) and v.strip() for v in categories): raise MediaConfigError(f"source {source_id} categories must be strings")
@@ -905,7 +939,7 @@ class MediaImportEngine:
 
     @staticmethod
     def _infer_source_type(provider: str) -> str:
-        if provider.startswith("youtube") or provider == "youtube": return "youtube"
+        if provider.startswith("youtube") or provider in {"youtube", "auto"}: return "youtube"
         if provider.startswith("telegram"): return "telegram"
         if provider in {"rss", "rss_feed"}: return "rss"
         if provider in {"manual", "youtube_manual"}: return "manual"
@@ -972,7 +1006,7 @@ class MediaImportEngine:
         provider = str(item.get("provider") or "")
         if not allow_manual and (item.get("status") == "manual_demo" or provider in {"youtube_manual", "youtube-manual"}):
             return False
-        if provider in {"youtube", "youtube_api", "youtube_ytdlp", "youtube-rss"} or item.get("youtube_id"):
+        if provider in {"youtube", "youtube_api", "youtube_ytdlp", "auto", "youtube-rss"} or item.get("youtube_id"):
             youtube_id = str(item.get("youtube_id") or "").strip()
             return bool(youtube_id and not youtube_id.upper().startswith("DEMO"))
         return bool(str(item.get("url") or item.get("id") or "").strip())

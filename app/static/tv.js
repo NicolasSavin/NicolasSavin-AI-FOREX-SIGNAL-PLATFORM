@@ -33,6 +33,17 @@
     { title: 'Options', match: (video) => isSameCategory(video, 'options') },
   ];
   const getNextVideo = () => { const index = filteredVideos.findIndex((video) => video.id === selectedId); return filteredVideos[index + 1] || filteredVideos[0] || null; };
+  const normalizeMediaPayload = (payload) => {
+    const raw = Array.isArray(payload) ? payload : (Array.isArray(payload?.items) ? payload.items : (Array.isArray(payload?.videos) ? payload.videos : (Array.isArray(payload?.data) ? payload.data : [])));
+    return raw.filter((video) => video && video.status === 'imported' && video.youtube_id);
+  };
+  const showRenderError = (error) => {
+    console.error('FXPilot TV render failed:', error);
+    const message = error?.message || String(error || 'unknown render error');
+    playerEl.innerHTML = `<div class="tv-player-empty"><strong>Ошибка отрисовки каталога</strong><span>${escapeHtml(message)}</span></div>`;
+    detailsEl.innerHTML = `<p class="section-text">JS exception: ${escapeHtml(message)}</p>`;
+    listEl.innerHTML = `<div class="tv-player-empty">Ошибка интерфейса: ${escapeHtml(message)}</div>`;
+  };
 
   function renderPlayer(video) {
     playerEl.innerHTML = PlayerSkeleton('Загрузка выбранного обзора...');
@@ -158,13 +169,18 @@
   fetch('/api/media', { headers: { Accept: 'application/json' }, cache: 'no-store' })
     .then((response) => { if (!response.ok) throw new Error('videos_unavailable'); return response.json(); })
     .then((payload) => {
-      videos = (Array.isArray(payload) ? payload : []).sort(byNewest);
+      videos = normalizeMediaPayload(payload).sort(byNewest);
+      console.log(`FXPilot TV loaded media items: ${videos.length}`);
       filteredVideos = videos;
-      renderFilters();
-      document.getElementById('tvVideoSearch')?.addEventListener('input', (event) => { query = event.target.value; renderList(); });
-      document.getElementById('tvCategoryFilter')?.addEventListener('change', (event) => { category = event.target.value; renderList(); selectVideo(filteredVideos[0]?.id); });
-      if (!videos.length) { renderList(); renderPlayer(null); renderDetails(null); return; }
-      selectVideo(videos[0] && videos[0].id);
+      try {
+        renderFilters();
+        document.getElementById('tvVideoSearch')?.addEventListener('input', (event) => { query = event.target.value; renderList(); });
+        document.getElementById('tvCategoryFilter')?.addEventListener('change', (event) => { category = event.target.value; renderList(); selectVideo(filteredVideos[0]?.id); });
+        if (!videos.length) { renderList(); renderPlayer(null); renderDetails(null); return; }
+        selectVideo(videos[0] && videos[0].id);
+      } catch (error) {
+        showRenderError(error);
+      }
     })
-    .catch(() => { videos = []; filteredVideos = []; if (countEl) countEl.textContent = '0 видео'; playerEl.innerHTML = '<div class="tv-player-empty"><strong>Каталог временно недоступен</strong><span>Не удалось загрузить локальный список видео. Попробуйте обновить страницу.</span></div>'; detailsEl.innerHTML = '<p class="section-text">Видеообзоры не загружены. Реальные рыночные данные не подменяются демо-контентом.</p>'; listEl.innerHTML = '<div class="tv-player-empty">Нет доступных видео.</div>'; });
+    .catch((error) => { console.error('FXPilot TV media load failed:', error); videos = []; filteredVideos = []; if (countEl) countEl.textContent = '0 из 0 видео'; playerEl.innerHTML = `<div class="tv-player-empty"><strong>Каталог временно недоступен</strong><span>${escapeHtml(error?.message || 'Не удалось загрузить локальный список видео.')}</span></div>`; detailsEl.innerHTML = '<p class="section-text">Видеообзоры не загружены. Реальные рыночные данные не подменяются демо-контентом.</p>'; listEl.innerHTML = '<div class="tv-player-empty">Нет доступных видео.</div>'; });
 })();

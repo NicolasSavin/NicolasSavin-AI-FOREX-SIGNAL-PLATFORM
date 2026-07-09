@@ -69,7 +69,13 @@ class ConsensusEngine:
         wanted_timeframe = _norm_timeframe(timeframe)
         start = _date(date_from)
         end = _date(date_to)
-        videos = [v for v in self.media_catalog_loader() if _norm_symbol(v.get("symbol")) == wanted_symbol]
+        catalog = self.media_catalog_loader()
+        available_symbols = sorted({_norm_symbol(v.get("symbol")) or "MARKET" for v in catalog})
+        if wanted_symbol in {"", "ALL", "MARKET"}:
+            videos = list(catalog)
+            wanted_symbol = "MARKET"
+        else:
+            videos = [v for v in catalog if _norm_symbol(v.get("symbol")) == wanted_symbol]
         if wanted_timeframe:
             videos = [v for v in videos if _norm_timeframe(v.get("timeframe")) == wanted_timeframe]
         if start or end:
@@ -112,7 +118,9 @@ class ConsensusEngine:
             "opinions": opinions,
             "top_authors": self._leaderboard(opinions),
             "disagreements": self._disagreements(counts),
-            "market_summary": self._summary(wanted_symbol, wanted_timeframe or "все TF", overall, agreement, counts),
+            "market_summary": self._summary(wanted_symbol, wanted_timeframe or "все TF", overall, agreement, counts) if total else f"Нет видео по этому символу. Доступные символы: {', '.join(available_symbols) or 'нет'}",
+            "available_symbols": available_symbols,
+            "empty_message": None if total else f"Нет видео по этому символу. Доступные символы: {', '.join(available_symbols) or 'нет'}",
         }
 
     def _opinion(self, video: dict[str, Any]) -> dict[str, Any]:

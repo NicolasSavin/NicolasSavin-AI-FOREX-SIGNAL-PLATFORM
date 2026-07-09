@@ -25,7 +25,16 @@ class InvestmentCommitteeEngine:
         video = next((item for item in self.media_catalog_loader() if str(item.get("id")) == str(video_id)), None)
         if not video:
             raise ValueError("TV video not found")
-        review_payload = self.review_payload_builder(video)
+        warnings: list[str] = []
+        try:
+            review_payload = self.review_payload_builder(video)
+        except Exception as exc:
+            review_payload = {"video": video}
+            warnings.append(f"review_payload_unavailable: {exc.__class__.__name__}: {exc}")
+        for key in ("transcript", "knowledge_context", "knowledge", "llm_review"):
+            value = review_payload.get(key)
+            if isinstance(value, dict) and (value.get("error") or value.get("status") in {"unavailable", "error"}):
+                warnings.append(f"{key}_warning: {value.get('error') or value.get('status')}")
         context = CommitteeInput(
             video=review_payload.get("video") or video,
             transcript=review_payload.get("transcript") or {},
@@ -33,4 +42,26 @@ class InvestmentCommitteeEngine:
             knowledge_layer=review_payload.get("knowledge_context") or review_payload.get("knowledge") or {},
             llm_review=review_payload.get("llm_review") or {},
         )
-        return self.provider.evaluate(context)
+        try:
+            report = self.provider.evaluate(context)
+        except Exception as exc:
+            warnings.append(f"committee_provider_unavailable: {exc.__class__.__name__}: {exc}")
+            report = InvestmentCommitteeReport(
+                video=video,
+                summary="Investment Committee работает в деградированном режиме: часть AI/knowledge слоёв недоступна.",
+                overall_score=0,
+                decision="WAIT",
+                signal_quality="D",
+                risk_level="HIGH",
+                agreement_score=0,
+                institutional_bias="NEUTRAL",
+                pros=[],
+                cons=["Недостаточно данных для полноценного committee review."],
+                conflicts=[],
+                committee_verdict="WATCH",
+                provider="rule-committee-degraded",
+            )
+        if warnings:
+            report.warnings.extend(warnings)
+            report.degraded = True
+        return report
