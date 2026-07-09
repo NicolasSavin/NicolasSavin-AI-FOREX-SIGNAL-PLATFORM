@@ -102,3 +102,53 @@ def test_review_endpoint_includes_llm_review(monkeypatch, tmp_path):
     response = TestClient(main.app).get("/api/media/review/v1")
     assert response.status_code == 200
     assert response.json()["llm_review"]["provider"] == "mock"
+
+
+def test_media_import_generates_reviews_for_new_catalog_items(monkeypatch):
+    import app.main as main
+
+    calls = []
+
+    class FakeImportEngine:
+        def import_latest(self):
+            return {"success": True, "new_item_ids": ["youtube:abc12345678"], "imported": 1}
+
+    class FakeReviewEngine:
+        def generate(self, video_id):
+            calls.append(video_id)
+            return LLMReview(summary="Generated after import", provider="mock")
+
+    monkeypatch.setattr(main, "create_media_import_engine", lambda: FakeImportEngine())
+    monkeypatch.setattr(main, "create_llm_review_engine", lambda: FakeReviewEngine())
+
+    result = main._run_media_import()
+
+    assert calls == ["youtube:abc12345678"]
+    assert result["review_generation"]["generated"] == 1
+    assert result["review_generation"]["items"][0]["video_id"] == "youtube:abc12345678"
+
+
+def test_automatic_media_pipeline_uses_catalog_id_for_review_generation(monkeypatch):
+    import app.main as main
+
+    item = {"id": "youtube:abc12345678", "youtube_id": "abc12345678", "description": "Buy EURUSD", "symbol": "EURUSD", "author": "Desk"}
+    calls = []
+
+    class FakeReviewEngine:
+        def generate(self, video_id):
+            calls.append(video_id)
+            return LLMReview(summary="Generated", provider="mock")
+
+    monkeypatch.setattr(main, "_review_transcript_payload", lambda video: {"status": "FOUND", "text": "Buy EURUSD"})
+    monkeypatch.setattr(main.ai_analyzer_engine, "analyze", lambda transcript, metadata: AIReview(video_id=metadata["video_id"], symbol="EURUSD", direction="BUY"))
+    monkeypatch.setattr(main, "_build_knowledge_for_video", lambda video_id: type("Knowledge", (), {"model_dump": lambda self: {"agreement_score": 80}})())
+    monkeypatch.setattr(main, "create_llm_review_engine", lambda: FakeReviewEngine())
+    monkeypatch.setattr(main, "InvestmentCommitteeEngine", lambda **kwargs: type("Committee", (), {"build_for_video": lambda self, video_id: type("Report", (), {"model_dump": lambda self: {}})()})())
+    monkeypatch.setattr(main, "create_consensus_engine", lambda: type("Consensus", (), {"build": lambda self, symbol: {}})())
+    monkeypatch.setattr(main, "create_author_intelligence_engine", lambda: type("Author", (), {"build_for_author": lambda self, author: {}})())
+    monkeypatch.setattr(main, "create_performance_engine", lambda: type("Performance", (), {"evaluate_video": lambda self, video_id: {}})())
+
+    result = main._run_automatic_media_pipeline(item)
+
+    assert calls == ["youtube:abc12345678"]
+    assert result["video_id"] == "youtube:abc12345678"

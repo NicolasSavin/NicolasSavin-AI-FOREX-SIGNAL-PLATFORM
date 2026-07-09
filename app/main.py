@@ -873,7 +873,7 @@ def api_media_resolve_all() -> dict[str, Any]:
 
 def _run_automatic_media_pipeline(item: dict[str, Any]) -> dict[str, Any]:
     """Run the automatic Import → Transcript → AI → Knowledge → Review → Committee pipeline for one item."""
-    video_id = str(item.get("youtube_id") or item.get("id") or "")
+    video_id = str(item.get("id") or item.get("youtube_id") or "")
     if not video_id:
         return {"status": "skipped", "reason": "missing_video_id"}
     transcript = _review_transcript_payload(item)
@@ -898,9 +898,34 @@ def _run_automatic_media_pipeline(item: dict[str, Any]) -> dict[str, Any]:
         "performance": performance,
     }
 
+def _generate_reviews_for_imported_items(video_ids: list[str]) -> dict[str, Any]:
+    """Generate cached AI Reviews for freshly imported catalog items using the existing ReviewEngine."""
+    unique_ids = [video_id for video_id in dict.fromkeys(str(item or "") for item in video_ids) if video_id]
+    result: dict[str, Any] = {"requested": len(unique_ids), "generated": 0, "failed": 0, "items": []}
+    if not unique_ids:
+        return result
+
+    engine = create_llm_review_engine()
+    for video_id in unique_ids:
+        logger.info("media_import_review_generation_start video_id=%s", video_id)
+        try:
+            review = engine.generate(video_id)
+        except Exception as exc:
+            logger.exception("media_import_review_generation_failed video_id=%s", video_id)
+            result["failed"] += 1
+            result["items"].append({"video_id": video_id, "status": "failed", "error": str(exc), "exception_type": exc.__class__.__name__})
+            continue
+        result["generated"] += 1
+        result["items"].append({"video_id": video_id, "status": "generated", "provider": review.provider})
+        logger.info("media_import_review_generation_done video_id=%s provider=%s", video_id, review.provider)
+    return result
+
+
 def _run_media_import() -> dict[str, Any]:
     engine = create_media_import_engine()
-    return engine.import_latest()
+    result = engine.import_latest()
+    result["review_generation"] = _generate_reviews_for_imported_items(result.get("new_item_ids") or [])
+    return result
 
 
 @app.post("/api/media/import")
