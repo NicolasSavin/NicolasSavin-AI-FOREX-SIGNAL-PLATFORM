@@ -18,5 +18,6 @@ dependencies = [
   "ta",
   "python-dotenv",
   "yt-dlp",
-  "feedparser"
+  "feedparser",
+  "APScheduler==3.10.4"
 ]

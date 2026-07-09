@@ -15,7 +15,7 @@
   const formPayload = () => { const fd = new FormData(sourceForm); return { id: fd.get('id'), name: fd.get('name'), source_type: fd.get('source_type') || 'youtube', provider: fd.get('provider') || 'youtube_api', url: fd.get('channel_url'), channel_url: fd.get('channel_url'), language: fd.get('language') || 'ru', categories: String(fd.get('categories') || '').split(',').map((v) => v.trim()).filter(Boolean), symbols: String(fd.get('symbols') || '').split(',').map((v) => v.trim()).filter(Boolean), priority: Number(fd.get('priority') || 1), enabled: Boolean(fd.get('enabled')) }; };
   const showResolve = (payload) => { if (resolveResult) resolveResult.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2); };
   function implementationNotice(action, sourceName) { window.alert(`${action}: Implementation in next sprint${sourceName ? ` для ${sourceName}` : ''}.`); }
-  const providerLabel = (provider) => provider === 'youtube_ytdlp' ? 'YouTube (yt-dlp)' : (provider === 'youtube_api' ? 'YouTube API' : provider);
+  const providerLabel = (provider) => provider === 'youtube_ytdlp' ? 'YouTube (yt-dlp)' : (provider === 'youtube_api' ? 'YouTube API' : provider === 'rss_feed' ? 'RSS' : provider === 'telegram_public' ? 'Telegram' : provider);
   const statusLabel = (source) => { if (source.provider === 'youtube_ytdlp' && source.status === 'online') return 'Online'; if (source.status === 'manual_source' || source.provider === 'youtube_manual') return 'Manual source — API not connected'; if (source.status === 'needs_channel_id' || (source.provider === 'youtube' && !source.channel_id)) return 'Нужен YouTube channel_id для RSS-импорта'; return source.enabled ? 'Online' : 'Disabled'; };
   const sourceDuration = (source) => source.last_run?.execution_time ? `${source.last_run.execution_time}s` : (source.import_duration ? `${source.import_duration}s` : '—');
   const sourceErrors = (source) => source.last_error || (source.last_run?.errors || []).filter(Boolean).join('; ') || '—';
@@ -30,7 +30,7 @@
       <tr>
         <td><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.url || source.channel_url || '')}</span></td>
         <td>${escapeHtml(source.source_type || 'youtube')}</td>
-        <td><span class="tv-provider-pill">${escapeHtml(providerLabel(source.provider))}</span></td>
+        <td><span class="tv-provider-pill">${escapeHtml(providerLabel(source.provider))}</span><span>used: ${escapeHtml(providerLabel(source.provider_used || source.last_run?.provider_used || source.provider))}${source.provider_fallback || source.last_run?.provider_fallback ? ' · fallback yt-dlp' : ''}</span></td>
         <td><span class="tv-status-pill ${statusClass}">${escapeHtml(source.enabled ? 'Enabled' : 'Disabled')}</span></td>
         <td>${formatValue(source.last_success || source.last_import)}</td>
         <td>${escapeHtml(source.items_count ?? source.videos_count ?? 0)}</td>

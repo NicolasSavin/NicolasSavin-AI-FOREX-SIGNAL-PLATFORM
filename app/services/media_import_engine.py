@@ -440,7 +440,8 @@ class MediaImportEngine:
                 result = provider.fetch_latest(source)
                 fallback_used = False
                 fallback_reason = None
-                if result.error and source.provider == "youtube_api" and str(os.getenv("FXPILOT_YOUTUBE_PROVIDER") or "auto").lower() == "auto":
+                selected_name = getattr(provider, "provider_name", source.provider)
+                if result.error and selected_name == "youtube_api" and str(os.getenv("FXPILOT_YOUTUBE_PROVIDER") or "auto").lower() == "auto":
                     fallback_reason = result.error
                     logger.warning("youtube_api_fallback_to_ytdlp source_id=%s reason=%s", source.id, fallback_reason)
                     fallback_result = self.ytdlp_provider.fetch_latest(replace(source, provider="youtube_ytdlp"))
@@ -449,7 +450,12 @@ class MediaImportEngine:
                         fallback_used = True
                 source_log["fallback_used"] = fallback_used
                 source_log["fallback_reason"] = fallback_reason
-                source_log["provider_selected"] = getattr(provider, "provider_name", source.provider)
+                source_log["provider_selected"] = selected_name
+                source_log["provider_used"] = getattr(self.ytdlp_provider if fallback_used else provider, "provider_name", source.provider)
+                source_log["provider_fallback"] = fallback_used
+                api_diag = getattr(provider, "last_diagnostic", {}) if selected_name == "youtube_api" else {}
+                fallback_diag = getattr(self.ytdlp_provider, "last_diagnostic", {}) if fallback_used else {}
+                active_diag = fallback_diag if fallback_used else api_diag
                 run_log["steps"].append(f"HTTP {result.response_status if result.response_status is not None else result.request_status}")
                 run_log["steps"].append("Parsing...")
                 logger.info("HTTP %s", result.response_status if result.response_status is not None else result.request_status)
@@ -467,13 +473,18 @@ class MediaImportEngine:
                     "channel_title": result.channel_title or result.source.feed_title,
                     "channel_url": source.channel_url,
                     "resolved_url": result.source.rss_url or result.source.feed_url,
-                    "yt_dlp_version": getattr(provider, "last_diagnostic", {}).get("yt_dlp_version") if source.provider == "youtube_ytdlp" else None,
-                    "execution_time": getattr(provider, "last_diagnostic", {}).get("execution_time") if source.provider == "youtube_ytdlp" else (datetime.now(timezone.utc) - source_started).total_seconds(),
-                    "fetched_raw_count": getattr(provider, "last_diagnostic", {}).get("fetched_raw_count", result.videos_found) if source.provider == "youtube_ytdlp" else result.videos_found,
-                    "valid_items": getattr(provider, "last_diagnostic", {}).get("valid_items", len(result.items)) if source.provider == "youtube_ytdlp" else len(result.items),
-                    "skipped_invalid": getattr(provider, "last_diagnostic", {}).get("skipped_invalid", 0) if source.provider == "youtube_ytdlp" else 0,
-                    "skipped_reasons": getattr(provider, "last_diagnostic", {}).get("skipped_reasons", {}) if source.provider == "youtube_ytdlp" else {},
-                    "skipped_items": getattr(provider, "last_diagnostic", {}).get("skipped_items", [])[:20] if source.provider == "youtube_ytdlp" else [],
+                    "yt_dlp_version": active_diag.get("yt_dlp_version"),
+                    "execution_time": active_diag.get("execution_time") or (datetime.now(timezone.utc) - source_started).total_seconds(),
+                    "fetched_raw_count": active_diag.get("fetched_raw_count", result.videos_found),
+                    "valid_items": active_diag.get("valid_items", len(result.items)),
+                    "skipped_invalid": active_diag.get("skipped_invalid", 0),
+                    "skipped_reasons": active_diag.get("skipped_reasons", {}),
+                    "skipped_items": active_diag.get("skipped_items", [])[:20],
+                    "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY")),
+                    "youtube_api_quota_used": api_diag.get("quota_used") if api_diag else result.quota_used,
+                    "youtube_api_remaining_estimate": max(0, 10000 - int((api_diag.get("quota_used") if api_diag else result.quota_used) or 0)),
+                    "resolved_channel_id": api_diag.get("resolved_channel_id") or result.source.channel_id,
+                    "api_errors": api_diag.get("api_errors", []),
                     "updated_count": 0,
                 })
                 if result.error:
@@ -599,6 +610,15 @@ class MediaImportEngine:
                 "source_id": source.id,
                 "channel_url": source.channel_url,
                 "provider": resolved.get("provider", source.provider),
+                "provider_selected": last_source_run.get("provider_selected") or getattr(provider, "provider_name", source.provider),
+                "provider_used": last_source_run.get("provider_used") or resolved.get("provider", source.provider),
+                "provider_fallback": bool(last_source_run.get("provider_fallback") or last_source_run.get("fallback_used")),
+                "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY")),
+                "youtube_api_quota_used": last_source_run.get("youtube_api_quota_used") or last_source_run.get("quota_used"),
+                "youtube_api_remaining_estimate": last_source_run.get("youtube_api_remaining_estimate"),
+                "resolved_channel_id": last_source_run.get("resolved_channel_id") or channel_id,
+                "api_errors": last_source_run.get("api_errors") or [],
+                "fallback_reason": last_source_run.get("fallback_reason"),
                 "quota_used": last_source_run.get("quota_used"),
                 "rss_url": resolved.get("rss_url") or resolved.get("resolved_url") or source.rss_url,
                 "resolved_url": resolved.get("resolved_url") or resolved.get("rss_url") or source.rss_url,
@@ -645,6 +665,15 @@ class MediaImportEngine:
                     "channel_url": source.channel_url,
                     "resolved_url": last_source_run.get("resolved_url") or resolved.get("resolved_url"),
                     "execution_time": last_source_run.get("execution_time") or resolved.get("execution_time"),
+                    "provider_selected": last_source_run.get("provider_selected"),
+                    "provider_used": last_source_run.get("provider_used"),
+                    "provider_fallback": bool(last_source_run.get("provider_fallback") or last_source_run.get("fallback_used")),
+                    "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY")),
+                    "youtube_api_quota_used": last_source_run.get("youtube_api_quota_used") or last_source_run.get("quota_used"),
+                    "youtube_api_remaining_estimate": last_source_run.get("youtube_api_remaining_estimate"),
+                    "resolved_channel_id": last_source_run.get("resolved_channel_id") or last_source_run.get("channel_id"),
+                    "api_errors": last_source_run.get("api_errors") or [],
+                    "fallback_reason": last_source_run.get("fallback_reason"),
                 },
             })
         return {"last_import_run": last_run, "sources": rows}
@@ -692,6 +721,10 @@ class MediaImportEngine:
             "sources_online": len([s for s in sources if s.enabled and not s.last_error]), "sources_failed": len(failed),
             "videos_analyzed": videos_analyzed, "videos_awaiting_ai": awaiting_ai,
             "average_import_duration": avg_duration, "provider_usage": dict(sorted(by_provider.items())),
+            "videos_per_provider": dict(sorted(by_provider.items())),
+            "quota_usage": sum(int((r.get("youtube_api_quota_used") or r.get("quota_used") or 0)) for r in (last_run.get("sources") or []) if isinstance(r, dict)),
+            "api_latency": round(sum(float(r.get("execution_time") or 0) for r in (last_run.get("sources") or []) if isinstance(r, dict) and r.get("provider_selected") == "youtube_api") / max(1, len([r for r in (last_run.get("sources") or []) if isinstance(r, dict) and r.get("provider_selected") == "youtube_api"])), 3),
+            "fallback_count": len([r for r in (last_run.get("sources") or []) if isinstance(r, dict) and (r.get("provider_fallback") or r.get("fallback_used"))]),
             "real_videos": real_videos,
             "manual_demo": manual_demo,
             "sources_with_videos": len(videos_by_source),
@@ -801,6 +834,9 @@ class MediaImportEngine:
     def resolve_provider(self, provider: str) -> MediaProvider:
         provider = (provider or "").lower()
         if provider == "youtube":
+            mode = str(os.getenv("FXPILOT_YOUTUBE_PROVIDER") or "auto").strip().lower()
+            if not self._custom_youtube_provider and (mode == "ytdlp" or (mode == "auto" and not os.getenv("YOUTUBE_API_KEY"))):
+                return self.ytdlp_provider
             return self.youtube_provider
         if provider == "youtube_api":
             if self._custom_youtube_provider:

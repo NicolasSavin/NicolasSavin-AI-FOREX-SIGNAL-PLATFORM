@@ -320,30 +320,46 @@ def test_youtube_source_with_channel_id_uses_channel_rss(tmp_path: Path):
     assert requested == ["https://www.youtube.com/feeds/videos.xml?channel_id=UCexplicit"]
 
 
-def test_youtube_source_without_api_key_returns_config_error(tmp_path: Path):
+def test_youtube_source_without_api_key_uses_ytdlp_fallback(tmp_path: Path, monkeypatch):
     sources_path = tmp_path / "media_sources.json"
     catalog_path = tmp_path / "media_catalog.json"
     sources_path.write_text(json.dumps([
         {"id":"demo","name":"Demo","provider":"youtube","channel_url":"https://www.youtube.com/@demo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
     ]), encoding="utf-8")
     catalog_path.write_text("[]", encoding="utf-8")
-    result = MediaImportEngine(sources_path, catalog_path).import_latest()
+    monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
+    class GoodYtDlp:
+        provider_name = "youtube_ytdlp"
+        last_diagnostic = {"execution_time": 0.01, "fetched_raw_count": 1, "valid_items": 1}
+        def fetch_latest(self, source):
+            item = MediaItem("youtube:NoKey000001", "youtube_ytdlp", source.id, "EURUSD", "Demo", "NoKey000001", "https://youtube.com/watch?v=NoKey000001", None, "2026-07-07", None, "Forex", "EURUSD", "ru", "")
+            return ImportSourceResult(source, [item], "ok", 200, 1)
+        def resolve_source(self, source):
+            return {"ok": True, "provider": "youtube_ytdlp", "resolved_url": source.channel_url}
+    result = MediaImportEngine(sources_path, catalog_path, ytdlp_provider=GoodYtDlp()).import_latest()
     source = json.loads(sources_path.read_text(encoding="utf-8"))[0]
-    assert result["failed"] == 1
-    assert source["status"] == "error"
-    assert "YOUTUBE_API_KEY" in source["last_error"]
+    assert result["failed"] == 0
+    assert source.get("last_error") is None
+    assert json.loads(catalog_path.read_text(encoding="utf-8"))[0]["provider"] == "youtube_ytdlp"
 
 
-def test_debug_sources_exposes_api_key_blocking_reason(tmp_path: Path):
+def test_debug_sources_exposes_ytdlp_provider_without_api_key(tmp_path: Path, monkeypatch):
     sources_path = tmp_path / "media_sources.json"
     catalog_path = tmp_path / "media_catalog.json"
     sources_path.write_text(json.dumps([
         {"id":"demo","name":"Demo","provider":"youtube","channel_url":"https://www.youtube.com/@demo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
     ]), encoding="utf-8")
     catalog_path.write_text("[]", encoding="utf-8")
-    row = MediaImportEngine(sources_path, catalog_path).debug_sources()["sources"][0]
-    assert row["can_import"] is False
-    assert "YOUTUBE_API_KEY" in row["blocking_reason"]
+    monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
+    class DiagnosticYtDlp:
+        provider_name = "youtube_ytdlp"
+        def resolve_source(self, source):
+            return {"ok": True, "provider": "youtube_ytdlp", "resolved_url": source.channel_url}
+        def fetch_latest(self, source):
+            return ImportSourceResult(source, [], "ok", 200, 0)
+    row = MediaImportEngine(sources_path, catalog_path, ytdlp_provider=DiagnosticYtDlp()).debug_sources()["sources"][0]
+    assert row["can_import"] is True
+    assert row["provider_selected"] == "youtube_ytdlp"
 
 
 def test_rss_test_returns_headers_preview_feed_title_and_entry_count(tmp_path: Path):
@@ -505,3 +521,51 @@ def test_media_review_endpoint_returns_fxpilot_context(monkeypatch):
     assert payload["comparison"]["video_says"] == "No transcript yet. AI summary will appear later."
     assert payload["confluence_score"] == 95
     assert payload["preliminary_verdict"] == "FXPilot currently supports this market context."
+
+
+def test_youtube_api_failure_falls_back_to_ytdlp_for_failed_source(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("YOUTUBE_API_KEY", "key")
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    sources_path.write_text(json.dumps([{"id":"demo","name":"Demo","provider":"youtube_api","channel_url":"https://youtube.com/@demo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}]), encoding="utf-8")
+    catalog_path.write_text("[]", encoding="utf-8")
+
+    class FailingApi:
+        provider_name = "youtube_api"
+        last_diagnostic = {"quota_used": 1, "api_errors": ["boom"], "resolved_channel_id": None, "execution_time": 0.01}
+        def set_latest_imported_at(self, *_): pass
+        def fetch_latest(self, source):
+            return ImportSourceResult(source, [], "api_error", None, 0, "boom", quota_used=1)
+        def resolve_source(self, source):
+            return {"ok": False, "provider": "youtube_api", "error": "boom"}
+
+    class GoodYtDlp:
+        provider_name = "youtube_ytdlp"
+        last_diagnostic = {"yt_dlp_version": "test", "execution_time": 0.02, "fetched_raw_count": 1, "valid_items": 1}
+        def fetch_latest(self, source):
+            item = MediaItem("youtube:AbC12345678", "youtube_ytdlp", source.id, "EURUSD", "Demo", "AbC12345678", "https://youtube.com/watch?v=AbC12345678", None, "2026-07-07", None, "Forex", "EURUSD", "ru", "")
+            return ImportSourceResult(source, [item], "ok", 200, 1)
+
+    engine = MediaImportEngine(sources_path, catalog_path, youtube_provider=FailingApi(), ytdlp_provider=GoodYtDlp())
+    result = engine.import_latest()
+    debug = json.loads((tmp_path / "media_import_debug.json").read_text(encoding="utf-8"))
+    row = debug["sources"][0]
+    assert result["success"] is True
+    assert row["provider_selected"] == "youtube_api"
+    assert row["provider_used"] == "youtube_ytdlp"
+    assert row["provider_fallback"] is True
+    assert row["fallback_reason"] == "boom"
+
+
+def test_stats_include_provider_quota_latency_and_fallback_count(tmp_path: Path):
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    debug_path = tmp_path / "debug.json"
+    sources_path.write_text(json.dumps([]), encoding="utf-8")
+    catalog_path.write_text(json.dumps([{"id":"youtube:AbC12345678","provider":"youtube_api","source_id":"demo","youtube_id":"AbC12345678"}]), encoding="utf-8")
+    debug_path.write_text(json.dumps({"sources":[{"provider_selected":"youtube_api","youtube_api_quota_used":102,"execution_time":0.5,"provider_fallback":True}]}), encoding="utf-8")
+    stats = MediaImportEngine(sources_path, catalog_path, debug_path=debug_path).stats()
+    assert stats["videos_per_provider"]["youtube_api"] == 1
+    assert stats["quota_usage"] == 102
+    assert stats["api_latency"] == 0.5
+    assert stats["fallback_count"] == 1

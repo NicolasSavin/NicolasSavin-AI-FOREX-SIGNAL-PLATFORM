@@ -93,3 +93,35 @@ def test_incremental_import_uses_latest_catalog_date(tmp_path: Path):
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     assert result["imported"] == 1
     assert any(item.get("youtube_id") == "v2" for item in catalog)
+
+
+def test_playlist_import_uses_playlist_items_and_videos_list():
+    calls = []
+    def requester(endpoint, params):
+        calls.append((endpoint, params))
+        if endpoint == "channels":
+            return {"items": [{"id": "UCdemo12345", "snippet": {"title": "Demo"}}]}
+        if endpoint == "playlistItems":
+            assert params["playlistId"] == "PLdemo"
+            return {"items": [{"contentDetails": {"videoId": "PlV00000001"}}]}
+        if endpoint == "videos":
+            return {"items": [{"id": "PlV00000001", "snippet": {"title": "GBPUSD", "publishedAt": "2026-07-07T00:00:00Z", "channelTitle": "Demo"}, "contentDetails": {"duration": "PT7M"}}]}
+        raise AssertionError(endpoint)
+    result = YouTubeApiProvider(api_key="key", requester=requester).fetch_latest(source("https://youtube.com/playlist?list=PLdemo", channel_id="UCdemo12345"))
+    assert result.error is None
+    assert result.items[0].youtube_id == "PlV00000001"
+    assert result.items[0].provider == "youtube_api"
+    assert [call[0] for call in calls] == ["channels", "playlistItems", "videos"]
+
+
+def test_handle_resolution_is_cached():
+    calls = []
+    def requester(endpoint, params):
+        calls.append((endpoint, params))
+        return {"items": [{"id": "UCcache12345", "snippet": {"title": "Cached"}}]}
+    provider = YouTubeApiProvider(api_key="key", requester=requester)
+    first = provider.resolve("https://youtube.com/@cache-test")
+    second = provider.resolve("https://youtube.com/@cache-test")
+    assert first["channel_id"] == second["channel_id"] == "UCcache12345"
+    assert second["cache_hit"] is True
+    assert len(calls) == 1
