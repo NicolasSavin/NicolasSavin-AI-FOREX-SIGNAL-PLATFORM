@@ -48,8 +48,9 @@ from app.services.media_automation import MediaAutomationService
 from app.services.transcript import TranscriptEngine, TranscriptStorage
 from app.services.ai_analyzer import AIAnalyzerEngine
 from app.services.knowledge import KnowledgeEngine
-from app.services.llm_config import LLMConfigurationError, llm_debug_payload, resolve_llm_config
+from app.services.llm_config import LLMConfigurationError, llm_debug_payload, log_llm_startup_config, resolve_llm_config
 from app.services.llm_review import LLMReview, LLMReviewStorage, OpenAIReviewProvider, ReviewEngine
+from app.services.openrouter_diagnostics import run_openrouter_diagnostic
 from app.services.investment_committee import InvestmentCommitteeEngine
 from app.services.consensus import ConsensusEngine
 from app.services.author_intelligence import AuthorIntelligenceEngine
@@ -458,6 +459,7 @@ if STATIC_DIR.exists():
 
 @app.on_event("startup")
 def startup() -> None:
+    log_llm_startup_config()
     twelvedata_ws_service.start()
     media_automation_service.start()
     asyncio.create_task(startup_ai_healthcheck())
@@ -978,6 +980,11 @@ def api_media_import_now() -> dict[str, Any]:
     except Exception as exc:
         logger.exception("media_import_failed_before_completion")
         raise HTTPException(status_code=500, detail={"error": str(exc), "exception_type": exc.__class__.__name__}) from exc
+
+
+@app.get("/api/ai/openrouter-test")
+def api_ai_openrouter_test() -> dict[str, Any]:
+    return run_openrouter_diagnostic()
 
 
 @app.get("/api/media/stats")
