@@ -2,206 +2,150 @@
   const root = document.getElementById('tvReviewPage');
   if (!root || !window.FXPilotTv) return;
 
-  const { escapeHtml, formatDate, thumbnailUrl, CategoryBadges, ReviewSection } = window.FXPilotTv;
+  const { escapeHtml, formatDate, thumbnailUrl, formatDuration, reviewLabel, reviewClass, badge } = window.FXPilotTv;
   const getVideoId = () => {
     const parts = window.location.pathname.split('/').filter(Boolean);
     return parts[0] === 'tv' && parts[1] === 'review' ? decodeURIComponent(parts[2] || '') : '';
   };
-  const value = (input, fallback = 'Не определено') => (input === undefined || input === null || input === '' ? fallback : input);
-  const percent = (input) => input === undefined || input === null || input === '' ? 'Не определено' : `${Math.round(Number(input))}%`;
-  const statusRu = (status) => status === 'available' ? 'Доступен' : 'Недоступен';
-  const directionRu = (direction) => direction === 'BUY' ? 'Покупка' : direction === 'SELL' ? 'Продажа' : value(direction, 'Нет направления');
-  const verdictRu = (verdict) => ({
-    'FXPilot currently supports this market context.': 'FXPilot сейчас поддерживает этот рыночный контекст.',
-    'FXPilot has insufficient data.': 'У FXPilot недостаточно данных.',
-    'FXPilot warns that confirmation is weak.': 'FXPilot предупреждает: подтверждение слабое.',
-  }[verdict] || verdict || 'Вердикт недоступен.');
+  const has = (v) => !(v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length));
+  const value = (input, fallback = 'Не определено') => has(input) ? input : fallback;
+  const percent = (input) => has(input) && Number.isFinite(Number(input)) ? `${Math.round(Number(input))}%` : 'Не определено';
+  const compact = (items) => items.filter(([_, v]) => has(v));
+  const youtubeUrl = (video) => video.youtube_id ? `https://www.youtube.com/watch?v=${encodeURIComponent(video.youtube_id)}` : '#';
+  const directionRu = (direction) => ({ BUY: 'Покупка', SELL: 'Продажа', WAIT: 'Ожидание', NEUTRAL: 'Нейтрально' }[String(direction || '').toUpperCase()] || value(direction));
+  const biasRu = (bias) => ({ bullish: 'Бычий', bearish: 'Медвежий', neutral: 'Нейтральный', mixed: 'Смешанный' }[String(bias || '').toLowerCase()] || value(bias));
+  const riskLevel = (review) => {
+    const risks = [...(review.llm_review?.risks || []), ...(review.analysis?.risks || []), ...(review.warnings || [])].filter(Boolean).length;
+    if (risks >= 4) return 'Высокий';
+    if (risks >= 2) return 'Средний';
+    return risks ? 'Умеренный' : 'Низкий';
+  };
 
-  function renderVideoInfo(video) {
+  function metricGrid(rows, cls = '') {
+    return `<div class="tv-report-metrics ${cls}">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div>`;
+  }
+  function section(id, title, content, cls = '') {
+    return `<section id="${escapeHtml(id)}" class="tv-report-card ${escapeHtml(cls)}"><div class="tv-report-card__head"><p class="section-kicker">Institutional Review</p><h2>${escapeHtml(title)}</h2></div>${content}</section>`;
+  }
+  function pillList(items, empty = '') {
+    const arr = Array.isArray(items) ? items.filter(has) : [];
+    if (!arr.length) return empty;
+    return `<div class="tv-report-pill-list">${arr.map((item) => `<span>${escapeHtml(item)}</span>`).join('')}</div>`;
+  }
+  function paragraph(text, fallback = 'Не определено') {
+    return `<p class="tv-report-copy">${escapeHtml(value(text, fallback))}</p>`;
+  }
+
+  function renderHeader(review) {
+    const video = review.video || {};
+    const llm = review.llm_review || {};
     const thumb = thumbnailUrl(video);
-    return ReviewSection({ id: 'videoInfo', className: 'tv-review-section--summary', title: 'Video info', content: `
-      <div class="tv-intel-video">
-        <div class="tv-intel-thumb" style="${thumb ? `background-image:url('${escapeHtml(thumb)}')` : ''}" aria-label="Thumbnail"></div>
-        <div class="tv-intel-video__body">
-          <div class="tv-detail-top"><div>${CategoryBadges(video)}</div><time datetime="${escapeHtml(video.published_at)}">${escapeHtml(formatDate(video.published_at))}</time></div>
-          <h2>${escapeHtml(video.title || 'Видеообзор FXPilot TV')}</h2>
-          <p>${escapeHtml(video.description || 'Описание недоступно.')}</p>
-          <div class="tv-player-meta-grid tv-review-meta-grid">
-            ${[['Длительность', video.duration], ['Категория', video.category], ['Таймфрейм', video.timeframe], ['YouTube ID', video.youtube_id]].map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}
-          </div>
-        </div>
-      </div>` });
+    const status = review.review_status || (llm.summary || review.primary_symbol || review.direction ? 'ready' : 'missing');
+    const chips = [
+      badge(String(review.direction || llm.direction || 'NEUTRAL').toUpperCase(), `direction ${String(review.direction || llm.direction || 'neutral').toLowerCase()}`),
+      badge(review.primary_symbol || review.symbol || video.symbol, 'symbol'),
+      badge(review.timeframe || llm.timeframe || video.timeframe, 'timeframe'),
+      badge(percent(review.confidence || llm.confidence), 'confidence'),
+      `<span class="${reviewClass(status)}">${escapeHtml(status === 'ready' ? 'Review Ready' : reviewLabel(status))}</span>`,
+    ].filter(Boolean).join('');
+    return `<section class="tv-report-hero panel">
+      <div class="tv-report-thumb" style="${thumb ? `background-image:url('${escapeHtml(thumb)}')` : ''}" aria-label="Превью видео"></div>
+      <div class="tv-report-hero__body">
+        <div class="tv-report-actions tv-report-actions--top"><a class="tv-back-link" href="/tv">← Назад в TV</a>${chips}</div>
+        <h1>${escapeHtml(video.title || 'AI Review FXPilot TV')}</h1>
+        <p>${escapeHtml(video.description || 'Профессиональный read-only отчёт по сохранённому AI Review.')}</p>
+        ${metricGrid([
+          ['Автор', video.author || video.channel || review.author_source?.author],
+          ['Публикация', formatDate(video.published_at)],
+          ['Длительность', formatDuration(video.duration)],
+          ['Источник', video.source || video.provider || review.author_source?.provider || 'YouTube'],
+          ['Категория', video.category],
+          ['Основной символ', review.primary_symbol || video.symbol],
+          ['Таймфрейм', review.timeframe || video.timeframe],
+          ['Направление', directionRu(review.direction)],
+          ['Confidence', percent(review.confidence)],
+        ], 'tv-report-metrics--hero')}
+      </div>
+    </section>`;
   }
 
-  function renderSource(review) {
-    const source = review.author_source || {};
-    return ReviewSection({ id: 'authorSource', className: 'tv-review-section--summary', title: 'Author/source', content: `
-      <div class="tv-snapshot-grid">
-        ${[['Автор', source.author], ['Provider', source.provider], ['Source ID', source.source_id], ['Detected symbol', review.detected_symbol]].map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}
-      </div>` });
+  function renderSummary(review) {
+    const llm = review.llm_review || {};
+    return section('executiveSummary', 'Executive Summary', `
+      <div class="tv-summary-grid">
+        <article><span>Общее мнение</span>${paragraph(llm.summary || review.analysis?.summary || review.ai_review?.summary, 'Резюме не сформировано.')}</article>
+        <article><span>Ключевая идея</span>${paragraph(llm.market_overview || llm.recommended_action || review.comparison?.video_says)}</article>
+        <article><span>Институциональная интерпретация</span>${paragraph(llm.institutional_view || review.knowledge_context?.institutional_narrative || review.current_fxpilot_idea?.institutional_narrative)}</article>
+      </div>
+      ${metricGrid([
+        ['Confidence', percent(llm.confidence || review.confidence)],
+        ['Market bias', biasRu(llm.market_bias || review.knowledge_context?.market_bias)],
+        ['Риск', riskLevel(review)],
+        ['Agreement', has(llm.agreement_score || review.agreement_score) ? `${llm.agreement_score || review.agreement_score}/100` : null],
+      ])}`, 'tv-report-card--wide');
   }
 
-  function renderIdea(review) {
-    const idea = review.current_fxpilot_idea || {};
+  function renderTradeSetup(review) {
     const rows = [
-      ['Detected symbol', review.detected_symbol],
-      ['Current FXPilot idea for that symbol', idea.symbol],
-      ['Direction', directionRu(idea.direction)],
-      ['Entry', idea.entry],
-      ['SL', idea.sl],
-      ['TP', idea.tp],
-      ['Confidence', percent(idea.confidence)],
-      ['OrderFlow status', `${statusRu(idea.orderflow_status)}${idea.orderflow_bias ? ` · ${idea.orderflow_bias}` : ''}`],
-      ['Options status', `${statusRu(idea.options_status)}${idea.options_bias ? ` · ${idea.options_bias}` : ''}`],
-      ['News status', idea.news_status || 'neutral'],
-      ['Institutional Narrative', idea.institutional_narrative],
+      ['Entry', review.entry], ['Entry zone', Array.isArray(review.entry_zone) ? review.entry_zone.join(' — ') : review.entry_zone],
+      ['Stop Loss', review.stop_loss], ['Take Profit', review.take_profit], ['Targets', Array.isArray(review.targets) ? review.targets.join(', ') : review.targets],
+      ['Risk/Reward', review.risk_reward || review.llm_review?.risk_reward],
     ];
-    return ReviewSection({ id: 'fxpilotIdea', className: 'tv-review-section--summary', title: 'Current FXPilot idea', content: `<div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div><p class="tv-context-note">Контекст построен фактически из /api/ideas/market. LLM Review создаётся настроенным LLM-провайдером и проходит детерминированную проверку символов.</p>` });
+    const ideas = Array.isArray(review.trade_ideas) ? review.trade_ideas : [];
+    const cards = ideas.map((idea, i) => `<article class="tv-trade-idea-card"><strong>Trade Setup ${i + 1}: ${escapeHtml(value(idea.symbol || review.primary_symbol))}</strong>${metricGrid([
+      ['Direction', directionRu(idea.direction)], ['Timeframe', idea.timeframe], ['Entry', idea.entry_zone?.length ? idea.entry_zone.join(' — ') : idea.entry], ['SL', idea.stop_loss], ['TP', idea.take_profit || (idea.targets || []).join(', ')], ['Confidence', percent(idea.confidence)]
+    ])}${paragraph(idea.reasoning)}</article>`).join('');
+    return section('tradeSetup', 'Trade Setup', `${metricGrid(rows)}${cards || '<div class="tv-report-empty">Trade setup: Не определено</div>'}`);
   }
 
-  function transcriptMessage(status) {
-    if (status === 'WHISPER_REQUIRED') return 'Whisper processing required';
-    if (status === 'ERROR') return 'Transcript unavailable';
-    return 'Transcript unavailable';
+  function renderMarketContext(review) {
+    const levels = Array.isArray(review.detected_levels) ? review.detected_levels.map((l) => [l.name || l.type || 'Level', l.price || l.value || l.zone].filter(has).join(': ')) : [];
+    const rows = compact([
+      ['Primary symbol', review.primary_symbol || review.symbol], ['Additional symbols', (review.symbols || []).filter((s) => s !== review.primary_symbol).join(', ')],
+      ['Detected levels', levels.join(' · ')], ['Trend', review.llm_review?.trend || review.analysis?.trend], ['Timeframe', review.timeframe], ['Market structure', review.llm_review?.market_structure || review.analysis?.market_structure],
+    ]);
+    return rows.length ? section('marketContext', 'Market Context', metricGrid(rows)) : '';
   }
 
-  function transcriptParagraphs(text) {
-    return String(text || '').split(/\n{2,}/).map((item) => item.trim()).filter(Boolean).slice(0, 3);
+  function renderInsights(review) {
+    const llm = review.llm_review || {}, analysis = review.analysis || {};
+    const groups = [
+      ['Бычьи аргументы', llm.bullish_arguments || analysis.opportunities], ['Медвежьи аргументы', llm.bearish_arguments || analysis.risks],
+      ['Ключевые риски', llm.risks || review.warnings], ['Важные события', llm.important_events || analysis.events],
+      ['Ошибки трейдинга', llm.trading_mistakes || analysis.trading_mistakes], ['Психология', llm.psychology || analysis.psychology],
+    ].map(([title, items]) => pillList(items) ? `<article><strong>${escapeHtml(title)}</strong>${pillList(items)}</article>` : '').filter(Boolean).join('');
+    return groups ? section('aiInsights', 'AI Insights', `<div class="tv-insights-grid">${groups}</div>`) : '';
   }
 
   function renderTranscript(transcript) {
-    const paragraphs = transcriptParagraphs(transcript && transcript.text);
-    const meta = transcript ? `${value(transcript.provider)} · ${value(transcript.language)} · ${value(transcript.duration ? Math.round(transcript.duration) + ' сек.' : null)}` : '—';
-    const body = transcript && transcript.status === 'FOUND' && paragraphs.length
-      ? `<div class="tv-transcript-preview">${paragraphs.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join('')}</div>`
-      : `<div class="tv-player-empty">${escapeHtml(transcriptMessage(transcript && transcript.status))}</div>`;
-    return ReviewSection({ id: 'transcript', className: 'tv-review-section--summary tv-transcript-section', title: 'Transcript', content: `<div class="tv-context-note">${escapeHtml(meta)}</div>${body}` });
+    const available = transcript && transcript.status === 'FOUND' && has(transcript.text);
+    const reason = transcript?.status === 'WHISPER_REQUIRED' ? 'Нужна обработка Whisper; сохранённый текст пока отсутствует.' : transcript?.status === 'ERROR' ? 'Источник транскрипта вернул ошибку.' : 'Транскрипт отсутствует в сохранённых данных review.';
+    const preview = available ? String(transcript.text).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).slice(0, 3).map((p) => `<p>${escapeHtml(p)}</p>`).join('') : '';
+    return section('transcript', 'Transcript', `${metricGrid([
+      ['Источник', transcript?.provider], ['Язык', transcript?.language], ['Доступность', available ? 'Доступен' : 'Недоступен'],
+    ])}${available ? `<div class="tv-transcript-preview">${preview}</div>` : `<div class="tv-report-empty">${escapeHtml(reason)}</div>`}`);
   }
 
-
-  function list(items) {
-    const values = Array.isArray(items) ? items.filter((item) => item !== null && item !== undefined && item !== '') : [];
-    return values.length ? values.map((item) => `<span class="tv-analysis-pill">${escapeHtml(item)}</span>`).join('') : '<span class="tv-context-note">—</span>';
-  }
-
-  function renderAIAnalysis(review) {
-    const analysis = review.analysis || {};
-    const rows = [
-      ['Symbol', analysis.symbol],
-      ['Direction', directionRu(analysis.direction)],
-      ['Confidence', percent(analysis.confidence)],
-      ['Entry', analysis.entry],
-      ['SL', analysis.sl],
-      ['TP', analysis.tp],
-    ];
-    return ReviewSection({ id: 'aiAnalysis', className: 'tv-review-section--summary tv-ai-analysis-section', title: 'AI Analysis', content: `
-      <p class="tv-context-note">Rule Engine: без OpenAI/GPT/Gemini/Claude. Провайдер можно заменить без изменения API и Frontend.</p>
-      <div class="tv-premium-placeholder"><strong>Summary</strong><p>${escapeHtml(analysis.summary || 'Недостаточно данных транскрипта для резюме.')}</p></div>
-      <div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div>
-      <div class="tv-analysis-lists">
-        <div><strong>Targets</strong><p>${list(analysis.targets)}</p></div>
-        <div><strong>Detected Levels</strong><p>${list(analysis.levels)}</p></div>
-        <div><strong>Indicators</strong><p>${list(analysis.indicators)}</p></div>
-        <div><strong>Concepts</strong><p>${list(analysis.concepts)}</p></div>
-        <div><strong>Risks</strong><p>${list(analysis.risks)}</p></div>
-        <div><strong>Opportunities</strong><p>${list(analysis.opportunities)}</p></div>
-      </div>` });
-  }
-  function renderKnowledgeContext(review) {
-    const knowledge = review.knowledge_context || {};
-    const market = knowledge.market_context || {};
-    const cards = [
-      ['Market Idea', `${value(market.symbol || knowledge.symbol)} · ${directionRu(market.direction || knowledge.direction)} · Entry ${value(market.entry)} · SL ${value(market.sl)} · TP ${value(market.tp)}`],
-      ['Agreement Score', `${value(knowledge.agreement_score, 0)}/100`],
-      ['OrderFlow', `${statusRu(knowledge.orderflow?.status || (knowledge.orderflow?.available ? 'available' : 'unavailable'))}${knowledge.orderflow?.bias ? ` · ${knowledge.orderflow.bias}` : ''}`],
-      ['Options', `${statusRu(knowledge.options?.status || (knowledge.options?.available ? 'available' : 'unavailable'))}${knowledge.options?.bias ? ` · ${knowledge.options.bias}` : ''}`],
-      ['News', knowledge.news?.status || 'neutral'],
-      ['Institutional Narrative', knowledge.institutional_narrative],
-      ['Risk Warnings', Array.isArray(knowledge.warnings) && knowledge.warnings.length ? knowledge.warnings.join(' · ') : 'Предупреждений нет'],
-      ['Conflicts', Array.isArray(knowledge.conflicts) && knowledge.conflicts.length ? knowledge.conflicts.join(' · ') : 'Конфликтов нет'],
-    ];
-    return ReviewSection({ id: 'knowledgeContext', className: 'tv-review-section--summary tv-verdict-section', title: 'FXPilot Knowledge Context', content: `<div class="tv-snapshot-grid tv-review-wide-grid">${cards.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div><p class="tv-context-note">Единый Knowledge Layer: metadata + transcript + rule AI analysis + FXPilot market idea. AI Review использует настроенный LLM-провайдер и детерминированную валидацию извлечённых сущностей.</p>` });
-  }
-
-
-  function renderExpertVerdict(review) {
-    const verdict = review.llm_review || {};
-    const rows = [
-      ['Agreement', verdict.agreement_score === undefined ? null : `${verdict.agreement_score}/100`],
-      ['Recommended Action', verdict.recommended_action],
-      ['Institutional View', verdict.institutional_view],
-      ['News Impact', verdict.news_impact],
-      ['Market Bias', verdict.market_bias],
-      ['Confidence', percent(verdict.confidence)],
-    ];
-    const block = (title, value) => `<div class="tv-premium-placeholder"><strong>${escapeHtml(title)}</strong><p>${Array.isArray(value) && value.length ? value.map((item) => escapeHtml(item)).join(' · ') : escapeHtml(value || 'Unknown')}</p></div>`;
-    return ReviewSection({ id: 'aiExpertVerdict', className: 'tv-review-section--summary tv-verdict-section', title: 'AI Expert Verdict', content: `
-      ${block('Summary', verdict.summary)}
-      <div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item, 'Unknown'))}</strong></div>`).join('')}</div>
-      <div class="tv-analysis-lists">
-        <div><strong>Reasoning</strong><p>${list(verdict.reasoning)}</p></div>
-        <div><strong>Risks</strong><p>${list(verdict.risks)}</p></div>
-        <div><strong>Contradictions</strong><p>${list(verdict.contradictions)}</p></div>
-      </div>
-      <p class="tv-context-note">Senior Institutional FX Analyst: использует только supplied context, без выдумывания цен и символов.</p>` });
-  }
-
-
-  function renderStructuredEntities(review) {
-    const ideas = Array.isArray(review.trade_ideas) ? review.trade_ideas : [];
-    const rows = [
-      ['Обнаруженные инструменты', Array.isArray(review.symbols) && review.symbols.length ? review.symbols.join(', ') : null],
-      ['Основной символ', review.primary_symbol || review.symbol],
-      ['Таймфрейм', review.timeframe],
-      ['Направление', directionRu(review.direction)],
-      ['Confidence', percent(review.confidence)],
-      ['Вход', review.entry_zone && review.entry_zone.length ? review.entry_zone.join(' — ') : review.entry],
-      ['Stop loss', review.stop_loss],
-      ['Targets', Array.isArray(review.targets) && review.targets.length ? review.targets.join(', ') : review.take_profit],
-    ];
-    const ideaCards = ideas.length ? ideas.map((idea, index) => `
-      <article class="tv-premium-placeholder">
-        <strong>Trade idea ${index + 1}: ${escapeHtml(value(idea.symbol))}</strong>
-        <p>${escapeHtml(directionRu(idea.direction))} · TF: ${escapeHtml(value(idea.timeframe))} · Entry: ${escapeHtml(value(idea.entry_zone && idea.entry_zone.length ? idea.entry_zone.join(' — ') : idea.entry))} · SL: ${escapeHtml(value(idea.stop_loss))} · TP: ${escapeHtml(value(idea.take_profit || (idea.targets || []).join(', ')))} · Confidence: ${escapeHtml(percent(idea.confidence))}</p>
-        <p>${escapeHtml(value(idea.reasoning))}</p>
-      </article>`).join('') : '<div class="tv-player-empty">Trade ideas: Не определено</div>';
-    return ReviewSection({ id: 'structuredEntities', className: 'tv-review-section--summary tv-verdict-section', title: 'Структурированные торговые сущности', content: `
-      <div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div>
-      <div class="tv-analysis-lists">${ideaCards}</div>
-      <p class="tv-context-note">AI Review создан настроенным LLM-провайдером; символы дополнительно проверены детерминированными алиасами.</p>` });
-  }
-
-  function renderComparison(review) {
-    const idea = review.current_fxpilot_idea || {};
-    return ReviewSection({ id: 'comparison', className: 'tv-review-section--summary', title: 'Comparison', content: `
-      <div class="tv-comparison-grid">
-        <article class="tv-premium-placeholder"><strong>Что говорит видео</strong><p>${escapeHtml(review.comparison?.video_says || 'No transcript yet. AI summary will appear later.')}</p></article>
-        <article class="tv-premium-placeholder"><strong>Что говорит FXPilot</strong><p>${escapeHtml(`Символ: ${value(idea.symbol)} · направление: ${directionRu(idea.direction)} · вход: ${value(idea.entry)} · SL: ${value(idea.sl)} · TP: ${value(idea.tp)} · confidence: ${percent(idea.confidence)}`)}</p></article>
-      </div>` });
-  }
-
-  function renderScore(review) {
-    return ReviewSection({ id: 'confluenceScore', className: 'tv-review-section--summary tv-verdict-section', title: 'Confluence Score', content: `<div class="tv-confluence-score"><strong>${escapeHtml(value(review.confluence_score, 0))}</strong><span>0-100</span></div><p class="tv-context-note">Скоринг: совпадение символа, наличие направления, OrderFlow, options, нейтральный/позитивный news-фон и confidence.</p>` });
-  }
-
-  function renderVerdict(review) {
-    return ReviewSection({ id: 'preliminaryVerdict', className: 'tv-review-section--summary tv-verdict-section', title: 'Preliminary verdict', content: `<div class="tv-verdict"><strong>${escapeHtml(verdictRu(review.preliminary_verdict))}</strong><p>Это предварительная проверка рыночного контекста, а не анализ тезисов автора видео.</p></div>` });
+  function renderQuickActions(review) {
+    const video = review.video || {};
+    const committee = `/investment-committee?video_id=${encodeURIComponent(video.id || getVideoId())}`;
+    return `<section class="tv-report-actions panel"><a class="tv-check-button" target="_blank" rel="noopener" href="${escapeHtml(youtubeUrl(video))}">Смотреть на YouTube</a><a class="tv-check-button" href="/tv">Назад в TV</a><a class="tv-check-button" href="${escapeHtml(committee)}">Открыть Committee</a><button class="tv-check-button" type="button" id="copyReviewLink">Скопировать ссылку</button></section>`;
   }
 
   function ReviewPage(review, transcript) {
-    const video = review.video || {};
-    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review: разбор создаётся настроенным LLM-провайдером с детерминированной валидацией инструментов и уровней.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderAIAnalysis(review)}${renderStructuredEntities(review)}${renderExpertVerdict(review)}${renderKnowledgeContext(review)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
+    return `${renderHeader(review)}${renderQuickActions(review)}<div class="tv-report-layout">${renderSummary(review)}${renderTradeSetup(review)}${renderMarketContext(review)}${renderInsights(review)}${renderTranscript(transcript)}</div>`;
   }
 
   async function loadReview() {
     const response = await fetch(`/api/media/review/${encodeURIComponent(getVideoId())}`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-    if (!response.ok) throw new Error('review_not_found');
+    if (!response.ok) throw new Error(response.status === 404 ? 'missing' : 'failed');
     const review = await response.json();
-    const transcript = review.transcript || { status: 'NOT_AVAILABLE' };
-    root.innerHTML = ReviewPage(review, transcript);
+    root.innerHTML = ReviewPage(review, review.transcript || { status: 'NOT_AVAILABLE' });
+    document.getElementById('copyReviewLink')?.addEventListener('click', async () => navigator.clipboard?.writeText(window.location.href));
   }
 
-  loadReview().catch(() => {
-    root.innerHTML = '<section class="panel"><div class="tv-player-empty">Review не найден. Вернитесь в каталог FXPilot TV и выберите другой обзор.</div></section>';
+  loadReview().catch((error) => {
+    const status = error.message === 'missing' ? 'missing' : 'failed';
+    root.innerHTML = `<section class="panel tv-report-status"><span class="${reviewClass(status)}">${escapeHtml(reviewLabel(status))}</span><h2>${status === 'missing' ? 'Review отсутствует' : 'Review недоступен'}</h2><p>Отчёт ещё не готов или не найден в сохранённом хранилище. Backend exceptions не отображаются пользователю.</p><a class="tv-check-button" href="/tv">Вернуться в TV</a></section>`;
   });
 })();

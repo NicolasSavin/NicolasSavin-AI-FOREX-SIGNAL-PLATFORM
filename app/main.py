@@ -754,7 +754,16 @@ def create_llm_review_engine(market_payload: dict[str, Any] | None = None, provi
         storage=LLM_REVIEW_STORAGE,
     )
 
-def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _stored_llm_review_for_video(video: dict[str, Any]) -> LLMReview | None:
+    keys = [canonical_catalog_id(video), canonical_youtube_id(video), str(video.get("id") or "")]
+    for key in dict.fromkeys(k for k in keys if k):
+        review = LLM_REVIEW_STORAGE.get(key)
+        if review:
+            return review
+    return None
+
+
+def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, Any] | None = None, *, stored_only: bool = False) -> dict[str, Any]:
     market_payload = market_payload if isinstance(market_payload, dict) else ideas_market()
     idea = _find_review_market_idea(market_payload, str(video.get("symbol") or ""))
     model = _build_review_market_model(video, idea)
@@ -764,9 +773,12 @@ def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, An
     analysis = ai_review.to_api_analysis()
     catalog_id = canonical_catalog_id(video)
     knowledge_context = _build_knowledge_for_video(catalog_id, market_payload=market_payload).model_dump()
-    llm_review = create_llm_review_engine(market_payload=market_payload).generate(catalog_id)
+    llm_review = _stored_llm_review_for_video(video) if stored_only else create_llm_review_engine(market_payload=market_payload).generate(catalog_id)
+    if llm_review is None:
+        raise HTTPException(status_code=404, detail="AI Review is not ready")
     return {
         "video": video,
+        "review_status": "ready",
         "transcript": transcript,
         "analysis": analysis,
         "knowledge_context": knowledge_context,
@@ -1182,7 +1194,7 @@ def _get_media_review(video_id: str) -> dict[str, Any]:
     video = resolve_media_video(video_id)
     _review_lookup_debug(video_id, video, "catalog_id|youtube_id|prefixed_id|url_contains")
     if video:
-        return _build_tv_review_payload(video)
+        return _build_tv_review_payload(video, stored_only=True)
     raise HTTPException(status_code=404, detail="TV video not found")
 
 
