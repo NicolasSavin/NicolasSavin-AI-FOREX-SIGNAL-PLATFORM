@@ -1,53 +1,16 @@
 window.FXPilotTv = (() => {
-  const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  }[char]));
-
-  const formatDate = (value) => {
-    if (!value) return 'Дата не указана';
-    const date = new Date(`${value}T00:00:00Z`);
-    if (Number.isNaN(date.getTime())) return value;
-    return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }).format(date);
-  };
-
-  const isValidYouTubeId = (youtubeId) => /^[A-Za-z0-9_-]{11}$/.test(String(youtubeId || ''));
-
-  const embedUrl = (youtubeId) => `https://www.youtube.com/embed/${encodeURIComponent(youtubeId)}`;
-
-  const PlayerSkeleton = (label = 'Загрузка видео...') => `
-    <div class="tv-player-skeleton" aria-live="polite">
-      <span></span><strong>${escapeHtml(label)}</strong><small>Подготавливаем YouTube-плеер</small>
-    </div>
-  `;
-
-  const VideoPlayer = (video, { autoplay = false, titleFallback = 'FXPilot TV' } = {}) => {
-    if (!video || !isValidYouTubeId(video.youtube_id)) return '<div class="tv-player-empty">Каталог пока пуст. Запустите Import Now.</div>';
-    return `<iframe src="${embedUrl(video.youtube_id, { autoplay })}" title="${escapeHtml(video.title || titleFallback)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy"></iframe>`;
-  };
-
-  const thumbnailUrl = (video = {}) => video.youtube_id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.youtube_id)}/hqdefault.jpg` : '';
-
-  const metaItems = (video = {}) => [
-    ['Автор', video.author],
-    ['Символ', video.symbol],
-    ['Категория', video.category],
-    ['Таймфрейм', video.timeframe],
-    ['Длительность', video.duration],
-    ['Дата публикации', formatDate(video.published_at)],
-  ].filter(([, value]) => value);
-
-  const CategoryBadges = (video = {}) => [
-    video.category && `<span class="tv-category-badge">${escapeHtml(video.category)}</span>`,
-    video.symbol && `<span class="tv-symbol-badge">${escapeHtml(video.symbol)}</span>`,
-    video.timeframe && `<span class="tv-timeframe-badge">${escapeHtml(video.timeframe)}</span>`,
-  ].filter(Boolean).join('');
-
-  const ReviewSection = ({ id, className = '', title, content }) => `
-    <section id="${escapeHtml(id)}" class="tv-review-section ${escapeHtml(className)}" data-review-section="${escapeHtml(id)}" aria-labelledby="${escapeHtml(id)}Title">
-      <div class="tv-review-section__head"><p class="section-kicker">Review Module</p><h2 id="${escapeHtml(id)}Title">${escapeHtml(title)}</h2></div>
-      <div class="tv-review-section__body">${content}</div>
-    </section>
-  `;
-
-  return { escapeHtml, formatDate, thumbnailUrl, metaItems, PlayerSkeleton, VideoPlayer, CategoryBadges, ReviewSection };
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+  const formatDate = (value) => { if (!value) return 'Дата не указана'; const d = new Date(String(value).length <= 10 ? `${value}T00:00:00Z` : value); return Number.isNaN(d.getTime()) ? String(value) : new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }).format(d); };
+  const isValidYouTubeId = (id) => /^[A-Za-z0-9_-]{11}$/.test(String(id || ''));
+  const embedUrl = (id) => `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?rel=0&modestbranding=1`;
+  const thumbnailUrl = (video = {}) => video.thumbnail || (video.youtube_id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.youtube_id)}/hqdefault.jpg` : '');
+  const formatDuration = (value) => { if (!value) return ''; if (typeof value === 'string') return value; const n = Number(value); if (!Number.isFinite(n) || n <= 0) return ''; const h = Math.floor(n / 3600), m = Math.floor((n % 3600) / 60), s = Math.floor(n % 60); return h ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`; };
+  const reviewLabel = (status) => ({ ready: 'Review ready', processing: 'Анализ выполняется', missing: 'Анализ ещё не создан', failed: 'Ошибка анализа' }[status] || 'Анализ ещё не создан');
+  const reviewClass = (status) => `tv-review-status tv-review-status--${escapeHtml(status || 'missing')}`;
+  const badge = (text, cls = '') => text ? `<span class="tv-badge-chip ${escapeHtml(cls)}">${escapeHtml(text)}</span>` : '';
+  const signalBadges = (video = {}) => [badge(video.primary_symbol, 'symbol'), badge(video.direction || '', `direction ${String(video.direction || '').toLowerCase()}`), badge(video.timeframe, 'timeframe'), Number(video.confidence) > 0 ? badge(`${Number(video.confidence)}%`, 'confidence') : ''].filter(Boolean).join('');
+  const PlayerSkeleton = (label = 'Загрузка каталога FXPilot TV…') => `<div class="tv-player-skeleton" aria-live="polite"><span></span><strong>${escapeHtml(label)}</strong><small>Подготавливаем плеер</small></div>`;
+  const VideoPlayer = (video) => { if (!video) return '<div class="tv-player-empty"><strong>Каталог пока пуст.</strong><span>Импортируйте материалы через Operations.</span><a href="/ops">Открыть /ops</a></div>'; if (!isValidYouTubeId(video.youtube_id)) return '<div class="tv-player-empty"><strong>Видео нельзя встроить</strong><span>Откройте материал на YouTube.</span></div>'; return `<iframe src="${embedUrl(video.youtube_id)}" title="${escapeHtml(video.title || 'FXPilot TV')}" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy"></iframe><div class="tv-embed-fallback">Если YouTube ограничил встраивание, используйте кнопку «Смотреть на YouTube».</div>`; };
+  const ReviewSection = ({ id, className = '', title, content }) => `<section id="${escapeHtml(id)}" class="tv-review-section ${escapeHtml(className)}"><div class="tv-review-section__head"><p class="section-kicker">Review Module</p><h2>${escapeHtml(title)}</h2></div><div class="tv-review-section__body">${content}</div></section>`;
+  return { escapeHtml, formatDate, thumbnailUrl, formatDuration, reviewLabel, reviewClass, signalBadges, badge, PlayerSkeleton, VideoPlayer, ReviewSection };
 })();

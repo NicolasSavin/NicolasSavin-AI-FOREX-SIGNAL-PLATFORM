@@ -844,6 +844,80 @@ def api_media() -> list[dict[str, Any]]:
     return _load_tv_video_catalog()
 
 
+
+
+def _media_catalog_review_for(video: dict[str, Any]) -> tuple[str, LLMReview | None, str | None]:
+    """Read cached review only; never generates LLM output."""
+    keys = [canonical_catalog_id(video), canonical_youtube_id(video), str(video.get("id") or "")]
+    for key in dict.fromkeys(k for k in keys if k):
+        try:
+            review = LLM_REVIEW_STORAGE.get(key)
+        except Exception:
+            logger.warning("media_catalog_review_read_failed video_id=%s", key, exc_info=True)
+            return "failed", None, None
+        if review:
+            try:
+                path = LLM_REVIEW_STORAGE.path_for(key)
+                updated = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat() if path.exists() else review.created_at
+            except Exception:
+                updated = review.created_at
+            return "ready", review, updated
+    pipeline_status = str(video.get("pipeline_status") or video.get("review_status") or "").lower()
+    if pipeline_status in {"processing", "running", "queued", "in_progress"}:
+        return "processing", None, None
+    if pipeline_status in {"failed", "error"}:
+        return "failed", None, None
+    return "missing", None, None
+
+
+def _clean_catalog_text(value: Any, limit: int = 420) -> str:
+    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit].rstrip()
+
+
+def _media_catalog_item(video: dict[str, Any]) -> dict[str, Any]:
+    review_status, review, review_updated_at = _media_catalog_review_for(video)
+    ideas = review.trade_ideas if review else []
+    symbols = review.symbols if review and review.symbols else ([video.get("symbol")] if video.get("symbol") else [])
+    return {
+        "id": canonical_catalog_id(video) or str(video.get("id") or ""),
+        "youtube_id": canonical_youtube_id(video),
+        "title": video.get("title") or "",
+        "author": video.get("author") or video.get("channel") or "",
+        "channel": video.get("channel") or video.get("author") or "",
+        "thumbnail": video.get("thumbnail") or video.get("thumbnail_url") or "",
+        "published_at": video.get("published_at") or "",
+        "duration": video.get("duration") or 0,
+        "category": video.get("category") or "",
+        "source_id": video.get("source_id") or "",
+        "status": video.get("status") or "imported",
+        "review_status": review_status,
+        "review_updated_at": review_updated_at,
+        "ai_summary": _clean_catalog_text(review.summary if review else ""),
+        "primary_symbol": review.primary_symbol if review else (video.get("symbol") or None),
+        "symbols": [s for s in symbols if s],
+        "direction": review.direction if review else None,
+        "timeframe": review.timeframe if review else None,
+        "confidence": review.confidence if review else 0,
+        "entry": review.entry if review else None,
+        "entry_zone": review.entry_zone if review else [],
+        "stop_loss": review.stop_loss if review else None,
+        "targets": review.targets if review else [],
+        "trade_ideas_count": len(ideas),
+    }
+
+
+@app.get("/api/media/catalog")
+def api_media_catalog() -> dict[str, Any]:
+    items = [_media_catalog_item(video) for video in _load_tv_video_catalog() if video and (video.get("status") in {None, "", "imported"})]
+    return {
+        "items": items,
+        "total": len(items),
+        "review_ready": sum(1 for item in items if item.get("review_status") == "ready"),
+        "structured": sum(1 for item in items if item.get("primary_symbol") or item.get("direction") or item.get("confidence")),
+    }
+
 @app.get("/api/media/sources")
 def api_media_sources() -> list[dict[str, Any]]:
     try:

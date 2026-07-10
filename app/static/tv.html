@@ -18,11 +18,11 @@
           <div class="tv-hero__copy">
             <p class="eyebrow">FXPilot 2.0 · Video Intelligence</p>
             <h1>FXPilot TV</h1>
-            <p class="lead">Видеообзоры рынка уже доступны.<br />AI-проверка прогнозов появится следующим этапом.</p>
+            <p class="lead">Видеообзоры рынка с готовыми AI Review, символами, направлениями и уровнями в одном каталоге.</p>
           </div>
           <div class="tv-hero__signal" aria-label="Статус FXPilot TV">
             <span class="tv-live-dot"></span><strong>Video catalog live</strong>
-            <p>Локальный каталог → YouTube player → будущий AI Reality Check</p>
+            <p>YouTube каталог → AI Summary → структурированные торговые параметры</p>
           </div>
         </div>
       </header>
@@ -33,10 +33,11 @@
             <div>
               <p class="section-kicker">Сейчас в эфире</p>
               <h2 id="tvWatchTitle">Рабочий видеоплеер FXPilot TV</h2>
-              <p class="section-text">Выберите обзор из каталога. Видео открывается через YouTube iframe; YouTube API, scraping и AI-анализ пока не подключены.</p>
+              <p class="section-text">Выберите видео: плеер, краткое AI-резюме и структурированные параметры обновятся без запуска платных LLM-запросов.</p>
             </div>
           </div>
 
+          <div class="tv-local-nav" aria-label="Навигация FXPilot TV"><a href="/">Главная</a><a href="/tv" aria-current="page">FXPilot TV</a><a id="tvSelectedReviewNav" href="#tvSelectedDetails">AI Review</a><a href="/archive">Архив</a><a href="/analytics">Аналитика</a></div>
           <div class="tv-player-layout">
             <div class="tv-player-column">
               <div class="tv-player-frame" id="tvPlayerFrame">
@@ -45,21 +46,21 @@
               <article class="tv-selected-card" id="tvSelectedDetails" aria-live="polite"></article>
               <section class="tv-ai-preview" aria-labelledby="tvAiPreviewTitle">
                 <div>
-                  <p class="section-kicker">Что скоро появится</p>
+                  <p class="section-kicker">AI-информация в каталоге</p>
                   <h3 id="tvAiPreviewTitle">AI-проверка видеообзоров</h3>
-                  <p>Следующий слой будет сравнивать тезисы автора с логикой FXPilot и результатом рынка после факта.</p>
+                  <p>Готовые обзоры показывают резюме, символы, направление, таймфрейм, confidence и уровни прямо рядом с видео.</p>
                 </div>
                 <div class="tv-ai-grid">
                   <div><strong>AI Summary</strong><span>Короткое резюме тезисов, уровней и рисков.</span></div>
-                  <div><strong>Сравнение с FXPilot</strong><span>Сопоставление сценария автора с внутренним анализом платформы.</span></div>
-                  <div><strong>Reality Check</strong><span>Проверка прогноза после движения рынка.</span></div>
-                  <div><strong>Trust Score</strong><span>Рейтинг доверия на основе проверяемой истории.</span></div>
+                  <div><strong>Структура сделки</strong><span>Entry, stop loss и targets отображаются только если они есть в review.</span></div>
+                  <div><strong>Review state</strong><span>Ready, processing, missing и failed не смешиваются в один статус.</span></div>
+                  <div><strong>Фильтры</strong><span>Поиск по названию, автору и символу плюс фильтры по категории и статусу.</span></div>
                 </div>
               </section>
             </div>
 
             <aside class="tv-sidebar" aria-label="Список видео">
-              <div class="tv-sidebar__head"><h3>Каталог обзоров</h3><span id="tvVideoCount">0 видео</span></div>
+              <div class="tv-sidebar__head"><h3>Каталог обзоров</h3><span id="tvVideoCount" aria-live="polite">0 видео</span></div><div id="tvCatalogFilters" class="tv-sidebar-controls"></div><button id="tvRetryButton" type="button" class="sr-only">Повторить</button>
               <div class="tv-video-list" id="tvVideoList"></div>
             </aside>
           </div>
@@ -73,16 +74,16 @@
         </section>
 
         <section class="panel">
-          <div class="panel-heading compact"><div><p class="section-kicker">Feature Preview</p><h2>Премиальные возможности FXPilot TV</h2><p class="section-text">Рабочий каталог видео уже создан. AI-обработка будет добавлена позже без внешних API-ключей на этом этапе.</p></div></div>
+          <div class="panel-heading compact"><div><p class="section-kicker">Feature Preview</p><h2>Премиальные возможности FXPilot TV</h2><p class="section-text">Каталог использует read-only payload /api/media/catalog и не запускает генерацию AI Review при открытии страницы.</p></div></div>
           <div class="tv-card-grid">
             <article class="tv-feature-card"><span class="tv-card-icon">01</span><h3>Видеоаналитика</h3><p>Кураторский каталог обзоров рынка с фокусом на валюты, золото и макро-сценарии.</p><span class="tv-badge">Live catalog</span></article>
             <article class="tv-feature-card"><span class="tv-card-icon">02</span><h3>AI Summary</h3><p>Короткое резюме длинных видео: тезисы, уровни, сценарии, риски и отмена прогноза.</p><span class="tv-badge">Coming Soon</span></article>
-            <article class="tv-feature-card"><span class="tv-card-icon">03</span><h3>Reality Check</h3><p>Проверка прогнозов после факта: что совпало с рынком и что оказалось ошибкой.</p><span class="tv-badge">Coming Soon</span></article>
-            <article class="tv-feature-card"><span class="tv-card-icon">04</span><h3>Trust Score</h3><p>Рейтинг доверия аналитиков на основе проверяемых прогнозов и прозрачности аргументации.</p><span class="tv-badge">Coming Soon</span></article>
+            <article class="tv-feature-card"><span class="tv-card-icon">03</span><h3>Review state</h3><p>Проверка прогнозов после факта: что совпало с рынком и что оказалось ошибкой.</p><span class="tv-badge">Coming Soon</span></article>
+            <article class="tv-feature-card"><span class="tv-card-icon">04</span><h3>Фильтры</h3><p>Рейтинг доверия аналитиков на основе проверяемых прогнозов и прозрачности аргументации.</p><span class="tv-badge">Coming Soon</span></article>
           </div>
         </section>
 
-        <section class="panel tv-roadmap"><p class="section-kicker">Roadmap</p><h2>Путь к интеллектуальному видео-модулю</h2><div class="tv-timeline"><div><strong>Phase 1</strong><span>Video catalog</span></div><div><strong>Phase 2</strong><span>AI Summary</span></div><div><strong>Phase 3</strong><span>FXPilot comparison</span></div><div><strong>Phase 4</strong><span>Reality Check</span></div><div><strong>Phase 5</strong><span>Trust Score</span></div></div></section>
+        <section class="panel tv-roadmap"><p class="section-kicker">Roadmap</p><h2>Путь к интеллектуальному видео-модулю</h2><div class="tv-timeline"><div><strong>Phase 1</strong><span>Video catalog</span></div><div><strong>Phase 2</strong><span>AI Summary</span></div><div><strong>Phase 3</strong><span>FXPilot comparison</span></div><div><strong>Phase 4</strong><span>Review state</span></div><div><strong>Phase 5</strong><span>Фильтры</span></div></div></section>
 
         <section class="panel tv-vision"><p class="section-kicker">Vision</p><h2>Почему мы создаем FXPilot TV?</h2><p>Сегодня трейдер получает десятки противоречивых прогнозов.</p><p>FXPilot TV создается для того, чтобы проверять торговые идеи фактами.</p><p>Наша цель —<br />не заменить аналитиков,</p><p>а помочь понять,<br />какие выводы подтверждаются рынком.</p></section>
       </main>
