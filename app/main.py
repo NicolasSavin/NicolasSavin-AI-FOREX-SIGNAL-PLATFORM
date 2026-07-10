@@ -5,6 +5,7 @@ import lzma
 import logging
 import os
 import gc
+import hmac
 import struct
 import time
 import asyncio
@@ -17,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -152,6 +153,8 @@ MEDIA_CATALOG_PATH = BASE_DIR.parent / "data" / "media_catalog.json"
 MEDIA_TV_VIDEOS_PATH = BASE_DIR.parent / "data" / "tv_videos.json"
 MEDIA_MANUAL_YOUTUBE_PATH = BASE_DIR.parent / "data" / "manual_youtube_videos.json"
 MEDIA_DEBUG_PATH = BASE_DIR.parent / "data" / "media_import_debug.json"
+OPS_AUDIT_PATH = BASE_DIR.parent / "data" / "ops_audit.json"
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "cache_clear"]}
 
 def create_media_import_engine() -> MediaImportEngine:
     manual_path = MEDIA_MANUAL_YOUTUBE_PATH if os.getenv("FXPILOT_DEV_MANUAL_MEDIA", "").strip().lower() in {"1", "true", "yes", "on", "dev"} else None
@@ -528,6 +531,11 @@ def tv_sources_page():
 @app.get("/admin/media", include_in_schema=False)
 def media_admin_page():
     return FileResponse(STATIC_DIR / "media-admin.html")
+
+
+@app.get("/ops", include_in_schema=False)
+def ops_page():
+    return FileResponse(STATIC_DIR / "ops.html")
 
 
 def _load_tv_video_catalog() -> list[dict[str, Any]]:
@@ -1271,6 +1279,165 @@ def api_media_reviews_reprocess(force: bool = False, limit: int | None = None) -
             result["failed"] += 1
             result["items"].append({"video_id": catalog_id, "status": "failed", "error": exc.__class__.__name__})
     return result
+
+
+def _ops_token_configured() -> str | None:
+    token = os.getenv("FXPILOT_OPS_TOKEN", "").strip()
+    return token or None
+
+
+def require_ops_token(x_fxpilot_ops_token: str | None = Header(default=None)) -> bool:
+    expected = _ops_token_configured()
+    if not expected:
+        raise HTTPException(status_code=403, detail={"success": False, "status": "ops_token_not_configured", "message": "Operations token is not configured."})
+    if not x_fxpilot_ops_token:
+        raise HTTPException(status_code=401, detail={"success": False, "status": "missing_token", "message": "Operations token is required."})
+    if not hmac.compare_digest(str(x_fxpilot_ops_token), expected):
+        raise HTTPException(status_code=403, detail={"success": False, "status": "invalid_token", "message": "Operations token is invalid."})
+    return True
+
+
+def _safe_ops_error(exc: Exception) -> dict[str, str]:
+    return {"type": exc.__class__.__name__, "message": str(exc)[:300]}
+
+
+def _append_ops_audit(operation: str, params: dict[str, Any], success: bool, duration_ms: int, summary: str = "", error: dict[str, str] | None = None) -> None:
+    safe_record = {"timestamp": datetime.now(timezone.utc).isoformat(), "operation": operation, "parameters": params, "success": bool(success), "duration_ms": duration_ms, "summary": summary[:500]}
+    if error:
+        safe_record["error"] = error
+    try:
+        OPS_AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        existing = json.loads(OPS_AUDIT_PATH.read_text(encoding="utf-8")) if OPS_AUDIT_PATH.exists() else []
+        if not isinstance(existing, list):
+            existing = []
+        existing.append(safe_record)
+        OPS_AUDIT_PATH.write_text(json.dumps(existing[-200:], ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("ops_audit_write_failed error=%s", exc.__class__.__name__)
+
+
+def _run_locked_ops(operation: str, params: dict[str, Any], func) -> dict[str, Any]:
+    lock = OPS_LOCKS[operation]
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail={"success": False, "status": "already_running", "operation": operation})
+    started = time.perf_counter()
+    try:
+        result = func()
+        if isinstance(result, dict):
+            result.setdefault("success", result.get("failed", 0) == 0 if "failed" in result else True)
+        else:
+            result = {"success": True, "result": result}
+        _append_ops_audit(operation, params, bool(result.get("success")), int((time.perf_counter() - started) * 1000), summary=str({k: result.get(k) for k in ("status", "imported", "updated", "generated", "failed", "requested") if k in result}))
+        return result
+    except HTTPException as exc:
+        _append_ops_audit(operation, params, False, int((time.perf_counter() - started) * 1000), error={"type": "HTTPException", "message": str(exc.detail)[:300]})
+        raise
+    except Exception as exc:
+        _append_ops_audit(operation, params, False, int((time.perf_counter() - started) * 1000), error=_safe_ops_error(exc))
+        raise HTTPException(status_code=500, detail={"success": False, "status": "failed", "operation": operation, "error": _safe_ops_error(exc)}) from exc
+    finally:
+        lock.release()
+
+
+def _ops_not_available(message: str) -> dict[str, Any]:
+    return {"success": False, "status": "not_available", "message": message}
+
+
+def _safe_last_mtime(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat() if path.exists() else None
+    except Exception:
+        return None
+
+
+@app.get("/api/ops/status")
+def api_ops_status() -> dict[str, Any]:
+    catalog = _load_tv_video_catalog()
+    reviews = []
+    try:
+        reviews = [LLMReview.model_validate(json.loads(path.read_text(encoding="utf-8"))) for path in LLM_REVIEW_STORAGE.base_dir.glob("*.json")]
+    except Exception:
+        reviews = []
+    try:
+        llm_cfg = resolve_llm_config()
+        llm = {"provider": llm_cfg.provider, "model": llm_cfg.model, "api_key_present": bool(llm_cfg.api_key), "configuration_valid": True}
+    except Exception:
+        debug = llm_debug_payload()
+        llm = {"provider": debug.get("provider"), "model": debug.get("model"), "api_key_present": bool(debug.get("api_key_present")), "configuration_valid": False}
+    scheduler = media_automation_service.status()
+    return {
+        "service": "FXPilot",
+        "media": {"catalog_items": len(catalog), "sources": len(tv_source_manager.list_public_sources()) if tv_source_manager else 0, "last_import": _safe_last_mtime(MEDIA_DEBUG_PATH)},
+        "reviews": {"total": len(reviews), "structured": sum(1 for r in reviews if r.primary_symbol and r.trade_ideas), "market_fallback": sum(1 for r in reviews if not r.primary_symbol or (r.symbol or "").upper() == "MARKET"), "last_review": _safe_last_mtime(LLM_REVIEW_STORAGE.base_dir)},
+        "llm": llm,
+        "scheduler": {"enabled": bool(scheduler.get("enabled", scheduler.get("status") != "disabled")), "running": bool(scheduler.get("running", scheduler.get("status") == "running")), "last_run": scheduler.get("last_run"), "next_run": scheduler.get("next_run")},
+        "pipeline": {"running": 0, "completed": sum(1 for v in catalog if v.get("pipeline_status") == "completed"), "partial": sum(1 for v in catalog if v.get("pipeline_status") == "partial"), "failed": sum(1 for v in catalog if v.get("pipeline_status") == "failed")},
+        "engines": {"transcript": "available", "review": "available" if llm["configuration_valid"] else "degraded", "committee": "available", "consensus": "available", "authors": "available", "performance": "available"},
+    }
+
+
+@app.get("/api/ops/audit")
+def api_ops_audit(limit: int = 50, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    limit = max(1, min(int(limit or 50), 200))
+    records = json.loads(OPS_AUDIT_PATH.read_text(encoding="utf-8")) if OPS_AUDIT_PATH.exists() else []
+    return {"success": True, "records": records[-limit:] if isinstance(records, list) else []}
+
+
+@app.post("/api/ops/media/import")
+def api_ops_media_import(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("media_import", {}, _run_media_import)
+
+
+@app.post("/api/ops/reviews/reprocess")
+def api_ops_reviews_reprocess(force: bool = False, limit: int = 1, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    if limit > 20:
+        raise HTTPException(status_code=422, detail={"success": False, "status": "limit_too_high", "message": "limit must be <= 20"})
+    safe_limit = max(0, int(limit))
+    return _run_locked_ops("review_reprocess", {"force": bool(force), "limit": safe_limit}, lambda: api_media_reviews_reprocess(force=bool(force), limit=safe_limit))
+
+
+@app.post("/api/ops/pipeline/run")
+def api_ops_pipeline_run(video_id: str, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    video = resolve_media_video(video_id)
+    if not video:
+        return _ops_not_available("Video was not found in the media catalog.")
+    return _run_locked_ops("pipeline_run", {"video_id": video_id}, lambda: _run_automatic_media_pipeline(video))
+
+
+@app.post("/api/ops/pipeline/run-all")
+def api_ops_pipeline_run_all(limit: int = 1, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    if limit > 20:
+        raise HTTPException(status_code=422, detail={"success": False, "status": "limit_too_high", "message": "limit must be <= 20"})
+    def run_all():
+        items = [v for v in _load_tv_video_catalog() if v.get("pipeline_status") in {"failed", "partial", None, ""}][:max(0, int(limit))]
+        return {"success": True, "requested": len(items), "items": [_run_automatic_media_pipeline(v) for v in items]}
+    return _run_locked_ops("pipeline_run_all", {"limit": int(limit)}, run_all)
+
+
+@app.post("/api/ops/consensus/rebuild")
+def api_ops_consensus_rebuild(symbol: str = "MARKET", timeframe: str | None = None, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("consensus_rebuild", {"symbol": symbol, "timeframe": timeframe}, lambda: create_consensus_engine().build(symbol, timeframe))
+
+
+@app.post("/api/ops/authors/rebuild")
+def api_ops_authors_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("authors_rebuild", {}, lambda: {"success": True, "authors": create_author_intelligence_engine().build_all()})
+
+
+@app.post("/api/ops/performance/rebuild")
+def api_ops_performance_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("performance_rebuild", {}, lambda: create_performance_engine().evaluate_all())
+
+
+@app.post("/api/ops/cache/clear")
+def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    def clear():
+        for cache in (CANDLE_CACHE, PROVIDER_LAST_REQUEST_AT, IN_FLIGHT_FETCHES, HEATMAP_CACHE, MT4_SIGNALS_CACHE, MT4_MARKUP_CACHE, SENTIMENT_CACHE):
+            if isinstance(cache, dict):
+                cache.clear()
+        MARKET_IDEAS_CACHE.update({"updated_at_epoch": 0.0, "payload": None})
+        return {"success": True, "status": "cleared", "message": "Safe application caches cleared."}
+    return _run_locked_ops("cache_clear", {}, clear)
 
 @app.get("/api/media/review/{video_id}")
 def api_media_review(video_id: str) -> dict[str, Any]:

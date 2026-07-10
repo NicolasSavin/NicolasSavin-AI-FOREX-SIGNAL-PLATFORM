@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FXPilot Operations</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+</head>
+<body data-page="ops">
+  <div class="page-shell ops-shell">
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">Администрирование</p>
+        <h1>⚙ Operations</h1>
+        <p class="lead">Безопасная панель обслуживания FXPilot</p>
+        <p class="hero-caption">Запуск диагностики и регламентных операций из браузера.</p>
+      </div>
+      <nav class="top-nav">
+        <a href="/">Главная</a><a href="/ideas">Идеи</a><a href="/stats">Статистика</a><a href="/archive">Архив</a><a href="/analytics">Аналитика</a><a href="/news">Новости</a><a href="/calendar">Календарь</a><a href="/heatmap/page">Тепловая карта</a><a href="/tv">🎥 FXPilot TV</a><a href="/ops">⚙ Operations</a>
+      </nav>
+    </header>
+
+    <main class="content-stack ops-grid">
+      <section class="panel">
+        <div class="panel-heading compact"><div><p class="section-kicker">Доступ</p><h2>Operations token</h2><p class="section-text">Токен хранится только в sessionStorage и передаётся в заголовке X-FXPILOT-OPS-TOKEN.</p></div></div>
+        <div class="ops-token-row">
+          <input id="opsToken" type="password" autocomplete="off" placeholder="Введите FXPILOT_OPS_TOKEN" />
+          <button id="saveToken" class="archive-link-button">Сохранить на сессию</button>
+          <button id="clearToken" class="archive-link-button ghost">Очистить</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading compact"><div><p class="section-kicker">A. System status</p><h2>Состояние системы</h2></div><button id="refreshStatus" class="archive-link-button">Обновить статус</button></div>
+        <div id="statusCards" class="stats-page-grid"></div>
+      </section>
+
+      <section class="panel ops-two-col">
+        <div>
+          <p class="section-kicker">B. Media operations <span class="ops-badge free">FREE / NO LLM COST</span></p>
+          <h2>Импорт материалов</h2>
+          <button data-op="media-import" class="archive-link-button">Импортировать новые материалы</button>
+        </div>
+        <div>
+          <p class="section-kicker">C. AI Review operations <span class="ops-badge llm">USES LLM CREDITS</span></p>
+          <h2>AI Reviews</h2>
+          <p class="section-text warning">Операция использует платную LLM-модель и может расходовать баланс OpenRouter.</p>
+          <label>Force <input id="reviewForce" type="checkbox" /></label>
+          <label>Limit <input id="reviewLimit" type="number" min="1" max="20" value="1" /></label>
+          <button data-op="review-reprocess" class="archive-link-button">Перегенерировать AI Reviews</button>
+        </div>
+      </section>
+
+      <section class="panel ops-two-col">
+        <div>
+          <p class="section-kicker">D. Pipeline <span class="ops-badge llm">USES LLM CREDITS</span></p>
+          <label>video_id <input id="pipelineVideoId" placeholder="youtube:..." /></label>
+          <label>limit <input id="pipelineLimit" type="number" min="1" max="20" value="1" /></label>
+          <button data-op="pipeline-run" class="archive-link-button">Запустить для видео</button>
+          <button data-op="pipeline-run-all" class="archive-link-button">Запустить для необработанных</button>
+        </div>
+        <div>
+          <p class="section-kicker">E. Aggregation <span class="ops-badge free">FREE / NO LLM COST</span></p>
+          <label>symbol <input id="consensusSymbol" value="EURUSD" /></label>
+          <label>timeframe <input id="consensusTimeframe" value="H4" /></label>
+          <button data-op="consensus-rebuild" class="archive-link-button">Пересчитать Consensus</button>
+          <button data-op="authors-rebuild" class="archive-link-button">Пересчитать авторов</button>
+          <button data-op="performance-rebuild" class="archive-link-button">Пересчитать Performance</button>
+          <button data-op="cache-clear" class="archive-link-button ghost">Очистить безопасные кэши</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <p class="section-kicker">F. Diagnostics</p><h2>Диагностика JSON</h2>
+        <div class="ops-actions">
+          <a class="archive-link-button" target="_blank" href="/api/media/stats">Media stats</a>
+          <a class="archive-link-button" target="_blank" href="/api/media/debug">Media debug</a>
+          <a class="archive-link-button" target="_blank" href="/api/ai/openrouter-test">OpenRouter test</a>
+          <a class="archive-link-button" target="_blank" href="/api/media/scheduler">Scheduler status</a>
+          <a class="archive-link-button" target="_blank" href="/api/ops/status">Pipeline status</a>
+        </div>
+      </section>
+
+      <section class="panel"><div class="panel-heading compact"><div><p class="section-kicker">G. Result console</p><h2>Результаты операций</h2></div><button id="refreshAudit" class="archive-link-button ghost">Обновить аудит</button></div><div id="opsConsole" class="ops-console"></div><h3>Последние операции</h3><pre id="opsAudit" class="ops-pre">Введите токен и нажмите «Обновить аудит».</pre></section>
+    </main>
+  </div>
+  <script src="/static/nav.js"></script>
+  <script src="/static/ops.js"></script>
+</body>
+</html>

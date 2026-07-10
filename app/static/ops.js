@@ -1,0 +1,63 @@
+(() => {
+  const TOKEN_KEY = 'fxpilot_ops_token';
+  const $ = (id) => document.getElementById(id);
+  const tokenInput = $('opsToken');
+  const consoleBox = $('opsConsole');
+  let statusPayload = null;
+
+  function getToken() { return window.sessionStorage.getItem(TOKEN_KEY) || ''; }
+  function headers() { return { Accept: 'application/json', 'Content-Type': 'application/json', 'X-FXPILOT-OPS-TOKEN': getToken() }; }
+  function setBusy(button, busy) { button.disabled = busy; button.dataset.originalText ||= button.textContent; button.textContent = busy ? '⏳ Выполняется…' : button.dataset.originalText; }
+  function logResult(entry) {
+    const node = document.createElement('article'); node.className = 'ops-log-entry';
+    node.innerHTML = `<strong>${entry.name}</strong><span>${entry.started} → ${entry.finished} · ${entry.duration} ms · HTTP ${entry.httpStatus} · ${entry.ok ? 'success' : 'failure'}</span><pre></pre>`;
+    node.querySelector('pre').textContent = JSON.stringify(entry.payload, null, 2);
+    consoleBox.prepend(node);
+  }
+  async function loadStatus() {
+    const r = await fetch('/api/ops/status', { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    statusPayload = await r.json(); renderStatus(statusPayload);
+  }
+  function renderStatus(p) {
+    const cards = [
+      ['Media catalog', p.media?.catalog_items], ['Sources', p.media?.sources], ['Reviews', p.reviews?.total], ['Structured reviews', p.reviews?.structured],
+      ['LLM provider/model', `${p.llm?.provider || '—'} / ${p.llm?.model || '—'}`], ['Scheduler', p.scheduler?.running ? 'running' : 'stopped'],
+      ['Pipeline', `run:${p.pipeline?.running || 0} ok:${p.pipeline?.completed || 0} fail:${p.pipeline?.failed || 0}`], ['Last import', p.media?.last_import || '—'], ['Last error', '—']
+    ];
+    $('statusCards').innerHTML = cards.map(([label, value]) => `<article class="stats-page-card"><span>${label}</span><strong>${value ?? '—'}</strong></article>`).join('');
+  }
+  function confirmCostly(name, count) {
+    const model = statusPayload?.llm?.model || 'модель не определена';
+    return window.confirm(`${name}\nВидео: ${count}\nМодель: ${model}\nОперация использует платную LLM-модель и может расходовать баланс OpenRouter.`);
+  }
+  async function postOp(name, url, params = {}, costly = false, button) {
+    if (costly && !confirmCostly(name, params.limit || params.video_id || 1)) return;
+    const startedAt = new Date(); const started = startedAt.toLocaleString('ru-RU'); setBusy(button, true);
+    const qs = new URLSearchParams(params); const requestUrl = qs.toString() ? `${url}?${qs}` : url;
+    let payload = null; let httpStatus = 0; let ok = false;
+    try { const r = await fetch(requestUrl, { method: 'POST', headers: headers(), body: '{}' }); httpStatus = r.status; ok = r.ok; payload = await r.json().catch(() => ({})); }
+    catch (e) { payload = { success: false, error: e.message }; }
+    finally { setBusy(button, false); }
+    const finishedAt = new Date(); logResult({ name, started, finished: finishedAt.toLocaleString('ru-RU'), duration: finishedAt - startedAt, httpStatus, ok, payload });
+    loadAudit().catch(() => {});
+  }
+  async function loadAudit() {
+    const r = await fetch('/api/ops/audit?limit=50', { headers: headers(), cache: 'no-store' });
+    $('opsAudit').textContent = JSON.stringify(await r.json(), null, 2);
+  }
+
+  tokenInput.value = getToken() ? '••••••••' : '';
+  $('saveToken').addEventListener('click', () => { if (tokenInput.value && tokenInput.value !== '••••••••') window.sessionStorage.setItem(TOKEN_KEY, tokenInput.value); tokenInput.value = '••••••••'; });
+  $('clearToken').addEventListener('click', () => { window.sessionStorage.removeItem(TOKEN_KEY); tokenInput.value = ''; });
+  $('refreshStatus').addEventListener('click', loadStatus);
+  $('refreshAudit').addEventListener('click', () => loadAudit().catch((e) => { $('opsAudit').textContent = e.message; }));
+  document.querySelector('[data-op="media-import"]').addEventListener('click', (e) => postOp('Импортировать новые материалы', '/api/ops/media/import', {}, false, e.currentTarget));
+  document.querySelector('[data-op="review-reprocess"]').addEventListener('click', (e) => postOp('Перегенерировать AI Reviews', '/api/ops/reviews/reprocess', { force: $('reviewForce').checked, limit: Math.min(20, Number($('reviewLimit').value || 1)) }, true, e.currentTarget));
+  document.querySelector('[data-op="pipeline-run"]').addEventListener('click', (e) => postOp('Запустить pipeline для видео', '/api/ops/pipeline/run', { video_id: $('pipelineVideoId').value }, true, e.currentTarget));
+  document.querySelector('[data-op="pipeline-run-all"]').addEventListener('click', (e) => postOp('Запустить pipeline для необработанных', '/api/ops/pipeline/run-all', { limit: Math.min(20, Number($('pipelineLimit').value || 1)) }, true, e.currentTarget));
+  document.querySelector('[data-op="consensus-rebuild"]').addEventListener('click', (e) => postOp('Пересчитать Consensus', '/api/ops/consensus/rebuild', { symbol: $('consensusSymbol').value, timeframe: $('consensusTimeframe').value }, false, e.currentTarget));
+  document.querySelector('[data-op="authors-rebuild"]').addEventListener('click', (e) => postOp('Пересчитать авторов', '/api/ops/authors/rebuild', {}, false, e.currentTarget));
+  document.querySelector('[data-op="performance-rebuild"]').addEventListener('click', (e) => postOp('Пересчитать Performance', '/api/ops/performance/rebuild', {}, false, e.currentTarget));
+  document.querySelector('[data-op="cache-clear"]').addEventListener('click', (e) => { if (window.confirm('Очистить только безопасные application caches?')) postOp('Очистить безопасные кэши', '/api/ops/cache/clear', {}, false, e.currentTarget); });
+  loadStatus().catch(() => {});
+})();
