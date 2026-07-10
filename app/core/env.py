@@ -24,14 +24,15 @@ def get_env(name: str, default: str | None = None) -> str | None:
 
 
 def get_openrouter_api_key() -> str | None:
-    return get_env("OPENROUTER_API_KEY")
+    return get_env("OPENROUTER_API_KEY") or get_env("OPENAI_API_KEY")
 
 
 def get_openrouter_model() -> str:
-    model = get_env("OPENROUTER_MODEL")
-    logger.info("OPENROUTER MODEL: %s", model)
-    if model:
-        return model
+    for name in ("FXPILOT_OPENAI_MODEL", "OPENAI_MODEL", "OPENROUTER_MODEL", "OPENROUTER_FALLBACK_MODEL"):
+        model = get_env(name)
+        if model:
+            logger.info("OPENROUTER MODEL: %s", model)
+            return model
     return "x-ai/grok-4.3"
 
 

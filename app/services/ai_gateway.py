@@ -10,12 +10,13 @@ from typing import Any
 import requests
 from openai import AsyncOpenAI
 
-from app.core.env import get_openrouter_api_key, get_openrouter_model
+from app.core.env import get_openrouter_model
+from app.services.llm_config import LLMConfigurationError, resolve_llm_config
 from app.services.ai_runtime_status import record_ai_request_failure, record_ai_request_start, record_ai_request_success
 
 logger = logging.getLogger(__name__)
 
-OPENROUTER_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+OPENROUTER_URL = "https://openrouter.ai/api/v1"
 
 
 @dataclass
@@ -74,9 +75,16 @@ def model_sequence(primary_model: str | None = None) -> list[str]:
 
 class AIGateway:
     def __init__(self) -> None:
-        self.api_key = (get_openrouter_api_key() or "").strip()
+        try:
+            self.config = resolve_llm_config(provider="openrouter")
+            self.api_key = self.config.api_key
+            self.base_url = (self.config.base_url or OPENROUTER_URL).rstrip("/")
+        except LLMConfigurationError:
+            self.config = None
+            self.api_key = ""
+            self.base_url = OPENROUTER_URL
         self.timeout = float(os.getenv("OPENROUTER_TIMEOUT", os.getenv("OPENAI_TIMEOUT", "30")))
-        self.client = AsyncOpenAI(api_key=self.api_key, base_url=OPENROUTER_URL, timeout=self.timeout) if self.api_key else None
+        self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout) if self.api_key else None
 
     def enabled(self) -> bool:
         return bool(self.api_key)
@@ -108,7 +116,7 @@ class AIGateway:
                 if max_tokens:
                     body["max_tokens"] = max_tokens
                 response = requests.post(
-                    f"{OPENROUTER_URL}/chat/completions",
+                    f"{self.base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
                     json=body,
                     timeout=self.timeout,
