@@ -5,7 +5,7 @@
 - The Grok/OpenRouter prompt explicitly requires valid JSON only, forbids invented instruments/prices, distinguishes broad market commentary from actionable trade ideas, and includes common aliases such as золото/gold → `XAUUSD`, euro dollar → `EURUSD`, Bitcoin → `BTCUSD`, Brent → `UKOIL`.
 - A deterministic fallback extractor validates and supplements LLM symbols from video title, description, tags, existing media symbol, transcript and LLM summaries so real instruments no longer collapse to the `MARKET` compatibility fallback.
 - `GET /api/media/review/{video_id}` and `GET /api/tv/review/{video_id}` now return structured top-level fields while keeping backward-compatible `symbol` and `llm_review` fields.
-- Added manual reprocessing endpoint: `POST /api/media/reviews/reprocess?force=false&limit=<number>` regenerates reviews with `MARKET`/missing symbols or empty trade ideas; use `force=true` to rebuild already structured reviews.
+- Added manual reprocessing endpoint: `POST /api/media/reviews/reprocess?force=false&limit=<number>` regenerates reviews with `MARKET`/missing symbols or empty trade ideas; the same JSON contract is available in a browser via `GET /api/media/reviews/reprocess?force=false&limit=<number>`, and `force=true` rebuilds already structured reviews.
 - `/api/media/debug` now reports review entity coverage: total reviews, reviews with primary symbol, trade ideas, MARKET fallback, direction, levels and last extraction error.
 
 ## Stage 12 — YouTube Data API Primary Provider

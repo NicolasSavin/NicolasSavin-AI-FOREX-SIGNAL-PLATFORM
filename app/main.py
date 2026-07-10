@@ -1247,6 +1247,7 @@ def api_consensus_symbol_timeframe(symbol: str, timeframe: str, date_from: str |
     return create_consensus_engine().build(symbol, timeframe, date_from=date_from, date_to=date_to)
 
 
+@app.get("/api/media/reviews/reprocess")
 @app.post("/api/media/reviews/reprocess")
 def api_media_reviews_reprocess(force: bool = False, limit: int | None = None) -> dict[str, Any]:
     videos = _load_tv_video_catalog()
