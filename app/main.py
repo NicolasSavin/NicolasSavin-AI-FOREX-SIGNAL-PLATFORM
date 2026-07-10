@@ -764,6 +764,19 @@ def _build_tv_review_payload(video: dict[str, Any], market_payload: dict[str, An
         "knowledge_context": knowledge_context,
         "knowledge": knowledge_context,
         "llm_review": llm_review.model_dump(),
+        "symbols": llm_review.symbols,
+        "primary_symbol": llm_review.primary_symbol,
+        "symbol": llm_review.primary_symbol,
+        "timeframe": llm_review.timeframe,
+        "direction": llm_review.direction,
+        "confidence": llm_review.confidence,
+        "entry": llm_review.entry,
+        "entry_zone": llm_review.entry_zone,
+        "stop_loss": llm_review.stop_loss,
+        "take_profit": llm_review.take_profit,
+        "targets": llm_review.targets,
+        "detected_levels": [level.model_dump() for level in llm_review.detected_levels],
+        "trade_ideas": [idea.model_dump() for idea in llm_review.trade_ideas],
         "agreement_score": knowledge_context.get("agreement_score"),
         "warnings": knowledge_context.get("warnings", []),
         "conflicts": knowledge_context.get("conflicts", []),
@@ -995,6 +1008,34 @@ def api_media_stats() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+
+def _llm_review_entity_debug() -> dict[str, Any]:
+    reviews: list[LLMReview] = []
+    last_error = None
+    try:
+        for path in LLM_REVIEW_STORAGE.base_dir.glob("*.json"):
+            try:
+                review = LLMReview.model_validate(json.loads(path.read_text(encoding="utf-8")))
+                reviews.append(review)
+            except Exception as exc:
+                last_error = f"{path.name}: {exc.__class__.__name__}"
+    except Exception as exc:
+        last_error = exc.__class__.__name__
+    return {
+        "reviews_total": len(reviews),
+        "reviews_with_primary_symbol": sum(1 for r in reviews if r.primary_symbol),
+        "reviews_with_trade_ideas": sum(1 for r in reviews if r.trade_ideas),
+        "reviews_with_market_fallback": sum(1 for r in reviews if (r.symbol or "").upper() == "MARKET" or not r.primary_symbol),
+        "reviews_with_direction": sum(1 for r in reviews if r.direction in {"BUY", "SELL", "WAIT"}),
+        "reviews_with_levels": sum(1 for r in reviews if r.detected_levels or r.entry or r.stop_loss or r.take_profit or r.targets),
+        "last_entity_extraction_error": last_error,
+    }
+
+def _review_needs_reprocess(review: LLMReview | None) -> bool:
+    if review is None:
+        return True
+    return (not review.primary_symbol) or ((review.symbol or "").upper() == "MARKET") or (not review.trade_ideas)
+
 @app.get("/api/media/debug")
 def api_media_debug() -> dict[str, Any]:
     try:
@@ -1002,6 +1043,7 @@ def api_media_debug() -> dict[str, Any]:
         payload.update(transcript_engine.debug_payload())
         payload.update(MEDIA_KNOWLEDGE_DEBUG)
         payload.update(llm_debug_payload())
+        payload.update(_llm_review_entity_debug())
         return payload
     except MediaConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1204,6 +1246,31 @@ def api_consensus_symbol(symbol: str, timeframe: str | None = None, date_from: s
 def api_consensus_symbol_timeframe(symbol: str, timeframe: str, date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
     return create_consensus_engine().build(symbol, timeframe, date_from=date_from, date_to=date_to)
 
+
+@app.post("/api/media/reviews/reprocess")
+def api_media_reviews_reprocess(force: bool = False, limit: int | None = None) -> dict[str, Any]:
+    videos = _load_tv_video_catalog()
+    engine = create_llm_review_engine(market_payload=ideas_market())
+    result: dict[str, Any] = {"requested": 0, "generated": 0, "updated": 0, "failed": 0, "items": []}
+    max_items = max(0, int(limit)) if limit is not None else None
+    for video in videos:
+        catalog_id = canonical_catalog_id(video)
+        cached = LLM_REVIEW_STORAGE.get(catalog_id)
+        if not force and not _review_needs_reprocess(cached):
+            continue
+        if max_items is not None and result["requested"] >= max_items:
+            break
+        result["requested"] += 1
+        try:
+            existed = cached is not None
+            review = engine.generate(catalog_id, force=True)
+            result["updated" if existed else "generated"] += 1
+            result["items"].append({"video_id": catalog_id, "status": "updated" if existed else "generated", "primary_symbol": review.primary_symbol, "symbols": review.symbols})
+        except Exception as exc:
+            logger.exception("media_reviews_reprocess_failed video_id=%s", catalog_id)
+            result["failed"] += 1
+            result["items"].append({"video_id": catalog_id, "status": "failed", "error": exc.__class__.__name__})
+    return result
 
 @app.get("/api/media/review/{video_id}")
 def api_media_review(video_id: str) -> dict[str, Any]:

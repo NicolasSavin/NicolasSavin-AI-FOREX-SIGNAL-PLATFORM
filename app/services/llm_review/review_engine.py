@@ -7,6 +7,7 @@ from app.services.media_identity import canonical_catalog_id, canonical_youtube_
 from app.services.ai_analyzer import AIAnalyzerEngine
 from app.services.knowledge import KnowledgeEngine
 from app.services.llm_review.models import LLMReview
+from app.services.llm_review.entity_extraction import extract_symbols_from_text, unique_symbols
 from app.services.llm_review.provider import LLMReviewProvider
 from app.services.llm_review.storage import LLMReviewStorage
 from app.services.transcript import TranscriptEngine
@@ -57,6 +58,19 @@ class ReviewEngine:
             "detected_conflicts": knowledge.conflicts,
         }
 
+    def _enrich_entities(self, review: LLMReview, context: dict[str, Any]) -> LLMReview:
+        video = context.get("video") or {}
+        transcript = context.get("transcript") or {}
+        llm_symbols = review.symbols
+        metadata_symbols = extract_symbols_from_text(video.get("title"), video.get("description"), video.get("tags"), video.get("symbol"))
+        context_symbols = extract_symbols_from_text(transcript.get("text"), review.summary, review.market_overview)
+        symbols = unique_symbols([*llm_symbols, *metadata_symbols, *context_symbols])
+        payload = review.model_dump()
+        payload["symbols"] = symbols
+        payload["primary_symbol"] = review.primary_symbol if review.primary_symbol in symbols else (metadata_symbols[0] if metadata_symbols else (symbols[0] if symbols else None))
+        payload["symbol"] = payload["primary_symbol"]
+        return LLMReview.model_validate(payload)
+
     def generate(self, video_id: str, *, force: bool = False) -> LLMReview:
         video = resolve_media_video(video_id, self.media_catalog_loader())
         storage_id = canonical_catalog_id(video) if video else str(video_id)
@@ -64,8 +78,12 @@ class ReviewEngine:
             cached = self.storage.get(storage_id) or self.storage.get(video_id)
             if cached:
                 return cached
-        review = self.provider.generate_review(self.build_context(storage_id))
-        # Re-validate provider JSON through the explicit contract before caching.
-        review = LLMReview.model_validate(review.model_dump())
+        context = self.build_context(storage_id)
+        try:
+            review = self.provider.generate_review(context)
+        except Exception as exc:
+            review = LLMReview(summary="LLM review unavailable; применена детерминированная нормализация.", risks=[f"llm_error:{exc.__class__.__name__}"], provider=getattr(self.provider, "provider_name", "unknown"))
+        # Re-validate provider JSON through the explicit contract and deterministic entity fallback before caching.
+        review = self._enrich_entities(LLMReview.model_validate(review.model_dump()), context)
         self.storage.set(storage_id, review)
         return review

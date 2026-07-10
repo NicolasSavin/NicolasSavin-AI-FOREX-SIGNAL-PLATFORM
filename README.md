@@ -1,3 +1,13 @@
+
+## Stage 16 — Structured AI Review entity extraction
+
+- AI Review now uses a strict structured JSON contract for trading entities: `symbols`, `primary_symbol`, `timeframe`, `direction`, confidence, entry/entry zone, stop loss, take profits/targets, detected levels and per-symbol `trade_ideas`. Missing market facts are stored as `null` or empty arrays instead of fake prices.
+- The Grok/OpenRouter prompt explicitly requires valid JSON only, forbids invented instruments/prices, distinguishes broad market commentary from actionable trade ideas, and includes common aliases such as золото/gold → `XAUUSD`, euro dollar → `EURUSD`, Bitcoin → `BTCUSD`, Brent → `UKOIL`.
+- A deterministic fallback extractor validates and supplements LLM symbols from video title, description, tags, existing media symbol, transcript and LLM summaries so real instruments no longer collapse to the `MARKET` compatibility fallback.
+- `GET /api/media/review/{video_id}` and `GET /api/tv/review/{video_id}` now return structured top-level fields while keeping backward-compatible `symbol` and `llm_review` fields.
+- Added manual reprocessing endpoint: `POST /api/media/reviews/reprocess?force=false&limit=<number>` regenerates reviews with `MARKET`/missing symbols or empty trade ideas; use `force=true` to rebuild already structured reviews.
+- `/api/media/debug` now reports review entity coverage: total reviews, reviews with primary symbol, trade ideas, MARKET fallback, direction, levels and last extraction error.
+
 ## Stage 12 — YouTube Data API Primary Provider
 
 - FXPilot TV теперь использует официальный YouTube Data API v3 как первичный YouTube-провайдер при наличии `YOUTUBE_API_KEY`; `yt-dlp` остаётся автоматическим fallback только для источников, где API-импорт завершился ошибкой или ключ отсутствует.

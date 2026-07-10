@@ -54,6 +54,9 @@ class OpenAIReviewProvider:
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
         content = response.choices[0].message.content or "{}"
-        payload = json.loads(content)
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            payload = {"summary": "LLM вернул невалидный JSON; применена безопасная нормализация.", "risks": ["invalid_llm_json"]}
         tokens = getattr(getattr(response, "usage", None), "total_tokens", 0) or 0
         return LLMReview.from_payload(payload, provider=f"{self.provider_name}:{self.model}", tokens_used=int(tokens), latency_ms=latency_ms)
