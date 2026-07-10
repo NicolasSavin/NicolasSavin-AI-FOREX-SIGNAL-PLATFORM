@@ -307,3 +307,38 @@ def test_reprocess_endpoint_updates_market_reviews(monkeypatch, tmp_path):
     assert payload["requested"] == 1
     assert payload["updated"] == 1
     assert payload["items"][0]["primary_symbol"] == "EURUSD"
+
+
+def test_reprocess_endpoint_get_matches_post_contract(monkeypatch, tmp_path):
+    import app.main as main
+
+    videos = [
+        {"id": "v1", "youtube_id": "yt1", "title": "EURUSD", "symbol": "MARKET"},
+        {"id": "v2", "youtube_id": "yt2", "title": "GBPUSD", "symbol": "MARKET"},
+    ]
+    generated: list[str] = []
+
+    class Engine:
+        def generate(self, video_id, force=False):
+            generated.append(video_id)
+            review = LLMReview(symbols=[video_id.upper()], primary_symbol=video_id.upper(), trade_ideas=[{"symbol": video_id.upper()}])
+            main.LLM_REVIEW_STORAGE.set(video_id, review)
+            return review
+
+    monkeypatch.setattr(main, "_load_tv_video_catalog", lambda: videos)
+    monkeypatch.setattr(main, "ideas_market", lambda: {})
+    monkeypatch.setattr(main, "LLM_REVIEW_STORAGE", LLMReviewStorage(tmp_path))
+    for video in videos:
+        main.LLM_REVIEW_STORAGE.set(video["id"], LLMReview(symbols=["EURUSD"], primary_symbol="EURUSD", trade_ideas=[{"symbol":"EURUSD"}]))
+    monkeypatch.setattr(main, "create_llm_review_engine", lambda market_payload=None: Engine())
+
+    payload = TestClient(main.app).get("/api/media/reviews/reprocess?force=true&limit=1").json()
+
+    assert payload == {
+        "requested": 1,
+        "generated": 0,
+        "updated": 1,
+        "failed": 0,
+        "items": [{"video_id": "v1", "status": "updated", "primary_symbol": "V1", "symbols": ["V1"]}],
+    }
+    assert generated == ["v1"]
