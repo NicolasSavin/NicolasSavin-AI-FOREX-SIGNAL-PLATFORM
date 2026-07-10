@@ -96,8 +96,9 @@ def test_review_endpoint_includes_llm_review(monkeypatch, tmp_path):
     monkeypatch.setattr(main.transcript_engine, "get", lambda video_id: TranscriptResult(video_id, "en", "cache", "Buy EURUSD 1.10", status=TranscriptStatus.FOUND))
     monkeypatch.setattr(main.ai_analyzer_engine, "analyze", lambda transcript, metadata: AIReview(video_id="v1", symbol="EURUSD", direction="BUY", mentioned_levels=[1.1], confidence=80, summary="Покупка EURUSD"))
     monkeypatch.setattr(main, "ideas_market", lambda: market_payload())
-    monkeypatch.setattr(main, "LLM_REVIEW_STORAGE", LLMReviewStorage(tmp_path))
-    monkeypatch.setattr(main, "create_llm_review_provider", lambda: MockProvider())
+    storage = LLMReviewStorage(tmp_path)
+    storage.set("v1", LLMReview(summary="Professional review", provider="mock"))
+    monkeypatch.setattr(main, "LLM_REVIEW_STORAGE", storage)
 
     response = TestClient(main.app).get("/api/media/review/v1")
     assert response.status_code == 200
@@ -191,7 +192,7 @@ def test_review_engine_lookup_by_youtube_id_and_transcript_uses_clean_id(tmp_pat
     assert (tmp_path / "youtubeHf7eX113oIc.json").exists()
 
 
-def test_media_review_endpoint_accepts_catalog_and_youtube_id(monkeypatch):
+def test_media_review_endpoint_accepts_catalog_and_youtube_id(monkeypatch, tmp_path):
     import app.main as main
 
     video = {"id": "youtube:Hf7eX113oIc", "youtube_id": "Hf7eX113oIc", "symbol": "EURUSD", "title": "Обзор"}
@@ -200,7 +201,9 @@ def test_media_review_endpoint_accepts_catalog_and_youtube_id(monkeypatch):
     monkeypatch.setattr(main, "_review_transcript_payload", lambda video: {"status": "FOUND", "text": "Buy EURUSD"})
     monkeypatch.setattr(main.ai_analyzer_engine, "analyze", lambda transcript, metadata: AIReview(video_id=metadata["video_id"], symbol="EURUSD", direction="BUY", summary="Покупка"))
     monkeypatch.setattr(main, "_build_knowledge_for_video", lambda video_id, market_payload=None: type("Knowledge", (), {"model_dump": lambda self: {"agreement_score": 80, "ai_analysis": {}}})())
-    monkeypatch.setattr(main, "create_llm_review_engine", lambda market_payload=None: type("Engine", (), {"generate": lambda self, video_id, force=False: LLMReview(summary="Generated", provider="mock")})())
+    storage = LLMReviewStorage(tmp_path)
+    storage.set("youtube:Hf7eX113oIc", LLMReview(summary="Generated", provider="mock"))
+    monkeypatch.setattr(main, "LLM_REVIEW_STORAGE", storage)
 
     client = TestClient(main.app)
     assert client.get("/api/media/review/youtube:Hf7eX113oIc").status_code == 200
@@ -288,7 +291,9 @@ def test_review_api_returns_structured_fields(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "_review_transcript_payload", lambda video: {"status": "FOUND", "text": "Buy EURUSD from 1.10"})
     monkeypatch.setattr(main.ai_analyzer_engine, "analyze", lambda transcript, metadata: AIReview(video_id="v1", symbol="EURUSD", direction="BUY"))
     monkeypatch.setattr(main, "_build_knowledge_for_video", lambda video_id, market_payload=None: type("Knowledge", (), {"model_dump": lambda self: {"agreement_score": 70}})())
-    monkeypatch.setattr(main, "create_llm_review_engine", lambda market_payload=None: type("Engine", (), {"generate": lambda self, video_id, force=False: LLMReview(symbols=["EURUSD"], primary_symbol="EURUSD", direction="BUY", confidence=90, trade_ideas=[{"symbol":"EURUSD","direction":"BUY"}], provider="mock")})())
+    storage = LLMReviewStorage(tmp_path)
+    storage.set("v1", LLMReview(symbols=["EURUSD"], primary_symbol="EURUSD", direction="BUY", confidence=90, trade_ideas=[{"symbol":"EURUSD","direction":"BUY"}], provider="mock"))
+    monkeypatch.setattr(main, "LLM_REVIEW_STORAGE", storage)
     payload = TestClient(main.app).get("/api/media/review/v1").json()
     assert payload["primary_symbol"] == "EURUSD"
     assert payload["symbol"] == "EURUSD"
