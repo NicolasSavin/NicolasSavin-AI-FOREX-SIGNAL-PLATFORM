@@ -57,6 +57,14 @@
     nav.appendChild(tvLink);
   }
 
+
+  if (!nav.querySelector('a[href="/ops"]')) {
+    const opsLink = document.createElement('a');
+    opsLink.href = '/ops';
+    opsLink.textContent = '⚙ Operations';
+    nav.appendChild(opsLink);
+  }
+
   nav.querySelectorAll('a[href]').forEach((link) => {
     const linkPath = normalize(link.getAttribute('href'));
     const isActive = linkPath === currentPath;

@@ -673,3 +673,32 @@ FXPilot TV now runs as an autonomous FastAPI-managed media platform. After an ad
 The automatic pipeline is Import → Transcript → Rule AI → Knowledge Layer → LLM Review → Committee → Consensus → Author Intelligence → Performance → Publish to TV. Manual import endpoints remain for backward compatibility, but normal daily operation is source-once/autopilot afterwards.
 
 The admin interface shows Sources, Statistics, Scheduler, Import Queue/last run, Logs, Health, and Notifications in one dark Russian-language interface. Source health uses explicit states (`Healthy`, `Warning`, `Broken`, `Disabled`) and tracks last successful import, last failed import, last error, imported item counts, average import duration, provider usage, and AI backlog metrics.
+
+## Operations panel
+
+Production operations panel:
+
+https://fxpilot.ru/ops
+
+Required Render environment variable:
+
+```text
+FXPILOT_OPS_TOKEN=<a long random secret>
+```
+
+Render setup steps:
+
+1. Open Render service `AI-FOREX-SIGNAL-PLATFORM`.
+2. Open **Environment**.
+3. Add `FXPILOT_OPS_TOKEN` with a long random secret value.
+4. Save changes and deploy.
+5. Open `/ops` in the browser.
+6. Enter the same token in the panel.
+
+Security notes:
+
+- The token is never included in source code or documentation.
+- The browser stores the token only in `sessionStorage` for the current tab/session.
+- Mutating operations use the `X-FXPILOT-OPS-TOKEN` header and are rejected without a valid token.
+- `/api/ops/status` returns only a safe consolidated status payload and does not expose API keys, authorization headers, environment values, prompts or full exception traces.
+- `/api/ops/audit` is token-protected and stores only safe operation metadata in `data/ops_audit.json` with the latest 200 records.
