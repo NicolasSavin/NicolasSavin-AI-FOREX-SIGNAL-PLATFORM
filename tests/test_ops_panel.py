@@ -107,3 +107,50 @@ def test_post_wrapper_reuses_existing_business_implementation(monkeypatch, tmp_p
     response = TestClient(main.app).post("/api/ops/media/import", headers={"X-FXPILOT-OPS-TOKEN": "secret"})
     assert response.status_code == 200
     assert called["import"] == 1
+
+
+def test_structured_review_helper_counts_primary_symbols_and_trade_ideas():
+    from app.services.llm_review import is_structured_review
+
+    assert is_structured_review({"primary_symbol": "EURUSD", "symbols": ["EURUSD"]}) is True
+    assert is_structured_review({"primary_symbol": "MARKET", "symbols": ["MARKET"]}) is False
+    assert is_structured_review({"trade_ideas": [{"symbol": "XAUUSD", "direction": "BUY"}]}) is True
+
+
+def test_review_diagnostics_counts_spx_and_market_fallback():
+    from app.services.llm_review import build_review_diagnostics
+
+    diagnostics = build_review_diagnostics([
+        {"primary_symbol": "SPX", "symbols": ["SPX"]},
+        {"primary_symbol": "MARKET", "symbols": ["MARKET"]},
+    ])
+    assert diagnostics["reviews_structured"] == 1
+    assert diagnostics["reviews_market_fallback"] == 1
+
+
+def test_status_counts_five_reviews_with_one_spx_structured(monkeypatch, tmp_path):
+    import app.main as main
+    from app.services.llm_review import LLMReviewStorage
+
+    storage = LLMReviewStorage(tmp_path / "reviews")
+    storage.set("spx", main.LLMReview.model_validate({"primary_symbol": "SPX", "symbols": ["SPX"]}))
+    for idx in range(4):
+        storage.set(f"market-{idx}", main.LLMReview.model_validate({"primary_symbol": "MARKET", "symbols": ["MARKET"]}))
+    monkeypatch.setattr(main, "LLM_REVIEW_STORAGE", storage)
+
+    response = TestClient(main.app).get("/api/ops/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reviews"]["total"] == 5
+    assert payload["reviews"]["structured"] == 1
+    assert payload["reviews_structured"] == 1
+
+
+def test_ops_js_uses_backend_structured_count_compatibility_mapping():
+    text = open("app/static/ops.js", encoding="utf-8").read()
+    assert "reviewStructuredCount" in text
+    assert "p.reviews?.structured" in text
+    assert "p.reviews?.structured_reviews" in text
+    assert "p.structured_reviews" in text
+    assert "p.reviews_structured" in text
+    assert "['Structured reviews', 0]" not in text

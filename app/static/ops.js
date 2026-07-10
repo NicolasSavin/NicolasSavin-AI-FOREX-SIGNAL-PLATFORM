@@ -18,9 +18,12 @@
     const r = await fetch('/api/ops/status', { headers: { Accept: 'application/json' }, cache: 'no-store' });
     statusPayload = await r.json(); renderStatus(statusPayload);
   }
+  function reviewStructuredCount(p) {
+    return p.reviews?.structured ?? p.reviews?.structured_reviews ?? p.structured_reviews ?? p.reviews_structured;
+  }
   function renderStatus(p) {
     const cards = [
-      ['Media catalog', p.media?.catalog_items], ['Sources', p.media?.sources], ['Reviews', p.reviews?.total], ['Structured reviews', p.reviews?.structured],
+      ['Media catalog', p.media?.catalog_items], ['Sources', p.media?.sources], ['Reviews', p.reviews?.total], ['Structured reviews', reviewStructuredCount(p)],
       ['LLM provider/model', `${p.llm?.provider || '—'} / ${p.llm?.model || '—'}`], ['Scheduler', p.scheduler?.running ? 'running' : 'stopped'],
       ['Pipeline', `run:${p.pipeline?.running || 0} ok:${p.pipeline?.completed || 0} fail:${p.pipeline?.failed || 0}`], ['Last import', p.media?.last_import || '—'], ['Last error', '—']
     ];
@@ -40,6 +43,7 @@
     finally { setBusy(button, false); }
     const finishedAt = new Date(); logResult({ name, started, finished: finishedAt.toLocaleString('ru-RU'), duration: finishedAt - startedAt, httpStatus, ok, payload });
     loadAudit().catch(() => {});
+    loadStatus().catch(() => {});
   }
   async function loadAudit() {
     const r = await fetch('/api/ops/audit?limit=50', { headers: headers(), cache: 'no-store' });

@@ -50,7 +50,7 @@ from app.services.transcript import TranscriptEngine, TranscriptStorage
 from app.services.ai_analyzer import AIAnalyzerEngine
 from app.services.knowledge import KnowledgeEngine
 from app.services.llm_config import LLMConfigurationError, llm_debug_payload, log_llm_startup_config, resolve_llm_config
-from app.services.llm_review import LLMReview, LLMReviewStorage, OpenAIReviewProvider, ReviewEngine
+from app.services.llm_review import LLMReview, LLMReviewStorage, OpenAIReviewProvider, ReviewEngine, build_review_diagnostics
 from app.services.openrouter_diagnostics import run_openrouter_diagnostic
 from app.services.investment_committee import InvestmentCommitteeEngine
 from app.services.consensus import ConsensusEngine
@@ -1029,11 +1029,10 @@ def _llm_review_entity_debug() -> dict[str, Any]:
                 last_error = f"{path.name}: {exc.__class__.__name__}"
     except Exception as exc:
         last_error = exc.__class__.__name__
+    diagnostics = build_review_diagnostics(reviews)
     return {
-        "reviews_total": len(reviews),
-        "reviews_with_primary_symbol": sum(1 for r in reviews if r.primary_symbol),
-        "reviews_with_trade_ideas": sum(1 for r in reviews if r.trade_ideas),
-        "reviews_with_market_fallback": sum(1 for r in reviews if (r.symbol or "").upper() == "MARKET" or not r.primary_symbol),
+        **diagnostics,
+        "reviews_with_market_fallback": diagnostics["reviews_market_fallback"],
         "reviews_with_direction": sum(1 for r in reviews if r.direction in {"BUY", "SELL", "WAIT"}),
         "reviews_with_levels": sum(1 for r in reviews if r.detected_levels or r.entry or r.stop_loss or r.take_profit or r.targets),
         "last_entity_extraction_error": last_error,
@@ -1366,10 +1365,26 @@ def api_ops_status() -> dict[str, Any]:
         debug = llm_debug_payload()
         llm = {"provider": debug.get("provider"), "model": debug.get("model"), "api_key_present": bool(debug.get("api_key_present")), "configuration_valid": False}
     scheduler = media_automation_service.status()
+    review_diagnostics = build_review_diagnostics(reviews)
     return {
         "service": "FXPilot",
         "media": {"catalog_items": len(catalog), "sources": len(tv_source_manager.list_public_sources()) if tv_source_manager else 0, "last_import": _safe_last_mtime(MEDIA_DEBUG_PATH)},
-        "reviews": {"total": len(reviews), "structured": sum(1 for r in reviews if r.primary_symbol and r.trade_ideas), "market_fallback": sum(1 for r in reviews if not r.primary_symbol or (r.symbol or "").upper() == "MARKET"), "last_review": _safe_last_mtime(LLM_REVIEW_STORAGE.base_dir)},
+        "reviews": {
+            "total": len(reviews),
+            "structured": review_diagnostics["reviews_structured"],
+            "structured_reviews": review_diagnostics["reviews_structured"],
+            "market_fallback": review_diagnostics["reviews_market_fallback"],
+            "last_review": _safe_last_mtime(LLM_REVIEW_STORAGE.base_dir),
+            **review_diagnostics,
+        },
+        "reviews_total": review_diagnostics["reviews_total"],
+        "reviews_structured": review_diagnostics["reviews_structured"],
+        "structured_reviews": review_diagnostics["reviews_structured"],
+        "reviews_with_primary_symbol": review_diagnostics["reviews_with_primary_symbol"],
+        "reviews_with_symbols": review_diagnostics["reviews_with_symbols"],
+        "reviews_with_trade_ideas": review_diagnostics["reviews_with_trade_ideas"],
+        "reviews_with_detected_levels": review_diagnostics["reviews_with_detected_levels"],
+        "reviews_market_fallback": review_diagnostics["reviews_market_fallback"],
         "llm": llm,
         "scheduler": {"enabled": bool(scheduler.get("enabled", scheduler.get("status") != "disabled")), "running": bool(scheduler.get("running", scheduler.get("status") == "running")), "last_run": scheduler.get("last_run"), "next_run": scheduler.get("next_run")},
         "pipeline": {"running": 0, "completed": sum(1 for v in catalog if v.get("pipeline_status") == "completed"), "partial": sum(1 for v in catalog if v.get("pipeline_status") == "partial"), "failed": sum(1 for v in catalog if v.get("pipeline_status") == "failed")},
