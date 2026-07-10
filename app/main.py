@@ -48,6 +48,7 @@ from app.services.media_automation import MediaAutomationService
 from app.services.transcript import TranscriptEngine, TranscriptStorage
 from app.services.ai_analyzer import AIAnalyzerEngine
 from app.services.knowledge import KnowledgeEngine
+from app.services.llm_config import LLMConfigurationError, llm_debug_payload, resolve_llm_config
 from app.services.llm_review import LLMReview, LLMReviewStorage, OpenAIReviewProvider, ReviewEngine
 from app.services.investment_committee import InvestmentCommitteeEngine
 from app.services.consensus import ConsensusEngine
@@ -725,9 +726,12 @@ class ContextOnlyReviewProvider:
 
 
 def create_llm_review_provider():
-    if os.getenv("OPENAI_API_KEY", "").strip():
-        return OpenAIReviewProvider()
-    return ContextOnlyReviewProvider()
+    try:
+        config = resolve_llm_config()
+        return OpenAIReviewProvider(config=config)
+    except LLMConfigurationError as exc:
+        logger.warning("llm_review_provider_configuration_error: %s", exc)
+        return ContextOnlyReviewProvider()
 
 
 def create_llm_review_engine(market_payload: dict[str, Any] | None = None, provider: Any | None = None) -> ReviewEngine:
@@ -990,6 +994,7 @@ def api_media_debug() -> dict[str, Any]:
         payload = create_media_import_engine().debug_sources()
         payload.update(transcript_engine.debug_payload())
         payload.update(MEDIA_KNOWLEDGE_DEBUG)
+        payload.update(llm_debug_payload())
         return payload
     except MediaConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

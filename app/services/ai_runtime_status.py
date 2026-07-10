@@ -9,7 +9,8 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from app.core.env import get_openrouter_api_key, get_openrouter_model
+from app.core.env import get_openrouter_model
+from app.services.llm_config import LLMConfigurationError, resolve_llm_config
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ _STATUS: dict[str, Any] = {
     "enabled": os.getenv("USE_OPENROUTER", "true").strip().lower() == "true",
     "provider": PROVIDER_NAME,
     "model": get_openrouter_model(),
-    "api_key_configured": bool(get_openrouter_api_key()),
+    "api_key_configured": bool(resolve_llm_config(provider="openrouter", require_api_key=False).api_key),
     "last_request_time": None,
     "last_success_time": None,
     "last_error": None,
@@ -44,7 +45,7 @@ def get_ai_status() -> dict[str, Any]:
         status = dict(_STATUS)
     status["enabled"] = os.getenv("USE_OPENROUTER", "true").strip().lower() == "true"
     status["model"] = get_openrouter_model()
-    status["api_key_configured"] = bool(get_openrouter_api_key())
+    status["api_key_configured"] = bool(resolve_llm_config(provider="openrouter", require_api_key=False).api_key)
     status["llm_available"] = bool(status["enabled"] and status["api_key_configured"] and status["last_success_time"] and not status["last_error"])
     return status
 
@@ -55,7 +56,7 @@ def record_ai_request_start(*, model: str | None = None) -> float:
     with _LOCK:
         _STATUS["enabled"] = os.getenv("USE_OPENROUTER", "true").strip().lower() == "true"
         _STATUS["model"] = model or get_openrouter_model()
-        _STATUS["api_key_configured"] = bool(get_openrouter_api_key())
+        _STATUS["api_key_configured"] = bool(resolve_llm_config(provider="openrouter", require_api_key=False).api_key)
         _STATUS["last_request_time"] = now
         _STATUS["total_requests"] = int(_STATUS.get("total_requests") or 0) + 1
     logger.info("llm_request_start provider=%s model=%s time=%s", PROVIDER_NAME, model or get_openrouter_model(), now)
@@ -91,20 +92,22 @@ def record_ai_request_failure(*, error: Any, model: str | None = None, started_a
 
 
 async def run_ai_test_request(prompt: str = "Reply with OK") -> dict[str, Any]:
-    model = get_openrouter_model()
-    api_key = (get_openrouter_api_key() or "").strip()
+    try:
+        config = resolve_llm_config(provider="openrouter")
+    except LLMConfigurationError as exc:
+        model = get_openrouter_model()
+        error = str(exc)
+        record_ai_request_failure(error=error, model=model)
+        return {"success": False, "provider": PROVIDER_NAME, "model": model, "response": "", "latency_ms": 0, "error": error}
+    model = config.model
+    api_key = config.api_key
     if os.getenv("USE_OPENROUTER", "true").strip().lower() != "true":
         error = "OpenRouter disabled by USE_OPENROUTER=false"
         record_ai_request_failure(error=error, model=model)
         return {"success": False, "provider": PROVIDER_NAME, "model": model, "response": "", "latency_ms": 0, "error": error}
-    if not api_key:
-        error = "missing_openrouter_api_key"
-        record_ai_request_failure(error=error, model=model)
-        return {"success": False, "provider": PROVIDER_NAME, "model": model, "response": "", "latency_ms": 0, "error": error}
-
     client = AsyncOpenAI(
         api_key=api_key,
-        base_url=OPENROUTER_BASE_URL,
+        base_url=config.base_url or OPENROUTER_BASE_URL,
         timeout=float(os.getenv("OPENROUTER_HEALTH_TIMEOUT", "10")),
         default_headers={"HTTP-Referer": OPENROUTER_SITE_URL, "X-Title": OPENROUTER_APP_TITLE},
     )

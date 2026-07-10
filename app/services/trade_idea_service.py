@@ -12,6 +12,7 @@ from typing import Any
 import requests
 
 from app.core.env import get_openrouter_api_key, get_openrouter_model
+from app.services.llm_config import LLMConfigurationError, resolve_llm_config
 from app.services.chart_data_service import ChartDataService
 from app.services.chart_snapshot_service import ChartSnapshotService
 from app.services.idea_narrative_llm import IdeaNarrativeLLMService, NarrativeResult
@@ -1243,8 +1244,15 @@ class TradeIdeaService:
         return list(DEFAULT_IDEA_TIMEFRAMES)
 
     def build_openrouter_api_ideas(self) -> list[dict[str, Any]]:
-        api_key = get_openrouter_api_key()
-        model = get_openrouter_model()
+        try:
+            llm_config = resolve_llm_config(provider="openrouter")
+            api_key = llm_config.api_key
+            model = llm_config.model
+            openrouter_url = f"{(llm_config.base_url or 'https://openrouter.ai/api/v1').rstrip('/')}/chat/completions"
+        except LLMConfigurationError:
+            api_key = get_openrouter_api_key()
+            model = get_openrouter_model()
+            openrouter_url = OPENROUTER_URL
 
         if not api_key:
             logger.warning("openrouter_missing_api_key")
@@ -1271,7 +1279,7 @@ class TradeIdeaService:
 
         try:
             logger.info("AI request started model=%s", model)
-            response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
+            response = requests.post(openrouter_url, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
             logger.info("AI response received status=%s", getattr(response, "status_code", "unknown"))
         except requests.RequestException as exc:

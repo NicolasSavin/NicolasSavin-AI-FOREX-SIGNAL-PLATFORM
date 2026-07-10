@@ -10,7 +10,8 @@ from typing import Any
 
 import requests
 
-from app.core.env import get_openrouter_api_key, get_openrouter_model
+from app.core.env import get_openrouter_model
+from app.services.llm_config import LLMConfigurationError, resolve_llm_config
 from app.signal_aggregator import SignalAggregator
 
 
@@ -88,8 +89,15 @@ class IdeaNarrativeLLMService:
     """
 
     def __init__(self) -> None:
-        self.api_key = (get_openrouter_api_key() or "").strip()
-        self.model = get_openrouter_model()
+        try:
+            config = resolve_llm_config(provider="openrouter")
+            self.api_key = config.api_key
+            self.base_url = (config.base_url or "https://openrouter.ai/api/v1").rstrip("/")
+            self.model = config.model
+        except LLMConfigurationError:
+            self.api_key = ""
+            self.base_url = "https://openrouter.ai/api/v1"
+            self.model = get_openrouter_model()
         self.fallback_model = (os.getenv("OPENROUTER_FALLBACK_MODEL", "") or "").strip()
         self.timeout = float(os.getenv("OPENROUTER_TIMEOUT", "30"))
         self._last_llm_rejection_reason: str | None = None
@@ -162,7 +170,7 @@ class IdeaNarrativeLLMService:
             logger.info("LLM model used: %s", model_used)
             try:
                 response = requests.post(
-                    OPENROUTER_URL,
+                    f"{self.base_url}/chat/completions",
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
@@ -229,7 +237,7 @@ class IdeaNarrativeLLMService:
             logger.info("LLM model used: %s", model_used)
             try:
                 response = requests.post(
-                    OPENROUTER_URL,
+                    f"{self.base_url}/chat/completions",
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
