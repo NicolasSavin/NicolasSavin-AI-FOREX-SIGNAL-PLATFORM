@@ -7,8 +7,8 @@
     const parts = window.location.pathname.split('/').filter(Boolean);
     return parts[0] === 'tv' && parts[1] === 'review' ? decodeURIComponent(parts[2] || '') : '';
   };
-  const value = (input, fallback = '—') => (input === undefined || input === null || input === '' ? fallback : input);
-  const percent = (input) => input === undefined || input === null || input === '' ? '—' : `${Math.round(Number(input))}%`;
+  const value = (input, fallback = 'Не определено') => (input === undefined || input === null || input === '' ? fallback : input);
+  const percent = (input) => input === undefined || input === null || input === '' ? 'Не определено' : `${Math.round(Number(input))}%`;
   const statusRu = (status) => status === 'available' ? 'Доступен' : 'Недоступен';
   const directionRu = (direction) => direction === 'BUY' ? 'Покупка' : direction === 'SELL' ? 'Продажа' : value(direction, 'Нет направления');
   const verdictRu = (verdict) => ({
@@ -56,7 +56,7 @@
       ['News status', idea.news_status || 'neutral'],
       ['Institutional Narrative', idea.institutional_narrative],
     ];
-    return ReviewSection({ id: 'fxpilotIdea', className: 'tv-review-section--summary', title: 'Current FXPilot idea', content: `<div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div><p class="tv-context-note">Контекст построен фактически из /api/ideas/market. Transcript и LLM не используются.</p>` });
+    return ReviewSection({ id: 'fxpilotIdea', className: 'tv-review-section--summary', title: 'Current FXPilot idea', content: `<div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div><p class="tv-context-note">Контекст построен фактически из /api/ideas/market. LLM Review создаётся настроенным LLM-провайдером и проходит детерминированную проверку символов.</p>` });
   }
 
   function transcriptMessage(status) {
@@ -120,7 +120,7 @@
       ['Risk Warnings', Array.isArray(knowledge.warnings) && knowledge.warnings.length ? knowledge.warnings.join(' · ') : 'Предупреждений нет'],
       ['Conflicts', Array.isArray(knowledge.conflicts) && knowledge.conflicts.length ? knowledge.conflicts.join(' · ') : 'Конфликтов нет'],
     ];
-    return ReviewSection({ id: 'knowledgeContext', className: 'tv-review-section--summary tv-verdict-section', title: 'FXPilot Knowledge Context', content: `<div class="tv-snapshot-grid tv-review-wide-grid">${cards.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div><p class="tv-context-note">Единый Knowledge Layer: metadata + transcript + rule AI analysis + FXPilot market idea. LLM/external AI calls не используются.</p>` });
+    return ReviewSection({ id: 'knowledgeContext', className: 'tv-review-section--summary tv-verdict-section', title: 'FXPilot Knowledge Context', content: `<div class="tv-snapshot-grid tv-review-wide-grid">${cards.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div><p class="tv-context-note">Единый Knowledge Layer: metadata + transcript + rule AI analysis + FXPilot market idea. AI Review использует настроенный LLM-провайдер и детерминированную валидацию извлечённых сущностей.</p>` });
   }
 
 
@@ -147,6 +147,30 @@
   }
 
 
+  function renderStructuredEntities(review) {
+    const ideas = Array.isArray(review.trade_ideas) ? review.trade_ideas : [];
+    const rows = [
+      ['Обнаруженные инструменты', Array.isArray(review.symbols) && review.symbols.length ? review.symbols.join(', ') : null],
+      ['Основной символ', review.primary_symbol || review.symbol],
+      ['Таймфрейм', review.timeframe],
+      ['Направление', directionRu(review.direction)],
+      ['Confidence', percent(review.confidence)],
+      ['Вход', review.entry_zone && review.entry_zone.length ? review.entry_zone.join(' — ') : review.entry],
+      ['Stop loss', review.stop_loss],
+      ['Targets', Array.isArray(review.targets) && review.targets.length ? review.targets.join(', ') : review.take_profit],
+    ];
+    const ideaCards = ideas.length ? ideas.map((idea, index) => `
+      <article class="tv-premium-placeholder">
+        <strong>Trade idea ${index + 1}: ${escapeHtml(value(idea.symbol))}</strong>
+        <p>${escapeHtml(directionRu(idea.direction))} · TF: ${escapeHtml(value(idea.timeframe))} · Entry: ${escapeHtml(value(idea.entry_zone && idea.entry_zone.length ? idea.entry_zone.join(' — ') : idea.entry))} · SL: ${escapeHtml(value(idea.stop_loss))} · TP: ${escapeHtml(value(idea.take_profit || (idea.targets || []).join(', ')))} · Confidence: ${escapeHtml(percent(idea.confidence))}</p>
+        <p>${escapeHtml(value(idea.reasoning))}</p>
+      </article>`).join('') : '<div class="tv-player-empty">Trade ideas: Не определено</div>';
+    return ReviewSection({ id: 'structuredEntities', className: 'tv-review-section--summary tv-verdict-section', title: 'Структурированные торговые сущности', content: `
+      <div class="tv-snapshot-grid tv-review-wide-grid">${rows.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value(item))}</strong></div>`).join('')}</div>
+      <div class="tv-analysis-lists">${ideaCards}</div>
+      <p class="tv-context-note">AI Review создан настроенным LLM-провайдером; символы дополнительно проверены детерминированными алиасами.</p>` });
+  }
+
   function renderComparison(review) {
     const idea = review.current_fxpilot_idea || {};
     return ReviewSection({ id: 'comparison', className: 'tv-review-section--summary', title: 'Comparison', content: `
@@ -166,7 +190,7 @@
 
   function ReviewPage(review, transcript) {
     const video = review.video || {};
-    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review v1: фактический контекст без OpenAI, с архитектурой transcript pipeline и локальным кешем.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderAIAnalysis(review)}${renderExpertVerdict(review)}${renderKnowledgeContext(review)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
+    return `<section class="panel tv-review-watch" data-video-id="${escapeHtml(video.id)}"><a class="tv-back-link" href="/tv">← Вернуться к каталогу FXPilot TV</a><p class="tv-review-slogan">FXPilot TV AI Review: разбор создаётся настроенным LLM-провайдером с детерминированной валидацией инструментов и уровней.</p></section><div class="tv-review-grid" id="reviewSections">${renderVideoInfo(video)}${renderTranscript(transcript)}${renderAIAnalysis(review)}${renderStructuredEntities(review)}${renderExpertVerdict(review)}${renderKnowledgeContext(review)}${renderSource(review)}${renderIdea(review)}${renderComparison(review)}${renderScore(review)}${renderVerdict(review)}</div>`;
   }
 
   async function loadReview() {

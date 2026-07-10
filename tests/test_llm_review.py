@@ -232,3 +232,78 @@ def test_import_now_generates_review_for_imported_youtube_id(monkeypatch):
     assert calls == ["Hf7eX113oIc"]
     assert result["review_generation"]["generated"] == 1
     assert result["review_generation"]["failed"] == 0
+
+from app.services.llm_review.entity_extraction import extract_symbols_from_text, normalize_direction, normalize_timeframe, to_float_or_none
+
+
+def test_structured_extraction_aliases_and_normalization():
+    assert extract_symbols_from_text("Прогноз по евро доллару") == ["EURUSD"]
+    assert extract_symbols_from_text("золото готовится к импульсу") == ["XAUUSD"]
+    assert extract_symbols_from_text("Bitcoin и EURUSD обзор") == ["EURUSD", "BTCUSD"]
+    assert extract_symbols_from_text("общий рыночный обзор") == []
+    assert normalize_direction("long buy") == "BUY"
+    assert normalize_direction("шорт") == "SELL"
+    assert normalize_direction("подождать") == "WAIT"
+    assert normalize_timeframe("4h") == "H4"
+    assert normalize_timeframe("Daily") == "D1"
+    assert to_float_or_none("1,2345") == 1.2345
+
+
+def test_llm_review_primary_symbol_null_not_market():
+    review = LLMReview.model_validate({"summary": "общий рынок", "symbols": ["MARKET"], "primary_symbol": "MARKET"})
+    assert review.primary_symbol is None
+    assert review.symbol is None
+
+
+def test_deterministic_fallback_supplements_missing_llm_symbols(tmp_path):
+    class EmptyProvider:
+        provider_name = "empty"
+        def generate_review(self, context):
+            return LLMReview(summary="Обзор без символа", provider="empty")
+    engine = ReviewEngine(
+        media_catalog_loader=lambda: [{"id": "v1", "youtube_id": "yt1", "title": "Прогноз золото и Bitcoin", "symbol": "MARKET"}],
+        transcript_engine=FakeTranscriptEngine(), ai_analyzer_engine=FakeAnalyzer(), market_payload_loader=lambda: {},
+        provider=EmptyProvider(), storage=LLMReviewStorage(tmp_path),
+    )
+    review = engine.generate("v1")
+    assert review.primary_symbol == "XAUUSD"
+    assert "BTCUSD" in review.symbols
+
+
+def test_storage_preserves_structured_fields(tmp_path):
+    storage = LLMReviewStorage(tmp_path)
+    review = LLMReview.model_validate({"symbols": ["EURUSD"], "primary_symbol": "EURUSD", "timeframe": "H4", "direction": "BUY", "entry": "1.10", "entry_zone": ["1.09", "1.10"], "stop_loss": "1.08", "take_profit": "1.12", "targets": ["1.12"], "trade_ideas": [{"symbol": "EURUSD", "direction": "BUY", "entry": "1.10", "confidence": 0.8}]})
+    storage.set("v1", review)
+    loaded = storage.get("v1")
+    assert loaded.primary_symbol == "EURUSD"
+    assert loaded.trade_ideas[0].confidence == 80
+    assert loaded.entry == 1.1
+
+
+def test_review_api_returns_structured_fields(monkeypatch, tmp_path):
+    import app.main as main
+    video = {"id": "v1", "youtube_id": "yt1", "title": "EURUSD buy", "symbol": "MARKET"}
+    monkeypatch.setattr(main, "_load_tv_video_catalog", lambda: [video])
+    monkeypatch.setattr(main, "ideas_market", lambda: {})
+    monkeypatch.setattr(main, "_review_transcript_payload", lambda video: {"status": "FOUND", "text": "Buy EURUSD from 1.10"})
+    monkeypatch.setattr(main.ai_analyzer_engine, "analyze", lambda transcript, metadata: AIReview(video_id="v1", symbol="EURUSD", direction="BUY"))
+    monkeypatch.setattr(main, "_build_knowledge_for_video", lambda video_id, market_payload=None: type("Knowledge", (), {"model_dump": lambda self: {"agreement_score": 70}})())
+    monkeypatch.setattr(main, "create_llm_review_engine", lambda market_payload=None: type("Engine", (), {"generate": lambda self, video_id, force=False: LLMReview(symbols=["EURUSD"], primary_symbol="EURUSD", direction="BUY", confidence=90, trade_ideas=[{"symbol":"EURUSD","direction":"BUY"}], provider="mock")})())
+    payload = TestClient(main.app).get("/api/media/review/v1").json()
+    assert payload["primary_symbol"] == "EURUSD"
+    assert payload["symbol"] == "EURUSD"
+    assert payload["trade_ideas"][0]["symbol"] == "EURUSD"
+
+
+def test_reprocess_endpoint_updates_market_reviews(monkeypatch, tmp_path):
+    import app.main as main
+    video = {"id": "v1", "youtube_id": "yt1", "title": "EURUSD", "symbol": "MARKET"}
+    monkeypatch.setattr(main, "_load_tv_video_catalog", lambda: [video])
+    monkeypatch.setattr(main, "ideas_market", lambda: {})
+    monkeypatch.setattr(main, "LLM_REVIEW_STORAGE", LLMReviewStorage(tmp_path))
+    main.LLM_REVIEW_STORAGE.set("v1", LLMReview.model_validate({"symbol": "MARKET"}))
+    monkeypatch.setattr(main, "create_llm_review_engine", lambda market_payload=None: type("Engine", (), {"generate": lambda self, video_id, force=False: main.LLM_REVIEW_STORAGE.set(video_id, LLMReview(symbols=["EURUSD"], primary_symbol="EURUSD", trade_ideas=[{"symbol":"EURUSD"}])) or main.LLM_REVIEW_STORAGE.get(video_id)})())
+    payload = TestClient(main.app).post("/api/media/reviews/reprocess").json()
+    assert payload["requested"] == 1
+    assert payload["updated"] == 1
+    assert payload["items"][0]["primary_symbol"] == "EURUSD"
