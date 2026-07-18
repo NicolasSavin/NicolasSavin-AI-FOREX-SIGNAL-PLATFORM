@@ -16,6 +16,7 @@
   const youtubeUrl = (v) => `https://www.youtube.com/watch?v=${encodeURIComponent(v.youtube_id || '')}`;
   const reviewUrl = (v) => `/tv/review/${encodeURIComponent(v.id || v.youtube_id || '')}`;
   const committeeUrl = (v) => `/committee/${encodeURIComponent(v.id || v.youtube_id || '')}`;
+  const symbolUrl = (v) => v.primary_symbol ? `/symbols/${encodeURIComponent(v.primary_symbol)}` : null;
 
   function renderFilters() {
     if (!filtersEl) return;
@@ -58,7 +59,7 @@
       <span class="tv-video-item__meta">${tv.badge(v.category,'category')}${tv.signalBadges(v)}${tv.badge(tv.formatDuration(v.duration),'duration')}<span class="${tv.reviewClass(v.review_status)}">${v.review_status === 'processing' ? '<i></i>' : ''}${tv.escapeHtml(tv.reviewLabel(v.review_status))}</span></span>
       <strong>${tv.escapeHtml(v.title || 'Без названия')}</strong>
       <span class="tv-video-item__info"><b>${tv.escapeHtml(v.author || v.channel || 'Автор не указан')}</b><time>${tv.escapeHtml(tv.formatDate(v.published_at))}</time></span>
-      <small class="tv-card-summary">${tv.escapeHtml(reviewText(v))}</small>
+      <small class="tv-card-summary">${tv.escapeHtml(reviewText(v))}</small>${v.primary_symbol ? `<a class="tv-check-button" href="/symbols/${encodeURIComponent(v.primary_symbol)}" onclick="event.stopPropagation()">Открыть аналитику символа</a>` : ''}
     </button>`;
   }
 
@@ -69,7 +70,7 @@
     <div class="tv-detail-top"><div>${tv.signalBadges(v)}<span class="${tv.reviewClass(v.review_status)}">${tv.escapeHtml(tv.reviewLabel(v.review_status))}</span></div></div>
     <p class="tv-ai-summary-full">${tv.escapeHtml(reviewText(v))}</p>
     <div class="tv-trade-levels"><span>Entry: <b>${tv.escapeHtml(val(v.entry))}</b></span><span>Entry zone: <b>${tv.escapeHtml(val(v.entry_zone))}</b></span><span>Stop loss: <b>${tv.escapeHtml(val(v.stop_loss))}</b></span><span>Targets: <b>${tv.escapeHtml(val(v.targets))}</b></span></div>
-    <div class="tv-detail-actions"><a class="tv-check-button" target="_blank" rel="noopener" href="${youtubeUrl(v)}">Смотреть на YouTube</a><a class="tv-check-button ${reviewReady ? '' : 'is-disabled'}" ${reviewReady ? `href="${reviewUrl(v)}"` : 'aria-disabled="true"'}>Открыть AI Review</a>${reviewReady ? `<a class="tv-check-button" href="${committeeUrl(v)}">Открыть Committee</a>` : ''}</div>`;
+    <div class="tv-detail-actions"><a class="tv-check-button" target="_blank" rel="noopener" href="${youtubeUrl(v)}">Смотреть на YouTube</a><a class="tv-check-button ${reviewReady ? '' : 'is-disabled'}" ${reviewReady ? `href="${reviewUrl(v)}"` : 'aria-disabled="true"'}>Открыть AI Review</a>${reviewReady ? `<a class="tv-check-button" href="${committeeUrl(v)}">Открыть Committee</a>` : ''}${symbolUrl(v) ? `<a class="tv-check-button" href="${symbolUrl(v)}">Открыть аналитику символа</a>` : ''}</div>`;
   }
 
   function selectVideo(id) { const old = selectedId; const v = visible.find(x => x.id === id) || videos.find(x => x.id === id) || visible[0] || null; selectedId = v?.id || null; if (v && old !== selectedId) playerEl.innerHTML = tv.VideoPlayer(v); renderDetails(v); renderList(); }
