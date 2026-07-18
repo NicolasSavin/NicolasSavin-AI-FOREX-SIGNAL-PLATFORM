@@ -404,13 +404,18 @@ class MediaImportEngine:
         return str(os.getenv("FXPILOT_DEV_MANUAL_MEDIA") or "").strip().lower() in {"1", "true", "yes", "on", "dev"}
     def import_latest(self, source_types: set[str] | None = None) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
-        run_log: dict[str, Any] = {"started_at": now, "finished_at": None, "sources": [], "steps": ["ENTER import_latest()"]}
+        run_log: dict[str, Any] = {"started_at": now, "finished_at": None, "sources": [], "steps": ["ENTER import_latest()"], **self._catalog_debug_snapshot("start")}
         self._persist_debug_run(run_log)
         logger.info("ENTER import_latest()")
 
         sources = [s for s in self.load_sources() if s.enabled and (not source_types or s.source_type in source_types)]
         existing_raw_catalog = self._read_json_list(self.catalog_path)
         existing = self.load_catalog()
+        run_log["catalog_items_before"] = len(existing)
+        run_log["catalog_raw_items_before"] = len(existing_raw_catalog)
+        run_log["storage_root"] = str(self.catalog_path.parent.resolve())
+        run_log["catalog_path"] = str(self.catalog_path.resolve())
+        run_log["catalog_exists"] = self.catalog_path.exists()
         fetched: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
         processed = 0
@@ -449,6 +454,13 @@ class MediaImportEngine:
                 "skipped_reasons": {},
                 "skipped_items": [],
                 "saved_catalog_items": 0,
+                "items_loaded_from_sources": 0,
+                "items_written": 0,
+                "catalog_items_before": len(existing),
+                "catalog_items_after": None,
+                "write_success": False,
+                "last_write_error": None,
+                "filters": self._empty_filter_counts(),
             }
             try:
                 run_log["steps"].append(f"Processing source {source.name}")
@@ -496,8 +508,10 @@ class MediaImportEngine:
                     "execution_time": active_diag.get("execution_time") or (datetime.now(timezone.utc) - source_started).total_seconds(),
                     "fetched_raw_count": active_diag.get("fetched_raw_count", result.videos_found),
                     "valid_items": active_diag.get("valid_items", len(result.items)),
+                    "items_loaded_from_sources": len(result.items),
                     "skipped_invalid": active_diag.get("skipped_invalid", 0),
                     "skipped_reasons": active_diag.get("skipped_reasons", {}),
+                    "filters": self._source_filter_counts(source, result, active_diag),
                     "skipped_items": active_diag.get("skipped_items", [])[:20],
                     "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY")),
                     "api_key_detected": bool(os.getenv("YOUTUBE_API_KEY")),
@@ -530,6 +544,7 @@ class MediaImportEngine:
             finally:
                 run_log["sources"].append(source_log)
 
+        filter_counts = self._filter_counts(fetched, existing)
         valid_fetched = [item for item in fetched if self._is_catalog_item_importable(item)]
         successful_source_ids = {s.id for s in updated_sources if not s.last_error and s.provider != "youtube_manual"}
         kept_existing = [item for item in existing if str(item.get("source_id") or "") not in successful_source_ids]
@@ -541,15 +556,37 @@ class MediaImportEngine:
         after_keys = {self._dedupe_key(i) for i in merged if self._dedupe_key(i)}
         before = {str(i.get("youtube_id")) for i in existing if is_valid_youtube_id(i.get("youtube_id"))}
         after = {str(i.get("youtube_id")) for i in merged if is_valid_youtube_id(i.get("youtube_id"))}
+        if valid_fetched and not merged:
+            raise MediaImportError("media import fetched importable items but catalog merge produced zero items; refusing successful zero-item write")
         run_log["steps"].append("Saving catalog...")
         logger.info("Saving catalog...")
-        self._atomic_write_json(self.catalog_path, merged)
+        write_success = False
+        last_write_error = None
+        try:
+            self._atomic_write_json(self.catalog_path, merged)
+            write_success = True
+        except Exception as exc:
+            last_write_error = str(exc)
+            run_log["last_write_error"] = last_write_error
+            run_log["write_success"] = False
+            self._persist_debug_run(run_log)
+            raise
         for row in run_log["sources"]:
             if row.get("error"):
                 continue
             row["saved_catalog_items"] = len([item for item in merged if item.get("source_id") == row.get("source_id")])
+            row["items_written"] = row["saved_catalog_items"]
+            row["catalog_items_after"] = len(merged)
+            row["write_success"] = write_success
+            row["last_write_error"] = last_write_error
             row["updated_count"] = len([item for item in valid_fetched if item.get("source_id") == row.get("source_id") and str(item.get("youtube_id")) in before])
         self._save_sources(updated_sources)
+        run_log["filters"] = filter_counts
+        run_log["items_loaded_from_sources"] = len(fetched)
+        run_log["items_written"] = len(merged)
+        run_log["catalog_items_after"] = len(merged)
+        run_log["write_success"] = write_success
+        run_log["last_write_error"] = last_write_error
         run_log["duplicates_removed"] = duplicates_removed
         run_log["fetched_raw_count"] = sum(int(row.get("fetched_raw_count") or row.get("entries_found") or 0) for row in run_log["sources"])
         run_log["valid_items"] = len(valid_fetched)
@@ -601,6 +638,56 @@ class MediaImportEngine:
     def _persist_debug_run(self, run_log: dict[str, Any]) -> None:
         self.debug_path.parent.mkdir(parents=True, exist_ok=True)
         self._atomic_write_json(self.debug_path, run_log)
+
+    def _catalog_debug_snapshot(self, label: str) -> dict[str, Any]:
+        items = self._read_json_list(self.catalog_path)
+        return {
+            "catalog_path": str(self.catalog_path.resolve()),
+            "storage_root": str(self.catalog_path.parent.resolve()),
+            "catalog_exists": self.catalog_path.exists(),
+            "catalog_items": len(items),
+            "catalog_debug_label": label,
+        }
+
+    @staticmethod
+    def _empty_filter_counts() -> dict[str, int]:
+        return {
+            "invalid_metadata": 0,
+            "duplicates": 0,
+            "missing_youtube_id": 0,
+            "unsupported_source": 0,
+            "validation": 0,
+            "normalization": 0,
+        }
+
+    def _source_filter_counts(self, source: MediaSource, result: ImportSourceResult, provider_diag: dict[str, Any] | None = None) -> dict[str, int]:
+        counts = self._empty_filter_counts()
+        provider_diag = provider_diag or {}
+        counts["unsupported_source"] = 0 if self.resolve_provider(source.provider).__class__ is not EmptyProvider else int(result.videos_found or 0)
+        counts["invalid_metadata"] = int(provider_diag.get("invalid_metadata") or 0)
+        counts["missing_youtube_id"] = int(provider_diag.get("missing_youtube_id") or 0)
+        counts["validation"] = int(provider_diag.get("skipped_invalid") or 0)
+        counts["normalization"] = int(provider_diag.get("normalization") or 0)
+        return counts
+
+    def _filter_counts(self, fetched: list[dict[str, Any]], existing: list[dict[str, Any]]) -> dict[str, int]:
+        counts = self._empty_filter_counts()
+        seen = {self._dedupe_key(item) for item in existing if self._dedupe_key(item)}
+        for item in fetched:
+            provider = str(item.get("provider") or "")
+            if provider in {"youtube", "youtube_api", "youtube_ytdlp", "auto", "youtube-rss"} and not str(item.get("youtube_id") or "").strip():
+                counts["missing_youtube_id"] += 1
+            if not self._is_catalog_item_importable(item):
+                counts["validation"] += 1
+                continue
+            key = self._dedupe_key(item)
+            if not key:
+                counts["normalization"] += 1
+            elif key in seen:
+                counts["duplicates"] += 1
+            else:
+                seen.add(key)
+        return counts
 
     def debug_sources(self) -> dict[str, Any]:
         last_run = {"started_at": None, "finished_at": None, "sources": []}
@@ -698,7 +785,18 @@ class MediaImportEngine:
                     "fallback_reason": last_source_run.get("fallback_reason"),
                 },
             })
-        return {"last_import_run": last_run, "sources": rows}
+        catalog = self.load_catalog()
+        diag = self._catalog_debug_snapshot("debug")
+        diag.update({
+            "catalog_items_before": last_run.get("catalog_items_before", len(catalog)),
+            "catalog_items_after": last_run.get("catalog_items_after", len(catalog)),
+            "items_loaded_from_sources": last_run.get("items_loaded_from_sources", 0),
+            "items_written": last_run.get("items_written", len(catalog)),
+            "write_success": bool(last_run.get("write_success", False)),
+            "last_write_error": last_run.get("last_write_error"),
+            "filters": last_run.get("filters") or self._empty_filter_counts(),
+        })
+        return {"last_import_run": last_run, "sources": rows, **diag}
     def stats(self) -> dict[str, Any]:
         catalog = self.load_catalog()
         last_run = {}
@@ -1005,8 +1103,7 @@ class MediaImportEngine:
         if not allow_manual and (item.get("status") == "manual_demo" or provider in {"youtube_manual", "youtube-manual"}):
             return False
         if provider in {"youtube", "youtube_api", "youtube_ytdlp", "auto", "youtube-rss"} or item.get("youtube_id"):
-            youtube_id = str(item.get("youtube_id") or "").strip()
-            return bool(youtube_id and not youtube_id.upper().startswith("DEMO"))
+            return is_valid_youtube_id(item.get("youtube_id"))
         return bool(str(item.get("url") or item.get("id") or "").strip())
 
     @staticmethod

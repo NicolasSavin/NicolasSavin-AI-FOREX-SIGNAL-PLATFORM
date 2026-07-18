@@ -100,6 +100,21 @@ class TvSourceManager:
             for source in sorted(self.list_enabled_sources(), key=lambda item: (item.priority, item.name.lower()))
         ]
 
+    def debug_payload(self) -> dict[str, Any]:
+        sources = self.load_sources()
+        videos = self._load_video_catalog()
+        payload = {
+            "sources_path": str(self.sources_path.resolve()),
+            "videos_path": str(self.videos_path.resolve()) if self.videos_path else None,
+            "sources_exists": self.sources_path.exists(),
+            "videos_exists": self.videos_path.exists() if self.videos_path else False,
+            "sources_loaded": len(sources),
+            "enabled_sources": len([s for s in sources if s.enabled]),
+            "video_catalog_items": len(videos),
+        }
+        logger.info("tv_source_manager_debug sources_path=%s videos_path=%s sources_loaded=%s video_catalog_items=%s", payload["sources_path"], payload["videos_path"], payload["sources_loaded"], payload["video_catalog_items"])
+        return payload
+
     def dashboard_stats(self) -> dict[str, Any]:
         sources = self.load_sources()
         videos = self._load_video_catalog()

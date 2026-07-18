@@ -162,6 +162,7 @@ KG_SERVICE: KnowledgeGraphService | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     manual_path = MEDIA_MANUAL_YOUTUBE_PATH if os.getenv("FXPILOT_DEV_MANUAL_MEDIA", "").strip().lower() in {"1", "true", "yes", "on", "dev"} else None
+    logger.info("create_media_import_engine storage_root=%s sources_path=%s catalog_path=%s debug_path=%s manual_path=%s", DATA_DIR, MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, MEDIA_DEBUG_PATH, manual_path)
     return MediaImportEngine(MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, manual_path, debug_path=MEDIA_DEBUG_PATH)
 
 media_import_engine = create_media_import_engine()
@@ -1155,6 +1156,7 @@ def _review_needs_reprocess(review: LLMReview | None) -> bool:
 def api_media_debug() -> dict[str, Any]:
     try:
         payload = create_media_import_engine().debug_sources()
+        payload["tv_source_manager"] = tv_source_manager.debug_payload()
         payload.update(transcript_engine.debug_payload())
         payload.update(MEDIA_KNOWLEDGE_DEBUG)
         payload.update(llm_debug_payload())

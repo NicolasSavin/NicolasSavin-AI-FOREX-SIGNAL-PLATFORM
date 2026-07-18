@@ -569,3 +569,49 @@ def test_stats_include_provider_quota_latency_and_fallback_count(tmp_path: Path)
     assert stats["quota_usage"] == 102
     assert stats["api_latency"] == 0.5
     assert stats["fallback_count"] == 1
+
+
+def test_stage_20_4_mock_youtube_import_persists_and_indexes_knowledge_graph(tmp_path: Path):
+    from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
+    from app.services.knowledge_graph.service import KnowledgeGraphService
+    from app.services.llm_review import LLMReview, LLMReviewStorage
+
+    sources_path = tmp_path / "media_sources.json"
+    catalog_path = tmp_path / "media_catalog.json"
+    debug_path = tmp_path / "media_import_debug.json"
+    sources_path.write_text(json.dumps([
+        {"id":"demo","name":"Demo","provider":"youtube_ytdlp","source_type":"youtube","channel_url":"https://www.youtube.com/@demo","language":"ru","priority":1,"categories":["Forex"],"enabled":True}
+    ]), encoding="utf-8")
+
+    class Provider:
+        provider_name = "youtube_ytdlp"
+        last_diagnostic = {"execution_time": 0.01, "fetched_raw_count": 1, "valid_items": 1, "skipped_invalid": 0}
+        def fetch_latest(self, source):
+            item = MediaItem("youtube:KgStage204A", "youtube_ytdlp", source.id, "BTCUSD обзор", "Demo", "KgStage204A", "https://www.youtube.com/watch?v=KgStage204A", None, "2026-07-18T00:00:00+00:00", None, "Forex", "BTCUSD", "ru", "")
+            return ImportSourceResult(source, [item], "ok", 200, 1)
+
+    engine = MediaImportEngine(sources_path, catalog_path, ytdlp_provider=Provider(), debug_path=debug_path)
+    result = engine.import_latest()
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+
+    assert result["success"] is True
+    assert catalog_path.exists()
+    assert len(catalog) == 1
+    assert engine.load_catalog()[0]["youtube_id"] == "KgStage204A"
+    debug = engine.debug_sources()
+    assert debug["catalog_path"] == str(catalog_path.resolve())
+    assert debug["catalog_exists"] is True
+    assert debug["catalog_items_before"] == 0
+    assert debug["catalog_items_after"] == 1
+    assert debug["items_loaded_from_sources"] == 1
+    assert debug["items_written"] == 1
+    assert debug["write_success"] is True
+    assert debug["last_write_error"] is None
+    assert set(debug["filters"]).issuperset({"invalid_metadata", "duplicates", "missing_youtube_id", "unsupported_source", "validation", "normalization"})
+
+    storage = LLMReviewStorage(tmp_path / "llm_reviews")
+    storage.set("youtube:KgStage204A", LLMReview(primary_symbol="BTCUSD", symbols=["BTCUSD"], direction="BUY", confidence=80, trade_ideas=[{"symbol":"BTCUSD","direction":"BUY"}]))
+    service = KnowledgeGraphService(KnowledgeGraphBuilder(media_catalog_loader=engine.load_catalog, review_storage=storage))
+    symbols = service.list_symbols()
+    assert symbols["total"] == 1
+    assert symbols["diagnostics"].catalog_items_scanned == 1
