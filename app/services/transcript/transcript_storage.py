@@ -4,12 +4,13 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.services.storage_paths import TRANSCRIPTS_DIR, atomic_write_json
 from .transcript_models import TranscriptResult, TranscriptSegment, TranscriptStatus
 
 
 class TranscriptStorage:
-    def __init__(self, directory: Path | str = Path("data/transcripts")) -> None:
-        self.directory = Path(directory)
+    def __init__(self, directory: Path | str | None = None) -> None:
+        self.directory = Path(directory if directory is not None else TRANSCRIPTS_DIR).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
 
     def path_for(self, video_id: str) -> Path:
@@ -50,7 +51,7 @@ class TranscriptStorage:
         if result.error:
             payload["error"] = result.error
         path = self.path_for(result.video_id)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_json(path, payload)
         return path
 
     def cached_count(self) -> int:

@@ -6,15 +6,20 @@ from app.services.knowledge_graph.models import SymbolAuthorSummary, SymbolConse
 from app.services.knowledge_graph.normalization import normalize_symbol
 
 class KnowledgeGraphService:
-    def __init__(self, builder: KnowledgeGraphBuilder, ttl_seconds: int = 60) -> None:
-        self.builder=builder; self.ttl=ttl_seconds; self._cache=None; self._built=0.0
-    def invalidate(self) -> None:
-        self._cache=None; self._built=0.0
+    def __init__(self, builder: KnowledgeGraphBuilder, ttl_seconds: int = 60, empty_ttl_seconds: int = 5) -> None:
+        self.builder=builder; self.ttl=ttl_seconds; self.empty_ttl=empty_ttl_seconds; self._cache=None; self._built=0.0; self.last_invalidation_reason=None
+    def invalidate(self, reason: str = "manual") -> None:
+        self._cache=None; self._built=0.0; self.last_invalidation_reason=reason
+    def _cache_is_empty(self) -> bool:
+        if not self._cache: return True
+        d=self._cache["diagnostics"]
+        return d.catalog_items_scanned == 0 and d.review_files_scanned == 0
     def graph(self):
         import time
-        if not self._cache or time.time()-self._built>self.ttl:
-            self._cache=self.builder.build(); self._built=time.time()
-        age=time.time()-self._built; self._cache['diagnostics'].cache_age_seconds=round(age,2); return self._cache
+        now=time.time(); ttl=self.empty_ttl if self._cache_is_empty() else self.ttl; hit=bool(self._cache) and now-self._built<=ttl
+        if not hit:
+            self._cache=self.builder.build(); self._built=now
+        age=time.time()-self._built; d=self._cache["diagnostics"]; d.cache_age_seconds=round(age,2); d.cache_hit=hit; d.cache_empty=self._cache_is_empty(); d.last_invalidation_reason=self.last_invalidation_reason; return self._cache
     def list_symbols(self, search=None, direction=None, min_reviews=0, sort='latest_review'):
         g=self.graph(); items=list(g['summaries'].values())
         if search: items=[i for i in items if search.upper() in i.symbol]

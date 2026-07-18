@@ -36,6 +36,16 @@
         <div id="statusCards" class="stats-page-grid"></div>
       </section>
 
+      <section class="panel">
+        <div class="panel-heading compact"><div><p class="section-kicker">Storage</p><h2>Хранилище production data</h2><p class="section-text">Диагностика использует OPS token в заголовке, без токена в URL.</p></div></div>
+        <div id="storageCards" class="stats-page-grid"></div>
+        <div class="ops-actions">
+          <button data-op="storage-diagnostics" class="archive-link-button">Обновить диагностику хранилища</button>
+          <button data-op="storage-migrate-dry" class="archive-link-button ghost">Проверить миграцию — dry run</button>
+          <button data-op="storage-migrate-exec" class="archive-link-button warning">Выполнить миграцию</button>
+        </div>
+      </section>
+
       <section class="panel ops-two-col">
         <div>
           <p class="section-kicker">B. Media operations <span class="ops-badge free">FREE / NO LLM COST</span></p>
