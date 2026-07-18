@@ -25,7 +25,7 @@
     const cards = [
       ['Media catalog', p.media?.catalog_items], ['Sources', p.media?.sources], ['Reviews', p.reviews?.total], ['Structured reviews', reviewStructuredCount(p)],
       ['LLM provider/model', `${p.llm?.provider || '—'} / ${p.llm?.model || '—'}`], ['Scheduler', p.scheduler?.running ? 'running' : 'stopped'],
-      ['Pipeline', `run:${p.pipeline?.running || 0} ok:${p.pipeline?.completed || 0} fail:${p.pipeline?.failed || 0}`], ['Last import', p.media?.last_import || '—'], ['Last error', '—']
+      ['Pipeline', `run:${p.pipeline?.running || 0} ok:${p.pipeline?.completed || 0} fail:${p.pipeline?.failed || 0}`], ['Knowledge Graph', `symbols:${p.knowledge_graph?.symbols ?? 0} reviews:${p.knowledge_graph?.reviews_indexed ?? 0} conflicts:${p.knowledge_graph?.conflicts ?? 0}`], ['KG build time', `${p.knowledge_graph?.build_time_ms ?? 0} ms`], ['Last import', p.media?.last_import || '—'], ['Last error', '—']
     ];
     $('statusCards').innerHTML = cards.map(([label, value]) => `<article class="stats-page-card"><span>${label}</span><strong>${value ?? '—'}</strong></article>`).join('');
   }

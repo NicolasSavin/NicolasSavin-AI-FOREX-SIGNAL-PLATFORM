@@ -56,6 +56,8 @@ from app.services.investment_committee import InvestmentCommitteeEngine
 from app.services.consensus import ConsensusEngine
 from app.services.author_intelligence import AuthorIntelligenceEngine
 from app.services.performance import PerformanceEngine
+from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
+from app.services.knowledge_graph.service import KnowledgeGraphService
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -155,6 +157,7 @@ MEDIA_MANUAL_YOUTUBE_PATH = BASE_DIR.parent / "data" / "manual_youtube_videos.js
 MEDIA_DEBUG_PATH = BASE_DIR.parent / "data" / "media_import_debug.json"
 OPS_AUDIT_PATH = BASE_DIR.parent / "data" / "ops_audit.json"
 OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "cache_clear"]}
+KG_SERVICE: KnowledgeGraphService | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     manual_path = MEDIA_MANUAL_YOUTUBE_PATH if os.getenv("FXPILOT_DEV_MANUAL_MEDIA", "").strip().lower() in {"1", "true", "yes", "on", "dev"} else None
@@ -527,6 +530,14 @@ def tv_review_page(video_id: str):
 def tv_sources_page():
     return FileResponse(STATIC_DIR / "tv-sources.html")
 
+
+@app.get("/symbols", include_in_schema=False)
+def symbols_page():
+    return FileResponse(STATIC_DIR / "symbols.html")
+
+@app.get("/symbols/{symbol}", include_in_schema=False)
+def symbol_detail_page(symbol: str):
+    return FileResponse(STATIC_DIR / "symbol-detail.html")
 
 @app.get("/admin/media", include_in_schema=False)
 def media_admin_page():
@@ -1475,6 +1486,7 @@ def api_ops_status() -> dict[str, Any]:
         "scheduler": {"enabled": bool(scheduler.get("enabled", scheduler.get("status") != "disabled")), "running": bool(scheduler.get("running", scheduler.get("status") == "running")), "last_run": scheduler.get("last_run"), "next_run": scheduler.get("next_run")},
         "pipeline": {"running": 0, "completed": sum(1 for v in catalog if v.get("pipeline_status") == "completed"), "partial": sum(1 for v in catalog if v.get("pipeline_status") == "partial"), "failed": sum(1 for v in catalog if v.get("pipeline_status") == "failed")},
         "engines": {"transcript": "available", "review": "available" if llm["configuration_valid"] else "degraded", "committee": "available", "consensus": "available", "authors": "available", "performance": "available"},
+        "knowledge_graph": (lambda d: {"symbols": d.symbols_found, "reviews_indexed": d.reviews_indexed, "trade_ideas": d.trade_ideas_found, "authors": d.authors, "committee_entries": d.committee_entries, "conflicts": d.conflicts, "build_time_ms": d.build_time_ms, "last_built_at": d.last_built_at})(create_knowledge_graph_service().graph()["diagnostics"]),
     }
 
 
@@ -1540,6 +1552,36 @@ def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, A
         MARKET_IDEAS_CACHE.update({"updated_at_epoch": 0.0, "payload": None})
         return {"success": True, "status": "cleared", "message": "Safe application caches cleared."}
     return _run_locked_ops("cache_clear", {}, clear)
+
+
+
+def _stored_review_payload_for_committee(video: dict[str, Any]) -> dict[str, Any]:
+    # Knowledge Graph must be read-only: this payload reads only cached LLMReview + catalog metadata.
+    review = _stored_llm_review_for_video(video)
+    if not review:
+        raise ValueError("cached AI Review is not ready")
+    return {"video": video, "analysis": {}, "knowledge": {}, "knowledge_context": {}, "llm_review": review.model_dump(), "direction": review.direction, "confidence": review.confidence}
+
+def create_knowledge_graph_service() -> KnowledgeGraphService:
+    global KG_SERVICE
+    if KG_SERVICE is None:
+        committee = lambda video_id: InvestmentCommitteeEngine(media_catalog_loader=_load_tv_video_catalog, review_payload_builder=_stored_review_payload_for_committee).build_for_video(video_id).model_dump()
+        builder = KnowledgeGraphBuilder(media_catalog_loader=_load_tv_video_catalog, review_storage=LLM_REVIEW_STORAGE, committee_builder=committee)
+        KG_SERVICE = KnowledgeGraphService(builder, ttl_seconds=60)
+    return KG_SERVICE
+
+@app.get("/api/symbols")
+def api_symbols(search: str | None = None, direction: str | None = None, min_reviews: int = 0, sort: str = "latest_review") -> dict[str, Any]:
+    if sort not in {"review_count", "latest_review", "confidence", "authors", "symbol"}:
+        sort = "latest_review"
+    return create_knowledge_graph_service().list_symbols(search=search, direction=direction, min_reviews=min_reviews, sort=sort)
+
+@app.get("/api/symbols/{symbol}")
+def api_symbol_detail(symbol: str, limit: int = 50):
+    detail = create_knowledge_graph_service().detail(symbol, limit=limit)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+    return detail
 
 @app.get("/api/media/review/{video_id}")
 def api_media_review(video_id: str) -> dict[str, Any]:

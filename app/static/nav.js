@@ -50,6 +50,13 @@
     nav.appendChild(authorsLink);
   }
 
+  if (!nav.querySelector('a[href="/symbols"]')) {
+    const symbolsLink = document.createElement('a');
+    symbolsLink.href = '/symbols';
+    symbolsLink.textContent = '🧭 Символы';
+    nav.appendChild(symbolsLink);
+  }
+
   if (!nav.querySelector('a[href="/tv"]')) {
     const tvLink = document.createElement('a');
     tvLink.href = '/tv';

@@ -129,7 +129,9 @@
   function renderQuickActions(review) {
     const video = review.video || {};
     const committee = `/investment-committee?video_id=${encodeURIComponent(video.id || getVideoId())}`;
-    return `<section class="tv-report-actions panel"><a class="tv-check-button" target="_blank" rel="noopener" href="${escapeHtml(youtubeUrl(video))}">Смотреть на YouTube</a><a class="tv-check-button" href="/tv">Назад в TV</a><a class="tv-check-button" href="${escapeHtml(committee)}">Открыть Committee</a><button class="tv-check-button" type="button" id="copyReviewLink">Скопировать ссылку</button></section>`;
+    const sym = review.primary_symbol || review.symbol || review.llm_review?.primary_symbol;
+    const symbolLink = sym ? `<a class="tv-check-button" href="/symbols/${encodeURIComponent(sym)}">Открыть аналитику символа</a>` : '';
+    return `<section class="tv-report-actions panel"><a class="tv-check-button" target="_blank" rel="noopener" href="${escapeHtml(youtubeUrl(video))}">Смотреть на YouTube</a><a class="tv-check-button" href="/tv">Назад в TV</a><a class="tv-check-button" href="${escapeHtml(committee)}">Открыть Committee</a>${symbolLink}<button class="tv-check-button" type="button" id="copyReviewLink">Скопировать ссылку</button></section>`;
   }
 
   function ReviewPage(review, transcript) {
