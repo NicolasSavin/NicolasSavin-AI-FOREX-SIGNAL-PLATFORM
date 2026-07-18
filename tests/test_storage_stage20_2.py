@@ -64,7 +64,7 @@ def test_migration_dry_run_execute_newer_and_atomic(tmp_path):
     sp.DATA_DIR = dst; sp.LLM_REVIEWS_DIR = dst / "llm_reviews"; sp.TRANSCRIPTS_DIR = dst / "transcripts"
     try:
         dry = sp.migrate_legacy_data(execute=False, review_model=LLMReview)
-        assert dry["copied"] >= 1 and not (dst / "llm_reviews" / "v1.json").exists()
+        assert dry["copy_planned"] >= 1 and dry["copied"] == 0 and not (dst / "llm_reviews" / "v1.json").exists()
         done = sp.migrate_legacy_data(execute=True, review_model=LLMReview)
         assert (dst / "llm_reviews" / "v1.json").exists()
         assert json.loads((dst / "media_catalog.json").read_text())[0]["id"] == "newer"

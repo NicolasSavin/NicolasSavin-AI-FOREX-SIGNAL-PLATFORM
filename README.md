@@ -769,3 +769,27 @@ When Render-like production is detected without a persistent configured data roo
 ### Knowledge Graph cache behavior
 
 Knowledge Graph keeps the normal healthy TTL, but empty graphs with zero catalog items and zero review files use a short TTL so startup races or late-mounted storage do not preserve an empty graph for the full cache duration. OPS media import, review generation/reprocessing, migration, aggregation rebuilds and safe cache clear invalidate the graph cache.
+
+## Постоянное хранилище FXPilot на Render
+
+Render хранит обычные файлы web service в эфемерной файловой системе контейнера. Файлы, записанные в каталог развернутого репозитория (`data/media_catalog.json`, `data/tv_videos.json`, `data/llm_reviews/*.json`, `data/transcripts/*`, `data/ops_audit.json`), могут исчезнуть после перезапуска или деплоя, если не подключен persistent disk. Переменные окружения сами по себе **не создают** диск: диск должен быть создан и смонтирован до того, как производственные данные станут долговечными. Persistent disk на Render обычно требует платный instance; текущий `render.yaml` не добавляет disk declaration, чтобы не ломать бесплатный план автоматически.
+
+Точные шаги в браузере:
+
+1. Open Render Dashboard.
+2. Select AI-FOREX-SIGNAL-PLATFORM.
+3. Open the Disk section.
+4. Create a persistent disk.
+5. Disk name: `fxpilot-data`.
+6. Mount path: `/var/data/fxpilot`.
+7. Open Environment.
+8. Add: `FXPILOT_DATA_DIR=/var/data/fxpilot`.
+9. Add: `FXPILOT_STORAGE_MODE=persistent`.
+10. Save changes.
+11. Redeploy the service.
+12. Open: `https://fxpilot.ru/ops`.
+13. Enter the OPS token.
+14. Click: `Обновить диагностику хранилища`.
+15. Confirm: `Storage mode = persistent` and `Status = healthy`.
+
+Если данные уже были потеряны вместе со старым уничтоженным контейнером Render, приложение не сможет восстановить их без копии, резервной выгрузки или другого внешнего бэкапа. После настройки диска можно использовать защищенную операцию миграции в `/ops`: сначала dry run, затем execute. Она копирует только известные runtime-файлы, не вызывает LLM, не удаляет источники и не перезаписывает более новые destination-файлы.

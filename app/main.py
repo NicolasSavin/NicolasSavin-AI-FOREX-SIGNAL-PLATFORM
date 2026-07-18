@@ -59,12 +59,13 @@ from app.services.performance import PerformanceEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
 from app.services.storage_paths import (
-    DATA_DIR, DATA_ROOT_SOURCE, STORAGE_MODE, INSTANCE_ID, PROCESS_STARTED_AT,
+    DATA_DIR, DATA_ROOT_SOURCE, STORAGE_MODE,
     MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, MEDIA_TV_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH,
     MEDIA_MANUAL_YOUTUBE_PATH, MEDIA_DEBUG_PATH, MEDIA_AUTOMATION_STATE_PATH,
     LLM_REVIEWS_DIR, TRANSCRIPTS_DIR, OPS_AUDIT_PATH, atomic_write_json,
-    migrate_legacy_data, storage_diagnostics, storage_health,
+    migrate_legacy_data,
 )
+from app.services.storage_health import FXPILOT_INSTANCE_ID, PROCESS_STARTED_AT, backup_manifest, storage_diagnostics, storage_health
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -1083,7 +1084,7 @@ def _run_media_import() -> dict[str, Any]:
     engine = create_media_import_engine()
     result = engine.import_latest()
     result["review_generation"] = _generate_reviews_for_imported_items(result.get("new_item_ids") or [])
-    invalidate_knowledge_graph()
+    invalidate_knowledge_graph("media_import")
     return result
 
 
@@ -1248,7 +1249,7 @@ def api_media_llm_review(video_id: str, force: bool = False) -> dict[str, Any]:
     market_payload = ideas_market()
     review = create_llm_review_engine(market_payload=market_payload).generate(catalog_id, force=force)
     knowledge = _build_knowledge_for_video(catalog_id, market_payload=market_payload).model_dump()
-    invalidate_knowledge_graph()
+    invalidate_knowledge_graph("ai_review_generation")
     return {
         "video": video,
         "analysis": knowledge.get("ai_analysis", {}),
@@ -1388,7 +1389,7 @@ def api_media_reviews_reprocess(force: bool = False, limit: int | None = None) -
             result["failed"] += 1
             result["items"].append({"video_id": catalog_id, "status": "failed", "error": exc.__class__.__name__})
     if result["generated"] or result["updated"]:
-        invalidate_knowledge_graph()
+        invalidate_knowledge_graph("media_import")
     return result
 
 
@@ -1478,7 +1479,7 @@ def api_ops_status() -> dict[str, Any]:
     health = storage_health()
     return {
         "service": "FXPilot",
-        "storage": {"mode": health["mode"], "healthy": health["healthy"], "warning": health["warning"], "data_root_source": DATA_ROOT_SOURCE, "instance_id": INSTANCE_ID, "process_started_at": PROCESS_STARTED_AT},
+        "storage": {"mode": health["mode"], "healthy": health["healthy"], "status": health["status"], "code": health["code"], "message": health["message"], "review_files": listed.files_scanned, "media_items": len(catalog), "data_root_source": DATA_ROOT_SOURCE, "instance_id": FXPILOT_INSTANCE_ID, "process_started_at": PROCESS_STARTED_AT},
         "media": {"catalog_items": len(catalog), "sources": len(tv_source_manager.list_public_sources()) if tv_source_manager else 0, "last_import": _safe_last_mtime(MEDIA_DEBUG_PATH)},
         "reviews": {
             "total": len(reviews), "storage_files": listed.files_scanned,
@@ -1507,6 +1508,11 @@ def api_ops_status() -> dict[str, Any]:
 @app.get("/api/ops/storage")
 def api_ops_storage(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
     return {"success": True, **storage_diagnostics(LLM_REVIEW_STORAGE)}
+
+
+@app.get("/api/ops/storage/backup-manifest")
+def api_ops_storage_backup_manifest(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return backup_manifest(LLM_REVIEW_STORAGE)
 
 
 @app.post("/api/ops/storage/migrate")
@@ -1558,17 +1564,17 @@ def api_ops_pipeline_run_all(limit: int = 1, _auth: bool = Depends(require_ops_t
 
 @app.post("/api/ops/consensus/rebuild")
 def api_ops_consensus_rebuild(symbol: str = "MARKET", timeframe: str | None = None, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("consensus_rebuild", {"symbol": symbol, "timeframe": timeframe}, lambda: (invalidate_knowledge_graph() or create_consensus_engine().build(symbol, timeframe)))
+    return _run_locked_ops("consensus_rebuild", {"symbol": symbol, "timeframe": timeframe}, lambda: (invalidate_knowledge_graph("consensus_rebuild") or create_consensus_engine().build(symbol, timeframe)))
 
 
 @app.post("/api/ops/authors/rebuild")
 def api_ops_authors_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("authors_rebuild", {}, lambda: (invalidate_knowledge_graph() or {"success": True, "authors": create_author_intelligence_engine().build_all()}))
+    return _run_locked_ops("authors_rebuild", {}, lambda: (invalidate_knowledge_graph("authors_rebuild") or {"success": True, "authors": create_author_intelligence_engine().build_all()}))
 
 
 @app.post("/api/ops/performance/rebuild")
 def api_ops_performance_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("performance_rebuild", {}, lambda: (invalidate_knowledge_graph() or create_performance_engine().evaluate_all()))
+    return _run_locked_ops("performance_rebuild", {}, lambda: (invalidate_knowledge_graph("performance_rebuild") or create_performance_engine().evaluate_all()))
 
 
 @app.post("/api/ops/cache/clear")
@@ -1578,7 +1584,7 @@ def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, A
             if isinstance(cache, dict):
                 cache.clear()
         MARKET_IDEAS_CACHE.update({"updated_at_epoch": 0.0, "payload": None})
-        invalidate_knowledge_graph()
+        invalidate_knowledge_graph("safe_cache_clear")
         return {"success": True, "status": "cleared", "message": "Safe application caches cleared."}
     return _run_locked_ops("cache_clear", {}, clear)
 

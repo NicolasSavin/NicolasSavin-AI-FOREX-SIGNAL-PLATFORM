@@ -32,17 +32,29 @@
   }
   function renderStorageFromStatus(p) {
     const s = p.storage || {}; const r = p.reviews || {}; const kg = p.knowledge_graph || {};
-    const warning = s.warning?.message || '—';
+    const warning = s.message || s.warning?.message || '—';
     const cards = [
-      ['Storage mode', s.mode || '—'], ['Persistent directory configured', s.data_root_source === 'FXPILOT_DATA_DIR' ? 'Да' : 'Нет'],
-      ['Media catalog items', p.media?.catalog_items ?? 0], ['Review files', r.storage_files ?? 0], ['Valid reviews', r.total ?? 0],
-      ['Knowledge Graph symbols', kg.symbols ?? 0], ['Last storage modification', r.last_review || p.media?.last_import || '—'], ['Warning', warning],
+      ['Storage mode', s.mode || '—'], ['Status', s.status || (s.healthy ? 'healthy' : '—')], ['Persistent storage configured', s.data_root_source === 'FXPILOT_DATA_DIR' ? 'Да' : 'Нет'],
+      ['Media catalog items', s.media_items ?? p.media?.catalog_items ?? 0], ['Review files', s.review_files ?? r.storage_files ?? 0], ['Valid reviews', r.total ?? 0],
+      ['Malformed reviews', kg.malformed_reviews ?? 0], ['Transcript files', p.transcripts?.files ?? '—'], ['Runtime instance', s.instance_id || '—'], ['Process start time', s.process_started_at || '—'], ['Warning', warning],
     ];
-    const el = $('storageCards'); if (el) el.innerHTML = cards.map(([label, value]) => `<article class="stats-page-card"><span>${label}</span><strong>${value ?? '—'}</strong></article>`).join('');
+    const el = $('storageCards');
+    if (el) el.innerHTML = cards.map(([label, value]) => `<article class="stats-page-card ${s.code === 'ephemeral_storage_risk' ? 'warning' : ''}"><span>${label}</span><strong>${value ?? '—'}</strong></article>`).join('');
+  }
+  function renderStorageDiagnostics(p) {
+    const s = p.storage || {}; const reviews = p.llm_reviews || {}; const transcripts = p.transcripts || {};
+    const cards = [
+      ['Storage mode', s.mode || '—'], ['Status', s.status || '—'], ['Persistent storage configured', s.configured ? 'Да' : 'Нет'],
+      ['Media catalog items', p.media_catalog?.items ?? 0], ['TV catalog items', p.tv_catalog?.items ?? 0], ['Review files', reviews.json_files ?? 0],
+      ['Valid reviews', reviews.valid_reviews ?? 0], ['Malformed reviews', reviews.malformed_reviews ?? 0], ['Transcript files', transcripts.files ?? 0],
+      ['Runtime instance', p.runtime?.instance_id || '—'], ['Process start time', p.runtime?.process_started_at || '—'], ['Warning', s.message || '—'],
+    ];
+    const el = $('storageCards');
+    if (el) el.innerHTML = cards.map(([label, value]) => `<article class="stats-page-card ${s.code === 'ephemeral_storage_risk' ? 'warning' : ''}"><span>${label}</span><strong>${value ?? '—'}</strong></article>`).join('');
   }
   async function loadStorage(button) {
     if (button) setBusy(button, true);
-    try { const r = await fetch('/api/ops/storage', { headers: headers(), cache: 'no-store' }); storagePayload = await r.json(); logResult({ name: 'Диагностика хранилища', started: new Date().toLocaleString('ru-RU'), finished: new Date().toLocaleString('ru-RU'), duration: 0, httpStatus: r.status, ok: r.ok, payload: storagePayload }); }
+    try { const r = await fetch('/api/ops/storage', { headers: headers(), cache: 'no-store' }); storagePayload = await r.json(); renderStorageDiagnostics(storagePayload); logResult({ name: 'Диагностика хранилища', started: new Date().toLocaleString('ru-RU'), finished: new Date().toLocaleString('ru-RU'), duration: 0, httpStatus: r.status, ok: r.ok, payload: storagePayload }); }
     finally { if (button) setBusy(button, false); }
   }
   function confirmCostly(name, count) {
