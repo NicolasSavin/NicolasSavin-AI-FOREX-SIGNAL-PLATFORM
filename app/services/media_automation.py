@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from app.services.storage_paths import atomic_write_json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,9 +103,7 @@ class MediaAutomationService:
 
     def _publish_to_tv(self) -> None:
         self.tv_catalog_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.tv_catalog_path.with_name(f".{self.tv_catalog_path.name}.tmp")
-        tmp.write_text(json.dumps(self.catalog_loader(), ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(self.tv_catalog_path)
+        atomic_write_json(self.tv_catalog_path, self.catalog_loader())
 
     def _cleanup_cache(self) -> int:
         removed = 0
@@ -132,9 +131,7 @@ class MediaAutomationService:
             notifications.append({"event": event, "message_ru": self._notification_ru(event, payload), "created_at": state["updated_at"], "payload": payload})
         state["notifications"] = notifications[-50:]
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.state_path.with_name(f".{self.state_path.name}.tmp")
-        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(self.state_path)
+        atomic_write_json(self.state_path, state)
 
     @staticmethod
     def _notification_ru(event: str, payload: dict[str, Any]) -> str:

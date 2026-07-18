@@ -58,6 +58,13 @@ from app.services.author_intelligence import AuthorIntelligenceEngine
 from app.services.performance import PerformanceEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
+from app.services.storage_paths import (
+    DATA_DIR, DATA_ROOT_SOURCE, STORAGE_MODE, INSTANCE_ID, PROCESS_STARTED_AT,
+    MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, MEDIA_TV_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH,
+    MEDIA_MANUAL_YOUTUBE_PATH, MEDIA_DEBUG_PATH, MEDIA_AUTOMATION_STATE_PATH,
+    LLM_REVIEWS_DIR, TRANSCRIPTS_DIR, OPS_AUDIT_PATH, atomic_write_json,
+    migrate_legacy_data, storage_diagnostics, storage_health,
+)
 from backend.chat_service import ChatRequest, ForexChatService
 
 logger = logging.getLogger(__name__)
@@ -149,14 +156,8 @@ from backend.signal_engine import SignalEngine
 
 canonical_market_service = get_canonical_market_service()
 trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
-tv_source_manager = TvSourceManager(BASE_DIR.parent / "data" / "tv_sources.json", BASE_DIR.parent / "data" / "tv_videos.json")
-MEDIA_SOURCES_PATH = BASE_DIR.parent / "data" / "media_sources.json"
-MEDIA_CATALOG_PATH = BASE_DIR.parent / "data" / "media_catalog.json"
-MEDIA_TV_VIDEOS_PATH = BASE_DIR.parent / "data" / "tv_videos.json"
-MEDIA_MANUAL_YOUTUBE_PATH = BASE_DIR.parent / "data" / "manual_youtube_videos.json"
-MEDIA_DEBUG_PATH = BASE_DIR.parent / "data" / "media_import_debug.json"
-OPS_AUDIT_PATH = BASE_DIR.parent / "data" / "ops_audit.json"
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "cache_clear"]}
+tv_source_manager = TvSourceManager(MEDIA_TV_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
@@ -168,14 +169,14 @@ media_automation_service = MediaAutomationService(
     engine_factory=create_media_import_engine,
     catalog_loader=lambda: create_media_import_engine().load_catalog(),
     pipeline_runner=lambda item: _run_automatic_media_pipeline(item),
-    state_path=BASE_DIR.parent / "data" / "media_automation_state.json",
+    state_path=MEDIA_AUTOMATION_STATE_PATH,
     tv_catalog_path=MEDIA_TV_VIDEOS_PATH,
-    data_dir=BASE_DIR.parent / "data",
+    data_dir=DATA_DIR,
 )
-transcript_engine = TranscriptEngine(storage=TranscriptStorage(BASE_DIR.parent / "data" / "transcripts"))
+transcript_engine = TranscriptEngine(storage=TranscriptStorage(TRANSCRIPTS_DIR))
 ai_analyzer_engine = AIAnalyzerEngine()
 MEDIA_KNOWLEDGE_DEBUG = {"knowledge_requests": 0, "knowledge_errors": 0, "last_knowledge_video_id": None, "last_agreement_score": None, "last_review_video_id": None, "last_review_catalog_id": None, "last_review_youtube_id": None, "review_storage_keys_count": 0, "review_lookup_strategy": None}
-LLM_REVIEW_STORAGE = LLMReviewStorage(BASE_DIR.parent / "data" / "llm_reviews")
+LLM_REVIEW_STORAGE = LLMReviewStorage(LLM_REVIEWS_DIR)
 
 class _AnalyticsNewsConnector:
     def _descriptor(self, *, status: str = "unavailable", note_ru: str = "") -> dict[str, str]:
@@ -1073,9 +1074,9 @@ def _generate_reviews_for_imported_items(video_ids: list[str]) -> dict[str, Any]
     return result
 
 
-def invalidate_knowledge_graph() -> None:
+def invalidate_knowledge_graph(reason: str = "manual") -> None:
     if KG_SERVICE is not None:
-        KG_SERVICE.invalidate()
+        KG_SERVICE.invalidate(reason)
 
 
 def _run_media_import() -> dict[str, Any]:
@@ -1421,7 +1422,7 @@ def _append_ops_audit(operation: str, params: dict[str, Any], success: bool, dur
         if not isinstance(existing, list):
             existing = []
         existing.append(safe_record)
-        OPS_AUDIT_PATH.write_text(json.dumps(existing[-200:], ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_json(OPS_AUDIT_PATH, existing[-200:])
     except Exception as exc:
         logger.warning("ops_audit_write_failed error=%s", exc.__class__.__name__)
 
@@ -1463,11 +1464,8 @@ def _safe_last_mtime(path: Path) -> str | None:
 @app.get("/api/ops/status")
 def api_ops_status() -> dict[str, Any]:
     catalog = _load_tv_video_catalog()
-    reviews = []
-    try:
-        reviews = [LLMReview.model_validate(json.loads(path.read_text(encoding="utf-8"))) for path in LLM_REVIEW_STORAGE.base_dir.glob("*.json")]
-    except Exception:
-        reviews = []
+    listed = LLM_REVIEW_STORAGE.list_reviews()
+    reviews = [item.review for item in listed.items]
     try:
         llm_cfg = resolve_llm_config()
         llm = {"provider": llm_cfg.provider, "model": llm_cfg.model, "api_key_present": bool(llm_cfg.api_key), "configuration_valid": True}
@@ -1476,18 +1474,21 @@ def api_ops_status() -> dict[str, Any]:
         llm = {"provider": debug.get("provider"), "model": debug.get("model"), "api_key_present": bool(debug.get("api_key_present")), "configuration_valid": False}
     scheduler = media_automation_service.status()
     review_diagnostics = build_review_diagnostics(reviews)
+    kg_diag = create_knowledge_graph_service().graph()["diagnostics"]
+    health = storage_health()
     return {
         "service": "FXPilot",
+        "storage": {"mode": health["mode"], "healthy": health["healthy"], "warning": health["warning"], "data_root_source": DATA_ROOT_SOURCE, "instance_id": INSTANCE_ID, "process_started_at": PROCESS_STARTED_AT},
         "media": {"catalog_items": len(catalog), "sources": len(tv_source_manager.list_public_sources()) if tv_source_manager else 0, "last_import": _safe_last_mtime(MEDIA_DEBUG_PATH)},
         "reviews": {
-            "total": len(reviews),
+            "total": len(reviews), "storage_files": listed.files_scanned,
             "structured": review_diagnostics["reviews_structured"],
             "structured_reviews": review_diagnostics["reviews_structured"],
             "market_fallback": review_diagnostics["reviews_market_fallback"],
             "last_review": _safe_last_mtime(LLM_REVIEW_STORAGE.base_dir),
             **review_diagnostics,
         },
-        "reviews_total": review_diagnostics["reviews_total"],
+        "reviews_total": len(reviews),
         "reviews_structured": review_diagnostics["reviews_structured"],
         "structured_reviews": review_diagnostics["reviews_structured"],
         "reviews_with_primary_symbol": review_diagnostics["reviews_with_primary_symbol"],
@@ -1499,9 +1500,23 @@ def api_ops_status() -> dict[str, Any]:
         "scheduler": {"enabled": bool(scheduler.get("enabled", scheduler.get("status") != "disabled")), "running": bool(scheduler.get("running", scheduler.get("status") == "running")), "last_run": scheduler.get("last_run"), "next_run": scheduler.get("next_run")},
         "pipeline": {"running": 0, "completed": sum(1 for v in catalog if v.get("pipeline_status") == "completed"), "partial": sum(1 for v in catalog if v.get("pipeline_status") == "partial"), "failed": sum(1 for v in catalog if v.get("pipeline_status") == "failed")},
         "engines": {"transcript": "available", "review": "available" if llm["configuration_valid"] else "degraded", "committee": "available", "consensus": "available", "authors": "available", "performance": "available"},
-        "knowledge_graph": (lambda d: {"catalog_items_scanned": d.catalog_items_scanned, "review_files_scanned": d.review_files_scanned, "reviews_loaded": d.reviews_loaded, "reviews_indexed": d.reviews_indexed, "orphan_reviews_indexed": d.orphan_reviews_indexed, "malformed_reviews": d.malformed_reviews, "symbols": d.symbols_found, "trade_ideas": d.trade_ideas_found, "authors": d.authors, "committee_entries": d.committee_entries, "conflicts": d.conflicts, "build_time_ms": d.build_time_ms, "cache_age_seconds": d.cache_age_seconds, "last_built_at": d.last_built_at})(create_knowledge_graph_service().graph()["diagnostics"]),
+        "knowledge_graph": {"catalog_items_scanned": kg_diag.catalog_items_scanned, "review_files_scanned": kg_diag.review_files_scanned, "reviews_loaded": kg_diag.reviews_loaded, "reviews_indexed": kg_diag.reviews_indexed, "orphan_reviews_indexed": kg_diag.orphan_reviews_indexed, "malformed_reviews": kg_diag.malformed_reviews, "symbols": kg_diag.symbols_found, "trade_ideas": kg_diag.trade_ideas_found, "authors": kg_diag.authors, "committee_entries": kg_diag.committee_entries, "conflicts": kg_diag.conflicts, "build_time_ms": kg_diag.build_time_ms, "cache_hit": kg_diag.cache_hit, "cache_empty": kg_diag.cache_empty, "cache_age_seconds": kg_diag.cache_age_seconds, "last_invalidation_reason": kg_diag.last_invalidation_reason, "last_built_at": kg_diag.last_built_at},
     }
 
+
+@app.get("/api/ops/storage")
+def api_ops_storage(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return {"success": True, **storage_diagnostics(LLM_REVIEW_STORAGE)}
+
+
+@app.post("/api/ops/storage/migrate")
+def api_ops_storage_migrate(dry_run: bool = True, execute: bool = False, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    def run():
+        result = migrate_legacy_data(execute=bool(execute) and not bool(dry_run), review_model=LLMReview)
+        if execute and not dry_run:
+            invalidate_knowledge_graph("storage_migration")
+        return result
+    return _run_locked_ops("storage_migrate", {"dry_run": bool(dry_run), "execute": bool(execute)}, run)
 
 @app.get("/api/ops/audit")
 def api_ops_audit(limit: int = 50, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:

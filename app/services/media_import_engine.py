@@ -8,6 +8,7 @@ import traceback
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from app.services.storage_paths import atomic_write_json
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
@@ -858,10 +859,7 @@ class MediaImportEngine:
 
     @staticmethod
     def _atomic_write_json(path: Path, payload: Any) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_name(f".{path.name}.tmp")
-        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp_path.replace(path)
+        atomic_write_json(path, payload)
 
     def resolve_provider(self, provider: str) -> MediaProvider:
         provider = (provider or "").lower()

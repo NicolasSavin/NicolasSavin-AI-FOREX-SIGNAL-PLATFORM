@@ -706,3 +706,66 @@ Security notes:
 ### Stage 20 Knowledge Graph data loading
 
 Knowledge Graph reads the same canonical media catalog as `/api/media`, `/api/media/catalog`, and OPS media counts through `load_canonical_media_catalog()` / `create_media_import_engine().load_catalog()`. It also enumerates stored AI Review JSON files from the configured `LLMReviewStorage` directory so structured reviews can still be indexed when catalog metadata is temporarily unavailable. Diagnostics distinguish catalog items, review files scanned, loaded reviews, indexed structured reviews, orphan indexed reviews, malformed review files, and cache timing without exposing filesystem paths or raw LLM data.
+
+## Stage 20.2 — production storage durability on Render
+
+Stage 20.2 centralizes all mutable application data under one configurable root so media catalogs, TV catalogs, AI Review JSON, transcripts, automation state and OPS audit records are not split between `<repo>/data` and process working-directory relative `data` folders.
+
+### Root cause fixed
+
+The production failure mode was consistent with generated files being written inside the deployed Render container/repository filesystem or an inconsistent relative `data` directory. Those files can appear immediately after import/review generation and then disappear after a Render restart or redeploy because the container filesystem is ephemeral unless a Render persistent disk is mounted. The Knowledge Graph also cached an empty graph, which made missing storage look stable until cache expiry or manual invalidation.
+
+### Canonical storage paths
+
+Configure one data root with:
+
+```bash
+FXPILOT_DATA_DIR=/var/data/fxpilot
+FXPILOT_STORAGE_MODE=persistent
+```
+
+If `FXPILOT_DATA_DIR` is absent, local development uses the repository `data/` directory. Production should not rely on that fallback. Canonical files/directories now resolve from the shared storage module:
+
+- `media_sources.json`
+- `media_catalog.json`
+- `tv_sources.json`
+- `tv_videos.json`
+- `manual_youtube_videos.json` (local/manual mode only)
+- `media_import_debug.json`
+- `media_automation_state.json`
+- `ops_audit.json`
+- `llm_reviews/*.json`
+- `transcripts/*`
+
+### Render persistent disk setup
+
+1. Open Render Dashboard.
+2. Select web service `AI-FOREX-SIGNAL-PLATFORM`.
+3. Open **Disk**.
+4. Add a persistent disk.
+5. Suggested disk name: `fxpilot-data`.
+6. Suggested mount path: `/var/data/fxpilot`.
+7. Add environment variable: `FXPILOT_DATA_DIR=/var/data/fxpilot`.
+8. Add environment variable: `FXPILOT_STORAGE_MODE=persistent`.
+9. Save and redeploy.
+10. Open `/ops` and inspect **Storage diagnostics**.
+
+Files written inside the deployed repository/container are ephemeral on Render. Redeploying can remove locally generated media catalogs, AI Reviews and transcripts. A mounted persistent disk is required for durable production file storage; do not claim persistence without the mounted disk and environment variables above.
+
+### OPS storage diagnostics and migration
+
+Protected endpoints require the existing `FXPILOT_OPS_TOKEN` header and never expose API keys, tokens, file contents or full absolute host paths.
+
+- `GET /api/ops/storage` returns storage mode, data-root source, process instance id, process start time, media catalog counts, TV catalog counts, AI Review file diagnostics, transcript counts and health warnings.
+- `POST /api/ops/storage/migrate?dry_run=true&execute=false` performs a free dry-run migration report.
+- `POST /api/ops/storage/migrate?dry_run=false&execute=true` copies only known application files from legacy data locations into the configured data root.
+
+Migration is conservative: it never calls an LLM, never regenerates reviews, never deletes source files, never copies unknown files, validates `llm_reviews/*.json`, and never overwrites newer destination files with older source files.
+
+### Storage health warnings
+
+When Render-like production is detected without a persistent configured data root, OPS storage health returns `ephemeral_storage_risk` with a clear warning that imported media and generated reviews may disappear after redeploy. If `FXPILOT_STORAGE_MODE=persistent` is set but the configured directory is missing or not writable, health is reported as degraded.
+
+### Knowledge Graph cache behavior
+
+Knowledge Graph keeps the normal healthy TTL, but empty graphs with zero catalog items and zero review files use a short TTL so startup races or late-mounted storage do not preserve an empty graph for the full cache duration. OPS media import, review generation/reprocessing, migration, aggregation rebuilds and safe cache clear invalidate the graph cache.
