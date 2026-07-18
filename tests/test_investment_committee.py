@@ -63,3 +63,32 @@ def test_committee_api_contract(monkeypatch):
     payload = response.json()
     for key in ["video", "summary", "overall_score", "decision", "signal_quality", "risk_level", "agreement_score", "institutional_bias", "pros", "cons", "conflicts", "committee_verdict"]:
         assert key in payload
+
+
+def test_committee_page_renders_institutional_report_without_raw_json():
+    from pathlib import Path
+
+    js = Path("app/static/investment-committee.js").read_text(encoding="utf-8")
+    css = Path("app/static/styles.css").read_text(encoding="utf-8")
+    html = Path("app/static/investment-committee.html").read_text(encoding="utf-8")
+
+    for marker in [
+        "Final Recommendation",
+        "Executive Verdict",
+        "Committee Members",
+        "Bullish %",
+        "Bearish %",
+        "Neutral %",
+        "Evidence · Positive factors",
+        "Evidence · Missing information",
+        "Trading Plan",
+        "Decision Timeline",
+        "Read-only режим",
+    ]:
+        assert marker in js
+    for member in ["Rule Engine", "Knowledge", "LLM Review", "Performance", "Consensus"]:
+        assert member in js
+    assert "JSON.stringify" not in js
+    assert "committee-report-hero" in css
+    assert "@media(max-width:760px)" in css
+    assert "Stage 19 · Institutional Investment Committee 2.0" in html
