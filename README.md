@@ -769,3 +769,9 @@ When Render-like production is detected without a persistent configured data roo
 ### Knowledge Graph cache behavior
 
 Knowledge Graph keeps the normal healthy TTL, but empty graphs with zero catalog items and zero review files use a short TTL so startup races or late-mounted storage do not preserve an empty graph for the full cache duration. OPS media import, review generation/reprocessing, migration, aggregation rebuilds and safe cache clear invalidate the graph cache.
+
+## Stage 20.4 Media Import persistence diagnostics
+
+- Media Import now records canonical catalog path, storage root, catalog existence, before/after item counts, loaded source items, written items, write success/error state and per-filter removal counters in `/api/media/debug`.
+- The import pipeline refuses a successful zero-item catalog write when providers returned importable videos, so fetched YouTube media is persisted to the canonical `media_catalog.json` or the write error is surfaced in diagnostics.
+- Added a regression test that imports one mock YouTube video, verifies catalog file persistence and subsequent catalog loading, then confirms the Knowledge Graph indexes the imported item with a stored review.
