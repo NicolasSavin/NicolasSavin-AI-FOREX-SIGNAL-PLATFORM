@@ -53,3 +53,88 @@ def test_api_symbols_pages_and_unknown_symbol():
     assert client.get('/api/symbols/MARKET').status_code == 404
     ops=client.get('/api/ops/status').json()
     assert 'knowledge_graph' in ops
+
+
+def test_api_symbols_uses_canonical_media_catalog_with_matching_review(monkeypatch, tmp_path):
+    from app import main
+    storage = LLMReviewStorage(tmp_path)
+    storage.set("youtube:D27xSWcsQJE", LLMReview(primary_symbol="SPX", symbols=["SPX"], direction="BUY", confidence=77, summary="SPX"))
+    monkeypatch.setattr(main, "LLM_REVIEW_STORAGE", storage)
+    monkeypatch.setattr(main, "KG_SERVICE", None)
+    monkeypatch.setattr(main, "load_canonical_media_catalog", lambda: [{"id":"youtube:D27xSWcsQJE","youtube_id":"D27xSWcsQJE","title":"SPX","author":"A"}])
+    monkeypatch.setattr(main, "_load_tv_video_catalog", lambda: [])
+    payload = TestClient(main.app).get('/api/symbols').json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["symbol"] == "SPX"
+
+
+def test_builder_diagnostics_for_five_reviews_two_structured(tmp_path):
+    storage = LLMReviewStorage(tmp_path)
+    videos = [{"id":f"youtube:v{i}","youtube_id":f"v{i}","title":f"Video {i}"} for i in range(5)]
+    for i in range(5):
+        kwargs = {"summary": f"r{i}", "direction": "WAIT"}
+        if i < 2:
+            kwargs.update({"primary_symbol":"SPX", "symbols":["SPX"], "direction":"BUY"})
+        storage.set(f"youtube:v{i}", LLMReview(**kwargs))
+    graph = KnowledgeGraphBuilder(media_catalog_loader=lambda: videos, review_storage=storage).build()
+    d = graph["diagnostics"]
+    assert d.catalog_items_scanned == 5
+    assert d.review_files_scanned == 5
+    assert d.reviews_loaded == 5
+    assert d.reviews_indexed == 2
+    assert d.symbols_found >= 1
+
+
+def test_empty_legacy_catalog_does_not_break_canonical_loader(monkeypatch, tmp_path):
+    from app import main
+    storage = LLMReviewStorage(tmp_path)
+    storage.set("youtube:v1", LLMReview(primary_symbol="SPX", symbols=["SPX"], direction="BUY"))
+    monkeypatch.setattr(main, "LLM_REVIEW_STORAGE", storage)
+    monkeypatch.setattr(main, "KG_SERVICE", None)
+    monkeypatch.setattr(main, "load_canonical_media_catalog", lambda: [{"id":"youtube:v1","youtube_id":"v1"}])
+    monkeypatch.setattr(main, "_load_tv_video_catalog", lambda: [])
+    assert TestClient(main.app).get('/api/symbols').json()["items"][0]["symbol"] == "SPX"
+
+
+def test_youtube_prefixed_review_key_matches_clean_youtube_id(tmp_path):
+    storage = LLMReviewStorage(tmp_path)
+    storage.set("youtube:D27xSWcsQJE", LLMReview(primary_symbol="SPX", symbols=["SPX"], direction="BUY"))
+    graph = KnowledgeGraphBuilder(media_catalog_loader=lambda: [{"id":"media-1","youtube_id":"D27xSWcsQJE"}], review_storage=storage).build()
+    assert "SPX" in graph["summaries"]
+
+
+def test_orphan_structured_review_is_indexed(tmp_path):
+    storage = LLMReviewStorage(tmp_path)
+    storage.set("orphan-review", LLMReview(primary_symbol="SPX", symbols=["SPX"], direction="SELL"))
+    graph = KnowledgeGraphBuilder(media_catalog_loader=lambda: [], review_storage=storage).build()
+    assert graph["diagnostics"].orphan_reviews_indexed == 1
+    assert "SPX" in graph["summaries"]
+
+
+def test_malformed_review_json_is_skipped_and_counted(tmp_path):
+    storage = LLMReviewStorage(tmp_path)
+    (tmp_path / "bad.json").write_text("{bad", encoding="utf-8")
+    storage.set("good", LLMReview(primary_symbol="SPX", symbols=["SPX"], direction="BUY"))
+    graph = KnowledgeGraphBuilder(media_catalog_loader=lambda: [], review_storage=storage).build()
+    assert graph["diagnostics"].malformed_reviews == 1
+    assert graph["diagnostics"].review_files_scanned == 2
+    assert "SPX" in graph["summaries"]
+
+
+def test_cache_invalidation_reflects_updated_review(tmp_path):
+    storage = LLMReviewStorage(tmp_path)
+    storage.set("youtube:v1", LLMReview(primary_symbol="SPX", symbols=["SPX"], direction="BUY"))
+    svc = KnowledgeGraphService(KnowledgeGraphBuilder(media_catalog_loader=lambda: [{"id":"youtube:v1","youtube_id":"v1"}], review_storage=storage), ttl_seconds=999)
+    assert svc.list_symbols()["items"][0].symbol == "SPX"
+    storage.set("youtube:v1", LLMReview(primary_symbol="NAS100", symbols=["NAS100"], direction="BUY"))
+    svc.invalidate()
+    assert svc.list_symbols()["items"][0].symbol == "NAS100"
+
+
+def test_market_only_review_loaded_but_not_indexed(tmp_path):
+    storage = LLMReviewStorage(tmp_path)
+    storage.set("youtube:v1", LLMReview(primary_symbol="MARKET", symbols=["MARKET"], direction="WAIT"))
+    graph = KnowledgeGraphBuilder(media_catalog_loader=lambda: [{"id":"youtube:v1","youtube_id":"v1"}], review_storage=storage).build()
+    assert graph["diagnostics"].reviews_loaded == 1
+    assert graph["diagnostics"].reviews_indexed == 0
+    assert graph["diagnostics"].symbols_found == 0

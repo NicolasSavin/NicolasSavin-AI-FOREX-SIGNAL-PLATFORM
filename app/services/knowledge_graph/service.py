@@ -8,6 +8,8 @@ from app.services.knowledge_graph.normalization import normalize_symbol
 class KnowledgeGraphService:
     def __init__(self, builder: KnowledgeGraphBuilder, ttl_seconds: int = 60) -> None:
         self.builder=builder; self.ttl=ttl_seconds; self._cache=None; self._built=0.0
+    def invalidate(self) -> None:
+        self._cache=None; self._built=0.0
     def graph(self):
         import time
         if not self._cache or time.time()-self._built>self.ttl:
