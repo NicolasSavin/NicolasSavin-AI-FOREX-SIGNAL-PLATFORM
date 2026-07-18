@@ -702,3 +702,7 @@ Security notes:
 - Mutating operations use the `X-FXPILOT-OPS-TOKEN` header and are rejected without a valid token.
 - `/api/ops/status` returns only a safe consolidated status payload and does not expose API keys, authorization headers, environment values, prompts or full exception traces.
 - `/api/ops/audit` is token-protected and stores only safe operation metadata in `data/ops_audit.json` with the latest 200 records.
+
+### Stage 20 Knowledge Graph data loading
+
+Knowledge Graph reads the same canonical media catalog as `/api/media`, `/api/media/catalog`, and OPS media counts through `load_canonical_media_catalog()` / `create_media_import_engine().load_catalog()`. It also enumerates stored AI Review JSON files from the configured `LLMReviewStorage` directory so structured reviews can still be indexed when catalog metadata is temporarily unavailable. Diagnostics distinguish catalog items, review files scanned, loaded reviews, indexed structured reviews, orphan indexed reviews, malformed review files, and cache timing without exposing filesystem paths or raw LLM data.

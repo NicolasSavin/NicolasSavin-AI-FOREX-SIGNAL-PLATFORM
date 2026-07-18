@@ -549,12 +549,16 @@ def ops_page():
     return FileResponse(STATIC_DIR / "ops.html")
 
 
-def _load_tv_video_catalog() -> list[dict[str, Any]]:
+def load_canonical_media_catalog() -> list[dict[str, Any]]:
     try:
         return create_media_import_engine().load_catalog()
     except Exception as exc:
         logger.warning("media_catalog_unavailable error=%s", exc)
         return []
+
+
+def _load_tv_video_catalog() -> list[dict[str, Any]]:
+    return load_canonical_media_catalog()
 
 
 
@@ -1069,10 +1073,16 @@ def _generate_reviews_for_imported_items(video_ids: list[str]) -> dict[str, Any]
     return result
 
 
+def invalidate_knowledge_graph() -> None:
+    if KG_SERVICE is not None:
+        KG_SERVICE.invalidate()
+
+
 def _run_media_import() -> dict[str, Any]:
     engine = create_media_import_engine()
     result = engine.import_latest()
     result["review_generation"] = _generate_reviews_for_imported_items(result.get("new_item_ids") or [])
+    invalidate_knowledge_graph()
     return result
 
 
@@ -1237,6 +1247,7 @@ def api_media_llm_review(video_id: str, force: bool = False) -> dict[str, Any]:
     market_payload = ideas_market()
     review = create_llm_review_engine(market_payload=market_payload).generate(catalog_id, force=force)
     knowledge = _build_knowledge_for_video(catalog_id, market_payload=market_payload).model_dump()
+    invalidate_knowledge_graph()
     return {
         "video": video,
         "analysis": knowledge.get("ai_analysis", {}),
@@ -1375,6 +1386,8 @@ def api_media_reviews_reprocess(force: bool = False, limit: int | None = None) -
             logger.exception("media_reviews_reprocess_failed video_id=%s", catalog_id)
             result["failed"] += 1
             result["items"].append({"video_id": catalog_id, "status": "failed", "error": exc.__class__.__name__})
+    if result["generated"] or result["updated"]:
+        invalidate_knowledge_graph()
     return result
 
 
@@ -1486,7 +1499,7 @@ def api_ops_status() -> dict[str, Any]:
         "scheduler": {"enabled": bool(scheduler.get("enabled", scheduler.get("status") != "disabled")), "running": bool(scheduler.get("running", scheduler.get("status") == "running")), "last_run": scheduler.get("last_run"), "next_run": scheduler.get("next_run")},
         "pipeline": {"running": 0, "completed": sum(1 for v in catalog if v.get("pipeline_status") == "completed"), "partial": sum(1 for v in catalog if v.get("pipeline_status") == "partial"), "failed": sum(1 for v in catalog if v.get("pipeline_status") == "failed")},
         "engines": {"transcript": "available", "review": "available" if llm["configuration_valid"] else "degraded", "committee": "available", "consensus": "available", "authors": "available", "performance": "available"},
-        "knowledge_graph": (lambda d: {"symbols": d.symbols_found, "reviews_indexed": d.reviews_indexed, "trade_ideas": d.trade_ideas_found, "authors": d.authors, "committee_entries": d.committee_entries, "conflicts": d.conflicts, "build_time_ms": d.build_time_ms, "last_built_at": d.last_built_at})(create_knowledge_graph_service().graph()["diagnostics"]),
+        "knowledge_graph": (lambda d: {"catalog_items_scanned": d.catalog_items_scanned, "review_files_scanned": d.review_files_scanned, "reviews_loaded": d.reviews_loaded, "reviews_indexed": d.reviews_indexed, "orphan_reviews_indexed": d.orphan_reviews_indexed, "malformed_reviews": d.malformed_reviews, "symbols": d.symbols_found, "trade_ideas": d.trade_ideas_found, "authors": d.authors, "committee_entries": d.committee_entries, "conflicts": d.conflicts, "build_time_ms": d.build_time_ms, "cache_age_seconds": d.cache_age_seconds, "last_built_at": d.last_built_at})(create_knowledge_graph_service().graph()["diagnostics"]),
     }
 
 
@@ -1530,17 +1543,17 @@ def api_ops_pipeline_run_all(limit: int = 1, _auth: bool = Depends(require_ops_t
 
 @app.post("/api/ops/consensus/rebuild")
 def api_ops_consensus_rebuild(symbol: str = "MARKET", timeframe: str | None = None, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("consensus_rebuild", {"symbol": symbol, "timeframe": timeframe}, lambda: create_consensus_engine().build(symbol, timeframe))
+    return _run_locked_ops("consensus_rebuild", {"symbol": symbol, "timeframe": timeframe}, lambda: (invalidate_knowledge_graph() or create_consensus_engine().build(symbol, timeframe)))
 
 
 @app.post("/api/ops/authors/rebuild")
 def api_ops_authors_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("authors_rebuild", {}, lambda: {"success": True, "authors": create_author_intelligence_engine().build_all()})
+    return _run_locked_ops("authors_rebuild", {}, lambda: (invalidate_knowledge_graph() or {"success": True, "authors": create_author_intelligence_engine().build_all()}))
 
 
 @app.post("/api/ops/performance/rebuild")
 def api_ops_performance_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("performance_rebuild", {}, lambda: create_performance_engine().evaluate_all())
+    return _run_locked_ops("performance_rebuild", {}, lambda: (invalidate_knowledge_graph() or create_performance_engine().evaluate_all()))
 
 
 @app.post("/api/ops/cache/clear")
@@ -1550,6 +1563,7 @@ def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, A
             if isinstance(cache, dict):
                 cache.clear()
         MARKET_IDEAS_CACHE.update({"updated_at_epoch": 0.0, "payload": None})
+        invalidate_knowledge_graph()
         return {"success": True, "status": "cleared", "message": "Safe application caches cleared."}
     return _run_locked_ops("cache_clear", {}, clear)
 
@@ -1566,7 +1580,7 @@ def create_knowledge_graph_service() -> KnowledgeGraphService:
     global KG_SERVICE
     if KG_SERVICE is None:
         committee = lambda video_id: InvestmentCommitteeEngine(media_catalog_loader=_load_tv_video_catalog, review_payload_builder=_stored_review_payload_for_committee).build_for_video(video_id).model_dump()
-        builder = KnowledgeGraphBuilder(media_catalog_loader=_load_tv_video_catalog, review_storage=LLM_REVIEW_STORAGE, committee_builder=committee)
+        builder = KnowledgeGraphBuilder(media_catalog_loader=load_canonical_media_catalog, review_storage=LLM_REVIEW_STORAGE, committee_builder=committee)
         KG_SERVICE = KnowledgeGraphService(builder, ttl_seconds=60)
     return KG_SERVICE
 
