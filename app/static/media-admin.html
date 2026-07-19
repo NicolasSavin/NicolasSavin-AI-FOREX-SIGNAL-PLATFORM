@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>FXPilot TV · Media Admin</title>
+    <title>FXPilot TV · Sources</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body data-page="tv-sources">
@@ -12,8 +12,8 @@
         <div class="tv-hero__grid">
           <div class="tv-hero__copy">
             <p class="eyebrow">FXPilot TV · Автономная админ-панель</p>
-            <h1>Автономный Media Engine</h1>
-            <p class="lead">Администратор добавляет YouTube, Telegram или RSS один раз — дальше импорт, AI-анализ, публикация и архивирование выполняются автоматически.</p>
+            <h1>Source Manager</h1>
+            <p class="lead">Управление YouTube, Telegram и RSS источниками из браузера без редактирования JSON, рестарта или redeploy.</p>
           </div>
           <div class="tv-hero__signal" aria-label="Статус импорта">
             <span class="tv-live-dot"></span><strong id="mediaImportStatus">Engine ready</strong>
@@ -24,16 +24,16 @@
 
       <main class="content-stack tv-content">
         <section class="tv-source-stats" aria-label="Статистика Media Engine">
-          <article><span>Configured sources</span><strong id="mediaStatSources">—</strong></article>
-          <article><span>Imported videos</span><strong id="mediaStatVideos">—</strong></article>
-          <article><span>Last update</span><strong id="mediaStatLastUpdate">—</strong></article>
-          <article><span>Newest media</span><strong id="mediaStatNewest">—</strong></article>
+          <article><span>Источники</span><strong id="mediaStatSources">—</strong></article>
+          <article><span>Импортировано</span><strong id="mediaStatVideos">—</strong></article>
+          <article><span>Последний импорт</span><strong id="mediaStatLastUpdate">—</strong></article>
+          <article><span>Последний материал</span><strong id="mediaStatNewest">—</strong></article>
         </section>
 
 
         <section class="panel tv-source-panel" aria-labelledby="mediaAddTitle">
           <div class="section-heading split-heading">
-            <div><p class="section-kicker">Add source</p><h2 id="mediaAddTitle">Добавить источник</h2><p class="section-text">YouTube: URL канала, Telegram: t.me URL, RSS: feed URL. Импорт не удаляет старый каталог при ошибках провайдера.</p></div>
+            <div><p class="section-kicker">Source Manager</p><h2 id="mediaAddTitle">Добавить источник</h2><p class="section-text">YouTube: URL канала, Telegram: t.me URL, RSS: feed URL. Импорт не удаляет старый каталог при ошибках провайдера.</p></div>
             <div class="tv-source-actions"><button type="button" id="mediaResolveAll">Обновить YouTube-метаданные</button></div>
           </div>
           <form id="mediaSourceForm" class="media-source-form">
@@ -57,13 +57,13 @@
               <h2 id="mediaSourcesTitle">Настроенные источники</h2>
               <p class="section-text">Ежедневный импорт автоматический. Ручные кнопки импорта скрыты и оставлены только API-совместимостью.</p>
             </div>
-            <div class="tv-source-actions"><span class="tv-status-pill is-enabled">Автопилот включён</span></div>
+            <div class="tv-source-actions"><input id="sourceSearch" placeholder="Поиск: имя, provider, категория, URL" /><button id="bulkEnable" type="button">Enable Selected</button><button id="bulkDisable" type="button">Disable Selected</button><button id="bulkDelete" type="button">Delete Selected</button><button id="bulkImport" type="button">Import Selected</button><button id="bulkTest" type="button">Test Selected</button><button id="exportSources" type="button">Export Sources</button><button id="importSources" type="button">Import Sources</button></div>
               <pre id="mediaImportResult" class="media-import-result" aria-live="polite">—</pre>
           </div>
           <div class="tv-source-table-wrap">
             <table class="tv-source-table">
-              <thead><tr><th>Источник</th><th>Тип</th><th>Provider</th><th>Enabled</th><th>Last success</th><th>Items</th><th>Errors</th><th>Действия</th></tr></thead>
-              <tbody id="mediaSourcesBody"><tr><td colspan="8">Загрузка...</td></tr></tbody>
+              <thead><tr><th></th><th>Enabled</th><th>Source Name</th><th>Provider</th><th>Category</th><th>Priority</th><th>Videos Imported</th><th>Last Successful Import</th><th>Last Review</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody id="mediaSourcesBody"><tr><td colspan="11">Загрузка...</td></tr></tbody>
             </table>
           </div>
         </section>
@@ -83,7 +83,7 @@
         </section>
 
         <section class="panel tv-source-panel" aria-labelledby="mediaNewestTitle">
-          <div class="section-heading"><p class="section-kicker">Catalog</p><h2 id="mediaNewestTitle">Newest media</h2></div>
+          <div class="section-heading"><p class="section-kicker">Catalog</p><h2 id="mediaNewestTitle">Последний материал</h2></div>
           <div class="tv-source-table-wrap">
             <table class="tv-source-table">
               <thead><tr><th>Видео</th><th>Symbol</th><th>Category</th><th>Published</th><th>Status</th></tr></thead>
@@ -93,6 +93,7 @@
         </section>
       </main>
     </div>
+    <script src="/static/nav.js"></script>
     <script src="/static/media-admin.js"></script>
   </body>
 </html>

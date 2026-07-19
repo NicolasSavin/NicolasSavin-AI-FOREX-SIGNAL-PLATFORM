@@ -21,7 +21,7 @@ from app.services.youtube_source_resolver import YouTubeSourceResolver
 logger = logging.getLogger(__name__)
 
 SUPPORTED_SOURCE_TYPES = {"youtube", "telegram", "rss", "website", "podcast", "manual"}
-SUPPORTED_MEDIA_PROVIDERS = {"youtube_api", "youtube_ytdlp", "auto", "telegram_public", "telegram_bot", "rss_feed", "manual", "youtube", "youtube_manual", "telegram", "rss", "podcast", "vimeo", "fxpilot", "news", "articles"}
+SUPPORTED_MEDIA_PROVIDERS = {"youtube_api", "youtube_ytdlp", "auto", "telegram_public", "telegram_bot", "telegram_rss", "rss_feed", "manual", "youtube", "youtube_manual", "youtube_playlist", "telegram", "rss", "podcast", "vimeo", "fxpilot", "news", "articles"}
 SYMBOLS = ("EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD", "XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD", "DXY", "US500", "NASDAQ", "GER40", "UK100")
 YOUTUBE_RSS_BY_CHANNEL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 YOUTUBE_RSS_BY_USER = "https://www.youtube.com/feeds/videos.xml?user={user}"
@@ -904,7 +904,7 @@ class MediaImportEngine:
         tags = payload.get("tags") or []
         if isinstance(tags, str): tags = [v.strip() for v in tags.split(",") if v.strip()]
         url = str(payload.get("url") or payload.get("channel_url") or "").strip()
-        if not url: raise MediaConfigError("url is required")
+        self._validate_source_url(provider, source_type, url)
         now = datetime.now(timezone.utc).isoformat()
         provider_config = payload.get("provider_config") if isinstance(payload.get("provider_config"), dict) else {}
         item = {"id": source_id, "name": name, "provider": provider, "source_type": source_type, "url": url, "channel_url": url, "language": str(payload.get("language") or "ru").strip(), "priority": int(payload.get("priority") or 1), "categories": categories, "symbols": symbols, "tags": tags, "enabled": bool(payload.get("enabled", True)), "provider_config": provider_config, "created_at": now, "updated_at": now}
@@ -970,7 +970,7 @@ class MediaImportEngine:
             return self.youtube_provider
         if provider == "youtube_ytdlp":
             return self.ytdlp_provider
-        if provider == "rss_feed" or provider == "rss":
+        if provider == "rss_feed" or provider == "rss" or provider == "telegram_rss":
             from app.services.providers.rss_feed_provider import RssFeedProvider
             return RssFeedProvider()
         if provider == "telegram_public" or provider == "telegram":
@@ -1029,10 +1029,54 @@ class MediaImportEngine:
     @staticmethod
     def _infer_source_type(provider: str) -> str:
         if provider.startswith("youtube") or provider in {"youtube", "auto"}: return "youtube"
+        if provider == "telegram_rss": return "rss"
         if provider.startswith("telegram"): return "telegram"
         if provider in {"rss", "rss_feed"}: return "rss"
         if provider in {"manual", "youtube_manual"}: return "manual"
         return "website"
+
+    @staticmethod
+    def _validate_source_url(provider: str, source_type: str, url: str) -> None:
+        text = str(url or "").strip()
+        if not text:
+            raise MediaConfigError("url is required")
+        parsed = urlparse(text)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise MediaConfigError("url must be an absolute http(s) URL")
+        host = parsed.netloc.lower()
+        provider = str(provider or "").lower()
+        source_type = str(source_type or "").lower()
+        if source_type == "youtube" or provider.startswith("youtube") or provider in {"auto", "youtube"}:
+            if not any(h in host for h in ("youtube.com", "youtu.be")):
+                raise MediaConfigError("YouTube source URL must point to youtube.com or youtu.be")
+        if source_type == "telegram" or provider in {"telegram", "telegram_public", "telegram_bot"}:
+            if "t.me" not in host and "telegram.me" not in host:
+                raise MediaConfigError("Telegram source URL must point to t.me or telegram.me")
+        if source_type == "rss" or provider in {"rss", "rss_feed", "telegram_rss"}:
+            if not parsed.path and not parsed.query:
+                raise MediaConfigError("RSS source URL must include a feed path or query")
+
+    @staticmethod
+    def sources_to_opml(sources: list[dict[str, Any]]) -> str:
+        def esc(v: Any) -> str:
+            return str(v or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+        outlines = []
+        for source in sources:
+            url = source.get("rss_url") or source.get("url") or source.get("channel_url") or ""
+            outlines.append(f'    <outline text="{esc(source.get("name"))}" title="{esc(source.get("name"))}" type="rss" xmlUrl="{esc(url)}" htmlUrl="{esc(source.get("channel_url") or url)}" category="{esc(",".join(source.get("categories") or []))}" />')
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<opml version=\"2.0\"><head><title>FXPilot Sources</title></head><body>\n" + "\n".join(outlines) + "\n</body></opml>\n"
+
+    @staticmethod
+    def opml_to_sources(text: str) -> list[dict[str, Any]]:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(text)
+        rows = []
+        for outline in root.findall(".//outline"):
+            url = outline.attrib.get("xmlUrl") or outline.attrib.get("htmlUrl") or outline.attrib.get("url") or ""
+            name = outline.attrib.get("title") or outline.attrib.get("text") or url
+            cats = [v.strip() for v in (outline.attrib.get("category") or "Market Analysis").split(",") if v.strip()]
+            rows.append({"name": name, "provider": "rss_feed", "source_type": "rss", "url": url, "channel_url": outline.attrib.get("htmlUrl") or url, "language": "ru", "priority": 1, "categories": cats, "enabled": True})
+        return rows
 
     def update_source(self, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         raw = self._read_json_list(self.sources_path); now = datetime.now(timezone.utc).isoformat(); found = False
@@ -1042,6 +1086,9 @@ class MediaImportEngine:
                 for key in ("name","provider","source_type","url","channel_url","language","categories","symbols","tags","priority","enabled","provider_config"):
                     if key in payload: item[key] = payload[key]
                 if "url" in payload and "channel_url" not in payload: item["channel_url"] = payload["url"]
+                provider = self._default_provider_for_source_type(str(item.get("source_type") or ""), str(item.get("provider") or ""))
+                source_type = str(item.get("source_type") or self._infer_source_type(provider)).lower()
+                self._validate_source_url(provider, source_type, str(item.get("url") or item.get("channel_url") or ""))
                 item["updated_at"] = now
         if not found: raise MediaConfigError(f"unknown media source id: {source_id}")
         self._validate_sources(raw); self._atomic_write_json(self.sources_path, raw)

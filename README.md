@@ -775,3 +775,19 @@ Knowledge Graph keeps the normal healthy TTL, but empty graphs with zero catalog
 - Media Import now records canonical catalog path, storage root, catalog existence, before/after item counts, loaded source items, written items, write success/error state and per-filter removal counters in `/api/media/debug`.
 - The import pipeline refuses a successful zero-item catalog write when providers returned importable videos, so fetched YouTube media is persisted to the canonical `media_catalog.json` or the write error is surfaced in diagnostics.
 - Added a regression test that imports one mock YouTube video, verifies catalog file persistence and subsequent catalog loading, then confirms the Knowledge Graph indexes the imported item with a stored review.
+
+## Stage 22 — FXPilot Source Manager
+
+Production users can manage runtime media sources from `/ops/sources` without editing JSON files, redeploying, or restarting Render. The Source Manager reads and writes only the canonical `DATA_DIR/media_sources.json` registry, so scheduler and media import jobs pick up added, edited, deleted, enabled, and disabled sources on the next run.
+
+API contract:
+
+- `GET /api/sources` and `GET /api/sources/{id}` list source configuration and runtime import metadata.
+- `POST /api/sources`, `PUT /api/sources/{id}`, and `DELETE /api/sources/{id}` create, edit, toggle, or remove runtime sources with URL validation.
+- `POST /api/sources/{id}/test` resolves provider metadata and reports reachability, titles, IDs, and error reasons.
+- `POST /api/sources/{id}/import` imports only one selected source and returns imported, updated, skipped, and error counts.
+- `POST /api/sources/import` supports JSON/OPML migration plus bulk actions (`enable`, `disable`, `delete`, `import_selected`, `test`).
+- `GET /api/sources/export?format=json|opml` exports sources for migration between development, Render, and new servers.
+- `GET /api/sources/debug` returns source counts, provider statistics, recent imports, recent errors, and validation errors.
+
+Supported providers are modular and include YouTube channel/playlist URLs, Telegram public channel URLs, Telegram RSS bridges, and generic RSS feeds. All source mutations are appended to the OPS audit log with actor, operation, timestamp, and before/after payloads.

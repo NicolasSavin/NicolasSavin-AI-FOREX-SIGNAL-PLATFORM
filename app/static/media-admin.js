@@ -20,22 +20,29 @@
   const sourceDuration = (source) => source.last_run?.execution_time ? `${source.last_run.execution_time}s` : (source.import_duration ? `${source.import_duration}s` : '—');
   const sourceErrors = (source) => source.last_error || (source.last_run?.errors || []).filter(Boolean).join('; ') || '—';
 
+  let allSources = [];
+  const matchesSearch = (source) => { const q = (document.getElementById('sourceSearch')?.value || '').toLowerCase(); if (!q) return true; return [source.name, source.provider, source.source_type, (source.categories || []).join(' '), source.url, source.channel_url].join(' ').toLowerCase().includes(q); };
   function renderSources(sources) {
+    allSources = sources;
+    const visible = sources.filter(matchesSearch);
     setText('mediaStatSources', String(sources.length));
-    if (!sources.length) { sourcesBody.innerHTML = '<tr><td colspan="8">Источники не настроены.</td></tr>'; return; }
-    sourcesBody.innerHTML = sources.map((source) => {
+    if (!visible.length) { sourcesBody.innerHTML = '<tr><td colspan="11">Источники не найдены.</td></tr>'; return; }
+    sourcesBody.innerHTML = visible.map((source) => {
       const label = statusLabel(source);
       const statusClass = source.enabled && !source.last_error && label !== 'Manual source — API not connected' ? 'is-enabled' : 'is-disabled';
       return `
       <tr>
-        <td><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.url || source.channel_url || '')}</span></td>
-        <td>${escapeHtml(source.source_type || 'youtube')}</td>
-        <td><span class="tv-provider-pill">${escapeHtml(providerLabel(source.provider))}</span><span>used: ${escapeHtml(providerLabel(source.provider_used || source.last_run?.provider_used || source.provider))}${source.provider_fallback || source.last_run?.provider_fallback ? ' · fallback yt-dlp' : ''}</span></td>
+        <td><input type="checkbox" data-select-source="${escapeHtml(source.id)}" /></td>
         <td><span class="tv-status-pill ${statusClass}">${escapeHtml(source.enabled ? 'Enabled' : 'Disabled')}</span></td>
-        <td>${formatValue(source.last_success || source.last_import)}</td>
+        <td><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.url || source.channel_url || '')}</span></td>
+        <td><span class="tv-provider-pill">${escapeHtml(providerLabel(source.provider))}</span></td>
+        <td>${escapeHtml((source.categories || []).join(', ') || '—')}</td>
+        <td>${escapeHtml(source.priority ?? 1)}</td>
         <td>${escapeHtml(source.items_count ?? source.videos_count ?? 0)}</td>
+        <td>${formatValue(source.last_success || source.last_import)}</td>
+        <td>${formatValue(source.last_review || source.review_updated_at)}</td>
         <td>${escapeHtml(sourceErrors(source))}</td>
-        <td><div class="tv-source-actions"><button data-action="Test" data-id="${escapeHtml(source.id)}">Health</button><button data-action="Disable" data-id="${escapeHtml(source.id)}">Disable</button><button data-action="Enable" data-id="${escapeHtml(source.id)}">Enable</button><button data-action="Delete" data-id="${escapeHtml(source.id)}">Delete</button></div></td>
+        <td><div class="tv-source-actions"><button data-action="Import Source" data-id="${escapeHtml(source.id)}">Import Now</button><button data-action="Test" data-id="${escapeHtml(source.id)}">Test</button><button data-action="Disable" data-id="${escapeHtml(source.id)}">Disable</button><button data-action="Enable" data-id="${escapeHtml(source.id)}">Enable</button><button data-action="Delete" data-id="${escapeHtml(source.id)}">Delete</button></div></td>
       </tr>`;
     }).join('');
   }
@@ -64,7 +71,7 @@
 
   function refresh() {
     Promise.all([
-      fetch('/api/media/sources', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((r) => r.ok ? r.json() : []),
+      fetch('/api/sources', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((r) => r.ok ? r.json() : []),
       fetch('/api/media', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((r) => r.ok ? r.json() : []),
       fetch('/api/media/stats', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((r) => r.ok ? r.json() : {}),
       fetch('/api/media/scheduler', { headers: { Accept: 'application/json' }, cache: 'no-store' }).then((r) => r.ok ? r.json() : {}),
@@ -76,10 +83,10 @@
     const button = event.target.closest('button[data-action]');
     if (!button) return;
     const id = button.dataset.id;
-    if (button.dataset.action === 'Import Source') { fetch(`/api/media/sources/${id}/import`, { method: 'POST', headers: { Accept: 'application/json' } }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); return; }
-    if (button.dataset.action === 'Test') { fetch(`/api/media/sources/${id}/test`, { method: 'POST', headers: { Accept: 'application/json' } }).then((r) => r.json()).then(showImportResult); return; }
-    if (button.dataset.action === 'Delete') { fetch(`/api/media/sources/${id}`, { method: 'DELETE', headers: { Accept: 'application/json' } }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); return; }
-    if (button.dataset.action === 'Disable' || button.dataset.action === 'Enable') { fetch(`/api/media/sources/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ enabled: button.dataset.action === 'Enable' }) }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); return; }
+    if (button.dataset.action === 'Import Source') { fetch(`/api/sources/${id}/import`, { method: 'POST', headers: { Accept: 'application/json' } }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); return; }
+    if (button.dataset.action === 'Test') { fetch(`/api/sources/${id}/test`, { method: 'POST', headers: { Accept: 'application/json' } }).then((r) => r.json()).then(showImportResult); return; }
+    if (button.dataset.action === 'Delete') { fetch(`/api/sources/${id}`, { method: 'DELETE', headers: { Accept: 'application/json' } }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); return; }
+    if (button.dataset.action === 'Disable' || button.dataset.action === 'Enable') { fetch(`/api/sources/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ enabled: button.dataset.action === 'Enable' }) }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); return; }
   });
 
   function runImport() {
@@ -102,6 +109,16 @@
   }
 
   importButton?.addEventListener('click', runImport);
+  document.getElementById('sourceSearch')?.addEventListener('input', () => renderSources(allSources));
+  const selectedIds = () => Array.from(document.querySelectorAll('[data-select-source]:checked')).map((el) => el.getAttribute('data-select-source')).filter(Boolean);
+  const bulk = (action) => fetch('/api/sources/import', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ action, ids: selectedIds() }) }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); });
+  document.getElementById('bulkEnable')?.addEventListener('click', () => bulk('enable'));
+  document.getElementById('bulkDisable')?.addEventListener('click', () => bulk('disable'));
+  document.getElementById('bulkDelete')?.addEventListener('click', () => { if (window.confirm('Удалить выбранные источники?')) bulk('delete'); });
+  document.getElementById('bulkImport')?.addEventListener('click', () => bulk('import_selected'));
+  document.getElementById('bulkTest')?.addEventListener('click', () => bulk('test'));
+  document.getElementById('exportSources')?.addEventListener('click', () => { window.location.href = '/api/sources/export?format=json'; });
+  document.getElementById('importSources')?.addEventListener('click', () => { const text = window.prompt('Вставьте JSON export с полем sources'); if (text) fetch('/api/sources/import', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: text }).then((r) => r.json()).then((p) => { showImportResult(p); refresh(); }); });
   document.getElementById('mediaResolveSource')?.addEventListener('click', () => {
     const payload = formPayload();
     showResolve('Resolving...');
@@ -112,7 +129,7 @@
   sourceForm?.addEventListener('submit', (event) => {
     event.preventDefault();
     showResolve('Saving...');
-    fetch('/api/media/sources', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(formPayload()) })
+    fetch('/api/sources', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(formPayload()) })
       .then((r) => r.json().then((data) => { if (!r.ok) throw data; return data; }))
       .then((payload) => { showResolve(payload); sourceForm.reset(); return refresh(); }).catch(showResolve);
   });

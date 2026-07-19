@@ -64,6 +64,13 @@
     nav.appendChild(tvLink);
   }
 
+  if (!nav.querySelector('a[href="/ops/sources"]')) {
+    const sourcesLink = document.createElement('a');
+    sourcesLink.href = '/ops/sources';
+    sourcesLink.textContent = '📡 Источники';
+    nav.appendChild(sourcesLink);
+  }
+
 
   if (!nav.querySelector('a[href="/ops"]')) {
     const opsLink = document.createElement('a');
