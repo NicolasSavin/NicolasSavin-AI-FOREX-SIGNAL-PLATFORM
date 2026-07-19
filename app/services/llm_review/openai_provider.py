@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import time
 from typing import Any
@@ -9,6 +8,7 @@ from openai import OpenAI
 
 from app.services.llm_config import LLMConfig, resolve_llm_config
 from app.services.llm_review.models import LLMReview
+from app.services.llm_review.entity_extraction import recover_json_payload
 from app.services.llm_review.prompt_builder import PromptBuilder
 
 
@@ -54,9 +54,11 @@ class OpenAIReviewProvider:
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
         content = response.choices[0].message.content or "{}"
-        try:
-            payload = json.loads(content)
-        except json.JSONDecodeError:
-            payload = {"summary": "LLM вернул невалидный JSON; применена безопасная нормализация.", "risks": ["invalid_llm_json"]}
+        payload, status, error_type = recover_json_payload(content)
+        if payload is None:
+            payload = {"summary": "LLM вернул невалидный JSON; применена безопасная fallback-нормализация.", "risks": [f"structured_json_parse_error:{error_type}"], "structured_parse_status": "failed", "entity_extraction_source": "deterministic_fallback", "structured_warnings": ["invalid_llm_json"]}
+        else:
+            payload["structured_parse_status"] = status
+            payload.setdefault("entity_extraction_source", "llm_json")
         tokens = getattr(getattr(response, "usage", None), "total_tokens", 0) or 0
         return LLMReview.from_payload(payload, provider=f"{self.provider_name}:{self.model}", tokens_used=int(tokens), latency_ms=latency_ms)

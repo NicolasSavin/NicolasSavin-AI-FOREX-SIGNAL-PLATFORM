@@ -1153,6 +1153,8 @@ def _llm_review_entity_debug() -> dict[str, Any]:
     except Exception as exc:
         last_error = exc.__class__.__name__
     diagnostics = build_review_diagnostics(reviews)
+    min_score = int(os.getenv("FXPILOT_REVIEW_MIN_COMPLETENESS", "40"))
+    diagnostics["reviews_below_min_completeness"] = sum(1 for r in reviews if (r.structured_completeness_score or 0) < min_score and not (r.non_actionable_reason and not r.trade_ideas))
     return {
         **diagnostics,
         "reviews_with_market_fallback": diagnostics["reviews_market_fallback"],
@@ -1164,7 +1166,20 @@ def _llm_review_entity_debug() -> dict[str, Any]:
 def _review_needs_reprocess(review: LLMReview | None) -> bool:
     if review is None:
         return True
-    return (not review.primary_symbol) or ((review.symbol or "").upper() == "MARKET") or (not review.trade_ideas)
+    min_score = int(os.getenv("FXPILOT_REVIEW_MIN_COMPLETENESS", "40"))
+    invalid_symbol = (not review.primary_symbol) or ((review.symbol or "").upper() in {"MARKET", "UNKNOWN", "N/A", "NONE"})
+    non_actionable = bool(getattr(review, "non_actionable_reason", "")) and review.direction in {"NEUTRAL", "WAIT"} and not review.trade_ideas
+    auto_reason = str(getattr(review, "non_actionable_reason", "")) == "Нет явной торговой рекомендации или плана сделки в источнике."
+    if non_actionable and not auto_reason:
+        return False
+    if invalid_symbol:
+        return True
+    if getattr(review, "structured_parse_status", "success") in {"failed", "fallback"}:
+        return True
+    if (getattr(review, "structured_completeness_score", 0) or 0) < min_score:
+        return True
+    legacy_actionable = (not review.trade_ideas) and review.direction in {"BUY", "SELL", "WAIT"} and bool(review.entry or review.entry_zone or review.stop_loss or review.take_profit or review.targets)
+    return bool(legacy_actionable)
 
 @app.get("/api/media/debug")
 def api_media_debug() -> dict[str, Any]:

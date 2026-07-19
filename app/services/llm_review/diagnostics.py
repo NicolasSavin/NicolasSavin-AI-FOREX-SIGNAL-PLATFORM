@@ -77,12 +77,26 @@ def is_market_fallback_review(review: Any) -> bool:
 
 
 def build_review_diagnostics(reviews: list[Any]) -> dict[str, Any]:
+    dumps = [_dump(r) for r in reviews]
+    scores = [d.get("structured_completeness_score") for d in dumps if isinstance(d.get("structured_completeness_score"), (int, float))]
     return {
         "reviews_total": len(reviews),
         "reviews_structured": sum(1 for review in reviews if is_structured_review(review)),
-        "reviews_with_primary_symbol": sum(1 for review in reviews if is_meaningful_structured_value(_dump(review).get("primary_symbol"))),
-        "reviews_with_symbols": sum(1 for review in reviews if is_meaningful_structured_value(_dump(review).get("symbols"))),
-        "reviews_with_trade_ideas": sum(1 for review in reviews if is_meaningful_structured_value(_dump(review).get("trade_ideas"))),
-        "reviews_with_detected_levels": sum(1 for review in reviews if is_meaningful_structured_value(_dump(review).get("detected_levels"))),
+        "reviews_parse_success": sum(1 for d in dumps if d.get("structured_parse_status") == "success"),
+        "reviews_parse_partial": sum(1 for d in dumps if d.get("structured_parse_status") == "partial"),
+        "reviews_fallback": sum(1 for d in dumps if d.get("structured_parse_status") == "fallback" or d.get("entity_extraction_source") == "deterministic_fallback"),
+        "reviews_failed": sum(1 for d in dumps if d.get("structured_parse_status") == "failed"),
+        "reviews_with_primary_symbol": sum(1 for d in dumps if is_meaningful_structured_value(d.get("primary_symbol"))),
+        "reviews_with_symbols": sum(1 for d in dumps if is_meaningful_structured_value(d.get("symbols"))),
+        "reviews_with_timeframe": sum(1 for d in dumps if is_meaningful_structured_value(d.get("timeframe"))),
+        "reviews_with_direction": sum(1 for d in dumps if d.get("direction") in {"BUY", "SELL", "WAIT"}),
+        "reviews_with_confidence": sum(1 for d in dumps if d.get("confidence") is not None),
+        "reviews_with_trade_ideas": sum(1 for d in dumps if is_meaningful_structured_value(d.get("trade_ideas"))),
+        "reviews_with_entry": sum(1 for d in dumps if is_meaningful_structured_value(d.get("entry")) or is_meaningful_structured_value(d.get("entry_zone"))),
+        "reviews_with_stop_loss": sum(1 for d in dumps if is_meaningful_structured_value(d.get("stop_loss"))),
+        "reviews_with_targets": sum(1 for d in dumps if is_meaningful_structured_value(d.get("targets")) or is_meaningful_structured_value(d.get("take_profit"))),
+        "reviews_with_detected_levels": sum(1 for d in dumps if is_meaningful_structured_value(d.get("detected_levels"))),
+        "average_structured_completeness": round(sum(scores) / len(scores), 2) if scores else 0,
+        "reviews_below_min_completeness": 0,
         "reviews_market_fallback": sum(1 for review in reviews if is_market_fallback_review(review)),
     }
