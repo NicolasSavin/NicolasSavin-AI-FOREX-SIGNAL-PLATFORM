@@ -43,6 +43,7 @@ from app.services.timing import timing_log
 from app.services.ai_runtime_status import get_ai_status, record_ai_request_failure, record_ai_request_start, record_ai_request_success, run_ai_test_request, startup_ai_healthcheck
 from app.services.visitor_counter import get_visit_stats, increment_visit
 from app.services.tv_source_manager import TvSourceConfigError, TvSourceManager
+from app.services.tv_source_bootstrap import ensure_tv_sources_initialized, last_tv_sources_bootstrap_diagnostic
 from app.services.media_identity import canonical_catalog_id, canonical_youtube_id, resolve_media_video as _resolve_media_video_from_catalog
 from app.services.media_import_engine import MediaConfigError, MediaImportEngine
 from app.services.media_automation import MediaAutomationService
@@ -156,6 +157,7 @@ from backend.signal_engine import SignalEngine
 
 canonical_market_service = get_canonical_market_service()
 trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
+tv_sources_bootstrap = ensure_tv_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_TV_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
 OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
@@ -1080,6 +1082,11 @@ def invalidate_knowledge_graph(reason: str = "manual") -> None:
         KG_SERVICE.invalidate(reason)
 
 
+def _media_import_source_counts(engine: MediaImportEngine) -> tuple[int, int]:
+    sources = engine.load_sources()
+    return len(sources), len([source for source in sources if source.enabled])
+
+
 def _run_media_import() -> dict[str, Any]:
     engine = create_media_import_engine()
     result = engine.import_latest()
@@ -1092,6 +1099,8 @@ def _run_media_import() -> dict[str, Any]:
 def api_media_import() -> dict[str, Any]:
     try:
         return _run_media_import()
+    except HTTPException:
+        raise
     except MediaConfigError as exc:
         logger.exception("media_import_config_failed")
         raise HTTPException(status_code=500, detail={"error": str(exc), "exception_type": exc.__class__.__name__}) from exc
@@ -1104,6 +1113,8 @@ def api_media_import() -> dict[str, Any]:
 def api_media_import_now() -> dict[str, Any]:
     try:
         return _run_media_import()
+    except HTTPException:
+        raise
     except MediaConfigError as exc:
         logger.exception("media_import_config_failed")
         raise HTTPException(status_code=500, detail={"error": str(exc), "exception_type": exc.__class__.__name__}) from exc
@@ -1156,7 +1167,13 @@ def _review_needs_reprocess(review: LLMReview | None) -> bool:
 def api_media_debug() -> dict[str, Any]:
     try:
         payload = create_media_import_engine().debug_sources()
-        payload["tv_source_manager"] = tv_source_manager.debug_payload()
+        tv_debug = tv_source_manager.debug_payload()
+        bootstrap_debug = last_tv_sources_bootstrap_diagnostic()
+        tv_debug["bootstrap_status"] = bootstrap_debug.get("status")
+        tv_debug["template_exists"] = bootstrap_debug.get("template_exists")
+        tv_debug["load_error"] = tv_debug.get("load_error") or bootstrap_debug.get("load_error")
+        payload["tv_source_manager"] = tv_debug
+        payload["source_registry"] = tv_debug
         payload.update(transcript_engine.debug_payload())
         payload.update(MEDIA_KNOWLEDGE_DEBUG)
         payload.update(llm_debug_payload())
@@ -1516,6 +1533,7 @@ def api_ops_storage_migrate(dry_run: bool = True, execute: bool = False, _auth: 
     def run():
         result = migrate_legacy_data(execute=bool(execute) and not bool(dry_run), review_model=LLMReview)
         if execute and not dry_run:
+            result["tv_source_reload"] = tv_source_manager.reload_sources()
             invalidate_knowledge_graph("storage_migration")
         return result
     return _run_locked_ops("storage_migrate", {"dry_run": bool(dry_run), "execute": bool(execute)}, run)
@@ -1527,9 +1545,26 @@ def api_ops_audit(limit: int = 50, _auth: bool = Depends(require_ops_token)) -> 
     return {"success": True, "records": records[-limit:] if isinstance(records, list) else []}
 
 
+def _run_ops_media_import() -> dict[str, Any]:
+    engine = create_media_import_engine()
+    sources_loaded, enabled_sources = _media_import_source_counts(engine)
+    if sources_loaded == 0 or enabled_sources == 0:
+        raise HTTPException(status_code=409, detail={
+            "success": False,
+            "status": "no_enabled_sources",
+            "message": "Не настроено ни одного активного источника FXPilot TV.",
+            "sources_loaded": sources_loaded,
+            "enabled_sources": enabled_sources,
+        })
+    result = engine.import_latest()
+    result["review_generation"] = _generate_reviews_for_imported_items(result.get("new_item_ids") or [])
+    invalidate_knowledge_graph()
+    return result
+
+
 @app.post("/api/ops/media/import")
 def api_ops_media_import(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("media_import", {}, _run_media_import)
+    return _run_locked_ops("media_import", {}, _run_ops_media_import)
 
 
 @app.post("/api/ops/reviews/reprocess")

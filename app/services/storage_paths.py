@@ -27,7 +27,16 @@ MEDIA_AUTOMATION_STATE_PATH = DATA_DIR / "media_automation_state.json"
 LLM_REVIEWS_DIR = DATA_DIR / "llm_reviews"
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 OPS_AUDIT_PATH = DATA_DIR / "ops_audit.json"
-KNOWN_JSON_FILES = ["media_catalog.json", "tv_videos.json", "media_sources.json", "media_import_debug.json", "media_automation_state.json", "ops_audit.json"]
+KNOWN_JSON_FILES = [
+    "media_catalog.json",
+    "tv_videos.json",
+    "tv_sources.json",
+    "media_sources.json",
+    "manual_youtube_videos.json",
+    "media_import_debug.json",
+    "media_automation_state.json",
+    "ops_audit.json",
+]
 
 
 def ensure_storage_dirs() -> None:
