@@ -105,3 +105,57 @@ def test_knowledge_graph_reads_normalized_fields(tmp_path):
 def test_no_secret_leakage_in_review_dump():
     dump=json.dumps(LLMReview.model_validate({"summary":"ok"}).model_dump())
     assert "OPENROUTER_API_KEY" not in dump and "sk-" not in dump
+
+
+def test_stage21_2_explicit_buy_text_recovers_direction_levels_and_diagnostics():
+    r = LLMReview.model_validate({
+        "summary": "EURUSD H1: we are looking to BUY from entry zone 1.0850-1.0870, stop loss 1.0810, targets 1.0920 and TP 1.0980.",
+        "direction": "neutral",
+    })
+    assert r.direction == "BUY"
+    assert len(r.trade_ideas) == 1
+    assert r.trade_ideas[0].direction == "BUY"
+    assert r.entry_zone == [1.085, 1.087]
+    assert r.stop_loss == 1.081
+    assert 1.098 in r.targets
+    assert r.diagnostics["trade_signal_detected"] is True
+    assert r.diagnostics["levels_detected"] is True
+    assert r.diagnostics["reason_missing_direction"] is None
+
+
+def test_stage21_2_explicit_sell_text_overrides_neutral():
+    r = LLMReview.model_validate({
+        "summary": "Gold update: explicit short XAUUSD if price rejects resistance; sell the rally. SL 2365, target 2320.",
+        "direction": "neutral",
+    })
+    assert r.primary_symbol == "XAUUSD"
+    assert r.direction == "SELL"
+    assert r.stop_loss == 2365
+    assert r.take_profit == 2320
+    assert r.trade_ideas[0].direction == "SELL"
+
+
+def test_stage21_2_multiple_top_level_symbols_create_one_idea_each():
+    r = LLMReview.model_validate({
+        "symbols": ["EURUSD", "BTCUSD"],
+        "direction": "long",
+        "confidence": 0.8,
+        "entry": 1.1,
+        "stop_loss": 1.09,
+        "targets": [1.12],
+    })
+    assert [idea.symbol for idea in r.trade_ideas] == ["EURUSD", "BTCUSD"]
+    assert all(idea.direction == "BUY" for idea in r.trade_ideas)
+    assert r.confidence_label == "HIGH"
+    assert r.confidence_score == 0.8
+    assert all(idea.confidence_score == 0.8 for idea in r.trade_ideas)
+
+
+def test_stage21_2_no_signal_diagnostics_are_explicit():
+    r = LLMReview.model_validate({"summary": "Macro discussion about central banks and liquidity, no trade plan."})
+    assert r.direction == "NEUTRAL"
+    assert r.trade_ideas == []
+    assert r.diagnostics["trade_signal_detected"] is False
+    assert r.diagnostics["levels_detected"] is False
+    assert r.diagnostics["reason_missing_levels"]
+    assert r.diagnostics["reason_missing_targets"]
