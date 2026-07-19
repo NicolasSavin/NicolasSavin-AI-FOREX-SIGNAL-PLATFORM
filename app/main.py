@@ -44,6 +44,7 @@ from app.services.ai_runtime_status import get_ai_status, record_ai_request_fail
 from app.services.visitor_counter import get_visit_stats, increment_visit
 from app.services.tv_source_manager import TvSourceConfigError, TvSourceManager
 from app.services.tv_source_bootstrap import ensure_tv_sources_initialized, last_tv_sources_bootstrap_diagnostic
+from app.services.media_source_bootstrap import ensure_media_sources_initialized, last_media_sources_bootstrap_diagnostic
 from app.services.media_identity import canonical_catalog_id, canonical_youtube_id, resolve_media_video as _resolve_media_video_from_catalog
 from app.services.media_import_engine import MediaConfigError, MediaImportEngine
 from app.services.media_automation import MediaAutomationService
@@ -158,11 +159,13 @@ from backend.signal_engine import SignalEngine
 canonical_market_service = get_canonical_market_service()
 trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
-tv_source_manager = TvSourceManager(MEDIA_TV_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
+media_sources_bootstrap = ensure_media_sources_initialized()
+tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
 OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
+    ensure_media_sources_initialized()
     manual_path = MEDIA_MANUAL_YOUTUBE_PATH if os.getenv("FXPILOT_DEV_MANUAL_MEDIA", "").strip().lower() in {"1", "true", "yes", "on", "dev"} else None
     logger.info("create_media_import_engine storage_root=%s sources_path=%s catalog_path=%s debug_path=%s manual_path=%s", DATA_DIR, MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, MEDIA_DEBUG_PATH, manual_path)
     return MediaImportEngine(MEDIA_SOURCES_PATH, MEDIA_CATALOG_PATH, manual_path, debug_path=MEDIA_DEBUG_PATH)
@@ -1166,14 +1169,33 @@ def _review_needs_reprocess(review: LLMReview | None) -> bool:
 @app.get("/api/media/debug")
 def api_media_debug() -> dict[str, Any]:
     try:
-        payload = create_media_import_engine().debug_sources()
+        engine = create_media_import_engine()
+        payload = engine.debug_sources()
+        media_sources = engine.load_sources()
         tv_debug = tv_source_manager.debug_payload()
-        bootstrap_debug = last_tv_sources_bootstrap_diagnostic()
-        tv_debug["bootstrap_status"] = bootstrap_debug.get("status")
-        tv_debug["template_exists"] = bootstrap_debug.get("template_exists")
-        tv_debug["load_error"] = tv_debug.get("load_error") or bootstrap_debug.get("load_error")
+        tv_bootstrap_debug = last_tv_sources_bootstrap_diagnostic()
+        media_bootstrap_debug = last_media_sources_bootstrap_diagnostic()
+        tv_debug["bootstrap_status"] = tv_bootstrap_debug.get("status")
+        tv_debug["template_exists"] = tv_bootstrap_debug.get("template_exists")
+        tv_debug["load_error"] = tv_debug.get("load_error") or tv_bootstrap_debug.get("load_error")
+        source_registry = {
+            "canonical_file": "media_sources.json",
+            "canonical_exists": MEDIA_SOURCES_PATH.exists(),
+            "bootstrap_status": media_bootstrap_debug.get("status"),
+            "media_import_sources_loaded": len(media_sources),
+            "media_import_enabled_sources": len([s for s in media_sources if s.enabled]),
+            "tv_manager_sources_loaded": tv_debug.get("sources_loaded", 0),
+            "tv_manager_enabled_sources": tv_debug.get("enabled_sources", 0),
+            "consistent": sorted(s.id for s in media_sources) == sorted(s.id for s in tv_source_manager.load_sources()) and len([s for s in media_sources if s.enabled]) == tv_debug.get("enabled_sources", 0),
+            "load_error": media_bootstrap_debug.get("load_error") or tv_debug.get("load_error"),
+        }
         payload["tv_source_manager"] = tv_debug
-        payload["source_registry"] = tv_debug
+        payload["source_registry"] = source_registry
+        payload["effective_source_registry"] = "media_sources.json"
+        payload["effective_sources_loaded"] = source_registry["media_import_sources_loaded"]
+        payload["effective_enabled_sources"] = source_registry["media_import_enabled_sources"]
+        payload["media_source_bootstrap_status"] = media_bootstrap_debug.get("status")
+        payload["tv_source_compatibility_status"] = "canonical_adapter" if source_registry["consistent"] else "inconsistent"
         payload.update(transcript_engine.debug_payload())
         payload.update(MEDIA_KNOWLEDGE_DEBUG)
         payload.update(llm_debug_payload())
@@ -1533,7 +1555,14 @@ def api_ops_storage_migrate(dry_run: bool = True, execute: bool = False, _auth: 
     def run():
         result = migrate_legacy_data(execute=bool(execute) and not bool(dry_run), review_model=LLMReview)
         if execute and not dry_run:
-            result["tv_source_reload"] = tv_source_manager.reload_sources()
+            result["media_source_bootstrap"] = ensure_media_sources_initialized()
+            result["tv_sources_reload"] = tv_source_manager.reload_sources()
+            reloaded_engine = create_media_import_engine()
+            loaded, enabled = _media_import_source_counts(reloaded_engine)
+            result["canonical_registry"] = "media_sources.json"
+            result["media_sources_reload"] = {"success": True, "sources_loaded": loaded, "enabled_sources": enabled}
+            result["effective_sources_loaded"] = loaded
+            result["effective_enabled_sources"] = enabled
             invalidate_knowledge_graph("storage_migration")
         return result
     return _run_locked_ops("storage_migrate", {"dry_run": bool(dry_run), "execute": bool(execute)}, run)

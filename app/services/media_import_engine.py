@@ -700,16 +700,9 @@ class MediaImportEngine:
         rows=[]
         for source in self.load_sources():
             provider = self.resolve_provider(source.provider)
-            if hasattr(provider, "resolve_source"):
-                resolved = getattr(provider, "resolve_source")(source)
-            elif isinstance(provider, YouTubeRssProvider):
-                resolved = provider.resolve_rss(source)
-            else:
-                resolved = {"provider": provider.provider_name, "error":"provider_not_implemented"}
-            channel_id = resolved.get("channel_id") or source.channel_id
+            resolved = {"provider": getattr(provider, "provider_name", source.provider)}
+            channel_id = source.channel_id
             blocking_reason = None
-            if source.provider == "youtube" and resolved.get("error"):
-                blocking_reason = str(resolved.get("error"))
             matching_logs = [row for row in last_run.get("sources", []) if row.get("source_id") == source.id]
             last_source_run = matching_logs[-1] if matching_logs else {}
             rows.append({
