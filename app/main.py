@@ -534,6 +534,7 @@ def tv_review_page(video_id: str):
 
 
 @app.get("/tv/sources", include_in_schema=False)
+@app.get("/ops/sources", include_in_schema=False)
 def tv_sources_page():
     return FileResponse(STATIC_DIR / "tv-sources.html")
 
@@ -1096,6 +1097,123 @@ def _run_media_import() -> dict[str, Any]:
     result["review_generation"] = _generate_reviews_for_imported_items(result.get("new_item_ids") or [])
     invalidate_knowledge_graph()
     return result
+
+
+def _source_actor(request: Request | None = None) -> str:
+    if not request:
+        return "browser"
+    return request.headers.get("x-fxpilot-user") or request.client.host if request.client else "browser"
+
+
+def _append_source_audit(operation: str, source_id: str | None, before: Any = None, after: Any = None, actor: str = "browser") -> None:
+    record = {"timestamp": datetime.now(timezone.utc).isoformat(), "operation": operation, "source_id": source_id, "actor": actor, "before": before, "after": after}
+    try:
+        OPS_AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        existing = json.loads(OPS_AUDIT_PATH.read_text(encoding="utf-8")) if OPS_AUDIT_PATH.exists() else []
+        if not isinstance(existing, list): existing = []
+        existing.append(record)
+        atomic_write_json(OPS_AUDIT_PATH, existing[-300:])
+    except Exception as exc:
+        logger.warning("source_audit_write_failed error=%s", exc.__class__.__name__)
+
+
+@app.get("/api/sources")
+def api_sources() -> list[dict[str, Any]]:
+    return create_media_import_engine().list_sources()
+
+
+@app.get("/api/sources/debug")
+def api_sources_debug() -> dict[str, Any]:
+    engine = create_media_import_engine(); sources = engine.list_sources(); debug = engine.debug_sources()
+    provider_statistics: dict[str, dict[str, int]] = {}
+    validation_errors = []
+    for source in sources:
+        provider = str(source.get("provider") or "unknown")
+        row = provider_statistics.setdefault(provider, {"total": 0, "enabled": 0, "disabled": 0})
+        row["total"] += 1; row["enabled" if source.get("enabled") else "disabled"] += 1
+        if source.get("last_resolve_error") or source.get("last_error"):
+            validation_errors.append({"source_id": source.get("id"), "error": source.get("last_resolve_error") or source.get("last_error")})
+    return {"total_sources": len(sources), "enabled_sources": sum(1 for s in sources if s.get("enabled")), "disabled_sources": sum(1 for s in sources if not s.get("enabled")), "provider_statistics": provider_statistics, "last_imports": [{"source_id": s.get("id"), "last_successful_import": s.get("last_successful_import"), "last_import": s.get("last_import")} for s in sources[-20:]], "last_errors": debug.get("last_import_run", {}).get("errors", []) or [{"source_id": s.get("id"), "error": s.get("last_error")} for s in sources if s.get("last_error")], "validation_errors": validation_errors}
+
+
+@app.get("/api/sources/export")
+def api_sources_export(format: str = "json") -> Response:
+    sources = create_media_import_engine().list_sources(); fmt = format.lower()
+    if fmt == "opml":
+        outlines = "".join(f'<outline text="{str(s.get("name") or "")}" title="{str(s.get("name") or "")}" type="rss" xmlUrl="{str(s.get("rss_url") or s.get("url") or "")}" htmlUrl="{str(s.get("url") or "")}" category="{",".join(s.get("categories") or [])}" />' for s in sources)
+        return Response(f'<?xml version="1.0" encoding="UTF-8"?><opml version="2.0"><head><title>FXPilot Sources</title></head><body>{outlines}</body></opml>', media_type="text/xml", headers={"Content-Disposition":"attachment; filename=fxpilot_sources.opml"})
+    return JSONResponse(sources, headers={"Content-Disposition":"attachment; filename=fxpilot_sources.json"})
+
+
+@app.get("/api/sources/{source_id}")
+def api_sources_get(source_id: str) -> dict[str, Any]:
+    try: return create_media_import_engine().get_source(source_id)
+    except MediaConfigError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/sources")
+async def api_sources_add(request: Request) -> dict[str, Any]:
+    payload = await request.json(); engine = create_media_import_engine()
+    try:
+        saved = engine.add_source(payload); _append_source_audit("source_created", saved.get("id"), None, saved, _source_actor(request)); return saved
+    except MediaConfigError as exc: raise HTTPException(status_code=409 if "duplicate" in str(exc).lower() else 400, detail=str(exc)) from exc
+
+
+@app.put("/api/sources/{source_id}")
+async def api_sources_update(source_id: str, request: Request) -> dict[str, Any]:
+    payload = await request.json(); engine = create_media_import_engine()
+    try:
+        before = engine.get_source(source_id); saved = engine.update_source(source_id, payload); _append_source_audit("source_updated", source_id, before, saved, _source_actor(request)); return saved
+    except MediaConfigError as exc: raise HTTPException(status_code=404 if "unknown" in str(exc).lower() else 400, detail=str(exc)) from exc
+
+
+@app.delete("/api/sources/{source_id}")
+def api_sources_delete(source_id: str, request: Request) -> dict[str, Any]:
+    engine = create_media_import_engine()
+    try:
+        before = engine.get_source(source_id); result = engine.delete_source(source_id); _append_source_audit("source_deleted", source_id, before, result, _source_actor(request)); return result
+    except MediaConfigError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/sources/{source_id}/test")
+def api_sources_test(source_id: str) -> dict[str, Any]:
+    try:
+        result = create_media_import_engine().test_source(source_id)
+        return {"reachable": bool(result.get("ok", not result.get("error"))), "channel_title": result.get("channel_title"), "channel_id": result.get("channel_id") or result.get("resolved_channel_id"), "feed_title": result.get("feed_title"), "error_reason": result.get("error"), **result}
+    except MediaConfigError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/sources/{source_id}/import")
+def api_sources_import(source_id: str, request: Request) -> dict[str, Any]:
+    try:
+        result = create_media_import_engine().import_source(source_id); _append_source_audit("source_import_now", source_id, None, result, _source_actor(request)); return {"skipped": result.get("skipped_invalid", 0), "errors": result.get("errors", []), **result}
+    except MediaConfigError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/sources/import")
+async def api_sources_import_bulk(request: Request) -> dict[str, Any]:
+    payload = await request.json(); action = str(payload.get("action") or "import"); ids = [str(v) for v in (payload.get("ids") or [])]
+    engine = create_media_import_engine(); results=[]
+    if "sources" in payload:
+        imported=[]
+        for row in payload.get("sources") or []:
+            if isinstance(row, dict):
+                imported.append(engine.add_source(row))
+        _append_source_audit("sources_import_config", None, None, imported, _source_actor(request))
+        return {"success": True, "action": "import_config", "count": len(imported), "results": imported}
+    if action == "test":
+        results = [api_sources_test(i) for i in ids]
+    elif action == "import":
+        results = [api_sources_import(i, request) for i in ids]
+    elif action in {"enable", "disable"}:
+        results = [engine.update_source(i, {"enabled": action == "enable"}) for i in ids]
+        _append_source_audit(f"bulk_{action}", ",".join(ids), None, results, _source_actor(request))
+    elif action == "delete":
+        results = [engine.delete_source(i) for i in ids]
+        _append_source_audit("bulk_delete", ",".join(ids), None, results, _source_actor(request))
+    else:
+        raise HTTPException(status_code=400, detail="unsupported bulk action")
+    return {"success": True, "action": action, "count": len(results), "results": results}
 
 
 @app.post("/api/media/import")
