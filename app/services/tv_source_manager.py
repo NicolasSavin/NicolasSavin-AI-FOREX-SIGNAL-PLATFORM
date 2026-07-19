@@ -72,14 +72,25 @@ class TvSourceManager:
     def __init__(self, sources_path: Path, videos_path: Path | None = None) -> None:
         self.sources_path = sources_path
         self.videos_path = videos_path
+        self._sources: list[TvSource] = []
+        self._load_error: str | None = None
+        self.reload_sources()
 
     def load_sources(self) -> list[TvSource]:
+        return list(self._sources)
+
+    def reload_sources(self) -> dict[str, Any]:
         try:
             payload = json.loads(self.sources_path.read_text(encoding="utf-8"))
+            sources = self._validate_sources(payload)
         except Exception as exc:
-            logger.warning("tv_sources_config_unavailable path=%s error=%s", self.sources_path, exc)
-            return []
-        return self._validate_sources(payload)
+            logger.warning("tv_sources_reload_failed path=%s error=%s", self.sources_path, exc.__class__.__name__)
+            if not self._sources:
+                self._load_error = exc.__class__.__name__
+            return {"success": False, "sources_loaded": len(self._sources), "enabled_sources": len([s for s in self._sources if s.enabled]), "load_error": exc.__class__.__name__}
+        self._sources = sources
+        self._load_error = None
+        return {"success": True, "sources_loaded": len(sources), "enabled_sources": len([s for s in sources if s.enabled]), "load_error": None}
 
     def list_enabled_sources(self) -> list[TvSource]:
         return [source for source in self.load_sources() if source.enabled]
@@ -106,10 +117,13 @@ class TvSourceManager:
         payload = {
             "sources_path": str(self.sources_path.resolve()),
             "videos_path": str(self.videos_path.resolve()) if self.videos_path else None,
+            "sources_path_configured": bool(self.sources_path),
             "sources_exists": self.sources_path.exists(),
             "videos_exists": self.videos_path.exists() if self.videos_path else False,
             "sources_loaded": len(sources),
             "enabled_sources": len([s for s in sources if s.enabled]),
+            "disabled_sources": len([s for s in sources if not s.enabled]),
+            "load_error": self._load_error,
             "video_catalog_items": len(videos),
         }
         logger.info("tv_source_manager_debug sources_path=%s videos_path=%s sources_loaded=%s video_catalog_items=%s", payload["sources_path"], payload["videos_path"], payload["sources_loaded"], payload["video_catalog_items"])
