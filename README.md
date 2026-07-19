@@ -775,3 +775,11 @@ Knowledge Graph keeps the normal healthy TTL, but empty graphs with zero catalog
 - Media Import now records canonical catalog path, storage root, catalog existence, before/after item counts, loaded source items, written items, write success/error state and per-filter removal counters in `/api/media/debug`.
 - The import pipeline refuses a successful zero-item catalog write when providers returned importable videos, so fetched YouTube media is persisted to the canonical `media_catalog.json` or the write error is surfaced in diagnostics.
 - Added a regression test that imports one mock YouTube video, verifies catalog file persistence and subsequent catalog loading, then confirms the Knowledge Graph indexes the imported item with a stored review.
+
+## Stage 22 — FXPilot Source Manager
+
+- Browser Source Manager is available at `/ops/sources` and `/tv/sources` for runtime YouTube, Telegram and RSS source administration.
+- Source CRUD APIs are available under `/api/sources`: list, read one, create, update, delete, test, import one source, bulk actions/import, export and debug.
+- Source changes are written only to the canonical `DATA_DIR` runtime registry (`media_sources.json`) and are picked up by Scheduler / Media Import on the next run without redeploy or service restart.
+- Supported provider keys include `youtube_channel`, `youtube_playlist`, `telegram_public`, `telegram_rss` and `rss_feed`; the engine still maps them to the existing provider architecture for backward compatibility.
+- Source changes append audit records to the existing OPS audit log while preserving imported media and review history.
