@@ -60,5 +60,8 @@ class OpenAIReviewProvider:
         else:
             payload["structured_parse_status"] = status
             payload.setdefault("entity_extraction_source", "llm_json")
+        diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
+        diagnostics["raw_llm_structured_output"] = content
+        payload["diagnostics"] = diagnostics
         tokens = getattr(getattr(response, "usage", None), "total_tokens", 0) or 0
         return LLMReview.from_payload(payload, provider=f"{self.provider_name}:{self.model}", tokens_used=int(tokens), latency_ms=latency_ms)
