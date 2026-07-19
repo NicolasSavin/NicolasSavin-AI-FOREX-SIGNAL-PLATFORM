@@ -619,7 +619,7 @@ Frontend page `/performance` shows leaderboard blocks for Best Authors, Worst Au
 
 ## FXPilot TV Source Manager v1
 
-FXPilot TV imports content through a unified source registry (`data/media_sources.json`) with stable fields for `source_type`, `provider`, diagnostics, counters, tags, symbols and `provider_config`. Existing catalog items are merged and deduplicated by YouTube ID or URL; a failed source does **not** clear the media catalog.
+FXPilot TV imports content through a unified source registry (`data/media_sources.json`) with stable fields for `source_type`, `provider`, diagnostics, counters, tags, symbols and `provider_config`. Existing catalog items are merged and deduplicated by YouTube ID or URL; a failed source does **not** clear the media catalog. Runtime uses `DATA_DIR/media_sources.json` as the canonical source registry for MediaImportEngine, OPS imports, scheduler diagnostics and the FXPilot TV manager; `tv_sources.json` is legacy compatibility/template input only and is converted deterministically on first run when the canonical file is missing or empty. Valid persistent administrator settings in `media_sources.json` are never overwritten by repository templates.
 
 ### YouTube Data API setup
 

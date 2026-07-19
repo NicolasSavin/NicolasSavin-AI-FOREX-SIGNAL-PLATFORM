@@ -9,7 +9,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_TV_PROVIDERS = {"youtube", "telegram", "rumble", "vimeo", "podcast", "fxpilot_live"}
+SUPPORTED_TV_PROVIDERS = {"youtube", "youtube_api", "youtube_ytdlp", "auto", "telegram", "rumble", "vimeo", "podcast", "fxpilot_live"}
 
 
 @dataclass(frozen=True)
@@ -153,6 +153,8 @@ class TvSourceManager:
                 raise TvSourceConfigError(f"duplicate source id: {source_id}")
             seen_ids.add(source_id)
             provider = self._required_str(item, "provider", index).lower()
+            if provider in {"auto", "youtube_api", "youtube_ytdlp"}:
+                provider = "youtube"
             if provider not in SUPPORTED_TV_PROVIDERS:
                 raise TvSourceConfigError(f"unsupported provider for {source_id}: {provider}")
             categories = item.get("categories")
