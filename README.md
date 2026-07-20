@@ -1,3 +1,31 @@
+## Stage 25 — Market State Engine (Production Grade)
+
+- Добавлена подсистема `app/services/market_state/`, которая без LLM агрегирует Consensus, Structured Reviews, Signal Validation, Author Intelligence, Knowledge Graph, Performance и Historical Metrics в объективное состояние рынка по каждому символу.
+- Новая модель `MarketState` вычисляет `direction`, `trend_strength`, `confidence`, `agreement`, `validation_score`, `author_score`, `performance_score`, `market_quality`, `review_count`, `author_count` и `updated_at`; недоступные реальные данные не подменяются фейковыми значениями.
+- Состояние сохраняется atomic write в `DATA_DIR/market_state.json`, а runtime использует TTL-cache и debug-метрики cache hit/cache age.
+- Новые API: `GET /api/market-state` для всех символов, `GET /api/market-state/{symbol}` для одного символа, `GET /api/market-state/debug` для диагностики вычислений.
+- OPS-страница `/ops/market` показывает тёмную responsive таблицу Symbol, Direction, Trend, Confidence, Agreement, Validation, Authors, Performance, Quality и Updated с поиском, фильтром, сортировкой и автообновлением.
+- После OPS Consensus rebuild и завершения Performance outcome Market State пересчитывается автоматически, сохраняя существующие маршруты и контракты.
+
+Пример ответа `GET /api/market-state/{symbol}`:
+
+```json
+{
+  "symbol": "EURUSD",
+  "direction": "Bullish",
+  "trend_strength": "Strong",
+  "confidence": 82,
+  "agreement": 91,
+  "validation_score": 80,
+  "author_score": 76,
+  "performance_score": 78,
+  "market_quality": "Excellent",
+  "review_count": 9,
+  "author_count": 4,
+  "updated_at": "2026-07-20T12:00:00+00:00"
+}
+```
+
 ## Stage 23 — Author Intelligence & Trust Engine
 
 - Author Intelligence повышен до первого класса: `AuthorProfile` хранит канонический `id`, aliases, review/source/trade/symbol counts, first/last seen, confidence/agreement/consensus alignment, trust/accuracy/activity/quality/signal scores, language/categories/status и proxy performance поля.
