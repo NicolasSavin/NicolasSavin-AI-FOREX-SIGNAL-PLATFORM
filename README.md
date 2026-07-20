@@ -930,3 +930,39 @@ FXPilot now includes a deterministic Strategy Builder layer that evaluates exist
 - First-run templates live in `data/templates/default_strategies.json` and are not overwritten at runtime.
 
 Supported policy fields include action, direction, readiness, decision/confidence/stability scores, opportunity/confluence/agreement/conflict/data-quality/freshness/validation/author/performance scores, dominant timeframe, urgency, execution risk fields, blocker/warning counts, missing data, symbol and timeframe. Supported operators are strict enums only: EQ, NE, GT, GTE, LT, LTE, IN, NOT_IN, EXISTS, NOT_EXISTS, CONTAINS, NOT_CONTAINS and BETWEEN.
+
+## Stage 32 — Portfolio Intelligence Engine
+
+Portfolio Intelligence is a deterministic portfolio-management layer built on stored Paper Trading results and existing analytics metadata. It never connects to brokers, never sends orders, does not use MT4/MT5, and does not use any LLM.
+
+### What it tracks
+
+- Total equity, balance, floating PnL and realized PnL.
+- Daily, weekly, monthly and annualized returns from saved portfolio history.
+- Current drawdown and maximum drawdown.
+- Exposure by symbol, currency, direction, timeframe, strategy, author and sector.
+- Risk used, capital allocation, average holding time, open positions and closed positions.
+- Performance metrics: Sharpe, Sortino, Calmar, profit factor, recovery factor, expectancy, average win/loss and win rate.
+
+### Deterministic engines
+
+- Risk engine validates maximum portfolio risk, symbol exposure, correlated currency exposure, open positions, sector exposure and currency exposure.
+- Allocation engine calculates equal weight, risk weight, confidence weight, volatility weight and deterministic Kelly fraction weights.
+- Performance engine calculates metrics only from Paper Trading realized trades and stored equity history.
+
+### API and Ops
+
+Public read endpoints:
+
+- `GET /api/portfolio`
+- `GET /api/portfolio/statistics`
+- `GET /api/portfolio/history`
+- `GET /api/portfolio/risk`
+- `GET /api/portfolio/exposure`
+
+Operations endpoints require `X-FXPILOT-OPS-TOKEN`:
+
+- `POST /api/ops/portfolio/rebuild`
+- `POST /api/ops/portfolio/reset`
+
+The browser operations page is available at `/ops/portfolio`. Persistence files are stored under the configured FXPilot data directory as `portfolio.json`, `portfolio_statistics.json` and `portfolio_history.json`.
