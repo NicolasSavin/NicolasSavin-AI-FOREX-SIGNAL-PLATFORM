@@ -878,3 +878,9 @@ Operations endpoint and UI:
 - `/ops/confluence` for sortable/filterable dark-theme diagnostics
 
 Persistence is stored atomically in `DATA_DIR/confluence.json`; if a rebuild fails, the previous valid file is preserved. Upstream rebuild flows for consensus, authors, performance, market state, multi-timeframe, validation scheduler updates, and performance completion hooks trigger a safe confluence refresh without recursive rebuild loops.
+
+## Stage 28 — Opportunity Scanner
+
+Opportunity Scanner builds `DATA_DIR/opportunities.json` from persisted Confluence, structured review ideas, validation and performance data. It is deterministic, does not call an LLM, and the Opportunity Score is a ranking score only — not financial advice, expected return, or probability of profit.
+
+Public endpoints: `GET /api/opportunities`, `/api/opportunities/top`, `/api/opportunities/{symbol}`, `/api/opportunities/stats`, `/api/opportunities/debug`. Protected OPS rebuild: `POST /api/ops/opportunities/rebuild` with the existing OPS token. UI pages: `/opportunities` and `/ops/opportunities`.
