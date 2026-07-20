@@ -62,6 +62,7 @@ from app.services.market_state import MarketStateBuilder, MarketStateEngine
 from app.services.multi_timeframe import MultiTimeframeBuilder, MultiTimeframeEngine
 from app.services.confluence import ConfluenceBuilder, ConfluenceEngine
 from app.services.opportunity_scanner import OpportunityBuilder, OpportunityEngine
+from app.services.decision_engine import DecisionBuilder, DecisionEngine
 from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
@@ -166,12 +167,13 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
 media_sources_bootstrap = ensure_media_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "cache_clear", "storage_migrate"]}
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "decisions_rebuild", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 MARKET_STATE_ENGINE: MarketStateEngine | None = None
 MULTI_TIMEFRAME_ENGINE: MultiTimeframeEngine | None = None
 CONFLUENCE_ENGINE: ConfluenceEngine | None = None
 OPPORTUNITY_ENGINE: OpportunityEngine | None = None
+DECISION_ENGINE: DecisionEngine | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     ensure_media_sources_initialized()
@@ -1587,11 +1589,26 @@ def create_opportunity_engine() -> OpportunityEngine:
     return OPPORTUNITY_ENGINE
 
 
+def create_decision_engine() -> DecisionEngine:
+    global DECISION_ENGINE
+    if DECISION_ENGINE is None:
+        DECISION_ENGINE = DecisionEngine(DecisionBuilder(opportunity_loader=lambda: create_opportunity_engine().all()))
+    return DECISION_ENGINE
+
+def _rebuild_decisions_safely() -> dict[str, Any]:
+    try:
+        payload = create_decision_engine().rebuild()
+        return {"count": payload.get("total", 0), "actionable": payload.get("actionable_count", 0), "ready": payload.get("ready_count", 0), "blocked": payload.get("blocked_count", 0)}
+    except Exception as exc:
+        logger.exception("decisions_rebuild_failed")
+        return {"error": exc.__class__.__name__}
+
 def _rebuild_opportunities_safely() -> dict[str, Any]:
     try:
         payload = create_opportunity_engine().rebuild()
+        decisions = _rebuild_decisions_safely()
         items = payload.get("items", [])
-        return {"count": payload.get("total", len(items)), "actionable": payload.get("actionable_count", 0), "watch": payload.get("watch_count", 0), "blocked": payload.get("blocked_count", 0), "highest_score": max((i.get("opportunity_score") or 0 for i in items), default=0)}
+        return {"count": payload.get("total", len(items)), "actionable": payload.get("actionable_count", 0), "watch": payload.get("watch_count", 0), "blocked": payload.get("blocked_count", 0), "highest_score": max((i.get("opportunity_score") or 0 for i in items), default=0), "decisions": decisions}
     except Exception as exc:
         logger.exception("opportunities_rebuild_failed")
         return {"error": exc.__class__.__name__}
@@ -1709,6 +1726,34 @@ def api_opportunities_symbol(symbol: str) -> dict[str, Any]:
     item = create_opportunity_engine().get(symbol)
     if not item:
         raise HTTPException(status_code=404, detail="Opportunity not found")
+    return item
+
+@app.get("/api/decisions")
+def api_decisions(action: str | None = None, direction: str | None = None, readiness: str | None = None, actionable_only: bool = False, minimum_decision_score: float | None = None, minimum_confidence: float | None = None, minimum_stability: float | None = None, minimum_data_quality: float | None = None, maximum_conflict: float | None = None, symbol: str | None = None, dominant_timeframe: str | None = None, has_entry: bool | None = None, has_stop_loss: bool | None = None, has_take_profit: bool | None = None, limit: int | None = None, offset: int = 0) -> dict[str, Any]:
+    pct = lambda v: None if v is None else max(0.0, min(100.0, float(v)))
+    return create_decision_engine().all({"action": action, "direction": direction, "readiness": readiness, "actionable_only": actionable_only, "minimum_decision_score": pct(minimum_decision_score), "minimum_confidence": pct(minimum_confidence), "minimum_stability": pct(minimum_stability), "minimum_data_quality": pct(minimum_data_quality), "maximum_conflict": pct(maximum_conflict), "symbol": symbol, "dominant_timeframe": dominant_timeframe, "has_entry": has_entry, "has_stop_loss": has_stop_loss, "has_take_profit": has_take_profit, "limit": None if limit is None else max(1, min(500, int(limit))), "offset": max(0, int(offset or 0))})
+
+@app.get("/api/decisions/top")
+def api_decisions_top(limit: int = 10) -> dict[str, Any]:
+    return create_decision_engine().top(limit)
+
+@app.get("/api/decisions/actionable")
+def api_decisions_actionable() -> dict[str, Any]:
+    return create_decision_engine().actionable()
+
+@app.get("/api/decisions/stats")
+def api_decisions_stats() -> dict[str, Any]:
+    return create_decision_engine().stats()
+
+@app.get("/api/decisions/debug")
+def api_decisions_debug() -> dict[str, Any]:
+    return create_decision_engine().debug()
+
+@app.get("/api/decisions/{symbol}")
+def api_decisions_symbol(symbol: str) -> dict[str, Any]:
+    item = create_decision_engine().get(symbol)
+    if not item:
+        raise HTTPException(status_code=404, detail="Decision not found")
     return item
 
 @app.get("/api/performance")
@@ -2109,10 +2154,21 @@ def api_ops_opportunities_rebuild(_auth: bool = Depends(require_ops_token)) -> d
     def run() -> dict[str, Any]:
         started = time.perf_counter()
         payload = create_opportunity_engine().rebuild()
+        decisions = _rebuild_decisions_safely()
         items = payload.get("items", [])
-        return {"success": True, "status": "completed", "duration_ms": int((time.perf_counter() - started) * 1000), "symbols_scanned": payload.get("diagnostics", {}).get("input_symbol_count", len(items)), "actionable_count": payload.get("actionable_count", 0), "watch_count": payload.get("watch_count", 0), "blocked_count": payload.get("blocked_count", 0), "highest_score": max((i.get("opportunity_score") or 0 for i in items), default=0), "errors": payload.get("diagnostics", {}).get("errors", [])}
+        return {"success": True, "status": "completed", "duration_ms": int((time.perf_counter() - started) * 1000), "symbols_scanned": payload.get("diagnostics", {}).get("input_symbol_count", len(items)), "actionable_count": payload.get("actionable_count", 0), "watch_count": payload.get("watch_count", 0), "blocked_count": payload.get("blocked_count", 0), "highest_score": max((i.get("opportunity_score") or 0 for i in items), default=0), "decisions": decisions, "errors": payload.get("diagnostics", {}).get("errors", [])}
     return _run_locked_ops("opportunities_rebuild", {}, run)
 
+
+
+@app.post("/api/ops/decisions/rebuild")
+def api_ops_decisions_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    def run() -> dict[str, Any]:
+        started = time.perf_counter()
+        payload = create_decision_engine().rebuild()
+        items = payload.get("items", [])
+        return {"success": True, "status": "completed", "duration_ms": int((time.perf_counter() - started) * 1000), "symbols_processed": len(items), "ready_count": payload.get("ready_count", 0), "blocked_count": payload.get("blocked_count", 0), "buy_count": sum(1 for i in items if i.get("action") in {"BUY", "STRONG_BUY"}), "sell_count": sum(1 for i in items if i.get("action") in {"SELL", "STRONG_SELL"}), "errors": payload.get("diagnostics", {}).get("errors", [])}
+    return _run_locked_ops("decisions_rebuild", {}, run)
 
 @app.post("/api/ops/cache/clear")
 def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
@@ -2130,6 +2186,8 @@ def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, A
             CONFLUENCE_ENGINE.invalidate()
         if OPPORTUNITY_ENGINE is not None:
             OPPORTUNITY_ENGINE.invalidate()
+        if DECISION_ENGINE is not None:
+            DECISION_ENGINE.invalidate()
         return {"success": True, "status": "cleared", "message": "Safe application caches cleared."}
     return _run_locked_ops("cache_clear", {}, clear)
 
@@ -2202,6 +2260,14 @@ def ops_multi_timeframe_page():
 def ops_confluence_page():
     return FileResponse(STATIC_DIR / "confluence.html")
 
+
+@app.get("/decisions", include_in_schema=False)
+def decisions_page():
+    return FileResponse(STATIC_DIR / "decisions.html")
+
+@app.get("/ops/decisions", include_in_schema=False)
+def ops_decisions_page():
+    return FileResponse(STATIC_DIR / "ops-decisions.html")
 
 @app.get("/opportunities", include_in_schema=False)
 def opportunities_page():
