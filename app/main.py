@@ -58,6 +58,7 @@ from app.services.investment_committee import InvestmentCommitteeEngine
 from app.services.consensus import ConsensusEngine
 from app.services.author_intelligence import AuthorIntelligenceEngine
 from app.services.performance import PerformanceEngine
+from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
 from app.services.storage_paths import (
@@ -476,6 +477,7 @@ def startup() -> None:
     twelvedata_ws_service.start()
     media_automation_service.start()
     asyncio.create_task(startup_ai_healthcheck())
+    asyncio.create_task(_signal_validation_scheduler_loop())
     _queue_market_ideas_refresh()
 
 
@@ -1444,7 +1446,6 @@ def api_media_committee(video_id: str) -> dict[str, Any]:
 
 
 def create_consensus_engine() -> ConsensusEngine:
-    author_weights = {row["name"]: row for row in create_author_intelligence_engine(include_consensus=False).build_all()}
     return ConsensusEngine(
         media_catalog_loader=_load_tv_video_catalog,
         review_payload_builder=_build_tv_review_payload,
@@ -1452,7 +1453,7 @@ def create_consensus_engine() -> ConsensusEngine:
             media_catalog_loader=_load_tv_video_catalog,
             review_payload_builder=_build_tv_review_payload,
         ).build_for_video(video_id).model_dump(),
-        author_weight_provider=lambda author: author_weights.get(str(author), {}),
+        author_weight_provider=lambda author: create_signal_validation_engine().historical_author_weight(author),
     )
 
 
@@ -1483,6 +1484,40 @@ def create_performance_engine() -> PerformanceEngine:
     )
 
 
+
+
+
+async def _signal_validation_scheduler_loop() -> None:
+    await asyncio.sleep(5)
+    while True:
+        try:
+            engine = create_signal_validation_engine()
+            engine.validate_many(_validation_ideas_from_catalog(100), limit=50)
+        except Exception:
+            logger.exception("signal_validation_scheduler_failed")
+        await asyncio.sleep(max(300, int(os.getenv("SIGNAL_VALIDATION_INTERVAL_SECONDS", "900"))))
+
+def create_signal_validation_engine() -> SignalValidationEngine:
+    return SignalValidationEngine(ExistingMarketDataValidationProvider(get_candles))
+
+def _validation_ideas_from_catalog(limit: int = 100) -> list[dict[str, Any]]:
+    ideas: list[dict[str, Any]] = []
+    for video in _load_tv_video_catalog()[:limit]:
+        try:
+            payload = _build_tv_review_payload(video)
+        except Exception:
+            payload = {}
+        analysis = payload.get("analysis") or payload.get("ai_review") or payload.get("llm_review") or {}
+        knowledge = payload.get("knowledge") or payload.get("knowledge_context") or {}
+        idea = {**video, **knowledge, **analysis}
+        idea.setdefault("id", video.get("id"))
+        idea.setdefault("author", video.get("author") or video.get("source_id"))
+        idea.setdefault("published_at", video.get("published_at"))
+        idea.setdefault("timeframe", video.get("timeframe") or analysis.get("timeframe") or knowledge.get("timeframe") or "M15")
+        if idea.get("symbol") and (idea.get("direction") or idea.get("signal") or idea.get("action")):
+            ideas.append(idea)
+    return ideas
+
 @app.get("/api/performance")
 def api_performance() -> dict[str, Any]:
     return create_performance_engine().evaluate_all()
@@ -1503,6 +1538,43 @@ def api_performance_video(video_id: str) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+
+
+
+@app.get("/ops/validation", include_in_schema=False)
+def ops_validation_page():
+    return FileResponse(STATIC_DIR / "validation.html")
+
+@app.get("/api/validation")
+def api_validation():
+    engine = create_signal_validation_engine()
+    ideas = _validation_ideas_from_catalog(100)
+    if ideas:
+        engine.validate_many(ideas, limit=50)
+    return {"items": engine.all(), "stats": engine.stats(), "data_label": "real_historical_ohlc_only_no_proxy_substitution"}
+
+@app.get("/api/validation/stats")
+def api_validation_stats():
+    return create_signal_validation_engine().stats()
+
+@app.get("/api/validation/authors")
+def api_validation_authors():
+    return create_signal_validation_engine().author_metrics()
+
+@app.get("/api/validation/symbols")
+def api_validation_symbols():
+    return create_signal_validation_engine().symbol_metrics()
+
+@app.get("/api/validation/debug")
+def api_validation_debug():
+    return create_signal_validation_engine().debug()
+
+@app.get("/api/validation/{validation_id}")
+def api_validation_detail(validation_id: str):
+    item = create_signal_validation_engine().get(validation_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Validation not found")
+    return item
 
 @app.get("/api/authors")
 def api_authors(sort: str = "rating") -> list[dict[str, Any]]:
