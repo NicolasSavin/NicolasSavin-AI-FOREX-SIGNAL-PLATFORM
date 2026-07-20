@@ -72,6 +72,13 @@
     nav.appendChild(opsLink);
   }
 
+  if (!nav.querySelector('a[href="/ops/multi-timeframe"]')) {
+    const mtfLink = document.createElement('a');
+    mtfLink.href = '/ops/multi-timeframe';
+    mtfLink.textContent = '⏱ Multi TF';
+    nav.appendChild(mtfLink);
+  }
+
   nav.querySelectorAll('a[href]').forEach((link) => {
     const linkPath = normalize(link.getAttribute('href'));
     const isActive = linkPath === currentPath;
