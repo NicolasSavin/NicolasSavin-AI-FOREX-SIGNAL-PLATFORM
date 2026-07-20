@@ -66,6 +66,7 @@ from app.services.decision_engine import DecisionBuilder, DecisionEngine
 from app.services.strategy_builder import StrategyEngine, StrategyDefinition, StrategyStatus
 from app.services.paper_trading import PaperTradingEngine
 from app.services.portfolio import PortfolioBuilder, PortfolioEngine
+from app.services.execution_gateway import ExecutionGateway
 from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
@@ -170,7 +171,7 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
 media_sources_bootstrap = ensure_media_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "decisions_rebuild", "strategy_rebuild", "strategy_mutation", "paper_rebuild", "paper_reset", "portfolio_rebuild", "portfolio_reset", "cache_clear", "storage_migrate"]}
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "decisions_rebuild", "strategy_rebuild", "strategy_mutation", "paper_rebuild", "paper_reset", "portfolio_rebuild", "portfolio_reset", "execution_build", "execution_dispatch", "execution_cancel", "execution_rebuild", "execution_kill_switch", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 MARKET_STATE_ENGINE: MarketStateEngine | None = None
 MULTI_TIMEFRAME_ENGINE: MultiTimeframeEngine | None = None
@@ -180,6 +181,7 @@ DECISION_ENGINE: DecisionEngine | None = None
 STRATEGY_ENGINE: StrategyEngine | None = None
 PAPER_TRADING_ENGINE: PaperTradingEngine | None = None
 PORTFOLIO_ENGINE: PortfolioEngine | None = None
+EXECUTION_GATEWAY: ExecutionGateway | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     ensure_media_sources_initialized()
@@ -1615,6 +1617,13 @@ def create_paper_trading_engine() -> PaperTradingEngine:
     return PAPER_TRADING_ENGINE
 
 
+def create_execution_gateway() -> ExecutionGateway:
+    global EXECUTION_GATEWAY
+    if EXECUTION_GATEWAY is None:
+        EXECUTION_GATEWAY = ExecutionGateway(signal_loader=lambda: create_strategy_engine().approved_signals(), strategy_loader=lambda: create_strategy_engine().list_strategies(), portfolio_loader=lambda: {"positions": create_paper_trading_engine().storage.positions(), "risk": create_portfolio_engine().risk()})
+    return EXECUTION_GATEWAY
+
+
 def create_portfolio_engine() -> PortfolioEngine:
     global PORTFOLIO_ENGINE
     if PORTFOLIO_ENGINE is None:
@@ -2080,6 +2089,63 @@ def api_ops_paper_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str,
 def ops_paper_page():
     return FileResponse(STATIC_DIR / "paper.html")
 
+
+
+@app.get("/api/execution/status")
+def api_execution_status() -> dict[str, Any]:
+    return create_execution_gateway().status().model_dump(mode="json")
+
+@app.get("/api/execution/orders")
+def api_execution_orders() -> dict[str, Any]:
+    return {"items": [o.model_dump(mode="json") for o in create_execution_gateway().storage.load_orders()]}
+
+@app.get("/api/execution/orders/{order_id}")
+def api_execution_order(order_id: str) -> dict[str, Any]:
+    for o in create_execution_gateway().storage.load_orders():
+        if o.id == order_id:
+            return o.model_dump(mode="json")
+    raise HTTPException(status_code=404, detail="Execution order not found")
+
+@app.get("/api/execution/results")
+def api_execution_results() -> dict[str, Any]:
+    return {"items": [r.model_dump(mode="json") for r in create_execution_gateway().storage.load_results()]}
+
+@app.get("/api/execution/debug")
+def api_execution_debug() -> dict[str, Any]:
+    return create_execution_gateway().debug()
+
+@app.post("/api/ops/execution/build")
+def api_ops_execution_build(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("execution_build", {"operation":"execution_build"}, lambda: create_execution_gateway().build_all())
+
+@app.post("/api/ops/execution/rebuild")
+def api_ops_execution_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("execution_rebuild", {"operation":"execution_rebuild"}, lambda: create_execution_gateway().build_all())
+
+@app.post("/api/ops/execution/dispatch")
+def api_ops_execution_dispatch(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("execution_dispatch", {"operation":"execution_dispatch"}, lambda: create_execution_gateway().dispatch())
+
+@app.post("/api/ops/execution/dispatch/{order_id}")
+def api_ops_execution_dispatch_one(order_id: str, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("execution_dispatch", {"operation":"execution_dispatch", "order_id": order_id}, lambda: create_execution_gateway().dispatch(order_id))
+
+@app.post("/api/ops/execution/cancel/{order_id}")
+def api_ops_execution_cancel(order_id: str, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("execution_cancel", {"operation":"execution_cancel", "order_id": order_id}, lambda: create_execution_gateway().cancel(order_id))
+
+@app.post("/api/ops/execution/kill-switch")
+def api_ops_execution_kill_switch(payload: dict[str, Any] | None = None, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    body=payload or {}; enabled=bool(body.get("enabled", True))
+    return _run_locked_ops("execution_kill_switch", {"operation":"execution_kill_switch", "enabled": enabled}, lambda: {"success": True, "state": create_execution_gateway().set_kill(enabled, str(body.get("reason") or "operator"), "ops").model_dump(mode="json")})
+
+@app.post("/api/ops/execution/kill-switch/reset")
+def api_ops_execution_kill_switch_reset(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("execution_kill_switch", {"operation":"execution_kill_switch_reset"}, lambda: {"success": True, "state": create_execution_gateway().set_kill(False, "operator_reset", "ops").model_dump(mode="json")})
+
+@app.get("/ops/execution", include_in_schema=False)
+def ops_execution_page():
+    return FileResponse(STATIC_DIR / "ops-execution.html")
 
 @app.get("/api/portfolio")
 def api_portfolio() -> dict[str, Any]:
