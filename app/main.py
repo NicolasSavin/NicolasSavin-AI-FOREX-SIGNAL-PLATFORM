@@ -63,6 +63,7 @@ from app.services.multi_timeframe import MultiTimeframeBuilder, MultiTimeframeEn
 from app.services.confluence import ConfluenceBuilder, ConfluenceEngine
 from app.services.opportunity_scanner import OpportunityBuilder, OpportunityEngine
 from app.services.decision_engine import DecisionBuilder, DecisionEngine
+from app.services.strategy_builder import StrategyEngine, StrategyDefinition, StrategyStatus
 from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
@@ -167,13 +168,14 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
 media_sources_bootstrap = ensure_media_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "decisions_rebuild", "cache_clear", "storage_migrate"]}
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "decisions_rebuild", "strategy_rebuild", "strategy_mutation", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 MARKET_STATE_ENGINE: MarketStateEngine | None = None
 MULTI_TIMEFRAME_ENGINE: MultiTimeframeEngine | None = None
 CONFLUENCE_ENGINE: ConfluenceEngine | None = None
 OPPORTUNITY_ENGINE: OpportunityEngine | None = None
 DECISION_ENGINE: DecisionEngine | None = None
+STRATEGY_ENGINE: StrategyEngine | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     ensure_media_sources_initialized()
@@ -1595,12 +1597,27 @@ def create_decision_engine() -> DecisionEngine:
         DECISION_ENGINE = DecisionEngine(DecisionBuilder(opportunity_loader=lambda: create_opportunity_engine().all()))
     return DECISION_ENGINE
 
+def create_strategy_engine() -> StrategyEngine:
+    global STRATEGY_ENGINE
+    if STRATEGY_ENGINE is None:
+        STRATEGY_ENGINE = StrategyEngine(decision_loader=lambda: create_decision_engine().all())
+    return STRATEGY_ENGINE
+
 def _rebuild_decisions_safely() -> dict[str, Any]:
     try:
         payload = create_decision_engine().rebuild()
-        return {"count": payload.get("total", 0), "actionable": payload.get("actionable_count", 0), "ready": payload.get("ready_count", 0), "blocked": payload.get("blocked_count", 0)}
+        strategies = _rebuild_strategies_safely()
+        return {"count": payload.get("total", 0), "actionable": payload.get("actionable_count", 0), "ready": payload.get("ready_count", 0), "blocked": payload.get("blocked_count", 0), "strategies": strategies}
     except Exception as exc:
         logger.exception("decisions_rebuild_failed")
+        return {"error": exc.__class__.__name__}
+
+def _rebuild_strategies_safely() -> dict[str, Any]:
+    try:
+        payload = create_strategy_engine().rebuild()
+        return {"evaluations": len(payload.get("evaluations", [])), "approved_signals": len(payload.get("approved_signals", [])), "errors": payload.get("diagnostics", {}).get("errors", [])}
+    except Exception as exc:
+        logger.exception("strategy_rebuild_failed")
         return {"error": exc.__class__.__name__}
 
 def _rebuild_opportunities_safely() -> dict[str, Any]:
@@ -2010,6 +2027,78 @@ def api_ops_status() -> dict[str, Any]:
     }
 
 
+@app.get("/api/strategies/active")
+def api_strategies_active() -> dict[str, Any]:
+    return {"items": [{k:v for k,v in s.items() if k not in {"metadata"}} for s in create_strategy_engine().list_strategies() if s.get("enabled") and s.get("status") == "ACTIVE"]}
+
+@app.get("/api/strategies/approved-signals")
+def api_strategies_approved_signals() -> dict[str, Any]:
+    return {"items": create_strategy_engine().approved_signals()}
+
+@app.get("/api/strategies/approved-signals/{symbol}")
+def api_strategies_approved_signals_symbol(symbol: str) -> dict[str, Any]:
+    w = str(symbol or "").upper().replace("/", "")
+    return {"items": [s for s in create_strategy_engine().approved_signals() if str(s.get("symbol", "")).upper().replace("/", "") == w]}
+
+@app.get("/api/strategies/stats")
+def api_strategies_stats() -> dict[str, Any]:
+    e=create_strategy_engine(); return {**e.debug(), "approved_signals": len(e.approved_signals())}
+
+@app.get("/api/ops/strategies")
+def api_ops_strategies(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return {"success": True, "items": create_strategy_engine().list_strategies()}
+
+@app.get("/api/ops/strategies/{strategy_id}")
+def api_ops_strategy(strategy_id: str, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    item=create_strategy_engine().get_strategy(strategy_id)
+    if not item: raise HTTPException(status_code=404, detail="Strategy not found")
+    return item
+
+@app.post("/api/ops/strategies")
+def api_ops_strategy_create(payload: dict[str, Any], _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("strategy_mutation", {"operation":"strategy_created"}, lambda: {"success": True, "strategy": create_strategy_engine().save(payload)})
+
+@app.put("/api/ops/strategies/{strategy_id}")
+def api_ops_strategy_update(strategy_id: str, payload: dict[str, Any], _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    payload["id"]=strategy_id
+    return _run_locked_ops("strategy_mutation", {"operation":"strategy_updated","id":strategy_id}, lambda: {"success": True, "strategy": create_strategy_engine().save(payload)})
+
+@app.delete("/api/ops/strategies/{strategy_id}")
+def api_ops_strategy_delete(strategy_id: str, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("strategy_mutation", {"operation":"strategy_deleted","id":strategy_id}, lambda: {"success": True, **create_strategy_engine().storage.delete(strategy_id)})
+
+@app.post("/api/ops/strategies/{strategy_id}/activate")
+def api_ops_strategy_activate(strategy_id: str, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("strategy_mutation", {"operation":"strategy_activated","id":strategy_id}, lambda: {"success": True, "strategy": create_strategy_engine().activate(strategy_id, StrategyStatus.ACTIVE)})
+
+@app.post("/api/ops/strategies/{strategy_id}/pause")
+def api_ops_strategy_pause(strategy_id: str, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("strategy_mutation", {"operation":"strategy_paused","id":strategy_id}, lambda: {"success": True, "strategy": create_strategy_engine().activate(strategy_id, StrategyStatus.PAUSED)})
+
+@app.post("/api/ops/strategies/{strategy_id}/clone")
+def api_ops_strategy_clone(strategy_id: str, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("strategy_mutation", {"operation":"strategy_cloned","id":strategy_id}, lambda: {"success": True, "strategy": create_strategy_engine().clone(strategy_id)})
+
+@app.post("/api/ops/strategies/{strategy_id}/validate")
+def api_ops_strategy_validate(strategy_id: str, payload: dict[str, Any] | None = None, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return {"success": True, **create_strategy_engine().validate(payload or create_strategy_engine().get_strategy(strategy_id))}
+
+@app.post("/api/ops/strategies/{strategy_id}/test")
+def api_ops_strategy_test(strategy_id: str, payload: dict[str, Any] | None = None, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("strategy_mutation", {"operation":"strategy_test_run","id":strategy_id}, lambda: {"success": True, **create_strategy_engine().test(strategy_id, (payload or {}).get("fixture"))})
+
+@app.post("/api/ops/strategies/evaluate")
+def api_ops_strategies_evaluate(payload: dict[str, Any] | None = None, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("strategy_rebuild", {"operation":"strategy_evaluation_completed"}, lambda: create_strategy_engine().evaluate_all(persist=bool((payload or {}).get("persist", True))))
+
+@app.post("/api/ops/strategies/rebuild")
+def api_ops_strategies_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("strategy_rebuild", {"operation":"strategy_rebuild"}, lambda: create_strategy_engine().rebuild())
+
+@app.get("/ops/strategies", include_in_schema=False)
+def ops_strategies_page():
+    return FileResponse(STATIC_DIR / "ops-strategies.html")
+
 @app.get("/api/ops/storage")
 def api_ops_storage(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
     return {"success": True, **storage_diagnostics(LLM_REVIEW_STORAGE)}
@@ -2166,8 +2255,9 @@ def api_ops_decisions_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[
     def run() -> dict[str, Any]:
         started = time.perf_counter()
         payload = create_decision_engine().rebuild()
+        strategies = _rebuild_strategies_safely()
         items = payload.get("items", [])
-        return {"success": True, "status": "completed", "duration_ms": int((time.perf_counter() - started) * 1000), "symbols_processed": len(items), "ready_count": payload.get("ready_count", 0), "blocked_count": payload.get("blocked_count", 0), "buy_count": sum(1 for i in items if i.get("action") in {"BUY", "STRONG_BUY"}), "sell_count": sum(1 for i in items if i.get("action") in {"SELL", "STRONG_SELL"}), "errors": payload.get("diagnostics", {}).get("errors", [])}
+        return {"success": True, "status": "completed", "duration_ms": int((time.perf_counter() - started) * 1000), "symbols_processed": len(items), "ready_count": payload.get("ready_count", 0), "blocked_count": payload.get("blocked_count", 0), "buy_count": sum(1 for i in items if i.get("action") in {"BUY", "STRONG_BUY"}), "sell_count": sum(1 for i in items if i.get("action") in {"SELL", "STRONG_SELL"}), "strategy_evaluation": strategies, "errors": payload.get("diagnostics", {}).get("errors", [])}
     return _run_locked_ops("decisions_rebuild", {}, run)
 
 @app.post("/api/ops/cache/clear")
