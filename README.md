@@ -1,3 +1,12 @@
+## Stage 31 — Paper Trading Engine
+
+- Добавлена подсистема `app/services/paper_trading/` для детерминированной виртуальной торговли только по `ApprovedSignal` из Strategy Builder. MT4/MT5, брокеры, реальные исполнения и LLM не используются.
+- Paper Trading использует тот же historical market provider, что и Signal Validation, и не подменяет недоступные цены proxy-данными.
+- Позиции проходят состояния `PENDING`, `OPEN`, `PARTIAL`, `BREAKEVEN`, `CLOSED`, `STOPPED`, `CANCELLED`, `EXPIRED` и хранят entry, entry zone, SL, TP, targets, R multiple, RR, floating/realized PnL, holding time, max drawdown и max favorable excursion.
+- Виртуальный счёт сохраняет balance, equity, free margin, risk %, open/closed trades, win rate, profit factor, average RR и expectancy в `paper_account.json`, `paper_positions.json`, `paper_trades.json`, `paper_statistics.json`.
+- Новые API: `GET /api/paper/account`, `GET /api/paper/positions`, `GET /api/paper/trades`, `GET /api/paper/statistics`, `POST /api/ops/paper/reset`, `POST /api/ops/paper/rebuild`.
+- OPS-страница `/ops/paper` показывает счёт, equity curve, открытые позиции, закрытые сделки и статистику в тёмном responsive trading UI с русскими подписями.
+
 ## Stage 25 — Market State Engine (Production Grade)
 
 - Добавлена подсистема `app/services/market_state/`, которая без LLM агрегирует Consensus, Structured Reviews, Signal Validation, Author Intelligence, Knowledge Graph, Performance и Historical Metrics в объективное состояние рынка по каждому символу.

@@ -64,6 +64,7 @@ from app.services.confluence import ConfluenceBuilder, ConfluenceEngine
 from app.services.opportunity_scanner import OpportunityBuilder, OpportunityEngine
 from app.services.decision_engine import DecisionBuilder, DecisionEngine
 from app.services.strategy_builder import StrategyEngine, StrategyDefinition, StrategyStatus
+from app.services.paper_trading import PaperTradingEngine
 from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
@@ -168,7 +169,7 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
 media_sources_bootstrap = ensure_media_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "decisions_rebuild", "strategy_rebuild", "strategy_mutation", "cache_clear", "storage_migrate"]}
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "decisions_rebuild", "strategy_rebuild", "strategy_mutation", "paper_rebuild", "paper_reset", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 MARKET_STATE_ENGINE: MarketStateEngine | None = None
 MULTI_TIMEFRAME_ENGINE: MultiTimeframeEngine | None = None
@@ -176,6 +177,7 @@ CONFLUENCE_ENGINE: ConfluenceEngine | None = None
 OPPORTUNITY_ENGINE: OpportunityEngine | None = None
 DECISION_ENGINE: DecisionEngine | None = None
 STRATEGY_ENGINE: StrategyEngine | None = None
+PAPER_TRADING_ENGINE: PaperTradingEngine | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     ensure_media_sources_initialized()
@@ -1603,6 +1605,13 @@ def create_strategy_engine() -> StrategyEngine:
         STRATEGY_ENGINE = StrategyEngine(decision_loader=lambda: create_decision_engine().all())
     return STRATEGY_ENGINE
 
+
+def create_paper_trading_engine() -> PaperTradingEngine:
+    global PAPER_TRADING_ENGINE
+    if PAPER_TRADING_ENGINE is None:
+        PAPER_TRADING_ENGINE = PaperTradingEngine(ExistingMarketDataValidationProvider(get_candles), signal_loader=lambda: create_strategy_engine().approved_signals())
+    return PAPER_TRADING_ENGINE
+
 def _rebuild_decisions_safely() -> dict[str, Any]:
     try:
         payload = create_decision_engine().rebuild()
@@ -2026,6 +2035,35 @@ def api_ops_status() -> dict[str, Any]:
         "knowledge_graph": {"catalog_items_scanned": kg_diag.catalog_items_scanned, "review_files_scanned": kg_diag.review_files_scanned, "reviews_loaded": kg_diag.reviews_loaded, "reviews_indexed": kg_diag.reviews_indexed, "orphan_reviews_indexed": kg_diag.orphan_reviews_indexed, "malformed_reviews": kg_diag.malformed_reviews, "symbols": kg_diag.symbols_found, "trade_ideas": kg_diag.trade_ideas_found, "authors": kg_diag.authors, "committee_entries": kg_diag.committee_entries, "conflicts": kg_diag.conflicts, "build_time_ms": kg_diag.build_time_ms, "cache_hit": kg_diag.cache_hit, "cache_empty": kg_diag.cache_empty, "cache_age_seconds": kg_diag.cache_age_seconds, "last_invalidation_reason": kg_diag.last_invalidation_reason, "last_built_at": kg_diag.last_built_at},
     }
 
+
+
+@app.get("/api/paper/account")
+def api_paper_account() -> dict[str, Any]:
+    return create_paper_trading_engine().account()
+
+@app.get("/api/paper/positions")
+def api_paper_positions() -> dict[str, Any]:
+    return create_paper_trading_engine().positions()
+
+@app.get("/api/paper/trades")
+def api_paper_trades() -> dict[str, Any]:
+    return create_paper_trading_engine().trades()
+
+@app.get("/api/paper/statistics")
+def api_paper_statistics() -> dict[str, Any]:
+    return create_paper_trading_engine().statistics()
+
+@app.post("/api/ops/paper/reset")
+def api_ops_paper_reset(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("paper_reset", {"operation":"paper_reset"}, lambda: create_paper_trading_engine().reset())
+
+@app.post("/api/ops/paper/rebuild")
+def api_ops_paper_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("paper_rebuild", {"operation":"paper_rebuild"}, lambda: create_paper_trading_engine().rebuild())
+
+@app.get("/ops/paper", include_in_schema=False)
+def ops_paper_page():
+    return FileResponse(STATIC_DIR / "paper.html")
 
 @app.get("/api/strategies/active")
 def api_strategies_active() -> dict[str, Any]:
