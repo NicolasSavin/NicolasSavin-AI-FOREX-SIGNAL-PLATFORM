@@ -842,3 +842,20 @@ FXPilot includes a production-oriented Signal Validation Engine that assigns eve
 - `/ops/validation` provides a dark Russian Operations screen for the latest validations.
 
 Consensus now uses validated historical author performance as its author weighting source, so authors with better objective outcomes can influence consensus more than unvalidated reputation-only signals.
+
+
+## Stage 26 — Multi-Timeframe Intelligence Engine
+
+FXPilot includes a deterministic Multi-Timeframe Intelligence subsystem that aggregates all supported timeframes (`M1`, `M5`, `M15`, `M30`, `H1`, `H4`, `D1`, `W1`, `MN`) into a single `MarketTimeframeProfile` per symbol. The engine does not call any LLM and computes its output from existing Market State, Consensus, Signal Validation, Structured Reviews, Knowledge Graph, Performance and Author Intelligence data.
+
+Default timeframe weights are higher for higher timeframes: `M1=1`, `M5=2`, `M15=3`, `M30=4`, `H1=5`, `H4=8`, `D1=13`, `W1=21`, `MN=34`. Results are persisted atomically to `DATA_DIR/multi_timeframe.json`.
+
+API and OPS routes:
+
+- `GET /api/multi-timeframe` — all symbol profiles.
+- `GET /api/multi-timeframe/{symbol}` — one symbol profile.
+- `GET /api/multi-timeframe/debug` — diagnostics, source list, weights and storage path.
+- `POST /api/ops/multi-timeframe/rebuild` — authenticated rebuild with OPS audit logging.
+- `/ops/multi-timeframe` — dark OPS table with sorting and timeframe detail modal.
+
+The home dashboard also shows a `MULTI TIMEFRAME` widget with top aligned symbols, highest conflict and strongest trend.

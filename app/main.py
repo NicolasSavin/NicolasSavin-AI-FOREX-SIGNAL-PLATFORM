@@ -59,6 +59,7 @@ from app.services.consensus import ConsensusEngine
 from app.services.author_intelligence import AuthorIntelligenceEngine
 from app.services.performance import PerformanceEngine
 from app.services.market_state import MarketStateBuilder, MarketStateEngine
+from app.services.multi_timeframe import MultiTimeframeBuilder, MultiTimeframeEngine
 from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
@@ -163,9 +164,10 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
 media_sources_bootstrap = ensure_media_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "cache_clear", "storage_migrate"]}
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 MARKET_STATE_ENGINE: MarketStateEngine | None = None
+MULTI_TIMEFRAME_ENGINE: MultiTimeframeEngine | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     ensure_media_sources_initialized()
@@ -1502,6 +1504,7 @@ async def _signal_validation_scheduler_loop() -> None:
         try:
             engine = create_signal_validation_engine()
             engine.validate_many(_validation_ideas_from_catalog(100), limit=50)
+            create_multi_timeframe_engine().rebuild()
         except Exception:
             logger.exception("signal_validation_scheduler_failed")
         await asyncio.sleep(max(300, int(os.getenv("SIGNAL_VALIDATION_INTERVAL_SECONDS", "900"))))
@@ -1530,6 +1533,23 @@ def create_market_state_engine() -> MarketStateEngine:
             performance_loader=lambda: create_performance_engine().evaluate_all(),
         ))
     return MARKET_STATE_ENGINE
+
+
+
+def create_multi_timeframe_engine() -> MultiTimeframeEngine:
+    global MULTI_TIMEFRAME_ENGINE
+    if MULTI_TIMEFRAME_ENGINE is None:
+        MULTI_TIMEFRAME_ENGINE = MultiTimeframeEngine(MultiTimeframeBuilder(
+            symbol_loader=_market_state_symbols,
+            market_state_loader=lambda: create_market_state_engine().all(),
+            consensus_builder=lambda symbol, timeframe=None: create_consensus_engine().build(symbol, timeframe),
+            validation_loader=lambda: {"items": create_signal_validation_engine().all(), **create_signal_validation_engine().symbol_metrics()},
+            review_ideas_loader=lambda: _validation_ideas_from_catalog(250),
+            knowledge_graph_loader=lambda: create_knowledge_graph_service().graph(),
+            performance_loader=lambda: create_performance_engine().evaluate_all(),
+            author_loader=lambda: create_author_intelligence_engine(include_consensus=False).build_all(),
+        ))
+    return MULTI_TIMEFRAME_ENGINE
 
 def create_signal_validation_engine() -> SignalValidationEngine:
     return SignalValidationEngine(ExistingMarketDataValidationProvider(get_candles))
@@ -1569,6 +1589,24 @@ def api_market_state_symbol(symbol: str) -> dict[str, Any]:
     if not item:
         raise HTTPException(status_code=404, detail="Market state not found")
     return item
+
+@app.get("/api/multi-timeframe")
+def api_multi_timeframe() -> dict[str, Any]:
+    return create_multi_timeframe_engine().all()
+
+
+@app.get("/api/multi-timeframe/debug")
+def api_multi_timeframe_debug() -> dict[str, Any]:
+    return create_multi_timeframe_engine().debug()
+
+
+@app.get("/api/multi-timeframe/{symbol}")
+def api_multi_timeframe_symbol(symbol: str) -> dict[str, Any]:
+    item = create_multi_timeframe_engine().get(symbol)
+    if not item:
+        raise HTTPException(status_code=404, detail="Multi-timeframe profile not found")
+    return item
+
 
 @app.get("/api/performance")
 def api_performance() -> dict[str, Any]:
@@ -1907,23 +1945,43 @@ def api_ops_consensus_rebuild(symbol: str = "MARKET", timeframe: str | None = No
         invalidate_knowledge_graph()
         consensus = create_consensus_engine().build(symbol, timeframe)
         market_state = create_market_state_engine().rebuild()
-        return {"success": True, "consensus": consensus, "market_state": {"count": market_state.get("meta", {}).get("count", 0)}}
+        multi_timeframe = create_multi_timeframe_engine().rebuild()
+        return {"success": True, "consensus": consensus, "market_state": {"count": market_state.get("meta", {}).get("count", 0)}, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}}
     return _run_locked_ops("consensus_rebuild", {"symbol": symbol, "timeframe": timeframe}, run)
 
 
 @app.post("/api/ops/authors/rebuild")
 def api_ops_authors_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("authors_rebuild", {}, lambda: (invalidate_knowledge_graph() or {"success": True, "authors": create_author_intelligence_engine().build_all()}))
+    def run() -> dict[str, Any]:
+        invalidate_knowledge_graph()
+        authors = create_author_intelligence_engine().build_all()
+        multi_timeframe = create_multi_timeframe_engine().rebuild()
+        return {"success": True, "authors": authors, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}}
+    return _run_locked_ops("authors_rebuild", {}, run)
 
 
 @app.post("/api/ops/performance/rebuild")
 def api_ops_performance_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("performance_rebuild", {}, lambda: (invalidate_knowledge_graph() or create_performance_engine().evaluate_all()))
+    def run() -> dict[str, Any]:
+        invalidate_knowledge_graph()
+        performance = create_performance_engine().evaluate_all()
+        multi_timeframe = create_multi_timeframe_engine().rebuild()
+        return {"success": True, "performance": performance, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}}
+    return _run_locked_ops("performance_rebuild", {}, run)
 
 
 @app.post("/api/ops/market-state/rebuild")
 def api_ops_market_state_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("market_state_rebuild", {}, lambda: {"success": True, **create_market_state_engine().rebuild()})
+    def run() -> dict[str, Any]:
+        market_state = create_market_state_engine().rebuild()
+        multi_timeframe = create_multi_timeframe_engine().rebuild()
+        return {"success": True, **market_state, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}}
+    return _run_locked_ops("market_state_rebuild", {}, run)
+
+
+@app.post("/api/ops/multi-timeframe/rebuild")
+def api_ops_multi_timeframe_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("multi_timeframe_rebuild", {}, lambda: {"success": True, **create_multi_timeframe_engine().rebuild()})
 
 
 @app.post("/api/ops/cache/clear")
@@ -1936,6 +1994,8 @@ def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, A
         invalidate_knowledge_graph()
         if MARKET_STATE_ENGINE is not None:
             MARKET_STATE_ENGINE.cache.invalidate()
+        if MULTI_TIMEFRAME_ENGINE is not None:
+            MULTI_TIMEFRAME_ENGINE.cache.invalidate()
         return {"success": True, "status": "cleared", "message": "Safe application caches cleared."}
     return _run_locked_ops("cache_clear", {}, clear)
 
@@ -1997,6 +2057,11 @@ def ops_authors_page():
 @app.get("/performance", include_in_schema=False)
 def performance_page():
     return FileResponse(STATIC_DIR / "performance.html")
+
+
+@app.get("/ops/multi-timeframe", include_in_schema=False)
+def ops_multi_timeframe_page():
+    return FileResponse(STATIC_DIR / "multi-timeframe.html")
 
 
 @app.get("/committee", include_in_schema=False)

@@ -3643,3 +3643,14 @@ body[data-page="tv-sources"] {
 .authors-toolbar { display: flex; justify-content: flex-end; margin-bottom: 14px; }
 .authors-toolbar input { width: min(420px, 100%); border: 1px solid rgba(148,163,184,.25); border-radius: 14px; background: rgba(15,23,42,.85); color: #e5edf7; padding: 12px 14px; }
 .author-detail { animation: signalCardFloat .45s ease both; }
+
+.mtf-modal {
+  width: min(980px, calc(100vw - 32px));
+  max-height: 86vh;
+  overflow: auto;
+  border: 1px solid rgba(99, 179, 237, 0.35);
+  background: #07111f;
+  color: #e6f1ff;
+  border-radius: 18px;
+}
+.mtf-modal::backdrop { background: rgba(0, 0, 0, 0.72); }
