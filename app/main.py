@@ -58,6 +58,7 @@ from app.services.investment_committee import InvestmentCommitteeEngine
 from app.services.consensus import ConsensusEngine
 from app.services.author_intelligence import AuthorIntelligenceEngine
 from app.services.performance import PerformanceEngine
+from app.services.market_state import MarketStateBuilder, MarketStateEngine
 from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
@@ -162,8 +163,9 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
 media_sources_bootstrap = ensure_media_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "cache_clear", "storage_migrate"]}
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
+MARKET_STATE_ENGINE: MarketStateEngine | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     ensure_media_sources_initialized()
@@ -557,6 +559,10 @@ def media_admin_page():
 @app.get("/ops", include_in_schema=False)
 def ops_page():
     return FileResponse(STATIC_DIR / "ops.html")
+
+@app.get("/ops/market", include_in_schema=False)
+def ops_market_page():
+    return FileResponse(STATIC_DIR / "market-state.html")
 
 
 def load_canonical_media_catalog() -> list[dict[str, Any]]:
@@ -1471,9 +1477,12 @@ def create_author_intelligence_engine(*, include_consensus: bool = True) -> Auth
 
 
 def _performance_completion_hook(outcome: dict[str, Any]) -> None:
-    # Hook point for Stage 10: completed outcomes can refresh Author Intelligence,
-    # Consensus and Institutional Rating without changing existing public APIs.
+    # Hook point for Stage 10+: completed outcomes can refresh derived engines.
     logger.info("performance_outcome_finished video_id=%s result=%s", outcome.get("video_id"), outcome.get("result"))
+    try:
+        create_market_state_engine().rebuild()
+    except Exception:
+        logger.exception("market_state_refresh_after_performance_failed")
 
 
 def create_performance_engine() -> PerformanceEngine:
@@ -1497,6 +1506,31 @@ async def _signal_validation_scheduler_loop() -> None:
             logger.exception("signal_validation_scheduler_failed")
         await asyncio.sleep(max(300, int(os.getenv("SIGNAL_VALIDATION_INTERVAL_SECONDS", "900"))))
 
+
+def _market_state_symbols() -> list[str]:
+    symbols = {str(v.get("symbol") or "").replace("/", "").replace(" ", "").upper() for v in _load_tv_video_catalog()}
+    try:
+        kg = create_knowledge_graph_service().list_symbols().get("items", [])
+        symbols.update(str(getattr(item, "symbol", "") or "").upper() for item in kg)
+    except Exception:
+        logger.exception("market_state_symbol_kg_load_failed")
+    symbols.discard("")
+    symbols.discard("MARKET")
+    return sorted(symbols)
+
+
+def create_market_state_engine() -> MarketStateEngine:
+    global MARKET_STATE_ENGINE
+    if MARKET_STATE_ENGINE is None:
+        MARKET_STATE_ENGINE = MarketStateEngine(MarketStateBuilder(
+            symbol_loader=_market_state_symbols,
+            consensus_builder=lambda symbol: create_consensus_engine().build(symbol),
+            author_loader=lambda: create_author_intelligence_engine(include_consensus=False).build_all(),
+            validation_metrics_loader=lambda: create_signal_validation_engine().symbol_metrics(),
+            performance_loader=lambda: create_performance_engine().evaluate_all(),
+        ))
+    return MARKET_STATE_ENGINE
+
 def create_signal_validation_engine() -> SignalValidationEngine:
     return SignalValidationEngine(ExistingMarketDataValidationProvider(get_candles))
 
@@ -1517,6 +1551,24 @@ def _validation_ideas_from_catalog(limit: int = 100) -> list[dict[str, Any]]:
         if idea.get("symbol") and (idea.get("direction") or idea.get("signal") or idea.get("action")):
             ideas.append(idea)
     return ideas
+
+
+@app.get("/api/market-state")
+def api_market_state() -> dict[str, Any]:
+    return create_market_state_engine().all()
+
+
+@app.get("/api/market-state/debug")
+def api_market_state_debug() -> dict[str, Any]:
+    return create_market_state_engine().debug()
+
+
+@app.get("/api/market-state/{symbol}")
+def api_market_state_symbol(symbol: str) -> dict[str, Any]:
+    item = create_market_state_engine().get(symbol)
+    if not item:
+        raise HTTPException(status_code=404, detail="Market state not found")
+    return item
 
 @app.get("/api/performance")
 def api_performance() -> dict[str, Any]:
@@ -1851,7 +1903,12 @@ def api_ops_pipeline_run_all(limit: int = 1, _auth: bool = Depends(require_ops_t
 
 @app.post("/api/ops/consensus/rebuild")
 def api_ops_consensus_rebuild(symbol: str = "MARKET", timeframe: str | None = None, _auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("consensus_rebuild", {"symbol": symbol, "timeframe": timeframe}, lambda: (invalidate_knowledge_graph() or create_consensus_engine().build(symbol, timeframe)))
+    def run() -> dict[str, Any]:
+        invalidate_knowledge_graph()
+        consensus = create_consensus_engine().build(symbol, timeframe)
+        market_state = create_market_state_engine().rebuild()
+        return {"success": True, "consensus": consensus, "market_state": {"count": market_state.get("meta", {}).get("count", 0)}}
+    return _run_locked_ops("consensus_rebuild", {"symbol": symbol, "timeframe": timeframe}, run)
 
 
 @app.post("/api/ops/authors/rebuild")
@@ -1864,6 +1921,11 @@ def api_ops_performance_rebuild(_auth: bool = Depends(require_ops_token)) -> dic
     return _run_locked_ops("performance_rebuild", {}, lambda: (invalidate_knowledge_graph() or create_performance_engine().evaluate_all()))
 
 
+@app.post("/api/ops/market-state/rebuild")
+def api_ops_market_state_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("market_state_rebuild", {}, lambda: {"success": True, **create_market_state_engine().rebuild()})
+
+
 @app.post("/api/ops/cache/clear")
 def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
     def clear():
@@ -1872,6 +1934,8 @@ def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, A
                 cache.clear()
         MARKET_IDEAS_CACHE.update({"updated_at_epoch": 0.0, "payload": None})
         invalidate_knowledge_graph()
+        if MARKET_STATE_ENGINE is not None:
+            MARKET_STATE_ENGINE.cache.invalidate()
         return {"success": True, "status": "cleared", "message": "Safe application caches cleared."}
     return _run_locked_ops("cache_clear", {}, clear)
 
