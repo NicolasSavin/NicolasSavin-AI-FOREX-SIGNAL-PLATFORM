@@ -884,3 +884,28 @@ Persistence is stored atomically in `DATA_DIR/confluence.json`; if a rebuild fai
 Opportunity Scanner builds `DATA_DIR/opportunities.json` from persisted Confluence, structured review ideas, validation and performance data. It is deterministic, does not call an LLM, and the Opportunity Score is a ranking score only — not financial advice, expected return, or probability of profit.
 
 Public endpoints: `GET /api/opportunities`, `/api/opportunities/top`, `/api/opportunities/{symbol}`, `/api/opportunities/stats`, `/api/opportunities/debug`. Protected OPS rebuild: `POST /api/ops/opportunities/rebuild` with the existing OPS token. UI pages: `/opportunities` and `/ops/opportunities`.
+
+## Stage 29 — Explainable Decision Engine
+
+FXPilot now includes a deterministic Explainable Decision Engine that converts the ranked Opportunity Scanner output into one final machine-readable decision per symbol. It does not call an LLM, does not execute trades and keeps Opportunity Scanner eligibility as the primary upstream source.
+
+Decision Score is a deterministic ranking and readiness score only. It is not a probability of profit, expected return or financial advice. Missing validation, risk levels and future extension factors (`order_flow`, `news_risk`, `liquidity`, `portfolio_risk`, `execution_readiness`) are reported honestly instead of being fabricated.
+
+The engine persists atomically to `DATA_DIR/decisions.json` and preserves the previous valid file if a rebuild fails. Each decision includes action, readiness, score, confidence, stability, risk context, evidence, supporting/conflicting reasons, blockers, missing data, upgrade/downgrade conditions, deterministic explanations, source timestamps and an execution-candidate contract only for `READY` / `READY_WITH_WARNINGS` states.
+
+Public read-only endpoints:
+
+- `GET /api/decisions`
+- `GET /api/decisions/top`
+- `GET /api/decisions/actionable`
+- `GET /api/decisions/{symbol}`
+- `GET /api/decisions/stats`
+- `GET /api/decisions/debug`
+
+Protected OPS endpoint and UI:
+
+- `POST /api/ops/decisions/rebuild` with the existing OPS token and audit/lock path.
+- `/ops/decisions` for summary cards, filters, decision table and full audit detail panel.
+- `/decisions` for a safe public read-only top-decisions page without hidden OPS diagnostics.
+
+Successful Opportunity Scanner rebuilds trigger a safe Decision rebuild after opportunities are persisted. A Decision rebuild failure does not roll back Opportunities or upstream subsystem outputs.

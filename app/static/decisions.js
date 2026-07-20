@@ -1,0 +1,5 @@
+const cls=a=>String(a||'').includes('BUY')?'buy':String(a||'').includes('SELL')?'sell':'wait';
+fetch('/api/decisions/top?limit=12').then(r=>r.json()).then(data=>{
+  const root=document.getElementById('decisions'); const items=data.items||[];
+  root.innerHTML=items.map(d=>`<section class="card"><div><b>${d.symbol}</b> <span class="badge ${cls(d.action)}">${d.action}</span></div><h2 class="${cls(d.action)}">${d.direction||'NO DATA'} · ${d.readiness}</h2><p>${d.concise_explanation||''}</p><p class="muted">Score ${d.decision_score} · Confidence ${d.confidence_score} (${d.confidence_label}) · Stability ${d.stability_score} (${d.stability_label})</p><p class="risk">Entry: ${d.entry ?? (d.entry_zone||[]).join(' - ') || '—'} · SL: ${d.stop_loss ?? '—'} · TP: ${d.take_profit ?? (d.targets||[]).join(', ') || '—'}</p>${(d.warnings||[]).length?`<p class="muted">Предупреждения: ${d.warnings.slice(0,3).join(', ')}</p>`:''}</section>`).join('') || '<p>Нет данных решений.</p>';
+}).catch(()=>document.getElementById('decisions').textContent='Не удалось загрузить решения.');
