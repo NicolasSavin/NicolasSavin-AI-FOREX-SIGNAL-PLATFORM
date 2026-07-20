@@ -966,3 +966,13 @@ Operations endpoints require `X-FXPILOT-OPS-TOKEN`:
 - `POST /api/ops/portfolio/reset`
 
 The browser operations page is available at `/ops/portfolio`. Persistence files are stored under the configured FXPilot data directory as `portfolio.json`, `portfolio_statistics.json` and `portfolio_history.json`.
+
+## Stage 33 — Broker Execution Gateway
+
+Добавлен безопасный шлюз исполнения `app/services/execution_gateway/` для будущей интеграции брокерских адаптеров. По умолчанию используется `FXPILOT_EXECUTION_MODE=DRY_RUN`; режим `LIVE` в этой стадии безопасно отклоняется, MT4/MT5 адаптеры не реализованы и реальные сделки не отправляются.
+
+Шлюз потребляет только подходящие `ApprovedSignal`, строит детерминированный `ExecutionOrder`, проверяет риск, идемпотентность, kill switch, наличие stop-loss и инструментальной metadata. Runtime-файлы сохраняются atomic write в `DATA_DIR/execution_orders.json`, `execution_results.json`, `execution_state.json`, `instrument_metadata.json`.
+
+Новые read-only API: `GET /api/execution/status`, `/api/execution/orders`, `/api/execution/orders/{id}`, `/api/execution/results`, `/api/execution/debug`. Защищённые OPS API: `POST /api/ops/execution/build`, `/dispatch`, `/dispatch/{order_id}`, `/cancel/{order_id}`, `/rebuild`, `/kill-switch`, `/kill-switch/reset` с существующим `X-FXPILOT-OPS-TOKEN`.
+
+OPS UI доступен на `/ops/execution`: тёмный русский интерфейс показывает режим, kill switch, health dry-run адаптера, очереди, результаты, проверки риска, blockers/warnings, idempotency key и dry-run audit. Kill switch включён при первом запуске; оператор должен явно отключить его даже для DRY_RUN dispatch.
