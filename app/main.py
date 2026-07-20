@@ -1444,6 +1444,7 @@ def api_media_committee(video_id: str) -> dict[str, Any]:
 
 
 def create_consensus_engine() -> ConsensusEngine:
+    author_weights = {row["name"]: row for row in create_author_intelligence_engine(include_consensus=False).build_all()}
     return ConsensusEngine(
         media_catalog_loader=_load_tv_video_catalog,
         review_payload_builder=_build_tv_review_payload,
@@ -1451,10 +1452,11 @@ def create_consensus_engine() -> ConsensusEngine:
             media_catalog_loader=_load_tv_video_catalog,
             review_payload_builder=_build_tv_review_payload,
         ).build_for_video(video_id).model_dump(),
+        author_weight_provider=lambda author: author_weights.get(str(author), {}),
     )
 
 
-def create_author_intelligence_engine() -> AuthorIntelligenceEngine:
+def create_author_intelligence_engine(*, include_consensus: bool = True) -> AuthorIntelligenceEngine:
     return AuthorIntelligenceEngine(
         media_catalog_loader=_load_tv_video_catalog,
         review_payload_builder=_build_tv_review_payload,
@@ -1462,6 +1464,7 @@ def create_author_intelligence_engine() -> AuthorIntelligenceEngine:
             media_catalog_loader=_load_tv_video_catalog,
             review_payload_builder=_build_tv_review_payload,
         ).build_for_video(video_id).model_dump(),
+        consensus_builder=(lambda symbol: create_consensus_engine().build(symbol)) if include_consensus else None,
     )
 
 
@@ -1514,9 +1517,28 @@ def api_authors(sort: str = "rating") -> list[dict[str, Any]]:
         "most_active": "activity_score",
         "institutional": "institutional_score",
         "best_institutional_score": "institutional_score",
+        "quality": "quality_score",
+        "trust": "trust_score",
+        "highest_trust": "trust_score",
     }
     key = keys.get(sort_key, "rating")
     return sorted(authors, key=lambda row: row.get(key) or 0, reverse=True)
+
+
+@app.get("/api/authors/top")
+def api_authors_top(limit: int = 10) -> dict[str, Any]:
+    rows = create_author_intelligence_engine().build_all()
+    return {"items": rows[: max(1, min(limit, 50))]}
+
+
+@app.get("/api/authors/stats")
+def api_authors_stats() -> dict[str, Any]:
+    return create_author_intelligence_engine().stats()
+
+
+@app.get("/api/authors/debug")
+def api_authors_debug() -> dict[str, Any]:
+    return create_author_intelligence_engine().debug()
 
 
 @app.get("/api/authors/{author}")
@@ -1828,6 +1850,11 @@ def consensus_page():
 
 @app.get("/authors", include_in_schema=False)
 def authors_page():
+    return FileResponse(STATIC_DIR / "authors.html")
+
+
+@app.get("/ops/authors", include_in_schema=False)
+def ops_authors_page():
     return FileResponse(STATIC_DIR / "authors.html")
 
 

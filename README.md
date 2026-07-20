@@ -1,3 +1,11 @@
+## Stage 23 — Author Intelligence & Trust Engine
+
+- Author Intelligence повышен до первого класса: `AuthorProfile` хранит канонический `id`, aliases, review/source/trade/symbol counts, first/last seen, confidence/agreement/consensus alignment, trust/accuracy/activity/quality/signal scores, language/categories/status и proxy performance поля.
+- `AuthorIntelligenceEngine` строит профили из Media Catalog, AI Review, Investment Committee и Consensus, объединяет очевидные aliases через конфигурируемые правила, рассчитывает weighted trust 0–100 и сохраняет incremental cache в `data/author_profiles.json`.
+- Добавлены endpoint’ы `GET /api/authors/top`, `GET /api/authors/stats`, `GET /api/authors/debug`; существующие `GET /api/authors` и `GET /api/authors/{author}` сохранены и обратносовместимо расширены новыми полями.
+- Consensus теперь учитывает author weight: high-trust авторы получают больший вес, experimental — меньший; одновременно сохранены обычные count-поля для совместимости.
+- Страница `/authors` и ops alias `/ops/authors` показывают таблицу авторов с Trust, Accuracy, Reviews, Trade Ideas, Symbols, Activity, Quality, Last Review, Status, поиском и детальным профилем. Accuracy/performance явно отмечены как proxy до подключения реальных market outcomes.
+
 
 ## Stage 16 — Structured AI Review entity extraction
 
