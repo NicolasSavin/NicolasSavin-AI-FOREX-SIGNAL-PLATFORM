@@ -791,3 +791,26 @@ Knowledge Graph keeps the normal healthy TTL, but empty graphs with zero catalog
 - Source changes are written only to the canonical `DATA_DIR` runtime registry (`media_sources.json`) and are picked up by Scheduler / Media Import on the next run without redeploy or service restart.
 - Supported provider keys include `youtube_channel`, `youtube_playlist`, `telegram_public`, `telegram_rss` and `rss_feed`; the engine still maps them to the existing provider architecture for backward compatibility.
 - Source changes append audit records to the existing OPS audit log while preserving imported media and review history.
+
+## Stage 24 — Signal Validation & Performance Engine
+
+FXPilot includes a production-oriented Signal Validation Engine that assigns every extracted trading idea an objective outcome when real historical OHLC candles are available. The engine does not substitute proxy candles or fake market results: unavailable history keeps a validation pending/expired with an explicit Russian warning.
+
+### Validation scope
+
+- Assets: Forex, metals (gold/silver), indices and crypto through the abstract historical market data provider.
+- Inputs: `symbol`, `direction`, `entry`, `entry_zone`, `stop_loss`, `take_profit`, `targets[]`, `timeframe`, `published_at`.
+- Outputs: status, outcome, RR, profit/loss points, holding time, entry/exit time, MFE and MAE.
+- Rules: BUY entries trigger when price trades at or below entry; SELL entries trigger when price trades at or above entry; validation stops on TP, SL or expiration.
+
+### API and OPS
+
+- `GET /api/validation` validates current catalog ideas incrementally and returns persisted results.
+- `GET /api/validation/{id}` returns one validation by validation id or signal id.
+- `GET /api/validation/stats` returns pending/running/validated/failed/expired totals.
+- `GET /api/validation/authors` returns win rate, loss rate, average RR, holding time, drawdown and streak metrics.
+- `GET /api/validation/symbols` returns symbol accuracy, frequency, average RR and best/worst authors.
+- `GET /api/validation/debug` exposes storage/provider diagnostics and labels real historical OHLC usage.
+- `/ops/validation` provides a dark Russian Operations screen for the latest validations.
+
+Consensus now uses validated historical author performance as its author weighting source, so authors with better objective outcomes can influence consensus more than unvalidated reputation-only signals.
