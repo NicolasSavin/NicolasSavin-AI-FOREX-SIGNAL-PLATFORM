@@ -909,3 +909,15 @@ Protected OPS endpoint and UI:
 - `/decisions` for a safe public read-only top-decisions page without hidden OPS diagnostics.
 
 Successful Opportunity Scanner rebuilds trigger a safe Decision rebuild after opportunities are persisted. A Decision rebuild failure does not roll back Opportunities or upstream subsystem outputs.
+
+## Stage 30 — Strategy Builder & Policy Engine
+
+FXPilot now includes a deterministic Strategy Builder layer that evaluates existing Explainable Decision Engine output and Execution Candidate risk context against operator-defined policies. It does not call an LLM, does not place trades, and does not call MT4/MT5 or external execution systems.
+
+- OPS UI: `/ops/strategies`
+- Protected CRUD/test/rebuild API: `/api/ops/strategies*` using the existing `X-FXPILOT-OPS-TOKEN` header
+- Public read-only API: `/api/strategies/active`, `/api/strategies/approved-signals`, `/api/strategies/approved-signals/{symbol}`, `/api/strategies/stats`
+- Persistent runtime files: `DATA_DIR/strategies.json`, `DATA_DIR/strategy_evaluations.json`, `DATA_DIR/approved_signals.json`
+- First-run templates live in `data/templates/default_strategies.json` and are not overwritten at runtime.
+
+Supported policy fields include action, direction, readiness, decision/confidence/stability scores, opportunity/confluence/agreement/conflict/data-quality/freshness/validation/author/performance scores, dominant timeframe, urgency, execution risk fields, blocker/warning counts, missing data, symbol and timeframe. Supported operators are strict enums only: EQ, NE, GT, GTE, LT, LTE, IN, NOT_IN, EXISTS, NOT_EXISTS, CONTAINS, NOT_CONTAINS and BETWEEN.
