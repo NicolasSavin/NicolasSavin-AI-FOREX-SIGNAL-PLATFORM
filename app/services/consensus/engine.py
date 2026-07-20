@@ -59,10 +59,12 @@ class ConsensusEngine:
         media_catalog_loader: Callable[[], list[dict[str, Any]]],
         review_payload_builder: Callable[[dict[str, Any]], dict[str, Any]],
         committee_builder: Callable[[str], dict[str, Any]],
+        author_weight_provider: Callable[[str], dict[str, Any]] | None = None,
     ) -> None:
         self.media_catalog_loader = media_catalog_loader
         self.review_payload_builder = review_payload_builder
         self.committee_builder = committee_builder
+        self.author_weight_provider = author_weight_provider
 
     def build(self, symbol: str, timeframe: str | None = None, *, date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
         wanted_symbol = _norm_symbol(symbol)
@@ -91,15 +93,20 @@ class ConsensusEngine:
 
         opinions = [self._opinion(video) for video in videos]
         counts = Counter(item["direction"] for item in opinions)
+        weighted_counts: Counter[str] = Counter()
+        for item in opinions:
+            weighted_counts[item["direction"]] += item.get("author_weight", 1.0)
         total = len(opinions)
+        weighted_total = sum(weighted_counts.values())
         agreement_count = max((counts.get("BUY", 0), counts.get("SELL", 0), counts.get("WAIT", 0)), default=0)
+        weighted_agreement_count = max((weighted_counts.get("BUY", 0), weighted_counts.get("SELL", 0), weighted_counts.get("WAIT", 0)), default=0)
         overall = "WAIT"
-        if total and agreement_count:
-            winners = [d for d in ("BUY", "SELL", "WAIT") if counts.get(d, 0) == agreement_count]
+        if total and weighted_agreement_count:
+            winners = [d for d in ("BUY", "SELL", "WAIT") if weighted_counts.get(d, 0) == weighted_agreement_count]
             overall = winners[0] if len(winners) == 1 else "WAIT"
         avg_conf = round(sum(item["confidence"] for item in opinions) / total) if total else 0
         avg_committee = round(sum(item["committee_score"] for item in opinions) / total) if total else 0
-        agreement = _percent(agreement_count, total)
+        agreement = round((weighted_agreement_count / weighted_total) * 100) if weighted_total else _percent(agreement_count, total)
         return {
             "symbol": wanted_symbol,
             "timeframe": wanted_timeframe or "ALL",
@@ -112,6 +119,9 @@ class ConsensusEngine:
             "bullish_count": counts.get("BUY", 0),
             "bearish_count": counts.get("SELL", 0),
             "neutral_count": counts.get("WAIT", 0),
+            "weighted_bullish_count": round(weighted_counts.get("BUY", 0), 2),
+            "weighted_bearish_count": round(weighted_counts.get("SELL", 0), 2),
+            "weighted_neutral_count": round(weighted_counts.get("WAIT", 0), 2),
             "bullish_percent": _percent(counts.get("BUY", 0), total),
             "bearish_percent": _percent(counts.get("SELL", 0), total),
             "neutral_percent": _percent(counts.get("WAIT", 0), total),
@@ -130,10 +140,16 @@ class ConsensusEngine:
         committee = self.committee_builder(str(video.get("id") or ""))
         direction = _direction(committee.get("decision") or analysis.get("direction") or knowledge.get("direction"))
         targets = analysis.get("targets") or ([analysis.get("tp")] if analysis.get("tp") is not None else [])
+        author = video.get("author") or video.get("source_id") or "Unknown"
+        weight_row = self.author_weight_provider(str(author)) if self.author_weight_provider else {}
+        trust = int(_number(weight_row.get("trust_score") if isinstance(weight_row, dict) else None) or 50)
+        weight = 0.5 + (max(0, min(100, trust)) / 100)
         return {
             "video_id": video.get("id"),
             "title": video.get("title"),
-            "author": video.get("author") or video.get("source_id") or "Unknown",
+            "author": author,
+            "author_weight": round(weight, 2),
+            "author_trust_score": trust,
             "published_at": video.get("published_at"),
             "timeframe": video.get("timeframe"),
             "direction": direction,
@@ -153,7 +169,7 @@ class ConsensusEngine:
         rows = []
         for author, items in grouped.items():
             latest = sorted(items, key=lambda x: str(x.get("published_at") or ""), reverse=True)[0]
-            rows.append({"author": author, "historical_accuracy": None, "historical_accuracy_label": "placeholder", "current_confidence": round(sum(i["confidence"] for i in items) / len(items)), "committee_score": round(sum(i["committee_score"] for i in items) / len(items)), "latest_opinion": latest["direction"]})
+            rows.append({"author": author, "historical_accuracy": round(sum(i.get("author_trust_score", 50) for i in items) / len(items)), "historical_accuracy_label": "proxy_author_trust_weight", "author_weight": round(sum(i.get("author_weight", 1.0) for i in items) / len(items), 2), "current_confidence": round(sum(i["confidence"] for i in items) / len(items)), "committee_score": round(sum(i["committee_score"] for i in items) / len(items)), "latest_opinion": latest["direction"]})
         return sorted(rows, key=lambda x: (x["committee_score"], x["current_confidence"]), reverse=True)
 
     def _disagreements(self, counts: Counter) -> list[str]:
