@@ -81,6 +81,8 @@
   document.querySelector('[data-op="consensus-rebuild"]').addEventListener('click', (e) => postOp('Пересчитать Consensus', '/api/ops/consensus/rebuild', { symbol: $('consensusSymbol').value, timeframe: $('consensusTimeframe').value }, false, e.currentTarget));
   document.querySelector('[data-op="authors-rebuild"]').addEventListener('click', (e) => postOp('Пересчитать авторов', '/api/ops/authors/rebuild', {}, false, e.currentTarget));
   document.querySelector('[data-op="performance-rebuild"]').addEventListener('click', (e) => postOp('Пересчитать Performance', '/api/ops/performance/rebuild', {}, false, e.currentTarget));
+  document.querySelector('[data-op="portfolio-rebuild"]').addEventListener('click', (e) => postOp('Пересчитать Portfolio', '/api/ops/portfolio/rebuild', {}, false, e.currentTarget));
+  document.querySelector('[data-op="portfolio-reset"]').addEventListener('click', (e) => { if (window.confirm('Сбросить сохранённую аналитику Portfolio? Paper Trading не изменится.')) postOp('Сбросить Portfolio', '/api/ops/portfolio/reset', {}, false, e.currentTarget); });
   document.querySelector('[data-op="cache-clear"]').addEventListener('click', (e) => { if (window.confirm('Очистить только безопасные application caches?')) postOp('Очистить безопасные кэши', '/api/ops/cache/clear', {}, false, e.currentTarget); });
   loadStatus().catch(() => {});
 })();

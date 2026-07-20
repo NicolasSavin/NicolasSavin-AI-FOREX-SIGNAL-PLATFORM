@@ -65,6 +65,7 @@ from app.services.opportunity_scanner import OpportunityBuilder, OpportunityEngi
 from app.services.decision_engine import DecisionBuilder, DecisionEngine
 from app.services.strategy_builder import StrategyEngine, StrategyDefinition, StrategyStatus
 from app.services.paper_trading import PaperTradingEngine
+from app.services.portfolio import PortfolioBuilder, PortfolioEngine
 from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
@@ -169,7 +170,7 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
 media_sources_bootstrap = ensure_media_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "decisions_rebuild", "strategy_rebuild", "strategy_mutation", "paper_rebuild", "paper_reset", "cache_clear", "storage_migrate"]}
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "decisions_rebuild", "strategy_rebuild", "strategy_mutation", "paper_rebuild", "paper_reset", "portfolio_rebuild", "portfolio_reset", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 MARKET_STATE_ENGINE: MarketStateEngine | None = None
 MULTI_TIMEFRAME_ENGINE: MultiTimeframeEngine | None = None
@@ -178,6 +179,7 @@ OPPORTUNITY_ENGINE: OpportunityEngine | None = None
 DECISION_ENGINE: DecisionEngine | None = None
 STRATEGY_ENGINE: StrategyEngine | None = None
 PAPER_TRADING_ENGINE: PaperTradingEngine | None = None
+PORTFOLIO_ENGINE: PortfolioEngine | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     ensure_media_sources_initialized()
@@ -1612,6 +1614,19 @@ def create_paper_trading_engine() -> PaperTradingEngine:
         PAPER_TRADING_ENGINE = PaperTradingEngine(ExistingMarketDataValidationProvider(get_candles), signal_loader=lambda: create_strategy_engine().approved_signals())
     return PAPER_TRADING_ENGINE
 
+
+def create_portfolio_engine() -> PortfolioEngine:
+    global PORTFOLIO_ENGINE
+    if PORTFOLIO_ENGINE is None:
+        paper = create_paper_trading_engine()
+        PORTFOLIO_ENGINE = PortfolioEngine(PortfolioBuilder(
+            account_loader=lambda: paper.storage.account(),
+            positions_loader=lambda: paper.storage.positions(),
+            trades_loader=lambda: paper.storage.trades(),
+            signal_loader=lambda: create_strategy_engine().approved_signals(),
+        ))
+    return PORTFOLIO_ENGINE
+
 def _rebuild_decisions_safely() -> dict[str, Any]:
     try:
         payload = create_decision_engine().rebuild()
@@ -2064,6 +2079,39 @@ def api_ops_paper_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str,
 @app.get("/ops/paper", include_in_schema=False)
 def ops_paper_page():
     return FileResponse(STATIC_DIR / "paper.html")
+
+
+@app.get("/api/portfolio")
+def api_portfolio() -> dict[str, Any]:
+    return create_portfolio_engine().portfolio()
+
+@app.get("/api/portfolio/statistics")
+def api_portfolio_statistics() -> dict[str, Any]:
+    return create_portfolio_engine().statistics()
+
+@app.get("/api/portfolio/history")
+def api_portfolio_history() -> dict[str, Any]:
+    return create_portfolio_engine().history()
+
+@app.get("/api/portfolio/risk")
+def api_portfolio_risk() -> dict[str, Any]:
+    return create_portfolio_engine().risk()
+
+@app.get("/api/portfolio/exposure")
+def api_portfolio_exposure() -> dict[str, Any]:
+    return create_portfolio_engine().exposure()
+
+@app.post("/api/ops/portfolio/rebuild")
+def api_ops_portfolio_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("portfolio_rebuild", {"operation":"portfolio_rebuild"}, lambda: create_portfolio_engine().rebuild())
+
+@app.post("/api/ops/portfolio/reset")
+def api_ops_portfolio_reset(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    return _run_locked_ops("portfolio_reset", {"operation":"portfolio_reset"}, lambda: create_portfolio_engine().reset())
+
+@app.get("/ops/portfolio", include_in_schema=False)
+def ops_portfolio_page():
+    return FileResponse(STATIC_DIR / "portfolio.html")
 
 @app.get("/api/strategies/active")
 def api_strategies_active() -> dict[str, Any]:
