@@ -61,6 +61,7 @@ from app.services.performance import PerformanceEngine
 from app.services.market_state import MarketStateBuilder, MarketStateEngine
 from app.services.multi_timeframe import MultiTimeframeBuilder, MultiTimeframeEngine
 from app.services.confluence import ConfluenceBuilder, ConfluenceEngine
+from app.services.opportunity_scanner import OpportunityBuilder, OpportunityEngine
 from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
@@ -165,11 +166,12 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
 media_sources_bootstrap = ensure_media_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "cache_clear", "storage_migrate"]}
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "opportunities_rebuild", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 MARKET_STATE_ENGINE: MarketStateEngine | None = None
 MULTI_TIMEFRAME_ENGINE: MultiTimeframeEngine | None = None
 CONFLUENCE_ENGINE: ConfluenceEngine | None = None
+OPPORTUNITY_ENGINE: OpportunityEngine | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     ensure_media_sources_initialized()
@@ -1572,10 +1574,33 @@ def create_confluence_engine() -> ConfluenceEngine:
     return CONFLUENCE_ENGINE
 
 
+
+def create_opportunity_engine() -> OpportunityEngine:
+    global OPPORTUNITY_ENGINE
+    if OPPORTUNITY_ENGINE is None:
+        OPPORTUNITY_ENGINE = OpportunityEngine(OpportunityBuilder(
+            confluence_loader=lambda: create_confluence_engine().all(),
+            review_ideas_loader=lambda: _validation_ideas_from_catalog(250),
+            validation_loader=lambda: {"items": create_signal_validation_engine().all(), **create_signal_validation_engine().symbol_metrics()},
+            performance_loader=lambda: create_performance_engine().evaluate_all(),
+        ))
+    return OPPORTUNITY_ENGINE
+
+
+def _rebuild_opportunities_safely() -> dict[str, Any]:
+    try:
+        payload = create_opportunity_engine().rebuild()
+        items = payload.get("items", [])
+        return {"count": payload.get("total", len(items)), "actionable": payload.get("actionable_count", 0), "watch": payload.get("watch_count", 0), "blocked": payload.get("blocked_count", 0), "highest_score": max((i.get("opportunity_score") or 0 for i in items), default=0)}
+    except Exception as exc:
+        logger.exception("opportunities_rebuild_failed")
+        return {"error": exc.__class__.__name__}
+
 def _rebuild_confluence_safely() -> dict[str, Any]:
     try:
         payload = create_confluence_engine().rebuild()
-        return {"count": payload.get("total", len(payload.get("items", []))), "actionable": sum(1 for i in payload.get("items", []) if i.get("actionable")), "high_conflict": sum(1 for i in payload.get("items", []) if (i.get("conflict_score") or 0) >= 60)}
+        opportunities = _rebuild_opportunities_safely()
+        return {"count": payload.get("total", len(payload.get("items", []))), "actionable": sum(1 for i in payload.get("items", []) if i.get("actionable")), "high_conflict": sum(1 for i in payload.get("items", []) if (i.get("conflict_score") or 0) >= 60), "opportunities": opportunities}
     except Exception as exc:
         logger.exception("confluence_rebuild_failed")
         return {"error": exc.__class__.__name__}
@@ -1654,6 +1679,37 @@ def api_confluence_symbol(symbol: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Confluence state not found")
     return item
 
+
+
+
+def _opportunity_filters(status: str | None = None, direction: str | None = None, recommendation: str | None = None, actionable_only: bool = False, minimum_score: float | None = None, minimum_data_quality: float | None = None, maximum_conflict: float | None = None, minimum_freshness: float | None = None, symbol: str | None = None, dominant_timeframe: str | None = None, validation_available: bool | None = None, risk_context_available: bool | None = None, limit: int | None = None, offset: int = 0) -> dict[str, Any]:
+    def pct(v):
+        return None if v is None else max(0.0, min(100.0, float(v)))
+    return {"status": status, "direction": direction, "recommendation": recommendation, "actionable_only": bool(actionable_only), "minimum_score": pct(minimum_score), "minimum_data_quality": pct(minimum_data_quality), "maximum_conflict": pct(maximum_conflict), "minimum_freshness": pct(minimum_freshness), "symbol": symbol, "dominant_timeframe": dominant_timeframe, "validation_available": validation_available, "risk_context_available": risk_context_available, "limit": None if limit is None else max(1, min(500, int(limit))), "offset": max(0, int(offset or 0))}
+
+@app.get("/api/opportunities")
+def api_opportunities(status: str | None = None, direction: str | None = None, recommendation: str | None = None, actionable_only: bool = False, minimum_score: float | None = None, minimum_data_quality: float | None = None, maximum_conflict: float | None = None, minimum_freshness: float | None = None, symbol: str | None = None, dominant_timeframe: str | None = None, validation_available: bool | None = None, risk_context_available: bool | None = None, limit: int | None = None, offset: int = 0) -> dict[str, Any]:
+    return create_opportunity_engine().all(_opportunity_filters(status,direction,recommendation,actionable_only,minimum_score,minimum_data_quality,maximum_conflict,minimum_freshness,symbol,dominant_timeframe,validation_available,risk_context_available,limit,offset))
+
+@app.get("/api/opportunities/top")
+def api_opportunities_top(limit: int = 10) -> dict[str, Any]:
+    return create_opportunity_engine().top(limit)
+
+@app.get("/api/opportunities/stats")
+def api_opportunities_stats() -> dict[str, Any]:
+    p = create_opportunity_engine().all(); items = p.get("items", [])
+    return {"total": p.get("total", 0), "actionable_count": p.get("actionable_count", 0), "watch_count": p.get("watch_count", 0), "blocked_count": p.get("blocked_count", 0), "ignored_count": p.get("ignored_count", 0), "no_data_count": p.get("no_data_count", 0), "strong_buy_count": sum(1 for i in items if i.get("recommendation") == "STRONG_BUY"), "strong_sell_count": sum(1 for i in items if i.get("recommendation") == "STRONG_SELL"), "average_score": round(sum(i.get("opportunity_score") or 0 for i in items) / max(1, len(items)), 2), "highest_conflict": max((i.get("conflict_score") or 0 for i in items), default=0), "generated_at": p.get("generated_at")}
+
+@app.get("/api/opportunities/debug")
+def api_opportunities_debug() -> dict[str, Any]:
+    return create_opportunity_engine().debug()
+
+@app.get("/api/opportunities/{symbol}")
+def api_opportunities_symbol(symbol: str) -> dict[str, Any]:
+    item = create_opportunity_engine().get(symbol)
+    if not item:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    return item
 
 @app.get("/api/performance")
 def api_performance() -> dict[str, Any]:
@@ -2048,6 +2104,16 @@ def api_ops_confluence_rebuild(_auth: bool = Depends(require_ops_token)) -> dict
     return _run_locked_ops("confluence_rebuild", {}, run)
 
 
+@app.post("/api/ops/opportunities/rebuild")
+def api_ops_opportunities_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    def run() -> dict[str, Any]:
+        started = time.perf_counter()
+        payload = create_opportunity_engine().rebuild()
+        items = payload.get("items", [])
+        return {"success": True, "status": "completed", "duration_ms": int((time.perf_counter() - started) * 1000), "symbols_scanned": payload.get("diagnostics", {}).get("input_symbol_count", len(items)), "actionable_count": payload.get("actionable_count", 0), "watch_count": payload.get("watch_count", 0), "blocked_count": payload.get("blocked_count", 0), "highest_score": max((i.get("opportunity_score") or 0 for i in items), default=0), "errors": payload.get("diagnostics", {}).get("errors", [])}
+    return _run_locked_ops("opportunities_rebuild", {}, run)
+
+
 @app.post("/api/ops/cache/clear")
 def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
     def clear():
@@ -2062,6 +2128,8 @@ def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, A
             MULTI_TIMEFRAME_ENGINE.cache.invalidate()
         if CONFLUENCE_ENGINE is not None:
             CONFLUENCE_ENGINE.invalidate()
+        if OPPORTUNITY_ENGINE is not None:
+            OPPORTUNITY_ENGINE.invalidate()
         return {"success": True, "status": "cleared", "message": "Safe application caches cleared."}
     return _run_locked_ops("cache_clear", {}, clear)
 
@@ -2133,6 +2201,15 @@ def ops_multi_timeframe_page():
 @app.get("/ops/confluence", include_in_schema=False)
 def ops_confluence_page():
     return FileResponse(STATIC_DIR / "confluence.html")
+
+
+@app.get("/opportunities", include_in_schema=False)
+def opportunities_page():
+    return FileResponse(STATIC_DIR / "opportunities.html")
+
+@app.get("/ops/opportunities", include_in_schema=False)
+def ops_opportunities_page():
+    return FileResponse(STATIC_DIR / "opportunities.html")
 
 
 @app.get("/committee", include_in_schema=False)
