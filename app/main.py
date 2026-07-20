@@ -60,6 +60,7 @@ from app.services.author_intelligence import AuthorIntelligenceEngine
 from app.services.performance import PerformanceEngine
 from app.services.market_state import MarketStateBuilder, MarketStateEngine
 from app.services.multi_timeframe import MultiTimeframeBuilder, MultiTimeframeEngine
+from app.services.confluence import ConfluenceBuilder, ConfluenceEngine
 from app.services.signal_validation import ExistingMarketDataValidationProvider, SignalValidationEngine
 from app.services.knowledge_graph.builder import KnowledgeGraphBuilder
 from app.services.knowledge_graph.service import KnowledgeGraphService
@@ -164,10 +165,11 @@ trade_idea_service = TradeIdeaService(signal_engine=SignalEngine())
 tv_sources_bootstrap = ensure_tv_sources_initialized()
 media_sources_bootstrap = ensure_media_sources_initialized()
 tv_source_manager = TvSourceManager(MEDIA_SOURCES_PATH, MEDIA_TV_VIDEOS_PATH)
-OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "cache_clear", "storage_migrate"]}
+OPS_LOCKS = {name: Lock() for name in ["media_import", "review_reprocess", "pipeline_run", "pipeline_run_all", "consensus_rebuild", "authors_rebuild", "performance_rebuild", "market_state_rebuild", "multi_timeframe_rebuild", "confluence_rebuild", "cache_clear", "storage_migrate"]}
 KG_SERVICE: KnowledgeGraphService | None = None
 MARKET_STATE_ENGINE: MarketStateEngine | None = None
 MULTI_TIMEFRAME_ENGINE: MultiTimeframeEngine | None = None
+CONFLUENCE_ENGINE: ConfluenceEngine | None = None
 
 def create_media_import_engine() -> MediaImportEngine:
     ensure_media_sources_initialized()
@@ -1483,6 +1485,8 @@ def _performance_completion_hook(outcome: dict[str, Any]) -> None:
     logger.info("performance_outcome_finished video_id=%s result=%s", outcome.get("video_id"), outcome.get("result"))
     try:
         create_market_state_engine().rebuild()
+        create_multi_timeframe_engine().rebuild()
+        _rebuild_confluence_safely()
     except Exception:
         logger.exception("market_state_refresh_after_performance_failed")
 
@@ -1505,6 +1509,7 @@ async def _signal_validation_scheduler_loop() -> None:
             engine = create_signal_validation_engine()
             engine.validate_many(_validation_ideas_from_catalog(100), limit=50)
             create_multi_timeframe_engine().rebuild()
+            _rebuild_confluence_safely()
         except Exception:
             logger.exception("signal_validation_scheduler_failed")
         await asyncio.sleep(max(300, int(os.getenv("SIGNAL_VALIDATION_INTERVAL_SECONDS", "900"))))
@@ -1550,6 +1555,30 @@ def create_multi_timeframe_engine() -> MultiTimeframeEngine:
             author_loader=lambda: create_author_intelligence_engine(include_consensus=False).build_all(),
         ))
     return MULTI_TIMEFRAME_ENGINE
+
+def create_confluence_engine() -> ConfluenceEngine:
+    global CONFLUENCE_ENGINE
+    if CONFLUENCE_ENGINE is None:
+        CONFLUENCE_ENGINE = ConfluenceEngine(ConfluenceBuilder(
+            symbol_loader=_market_state_symbols,
+            market_state_loader=lambda: create_market_state_engine().all(),
+            multi_timeframe_loader=lambda: create_multi_timeframe_engine().all(),
+            consensus_builder=lambda symbol: create_consensus_engine().build(symbol),
+            validation_loader=lambda: {"items": create_signal_validation_engine().all(), **create_signal_validation_engine().symbol_metrics()},
+            author_loader=lambda: create_author_intelligence_engine(include_consensus=False).build_all(),
+            performance_loader=lambda: create_performance_engine().evaluate_all(),
+            review_ideas_loader=lambda: _validation_ideas_from_catalog(250),
+        ))
+    return CONFLUENCE_ENGINE
+
+
+def _rebuild_confluence_safely() -> dict[str, Any]:
+    try:
+        payload = create_confluence_engine().rebuild()
+        return {"count": payload.get("total", len(payload.get("items", []))), "actionable": sum(1 for i in payload.get("items", []) if i.get("actionable")), "high_conflict": sum(1 for i in payload.get("items", []) if (i.get("conflict_score") or 0) >= 60)}
+    except Exception as exc:
+        logger.exception("confluence_rebuild_failed")
+        return {"error": exc.__class__.__name__}
 
 def create_signal_validation_engine() -> SignalValidationEngine:
     return SignalValidationEngine(ExistingMarketDataValidationProvider(get_candles))
@@ -1605,6 +1634,24 @@ def api_multi_timeframe_symbol(symbol: str) -> dict[str, Any]:
     item = create_multi_timeframe_engine().get(symbol)
     if not item:
         raise HTTPException(status_code=404, detail="Multi-timeframe profile not found")
+    return item
+
+
+@app.get("/api/confluence")
+def api_confluence() -> dict[str, Any]:
+    return create_confluence_engine().all()
+
+
+@app.get("/api/confluence/debug")
+def api_confluence_debug() -> dict[str, Any]:
+    return create_confluence_engine().debug()
+
+
+@app.get("/api/confluence/{symbol}")
+def api_confluence_symbol(symbol: str) -> dict[str, Any]:
+    item = create_confluence_engine().get(symbol)
+    if not item:
+        raise HTTPException(status_code=404, detail="Confluence state not found")
     return item
 
 
@@ -1946,7 +1993,8 @@ def api_ops_consensus_rebuild(symbol: str = "MARKET", timeframe: str | None = No
         consensus = create_consensus_engine().build(symbol, timeframe)
         market_state = create_market_state_engine().rebuild()
         multi_timeframe = create_multi_timeframe_engine().rebuild()
-        return {"success": True, "consensus": consensus, "market_state": {"count": market_state.get("meta", {}).get("count", 0)}, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}}
+        confluence = _rebuild_confluence_safely()
+        return {"success": True, "consensus": consensus, "market_state": {"count": market_state.get("meta", {}).get("count", 0)}, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}, "confluence": confluence}
     return _run_locked_ops("consensus_rebuild", {"symbol": symbol, "timeframe": timeframe}, run)
 
 
@@ -1956,7 +2004,8 @@ def api_ops_authors_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[st
         invalidate_knowledge_graph()
         authors = create_author_intelligence_engine().build_all()
         multi_timeframe = create_multi_timeframe_engine().rebuild()
-        return {"success": True, "authors": authors, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}}
+        confluence = _rebuild_confluence_safely()
+        return {"success": True, "authors": authors, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}, "confluence": confluence}
     return _run_locked_ops("authors_rebuild", {}, run)
 
 
@@ -1966,7 +2015,8 @@ def api_ops_performance_rebuild(_auth: bool = Depends(require_ops_token)) -> dic
         invalidate_knowledge_graph()
         performance = create_performance_engine().evaluate_all()
         multi_timeframe = create_multi_timeframe_engine().rebuild()
-        return {"success": True, "performance": performance, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}}
+        confluence = _rebuild_confluence_safely()
+        return {"success": True, "performance": performance, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}, "confluence": confluence}
     return _run_locked_ops("performance_rebuild", {}, run)
 
 
@@ -1975,13 +2025,27 @@ def api_ops_market_state_rebuild(_auth: bool = Depends(require_ops_token)) -> di
     def run() -> dict[str, Any]:
         market_state = create_market_state_engine().rebuild()
         multi_timeframe = create_multi_timeframe_engine().rebuild()
-        return {"success": True, **market_state, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}}
+        confluence = _rebuild_confluence_safely()
+        return {"success": True, **market_state, "multi_timeframe": {"count": multi_timeframe.get("meta", {}).get("count", 0)}, "confluence": confluence}
     return _run_locked_ops("market_state_rebuild", {}, run)
 
 
 @app.post("/api/ops/multi-timeframe/rebuild")
 def api_ops_multi_timeframe_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
-    return _run_locked_ops("multi_timeframe_rebuild", {}, lambda: {"success": True, **create_multi_timeframe_engine().rebuild()})
+    def run() -> dict[str, Any]:
+        multi = create_multi_timeframe_engine().rebuild()
+        return {"success": True, **multi, "confluence": _rebuild_confluence_safely()}
+    return _run_locked_ops("multi_timeframe_rebuild", {}, run)
+
+
+@app.post("/api/ops/confluence/rebuild")
+def api_ops_confluence_rebuild(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    def run() -> dict[str, Any]:
+        started = time.perf_counter()
+        payload = create_confluence_engine().rebuild()
+        items = payload.get("items", [])
+        return {"success": True, "status": "completed", "duration_ms": int((time.perf_counter() - started) * 1000), "symbols_processed": len(items), "actionable_count": sum(1 for i in items if i.get("actionable")), "high_conflict_count": sum(1 for i in items if (i.get("conflict_score") or 0) >= 60), "errors": payload.get("diagnostics", {}).get("errors", [])}
+    return _run_locked_ops("confluence_rebuild", {}, run)
 
 
 @app.post("/api/ops/cache/clear")
@@ -1996,6 +2060,8 @@ def api_ops_cache_clear(_auth: bool = Depends(require_ops_token)) -> dict[str, A
             MARKET_STATE_ENGINE.cache.invalidate()
         if MULTI_TIMEFRAME_ENGINE is not None:
             MULTI_TIMEFRAME_ENGINE.cache.invalidate()
+        if CONFLUENCE_ENGINE is not None:
+            CONFLUENCE_ENGINE.invalidate()
         return {"success": True, "status": "cleared", "message": "Safe application caches cleared."}
     return _run_locked_ops("cache_clear", {}, clear)
 
@@ -2062,6 +2128,11 @@ def performance_page():
 @app.get("/ops/multi-timeframe", include_in_schema=False)
 def ops_multi_timeframe_page():
     return FileResponse(STATIC_DIR / "multi-timeframe.html")
+
+
+@app.get("/ops/confluence", include_in_schema=False)
+def ops_confluence_page():
+    return FileResponse(STATIC_DIR / "confluence.html")
 
 
 @app.get("/committee", include_in_schema=False)
