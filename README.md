@@ -859,3 +859,22 @@ API and OPS routes:
 - `/ops/multi-timeframe` — dark OPS table with sorting and timeframe detail modal.
 
 The home dashboard also shows a `MULTI TIMEFRAME` widget with top aligned symbols, highest conflict and strongest trend.
+
+## Stage 27 — Confluence Engine
+
+FXPilot now includes a deterministic Confluence Engine that aggregates stored subsystem outputs into one explainable per-symbol assessment. It does **not** call an LLM and its `confluence_score` represents strength of deterministic agreement, not expected profit or win probability.
+
+Default factor weights are normalized to 100 across available data: Market State 20, Multi-Timeframe 20, Consensus 20, Signal Validation 15, Author Intelligence 10, Performance 10, Structured Reviews 5, and reserved `order_flow` 0. Missing factors are listed explicitly and their configured weight is redistributed across available factors instead of being treated as confirmation or conflict.
+
+Public read-only endpoints:
+
+- `GET /api/confluence`
+- `GET /api/confluence/{symbol}`
+- `GET /api/confluence/debug`
+
+Operations endpoint and UI:
+
+- `POST /api/ops/confluence/rebuild` with the existing `X-FXPILOT-OPS-TOKEN` header
+- `/ops/confluence` for sortable/filterable dark-theme diagnostics
+
+Persistence is stored atomically in `DATA_DIR/confluence.json`; if a rebuild fails, the previous valid file is preserved. Upstream rebuild flows for consensus, authors, performance, market state, multi-timeframe, validation scheduler updates, and performance completion hooks trigger a safe confluence refresh without recursive rebuild loops.
