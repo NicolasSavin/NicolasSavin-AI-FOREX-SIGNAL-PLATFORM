@@ -4714,12 +4714,16 @@ class TradeIdeaService:
         return card
 
     @staticmethod
-    def _resolve_narrative_source_label(value: Any, *, is_fallback: bool = False, combined: bool = False) -> str:
+    def _resolve_narrative_source_label(value: Any, *, is_fallback: bool = False, combined: bool = False, has_model_narrative: bool = False) -> str:
         raw = str(value or "").strip().lower()
-        if is_fallback and raw not in {"grok", "llm", "model"}:
+        if has_model_narrative and raw in {"fallback", "template_fallback", "fallback_template", "local_dynamic_fallback", "local_safe"}:
+            return "model"
+        if is_fallback and raw not in {"grok", "llm", "model", "openrouter", "llm_text"}:
             return "fallback"
-        if raw in {"grok", "llm", "model", "openrouter", "llm_text"}:
+        if raw in {"grok", "llm", "openrouter", "llm_text"}:
             return "grok"
+        if raw == "model":
+            return "model"
         if raw in {"local_dynamic", "rule_engine"} and not is_fallback:
             return "rule_engine"
         if raw in {"fallback", "template_fallback", "fallback_template", "local_dynamic_fallback", "local_safe"}:
@@ -5734,21 +5738,19 @@ class TradeIdeaService:
             unified_narrative = self._sanitize_user_narrative_text(row.get("unified_narrative"))
             full_text = self._sanitize_user_narrative_text(row.get("full_text") or row.get("fullText"))
             raw_narrative_source = row.get("narrative_source")
-            resolved_source = self._resolve_narrative_source_label(
-                raw_narrative_source,
-                is_fallback=bool(row.get("is_fallback")),
-                combined=bool(row.get("combined")),
-            )
             has_model_narrative = any(
                 str(value or "").strip()
                 and not re.search(r"\b(status\s+created|idea_created|debug|schema|payload)\b", str(value), re.IGNORECASE)
                 and not self._is_generic_narrative_text(value)
                 for value in (idea_thesis, unified_narrative, full_text)
             )
-            if resolved_source == "fallback_template" and has_model_narrative:
-                raw_source = str(raw_narrative_source or "").strip().lower()
-                resolved_source = "grok" if raw_source == "grok" else "model"
-            is_fallback_narrative = resolved_source == "fallback_template"
+            resolved_source = self._resolve_narrative_source_label(
+                raw_narrative_source,
+                is_fallback=bool(row.get("is_fallback")),
+                combined=bool(row.get("combined")),
+                has_model_narrative=has_model_narrative,
+            )
+            is_fallback_narrative = resolved_source == "fallback"
             htf_context = {
                 "H4": (row.get("timeframe_ideas") or {}).get("H4", {}) if isinstance(row.get("timeframe_ideas"), dict) else {},
                 "D1": (row.get("timeframe_ideas") or {}).get("D1", {}) if isinstance(row.get("timeframe_ideas"), dict) else {},
@@ -5967,7 +5969,7 @@ class TradeIdeaService:
                         "narrative_structured": row.get("narrative_structured") or detail_brief.get("narrative_structured"),
                         "update_explanation": row.get("update_explanation") or row.get("update_summary") or "",
                         "update_reason": row.get("update_reason") or "",
-                        "narrative_source": "local_dynamic" if (not has_model_narrative and local_reasoning.get("text")) else resolved_source,
+                        "narrative_source": "local_dynamic" if (not has_model_narrative and resolved_source != "fallback" and local_reasoning.get("text")) else resolved_source,
                         "narrative_error": row.get("narrative_error"),
                         "htf_context_used": bool(local_reasoning.get("htf_context_used")),
                         "liquidity_context_used": bool(local_reasoning.get("liquidity_context_used")),

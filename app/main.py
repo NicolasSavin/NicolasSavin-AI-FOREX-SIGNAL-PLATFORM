@@ -87,6 +87,22 @@ logging.getLogger().setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
+from app.core.settings import Settings
+from app.core.services import AppServices
+from app.core.locks import LockRegistry
+from app.core.middleware import RequestIdMiddleware
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    resolved_settings = settings or Settings.from_env()
+    resolved_settings.validate_startup()
+    application = FastAPI(title="AI FOREX SIGNAL PLATFORM", version="htf-context-real-candles-1.0")
+    application.state.settings = resolved_settings
+    application.state.services = AppServices()
+    application.state.lock_registry = LockRegistry()
+    application.add_middleware(RequestIdMiddleware)
+    return application
+
+
 DEFAULT_IDEA_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
 IDEA_SYMBOLS = os.getenv("IDEA_SYMBOLS", "EURUSD,GBPUSD,USDJPY,XAUUSD")
 SYMBOLS = [normalize.strip().upper() for normalize in IDEA_SYMBOLS.split(",") if normalize.strip()] or DEFAULT_IDEA_SYMBOLS
@@ -160,7 +176,7 @@ ARCHIVE_FILE = Path("archive.json")
 
 HTF_FILTER = HtfContextFilter()
 
-app = FastAPI(title="AI FOREX SIGNAL PLATFORM", version="htf-context-real-candles-1.0")
+app = create_app()
 
 from app.services.market_service_registry import get_canonical_market_service
 from app.services.trade_idea_service import TradeIdeaService
@@ -1613,7 +1629,7 @@ def create_strategy_engine() -> StrategyEngine:
 def create_paper_trading_engine() -> PaperTradingEngine:
     global PAPER_TRADING_ENGINE
     if PAPER_TRADING_ENGINE is None:
-        PAPER_TRADING_ENGINE = PaperTradingEngine(ExistingMarketDataValidationProvider(get_candles), signal_loader=lambda: create_strategy_engine().approved_signals())
+        PAPER_TRADING_ENGINE = PaperTradingEngine(ExistingMarketDataValidationProvider(get_candles_with_markup), signal_loader=lambda: create_strategy_engine().approved_signals())
     return PAPER_TRADING_ENGINE
 
 
@@ -1673,7 +1689,7 @@ def _rebuild_confluence_safely() -> dict[str, Any]:
         return {"error": exc.__class__.__name__}
 
 def create_signal_validation_engine() -> SignalValidationEngine:
-    return SignalValidationEngine(ExistingMarketDataValidationProvider(get_candles))
+    return SignalValidationEngine(ExistingMarketDataValidationProvider(get_candles_with_markup))
 
 def _validation_ideas_from_catalog(limit: int = 100) -> list[dict[str, Any]]:
     ideas: list[dict[str, Any]] = []
@@ -4184,6 +4200,30 @@ def api_debug_dukascopy(symbol: str, tf: str, limit: int = 160):
         "last": candles[-1] if candles else None,
     }
 
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    return {"ok": True, "status": "alive", "service": "FXPilot"}
+
+
+@app.get("/ready")
+def ready() -> JSONResponse:
+    from app.core.health import build_readiness
+    payload = build_readiness(app.state.settings, app.state.services, LLM_REVIEW_STORAGE)
+    return JSONResponse(payload, status_code=200 if payload.get("ready") else 503)
+
+
+@app.get("/api/ops/health")
+def api_ops_health(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    from app.core.health import build_ops_health
+    return build_ops_health(app.state.settings, app.state.services, LLM_REVIEW_STORAGE, app.state.lock_registry)
+
+
+@app.get("/api/ops/storage/manifest")
+def api_ops_storage_manifest(_auth: bool = Depends(require_ops_token)) -> dict[str, Any]:
+    from app.services.storage_manifest import build_storage_manifest
+    return build_storage_manifest()
 
 @app.get("/api/debug/sentiment/{symbol}")
 def api_debug_sentiment(symbol: str):
