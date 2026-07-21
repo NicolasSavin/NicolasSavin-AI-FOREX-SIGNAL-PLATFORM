@@ -3,21 +3,45 @@ name = "forex-signal-platform"
 version = "3.0.0"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-  "fastapi",
-  "uvicorn",
-  "pandas",
-  "numpy",
-  "yfinance",
-  "requests",
-  "beautifulsoup4",
-  "selenium",
-  "chromedriver-autoinstaller",
+  "fastapi==0.115.0",
+  "uvicorn[standard]==0.30.6",
+  "pandas==2.2.3",
+  "numpy==2.1.1",
+  "yfinance==0.2.54",
+  "requests==2.32.3",
+  "beautifulsoup4==4.12.3",
+  "selenium==4.24.0",
+  "chromedriver-autoinstaller==0.6.4",
   "openai==1.51.2",
   "httpx==0.27.2",
-  "scikit-learn",
-  "ta",
-  "python-dotenv",
-  "yt-dlp",
-  "feedparser",
+  "scikit-learn==1.5.2",
+  "ta==0.11.0",
+  "python-dotenv==1.0.1",
+  "yt-dlp==2025.1.26",
+  "feedparser==6.0.11",
   "APScheduler==3.10.4"
 ]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.5",
+  "pytest-asyncio==0.25.3",
+  "ruff==0.9.6",
+  "mypy==1.15.0",
+  "types-requests==2.32.0.20250306",
+  "pip-audit==2.7.3",
+]
+
+[tool.pytest.ini_options]
+markers = [
+  "external: tests that intentionally access public external services and are skipped by default",
+]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 160
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+strict_optional = false

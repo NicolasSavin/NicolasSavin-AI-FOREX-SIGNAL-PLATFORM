@@ -1,3 +1,114 @@
+# FXPilot Current Production Architecture
+
+**LIVE EXECUTION IS NOT IMPLEMENTED.** Execution Gateway remains DRY_RUN-only; real MT4/MT5/broker adapters and OrderFlow execution are intentionally out of scope for Stage 34.
+
+```mermaid
+flowchart LR
+  Media[Media Import] --> Review[Structured AI Reviews]
+  Review --> KG[Knowledge Graph]
+  KG --> Consensus[Consensus]
+  Consensus --> Authors[Author Intelligence]
+  Authors --> Performance[Performance]
+  Performance --> Validation[Signal Validation]
+  Validation --> MarketState[Market State]
+  MarketState --> MTF[Multi-Timeframe]
+  MTF --> Confluence[Confluence]
+  Confluence --> Opps[Opportunities]
+  Opps --> Decisions[Explainable Decisions]
+  Decisions --> Strategies[Strategy Evaluation / Approved Signals]
+  Strategies --> Paper[Paper Trading]
+  Paper --> Portfolio[Portfolio]
+  Portfolio --> Exec[Execution Order Build: DRY_RUN]
+```
+
+## Current deterministic pipeline
+
+1. Media Import loads configured sources into the catalog.
+2. Structured AI Reviews are the only normal pipeline stage that may consume LLM credits, and only when an explicit review/reprocess operation is requested and provider credentials are configured.
+3. Knowledge Graph, Consensus, Author Intelligence, Performance, Validation, Market State, Multi-Timeframe, Confluence, Opportunities, Decisions, Strategies, Paper Trading, Portfolio and Execution order building are deterministic read/rebuild stages. Read-only API routes must not call LLMs or public networks.
+4. Execution order building does not dispatch orders automatically. Broker execution remains disabled unless explicitly invoked in DRY_RUN mode.
+
+## Pages and routes
+
+Read-only pages include `/`, `/ideas`, `/tv`, `/symbols`, `/ops`, `/ops/market`, `/ops/paper`, `/ops/portfolio`, `/ops/execution`, `/ops/strategies`, `/authors`, `/performance`, `/opportunities`, `/decisions`, `/news`, `/calendar`, `/analytics`, `/stats` and `/archive`.
+
+Core health and diagnostics:
+
+- `GET /health` — process is alive.
+- `GET /ready` — local readiness: storage writable, schemas readable, service container constructed, scheduler configuration valid, DRY_RUN execution and kill-switch safety.
+- `GET /api/ops/health` — protected detailed component status.
+- `GET /api/ops/storage/manifest` — protected safe manifest for runtime JSON stores without absolute paths or secrets.
+
+## Persistent files
+
+Runtime JSON files are rooted at canonical `DATA_DIR` from `FXPILOT_DATA_DIR` when configured, otherwise local `data/`. Important aggregates include `market_state.json`, `multi_timeframe.json`, `confluence.json`, `opportunities.json`, `decisions.json`, `strategies.json`, `strategy_evaluations.json`, `approved_signals.json`, paper trading files, portfolio files and execution files. Stage 34 diagnostics treat files without `schema_version` as legacy and load them backward-compatibly; destructive migration is not automatic.
+
+## Environment variables
+
+Required for production operations:
+
+- `FXPILOT_DATA_DIR` — mounted persistent data directory on Render.
+- `FXPILOT_STORAGE_MODE=persistent` — expected when Render disk is attached.
+- `FXPILOT_OPS_TOKEN` — required for protected OPS mutations and diagnostics.
+- `FXPILOT_EXECUTION_MODE=DRY_RUN` — the only supported execution mode.
+- `FXPILOT_EXECUTION_KILL_SWITCH=1` — safe default.
+
+Optional:
+
+- `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` — only for explicit AI review/narrative operations.
+- `YOUTUBE_API_KEY`, `FXPILOT_EXTERNAL_PROVIDERS_ENABLED`, `ALLOW_EXTERNAL_FALLBACK`, `TWELVEDATA_API_KEY` — external provider enablement; missing providers must not make read-only routes fail.
+- `FXPILOT_SCHEDULER_ENABLED`, `FXPILOT_SCHEDULER_INTERVAL_SECONDS`, `MARKET_IDEAS_CACHE_TTL_SECONDS`, risk threshold variables.
+
+## Render disk configuration
+
+Mount a persistent disk and point `FXPILOT_DATA_DIR` at that mount. Use `FXPILOT_STORAGE_MODE=persistent`. Verify `/ready` after deploy and inspect `/api/ops/storage/manifest` with `X-FXPilot-OPS-Token`.
+
+## Source Manager and OPS usage
+
+Source Manager APIs remain under `/api/sources` and media APIs under `/api/media/*`. Protected OPS mutations require `X-FXPilot-OPS-Token`. Never place the token in query strings or logs.
+
+## AI credit-consuming operations
+
+AI credits may be consumed by explicit structured review/reprocess and optional idea narrative calls when keys are configured. Deterministic read/rebuild paths must not introduce LLM calls.
+
+## Paper Trading, Portfolio and Execution DRY_RUN
+
+Paper Trading uses Approved Signals only. Portfolio aggregates paper state and risk. Execution Gateway may build DRY_RUN orders for diagnostics but does not place real broker orders. Kill switch is enabled by default and LIVE execution is rejected at startup.
+
+## Recovery, backup and restore
+
+1. Stop scheduler/OPS mutations.
+2. Copy the full `FXPILOT_DATA_DIR` directory.
+3. Restore JSON files atomically from backup.
+4. Start the app and check `/ready`.
+5. Review `/api/ops/storage/manifest` for malformed or legacy schemas.
+6. Rebuild deterministic stages in pipeline order if needed; do not dispatch execution.
+
+## Windows development commands
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+python -m compileall app backend
+pytest -q -m "not external"
+ruff check app tests
+mypy app/core app/services/storage_manifest.py
+```
+
+## Production verification checklist
+
+- `/health` returns alive.
+- `/ready` returns ready with storage writable and execution DRY_RUN.
+- `FXPILOT_OPS_TOKEN` is configured and protected OPS endpoints reject unauthenticated requests.
+- Scheduler is explicitly enabled or disabled.
+- Storage manifest contains no absolute paths, secrets or raw LLM payloads.
+- Read-only routes do not trigger LLM, broker or public-network calls.
+- Kill switch remains enabled unless a DRY_RUN-only diagnostic explicitly changes it.
+
+---
+
 ## Stage 31 — Paper Trading Engine
 
 - Добавлена подсистема `app/services/paper_trading/` для детерминированной виртуальной торговли только по `ApprovedSignal` из Strategy Builder. MT4/MT5, брокеры, реальные исполнения и LLM не используются.
