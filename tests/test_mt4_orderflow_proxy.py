@@ -43,3 +43,22 @@ def test_proxy_forwards_payload_and_token(monkeypatch):
     assert captured["url"].endswith("/api/mt4/batch")
     assert captured["headers"]["X-FXPilot-MT4-Token"] == "secret"
     assert captured["json"]["timeframe"] == "M15"
+
+
+def test_proxy_forwards_batch_all_in_one_request(monkeypatch):
+    captured = {}
+
+    def fake_post(url, *, json, headers, timeout):
+        captured.update(url=url, json=json, headers=headers, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr(mt4_orderflow_proxy.requests, "post", fake_post)
+    response = client().post(
+        "/api/mt4/orderflow-batch-all",
+        json={"packets": [{"symbol": "EURUSD"}, {"symbol": "GBPUSD"}]},
+        headers={"X-FXPilot-MT4-Token": "secret"},
+    )
+
+    assert response.status_code == 200
+    assert captured["url"].endswith("/api/mt4/batch-all")
+    assert len(captured["json"]["packets"]) == 2
