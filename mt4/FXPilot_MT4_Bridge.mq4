@@ -1,5 +1,5 @@
 #property strict
-#property version "2.17"
+#property version "2.18"
 #property description "FXPilot: 4 symbols and 5 timeframes from one MT4 chart"
 
 input string ServerUrl = "https://fxpilot.ru/api/mt4/orderflow-batch-all";
@@ -10,7 +10,7 @@ input int BarsToSend = 3;
 input int SendEverySeconds = 60;
 input bool SendOnStart = true;
 input int HttpTimeoutMs = 60000;
-input bool UseWindowsTransportFirst = true;
+input bool UseLocalRelay = true;
 
 #define SYMBOL_COUNT 4
 #define TF_COUNT 5
@@ -165,9 +165,17 @@ bool WinHttpPostJson(string payload){
 }
 
 bool PostJson(string payload){
-   if(UseWindowsTransportFirst){
-      if(WinHttpPostJson(payload)){LastStatus="Sent via Windows transport";return true;}
-      Print("FXPilot: direct Windows transport failed: ",LastErrorDetail,"; trying MT4 WebRequest");
+   if(UseLocalRelay){
+      string job="{\"url\":\""+JsonEscape(ServerUrl)+"\",\"token\":\""+JsonEscape(ApiToken)+"\",\"payload\":"+payload+"}";
+      string tempName="fxpilot_job.tmp.json",jobName="fxpilot_job.json";
+      int file=FileOpen(tempName,FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+      if(file==INVALID_HANDLE){LastErrorDetail="Local relay file error "+IntegerToString(GetLastError());return false;}
+      FileWriteString(file,job);FileFlush(file);FileClose(file);
+      FileDelete(jobName,FILE_COMMON);
+      if(!FileMove(tempName,FILE_COMMON,jobName,FILE_COMMON)){LastErrorDetail="Local relay move error "+IntegerToString(GetLastError());return false;}
+      LastErrorDetail="";LastStatus="Queued for local relay";
+      Print("FXPilot: packet queued for local relay");
+      return true;
    }
    char data[],response[]; string responseHeaders; StringToCharArray(payload,data,0,WHOLE_ARRAY,CP_UTF8); ArrayResize(data,ArraySize(data)-1);
    string headers="Content-Type: application/json\r\nX-FXPilot-MT4-Token: "+ApiToken+"\r\n";
@@ -177,7 +185,7 @@ bool PostJson(string payload){
       LastErrorDetail="WebRequest error "+IntegerToString(errorCode);
       LastStatus=LastErrorDetail;
       Print("FXPilot: ",LastErrorDetail," URL=",ServerUrl);
-      if(errorCode==5203 && !UseWindowsTransportFirst){
+      if(errorCode==5203){
          Print("FXPilot: switching to Windows WinHTTP fallback");
          if(WinHttpPostJson(payload)){LastStatus="Sent via Windows fallback";return true;}
          Print("FXPilot: ",LastErrorDetail);
@@ -216,7 +224,7 @@ void CreatePanel(){
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BORDER_COLOR,C'55,75,95');
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BACK,false);
    ObjectSetInteger(0,PANEL_BG,OBJPROP_SELECTABLE,false);
-   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2.17",28,30,12,C'70,210,255');
+   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2.18 LOCAL",28,30,12,C'70,210,255');
    SetLabel("FXPILOT_TFS","ONE CHART  |  M15  H1  H4  D1  W1",28,54,9,C'170,185,200');
    SetLabel(PANEL_STATUS,"Status: starting",28,78,10,clrWhite);
    for(int i=0;i<SYMBOL_COUNT;i++)SetLabel("FXPILOT_SYMBOL_"+IntegerToString(i),CanonicalSymbols[i],28,106+i*22,10,clrSilver);
