@@ -1,5 +1,5 @@
 #property strict
-#property version "2.16"
+#property version "2.17"
 #property description "FXPilot: 4 symbols and 5 timeframes from one MT4 chart"
 
 input string ServerUrl = "https://fxpilot.ru/api/mt4/orderflow-batch-all";
@@ -40,6 +40,9 @@ bool WinHttpSendRequest(int request,string headers,int headersLength,char &optio
 bool WinHttpReceiveResponse(int request,int reserved);
 bool WinHttpQueryHeaders(int request,int infoLevel,string name,int &buffer,int &bufferLength,int &index);
 bool WinHttpCloseHandle(int handle);
+#import
+#import "ntdll.dll"
+int RtlGetLastWin32Error();
 #import
 
 string Trim(string value){ StringTrimLeft(value); StringTrimRight(value); return value; }
@@ -136,7 +139,8 @@ bool WinHttpPostJson(string payload){
    string path=pathPos<0?"/":StringSubstr(url,pathPos);
    int port=secure?443:80;
    // Direct access avoids broken or browser-only proxy settings inherited by WinHTTP.
-   int session=WinHttpOpen("FXPilot-MT4/2.16",1,"","",0);
+   RtlGetLastWin32Error(); // preload the diagnostic function before the network call
+   int session=WinHttpOpen("FXPilot-MT4/2.17",1,"","",0);
    if(session==0){LastErrorDetail="WinHTTP open failed";return false;}
    WinHttpSetTimeouts(session,HttpTimeoutMs,HttpTimeoutMs,HttpTimeoutMs,HttpTimeoutMs);
    int connect=WinHttpConnect(session,host,port,0);
@@ -147,11 +151,14 @@ bool WinHttpPostJson(string payload){
    char body[]; StringToCharArray(payload,body,0,WHOLE_ARRAY,CP_UTF8); ArrayResize(body,ArraySize(body)-1);
    string headers="Content-Type: application/json\r\nAccept: application/json\r\nX-FXPilot-MT4-Token: "+ApiToken+"\r\n";
    bool sent=WinHttpSendRequest(request,headers,-1,body,ArraySize(body),ArraySize(body),0);
+   int sendError=sent?0:RtlGetLastWin32Error();
    bool received=sent && WinHttpReceiveResponse(request,0);
+   int receiveError=received?0:RtlGetLastWin32Error();
    int status=0,size=4,index=0;
    bool queried=received && WinHttpQueryHeaders(request,0x20000013,"",status,size,index);
    WinHttpCloseHandle(request);WinHttpCloseHandle(connect);WinHttpCloseHandle(session);
-   if(!received){LastErrorDetail="WinHTTP send failed";return false;}
+   if(!sent){LastErrorDetail="WinHTTP send failed, Windows "+IntegerToString(sendError);return false;}
+   if(!received){LastErrorDetail="WinHTTP receive failed, Windows "+IntegerToString(receiveError);return false;}
    if(queried && (status<200 || status>=300)){LastErrorDetail="HTTP "+IntegerToString(status);return false;}
    LastErrorDetail="";
    return true;
@@ -209,7 +216,7 @@ void CreatePanel(){
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BORDER_COLOR,C'55,75,95');
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BACK,false);
    ObjectSetInteger(0,PANEL_BG,OBJPROP_SELECTABLE,false);
-   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2.16",28,30,12,C'70,210,255');
+   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2.17",28,30,12,C'70,210,255');
    SetLabel("FXPILOT_TFS","ONE CHART  |  M15  H1  H4  D1  W1",28,54,9,C'170,185,200');
    SetLabel(PANEL_STATUS,"Status: starting",28,78,10,clrWhite);
    for(int i=0;i<SYMBOL_COUNT;i++)SetLabel("FXPILOT_SYMBOL_"+IntegerToString(i),CanonicalSymbols[i],28,106+i*22,10,clrSilver);
