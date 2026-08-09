@@ -1,8 +1,8 @@
 #property strict
-#property version "2.13"
+#property version "2.14"
 #property description "FXPilot: 4 symbols and 5 timeframes from one MT4 chart"
 
-input string ServerUrl = "https://ai-forex-signal-platform.onrender.com/api/mt4/orderflow-batch";
+input string ServerUrl = "https://ai-forex-signal-platform.onrender.com/api/mt4/orderflow-batch-all";
 input string ApiToken = "";
 input string BrokerSymbolsCsv = "EURUSD,GBPUSD,USDJPY,XAUUSD";
 input bool AutoDetectBrokerSymbols = true;
@@ -102,6 +102,19 @@ string BuildPayload(int i,int tf){
    return p;
 }
 
+string BuildAllPayload(){
+   string out="{\"packets\":[";
+   bool first=true;
+   for(int i=0;i<SYMBOL_COUNT;i++){
+      for(int t=0;t<TF_COUNT;t++){
+         if(!first)out+=",";
+         first=false;
+         out+=BuildPayload(i,Timeframes[t]);
+      }
+   }
+   return out+"]}";
+}
+
 bool PostJson(string payload){
    char data[],response[]; string responseHeaders; StringToCharArray(payload,data,0,WHOLE_ARRAY,CP_UTF8); ArrayResize(data,ArraySize(data)-1);
    string headers="Content-Type: application/json\r\nX-FXPilot-MT4-Token: "+ApiToken+"\r\n";
@@ -145,7 +158,7 @@ void CreatePanel(){
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BORDER_COLOR,C'55,75,95');
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BACK,false);
    ObjectSetInteger(0,PANEL_BG,OBJPROP_SELECTABLE,false);
-   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2.13",28,30,12,C'70,210,255');
+   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2.14",28,30,12,C'70,210,255');
    SetLabel("FXPILOT_TFS","ONE CHART  |  M15  H1  H4  D1  W1",28,54,9,C'170,185,200');
    SetLabel(PANEL_STATUS,"Status: starting",28,78,10,clrWhite);
    for(int i=0;i<SYMBOL_COUNT;i++)SetLabel("FXPILOT_SYMBOL_"+IntegerToString(i),CanonicalSymbols[i],28,106+i*22,10,clrSilver);
@@ -170,8 +183,8 @@ void UpdatePanel(){
 
 void SendAll(){
    if(StringLen(ApiToken)==0){LastStatus="Set ApiToken in EA settings";UpdatePanel();return;}
-   int ok=0,failed=0; LastStatus="Sending...";UpdatePanel();
-   for(int i=0;i<SYMBOL_COUNT;i++)for(int t=0;t<TF_COUNT;t++){ if(PostJson(BuildPayload(i,Timeframes[t]))){ok++;OkPackets++;}else{failed++;FailedPackets++;} }
+   int ok=0,failed=0; LastStatus="Sending one batch (20 streams)...";UpdatePanel();
+   if(PostJson(BuildAllPayload())){ok=20;OkPackets+=20;}else{failed=20;FailedPackets+=20;}
    LastSendAt=TimeCurrent(); LastStatus="Cycle OK "+IntegerToString(ok)+", failed "+IntegerToString(failed);
    if(failed>0 && StringLen(LastErrorDetail)>0)LastStatus+=" | "+LastErrorDetail;
    for(int s=0;s<SYMBOL_COUNT;s++)ResetStats(s); UpdatePanel();
