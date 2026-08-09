@@ -45,6 +45,31 @@ def proxy_orderflow_batch(
     return JSONResponse(status_code=response.status_code, content=_safe_json(response))
 
 
+@router.post("/orderflow-batch-all")
+def proxy_orderflow_batch_all(
+    payload: dict[str, Any],
+    x_fxpilot_mt4_token: Annotated[str | None, Header()] = None,
+):
+    token = str(x_fxpilot_mt4_token or "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="missing MT4 bridge token")
+
+    try:
+        response = requests.post(
+            f"{ORDERFLOW_URL}/api/mt4/batch-all",
+            json=payload,
+            headers={"X-FXPilot-MT4-Token": token},
+            timeout=ORDERFLOW_TIMEOUT_SECONDS,
+        )
+    except requests.RequestException:
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "error": "orderflow_engine_unavailable"},
+        )
+
+    return JSONResponse(status_code=response.status_code, content=_safe_json(response))
+
+
 @router.get("/orderflow-proxy-health")
 def orderflow_proxy_health():
     try:
