@@ -78,6 +78,7 @@ from app.services.storage_paths import (
     migrate_legacy_data, storage_diagnostics, storage_health,
 )
 from backend.chat_service import ChatRequest, ForexChatService
+from app.api.mt4_orderflow_proxy import router as mt4_orderflow_proxy_router
 
 logger = logging.getLogger(__name__)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -177,6 +178,7 @@ ARCHIVE_FILE = Path("archive.json")
 HTF_FILTER = HtfContextFilter()
 
 app = create_app()
+app.include_router(mt4_orderflow_proxy_router)
 
 from app.services.market_service_registry import get_canonical_market_service
 from app.services.trade_idea_service import TradeIdeaService
