@@ -507,9 +507,15 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+from app.core.runtime import cron_authorized, running_on_vercel
+
+
 @app.on_event("startup")
 def startup() -> None:
     log_llm_startup_config()
+    if running_on_vercel():
+        logger.info("startup_vercel_serverless skipping background workers")
+        return
     twelvedata_ws_service.start()
     media_automation_service.start()
     asyncio.create_task(startup_ai_healthcheck())
@@ -533,6 +539,33 @@ def health(request: Request):
         "status": "ok",
         "version": "htf-context-real-candles-1.0",
         "time": now_utc(),
+        "runtime": "vercel" if running_on_vercel() else "server",
+    }
+
+
+@app.api_route("/api/cron/tick", methods=["GET", "POST", "HEAD"])
+def cron_tick(request: Request):
+    if request.method == "HEAD":
+        return Response(status_code=200)
+    if not cron_authorized(request.headers.get("authorization"), request.headers.get("x-vercel-cron")):
+        raise HTTPException(status_code=401, detail="cron unauthorized")
+    started = time.perf_counter()
+    errors: list[str] = []
+    try:
+        _queue_market_ideas_refresh()
+    except Exception as exc:
+        logger.exception("cron_market_ideas_failed")
+        errors.append(f"market_ideas:{type(exc).__name__}")
+    try:
+        media_automation_service.run_import_cycle()
+    except Exception as exc:
+        logger.exception("cron_media_import_failed")
+        errors.append(f"media:{type(exc).__name__}")
+    return {
+        "ok": not errors,
+        "runtime": "vercel" if running_on_vercel() else "server",
+        "duration_seconds": round(time.perf_counter() - started, 3),
+        "errors": errors,
     }
 
 

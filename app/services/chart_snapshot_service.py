@@ -11,13 +11,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
+from app.core.runtime import writable_charts_dir
+
 logger = logging.getLogger(__name__)
 
 
 class ChartSnapshotService:
     def __init__(self, charts_dir: str = "app/static/charts") -> None:
-        self.charts_dir = Path(charts_dir)
-        self.charts_dir.mkdir(parents=True, exist_ok=True)
+        self.charts_dir = writable_charts_dir(charts_dir)
 
     def build_snapshot(
         self,
