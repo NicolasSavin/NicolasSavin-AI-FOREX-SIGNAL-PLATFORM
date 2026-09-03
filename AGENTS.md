@@ -4,13 +4,15 @@
 - User-facing language: Russian
 - Backend: FastAPI
 - Frontend: simple static pages served by backend
-- Keep deploy compatible with Render
+- Production host: Vercel Python (`main.py` FastAPI entry). Keep `vercel.json` working.
+- Render (`render.yaml`) is legacy and must not be required to serve fxpilot.ru
 - Prefer modular services over monolith files
 - Do not fake unavailable market data
 - Clearly label proxy metrics vs real market metrics
 - Preserve working paths and existing deploy where possible
 - Keep API routes stable when possible
 - Update README after major changes
+- On Vercel: no APScheduler, no WebSocket worker, no persistent disk — use `/api/cron/tick` and `/tmp`
 
 ## Development workflow
 - Inspect current repo before editing

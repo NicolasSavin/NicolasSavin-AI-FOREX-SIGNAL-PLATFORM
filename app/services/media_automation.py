@@ -33,6 +33,12 @@ class MediaAutomationService:
         self._last_error: str | None = None
 
     def start(self) -> None:
+        from app.core.runtime import running_on_vercel
+
+        if running_on_vercel():
+            logger.info("media_automation_scheduler_skipped runtime=vercel use /api/cron/tick")
+            self._write_state_event("scheduler_skipped_vercel", {"status": "cron"})
+            return
         if self.scheduler.running:
             return
         self.scheduler.add_job(lambda: self.run_import_cycle("youtube"), IntervalTrigger(minutes=15), id="media_youtube_15m", replace_existing=True, max_instances=1, coalesce=True)

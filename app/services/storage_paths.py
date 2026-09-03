@@ -9,7 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core.runtime import apply_vercel_defaults, running_on_vercel, seed_ephemeral_data
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+apply_vercel_defaults()
+if running_on_vercel():
+    seed_ephemeral_data(PROJECT_ROOT)
 _ENV_DATA_DIR = os.getenv("FXPILOT_DATA_DIR", "").strip()
 DATA_DIR = Path(_ENV_DATA_DIR or PROJECT_ROOT / "data").expanduser().resolve()
 DATA_ROOT_SOURCE = "FXPILOT_DATA_DIR" if _ENV_DATA_DIR else "local_default"

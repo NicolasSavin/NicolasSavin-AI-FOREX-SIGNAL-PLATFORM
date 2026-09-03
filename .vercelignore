@@ -1,0 +1,15 @@
+.git
+.github
+.codex
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+tests
+docs
+mt4
+*.mq4
+frontend/node_modules
+node_modules
+AI_Ideas_Trader.mq4

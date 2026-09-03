@@ -1,0 +1,22 @@
+name: vercel-cron
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping FXPilot cron
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_URL: ${{ secrets.FXPILOT_CRON_URL }}
+        run: |
+          url="${CRON_URL:-https://fxpilot.ru/api/cron/tick}"
+          if [ -n "$CRON_SECRET" ]; then
+            curl -fsS -X POST -H "Authorization: Bearer ${CRON_SECRET}" "$url"
+          else
+            curl -fsS -X POST "$url"
+          fi
